@@ -201,6 +201,11 @@ class Backlink:
         if 'last_seen_date' in data and isinstance(data['last_seen_date'], str):
             data['last_seen_date'] = datetime.fromisoformat(data['last_seen_date'])
         
+        # Remove 'source_domain' and 'target_domain' from data if present,
+        # as they are calculated in __post_init__ and not part of __init__
+        data.pop('source_domain', None)
+        data.pop('target_domain', None)
+
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered_data)
@@ -227,7 +232,8 @@ class LinkProfile:
     def __post_init__(self):
         """Extract target domain"""
         try:
-            self.target_domain = urlparse(self.target_url).netloc.lower()
+            parsed = urlparse(self.target_url)
+            self.target_domain = parsed.netloc.lower()
         except Exception:
             pass
     
