@@ -57,14 +57,14 @@ link_profiler/
 │   └── database.py        # JSON-based storage (easily replaceable)
 ├── api/                   # REST API endpoints
 │   └── main.py           # FastAPI application and routes
-└── main.py               # Application entry point (launcher, not the main app)
+└── main.py               # Application entry point
 ```
 
 ### **Key Components**
 
 #### **Core Models** (`core/models.py`)
 - **Domain**: Authority scores, trust metrics, spam detection
-- **URL**: Status tracking, metadata, crawl information  
+- **URL**: Status tracking, metadata, crawl information
 - **Backlink**: Source/target mapping, anchor text, link types
 - **LinkProfile**: Aggregated metrics and analysis results
 - **CrawlJob**: Job status, progress tracking, error handling
@@ -85,10 +85,11 @@ link_profiler/
 ## 🛠 Installation & Setup
 
 ### **Prerequisites**
-- Python 3.8+ 
+- Python 3.8+
 - pip (Python package manager)
 - 4GB+ RAM recommended for large crawls
 - Stable internet connection
+- **PostgreSQL Database**: Required for data persistence.
 
 ### **Quick Installation**
 ```bash
@@ -102,10 +103,40 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
-
-# Create data directory (auto-created on first run)
-mkdir -p data
 ```
+
+### **Database Setup (PostgreSQL)**
+
+The application uses a PostgreSQL database for storing crawl data, link profiles, and domain information. You need to have a PostgreSQL server running and create the required database before starting the application.
+
+**For Windows (using PowerShell):**
+
+1.  **Install PostgreSQL**: If you don't have PostgreSQL installed, download and run the installer from the official website: [https://www.postgresql.org/download/windows/](https://www.postgresql.org/download/windows/)
+    *   During installation, remember the password you set for the `postgres` superuser.
+    *   Ensure the command-line tools (like `psql`) are included in your system's PATH environment variable, or note their installation location (e.g., `C:\Program Files\PostgreSQL\14\bin`).
+
+2.  **Open PowerShell**: Open a new PowerShell window.
+
+3.  **Navigate to PostgreSQL bin directory (if not in PATH)**: If `psql` is not in your PATH, navigate to the `bin` directory of your PostgreSQL installation. For example:
+    ```powershell
+    cd "C:\Program Files\PostgreSQL\14\bin" # Adjust version number if needed
+    ```
+
+4.  **Connect to PostgreSQL and Create Database**: Use the `psql` command to connect to the default `postgres` database as the `postgres` user and then create the `link_profiler_db`. You will be prompted for the `postgres` user's password.
+    ```powershell
+    .\psql -U postgres -d postgres -c "CREATE DATABASE link_profiler_db;"
+    ```
+    *   `-U postgres`: Specifies the user to connect as (`postgres`).
+    *   `-d postgres`: Specifies the initial database to connect to (`postgres` is the default).
+    *   `-c "CREATE DATABASE link_profiler_db;"`: Executes the SQL command to create the new database.
+
+5.  **Verify Database Creation**: You can optionally connect to the newly created database to verify it exists:
+    ```powershell
+    .\psql -U postgres -d link_profiler_db
+    ```
+    If the connection is successful, you will see the `link_profiler_db=#` prompt. Type `\q` and press Enter to exit `psql`.
+
+The application is configured to connect to `postgresql://postgres:postgres@localhost:5432/link_profiler_db` by default. If your PostgreSQL setup uses a different username, password, host, or port, you will need to update the `db_url` parameter in the `Link_Profiler/database/database.py` file or configure it via environment variables (a future enhancement).
 
 ### **Dependencies**
 ```
@@ -114,37 +145,33 @@ uvicorn[standard] # ASGI server for FastAPI
 aiohttp          # Async HTTP client for web crawling
 beautifulsoup4   # HTML parsing and link extraction
 lxml             # XML/HTML parser (faster than html.parser)
+SQLAlchemy       # SQL toolkit and Object-Relational Mapper
+psycopg2-binary  # PostgreSQL adapter for Python
 ```
 
 ## 🚀 Usage Guide
 
 ### **Starting the API Server**
 
-To run the API server, you need to ensure that the project's root directory is correctly added to your `PYTHONPATH`. This allows Python to resolve internal package imports.
+To run the API server, you need to ensure that the project's root directory is added to your `PYTHONPATH`. This allows Python to correctly resolve internal package imports.
 
-**Navigate to the project's root directory (where `setup.py` and the `Link_Profiler` package folder are located):**
-
-```bash
-cd /path/to/your/Link_Profiler_project_root
-```
-
-**Then, activate your virtual environment and run `uvicorn`:**
+**From the project root directory (where `main.py` is located):**
 
 **For Linux/macOS:**
 ```bash
-source venv/bin/activate
+export PYTHONPATH=$(pwd)
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **For Windows (Command Prompt):**
 ```cmd
-venv\Scripts\activate
+set PYTHONPATH=%cd%
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **For Windows (PowerShell):**
 ```powershell
-.\venv\Scripts\Activate.ps1
+$env:PYTHONPATH = (Get-Location).Path
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -189,6 +216,9 @@ GET /domain/availability/example.com
 # Get WHOIS information
 GET /domain/whois/example.com
 
+# Get comprehensive domain info
+GET /domain/info/example.com
+
 # Analyze domain value
 GET /domain/analyze/example.com
 
@@ -227,7 +257,7 @@ POST /domain/find_expired_domains
 ### **Domain Authority Calculation**
 The system uses a multi-factor algorithm:
 - **Backlink Quality**: Domain authority of linking sites
-- **Link Diversity**: Number of unique referring domains  
+- **Link Diversity**: Number of unique referring domains
 - **Content Relevance**: Topical relationship analysis
 - **Trust Signals**: HTTPS, domain age, clean WHOIS
 - **Spam Indicators**: Link patterns, anchor text over-optimization
@@ -254,7 +284,7 @@ For expired domain discovery:
 - **Concurrent Requests**: 5-50+ parallel connections
 - **Throughput**: 100-1000+ pages per minute (depending on configuration)
 - **Memory Usage**: ~50-200MB for typical crawls
-- **Storage**: JSON files (~1KB per domain, ~500B per link)
+- **Storage**: JSON files (~1KB per domain, ~500B per link) - **Note: Now using PostgreSQL**
 - **Scalability**: Horizontal scaling via multiple instances
 
 ### **Rate Limiting & Ethics**
@@ -265,21 +295,23 @@ For expired domain discovery:
 - **Resource Management**: Automatic connection pooling and cleanup
 
 ### **Data Persistence**
-- **Storage Format**: JSON files for easy inspection and portability
-- **Database Ready**: Modular design allows easy database integration
-- **Backup Friendly**: Human-readable data format
-- **Version Control**: Data changes can be tracked via Git
-- **Migration Path**: Simple upgrade to PostgreSQL/MongoDB
+- **Storage Format**: **PostgreSQL Database** for structured, queryable data.
+- **Backup Friendly**: Standard database backup procedures apply.
+- **Version Control**: Schema changes managed via SQLAlchemy models.
 
 ## 🐛 Troubleshooting
 
 ### **Common Issues**
+
+#### **`psycopg2.OperationalError: FATAL: database "link_profiler_db" does not exist`**
+- This means the PostgreSQL database named `link_profiler_db` has not been created. Follow the "Database Setup (PostgreSQL)" instructions above to create it.
 
 #### **"Connection Refused" Errors**
 - Check if target websites are accessible
 - Verify internet connection stability
 - Reduce concurrent request limits
 - Increase timeout values
+- **Check PostgreSQL Connection**: Ensure your PostgreSQL server is running and accessible at `localhost:5432` (or the configured address/port). Verify the username and password in `database.py` match your PostgreSQL setup.
 
 #### **"Robots.txt Blocked" Messages**
 - Normal behavior for sites that restrict crawling
@@ -292,6 +324,7 @@ For expired domain discovery:
 - Check available bandwidth and CPU
 - Monitor memory usage during large crawls
 - Consider crawling in smaller batches
+- **Database Performance**: Ensure your PostgreSQL server is adequately resourced and performing well.
 
 #### **Out of Memory Errors**
 - Reduce `max_pages` limit
@@ -309,7 +342,6 @@ For expired domain discovery:
 ## 🔮 Roadmap & Future Enhancements
 
 ### **Planned Features**
-- **Database Integration**: PostgreSQL/MongoDB support
 - **Advanced Analytics**: Machine learning-based link quality scoring
 - **Real-time Monitoring**: Live domain and link change tracking
 - **Competitor Analysis**: Side-by-side domain comparisons
@@ -331,7 +363,7 @@ We welcome contributions! Areas where you can help:
 
 ### **Development**
 - Additional link analysis algorithms
-- New domain scoring models  
+- New domain scoring models
 - Performance optimizations
 - Bug fixes and stability improvements
 
@@ -349,7 +381,7 @@ We welcome contributions! Areas where you can help:
 
 ## 📄 License
 
-This project is open source and available under the MIT License. 
+This project is open source and available under the MIT License.
 
 ## 🆘 Support & Community
 
