@@ -44,7 +44,8 @@ class ExpiredDomainFinderService:
         
         valuable_expired_domains = []
         
-        # Ensure domain_service is used as a context manager for its API client
+        # The domain_service needs to be used as a context manager to ensure its internal
+        # aiohttp session is active for API calls.
         async with self.domain_service as ds: 
             for i, domain_name in enumerate(potential_domains):
                 if limit and len(valuable_expired_domains) >= limit:
@@ -54,7 +55,8 @@ class ExpiredDomainFinderService:
                 self.logger.info(f"Processing domain {i+1}/{len(potential_domains)}: {domain_name}")
                 
                 # Step 1: Check if the domain is available
-                is_available = await ds.check_domain_availability(domain_name) # Use ds from context manager
+                # Use the 'ds' (domain_service) from the async context manager
+                is_available = await ds.check_domain_availability(domain_name) 
                 
                 if not is_available:
                     self.logger.info(f"Domain {domain_name} is NOT available. Skipping analysis.")
