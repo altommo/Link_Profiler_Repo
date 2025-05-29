@@ -108,7 +108,7 @@ class CrawlJobResponse(BaseModel):
     id: str
     target_url: str
     job_type: str
-    status: CrawlStatus
+    status: CrawlStatus # Keep as Enum type hint
     created_date: datetime
     started_date: Optional[datetime]
     completed_date: Optional[datetime]
@@ -121,17 +121,37 @@ class CrawlJobResponse(BaseModel):
 
     @classmethod
     def from_crawl_job(cls, job: CrawlJob):
-        # Convert CrawlStatus Enum to its value for Pydantic serialization
+        # Convert CrawlJob dataclass to a dictionary
         job_dict = serialize_model(job)
-        # Ensure datetime objects are correctly handled by Pydantic
-        if isinstance(job_dict.get('created_date'), str):
-            job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
-        if isinstance(job_dict.get('started_date'), str):
-            job_dict['started_date'] = datetime.fromisoformat(job_dict['started_date'])
-        if isinstance(job_dict.get('completed_date'), str):
-            job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
         
-        job_dict['status'] = job.status # Pydantic handles Enum directly if type hint is Enum
+        # Explicitly convert Enum to its value string for Pydantic
+        job_dict['status'] = job.status.value 
+
+        # Ensure datetime objects are correctly handled by Pydantic
+        # Pydantic v2 handles ISO 8601 strings automatically if the type hint is datetime
+        # We can remove the explicit conversion here if serialize_model already outputs ISO strings
+        # Let's keep it for robustness in case serialize_model changes or for older Pydantic versions
+        if isinstance(job_dict.get('created_date'), str):
+            try:
+                job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
+            except ValueError:
+                 logger.warning(f"Could not parse created_date string: {job_dict.get('created_date')}")
+                 job_dict['created_date'] = None # Or handle as error
+
+        if isinstance(job_dict.get('started_date'), str):
+             try:
+                job_dict['started_date'] = datetime.fromisoformat(job_dict['started_date'])
+             except ValueError:
+                 logger.warning(f"Could not parse started_date string: {job_dict.get('started_date')}")
+                 job_dict['started_date'] = None # Or handle as error
+
+        if isinstance(job_dict.get('completed_date'), str):
+             try:
+                job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
+             except ValueError:
+                 logger.warning(f"Could not parse completed_date string: {job_dict.get('completed_date')}")
+                 job_dict['completed_date'] = None # Or handle as error
+
         return cls(**job_dict)
 
 class LinkProfileResponse(BaseModel):
@@ -153,7 +173,11 @@ class LinkProfileResponse(BaseModel):
         profile_dict = serialize_model(profile)
         profile_dict['referring_domains'] = list(profile.referring_domains) # Ensure it's a list
         if isinstance(profile_dict.get('analysis_date'), str):
-            profile_dict['analysis_date'] = datetime.fromisoformat(profile_dict['analysis_date'])
+            try:
+                profile_dict['analysis_date'] = datetime.fromisoformat(profile_dict['analysis_date'])
+            except ValueError:
+                 logger.warning(f"Could not parse analysis_date string: {profile_dict.get('analysis_date')}")
+                 profile_dict['analysis_date'] = None # Or handle as error
         return cls(**profile_dict)
 
 class BacklinkResponse(BaseModel):
@@ -177,7 +201,11 @@ class BacklinkResponse(BaseModel):
         backlink_dict['link_type'] = backlink.link_type
         backlink_dict['spam_level'] = backlink.spam_level
         if isinstance(backlink_dict.get('discovered_date'), str):
-            backlink_dict['discovered_date'] = datetime.fromisoformat(backlink_dict['discovered_date'])
+            try:
+                backlink_dict['discovered_date'] = datetime.fromisoformat(backlink_dict['discovered_date'])
+            except ValueError:
+                 logger.warning(f"Could not parse discovered_date string: {backlink_dict.get('discovered_date')}")
+                 backlink_dict['discovered_date'] = None # Or handle as error
         return cls(**backlink_dict)
 
 class DomainResponse(BaseModel):
@@ -199,9 +227,17 @@ class DomainResponse(BaseModel):
     def from_domain(cls, domain: Domain):
         domain_dict = serialize_model(domain)
         if isinstance(domain_dict.get('first_seen'), str):
-            domain_dict['first_seen'] = datetime.fromisoformat(domain_dict['first_seen'])
+            try:
+                domain_dict['first_seen'] = datetime.fromisoformat(domain_dict['first_seen'])
+            except ValueError:
+                 logger.warning(f"Could not parse first_seen string: {domain_dict.get('first_seen')}")
+                 domain_dict['first_seen'] = None # Or handle as error
         if isinstance(domain_dict.get('last_crawled'), str):
-            domain_dict['last_crawled'] = datetime.fromisoformat(domain_dict['last_crawled'])
+            try:
+                domain_dict['last_crawled'] = datetime.fromisoformat(domain_dict['last_crawled'])
+            except ValueError:
+                 logger.warning(f"Could not parse last_crawled string: {domain_dict.get('last_crawled')}")
+                 domain_dict['last_crawled'] = None # Or handle as error
         return cls(**domain_dict)
 
 class DomainAnalysisResponse(BaseModel):
@@ -261,7 +297,7 @@ async def get_crawl_status(job_id: str):
     """
     Retrieves the current status of a specific crawl job.
     """
-    job = crawl_service.get_job_status(job_id)
+    job = db.get_crawl_job(job_id) # Fetch directly from DB
     if not job:
         raise HTTPException(status_code=404, detail="Crawl job not found.")
     return CrawlJobResponse.from_crawl_job(job)
@@ -279,7 +315,7 @@ async def get_link_profile(target_url: str):
     if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
         raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
 
-    profile = crawl_service.get_link_profile_for_url(target_url)
+    profile = db.get_link_profile(target_url) # Fetch directly from DB
     if not profile:
         raise HTTPException(status_code=404, detail="Link profile not found for this URL. A crawl might not have been completed yet.")
     return LinkProfileResponse.from_link_profile(profile)
@@ -293,7 +329,7 @@ async def get_backlinks(target_url: str):
     if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
         raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
 
-    backlinks = crawl_service.get_backlinks_for_url(target_url)
+    backlinks = db.get_backlinks_for_target(target_url) # Fetch directly from DB
     if not backlinks:
         raise HTTPException(status_code=404, detail="No backlinks found for this URL. A crawl might not have been completed yet.")
     
@@ -307,6 +343,7 @@ async def check_domain_availability(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
+    # Use the context-managed domain_service_instance
     is_available = await domain_service_instance.check_domain_availability(domain_name)
     return {"domain_name": domain_name, "is_available": is_available}
 
@@ -318,6 +355,7 @@ async def get_domain_whois(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
+    # Use the context-managed domain_service_instance
     whois_info = await domain_service_instance.get_whois_info(domain_name)
     if not whois_info:
         raise HTTPException(status_code=404, detail="WHOIS information not found for this domain.")
@@ -331,6 +369,7 @@ async def get_domain_info(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
+    # Use the context-managed domain_service_instance
     domain_obj = await domain_service_instance.get_domain_info(domain_name)
     if not domain_obj:
         raise HTTPException(status_code=404, detail="Domain information not found.")
@@ -344,10 +383,12 @@ async def analyze_domain(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
+    # domain_analyzer_service uses the context-managed domain_service_instance internally
     analysis_result = await domain_analyzer_service.analyze_domain_for_expiration_value(domain_name)
     
     if not analysis_result:
-        raise HTTPException(status_code=500, detail="Failed to perform domain analysis.")
+        # This case might occur if domain_analyzer_service couldn't get domain info
+        raise HTTPException(status_code=404, detail="Failed to perform domain analysis, domain info not found or error occurred.")
     
     return analysis_result
 
@@ -359,6 +400,7 @@ async def find_expired_domains(request: FindExpiredDomainsRequest):
     if not request.potential_domains:
         raise HTTPException(status_code=400, detail="No potential domains provided.")
     
+    # expired_domain_finder_service uses the context-managed domain_service_instance internally
     found_domains = await expired_domain_finder_service.find_valuable_expired_domains(
         potential_domains=request.potential_domains,
         min_value_score=request.min_value_score,
