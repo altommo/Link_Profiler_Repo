@@ -322,8 +322,7 @@ class Database:
     def get_backlinks_for_target(self, target_url: str) -> List[Backlink]:
         session = self._get_session()
         try:
-            # Explicitly expire/clear the session to ensure fresh data
-            session.rollback() # Rollback any pending changes and clear the session
+            # Removed session.rollback()
 
             parsed_target = urlparse(target_url)
             target_domain = parsed_target.netloc.lower() # Lowercase for consistent comparison
@@ -335,13 +334,17 @@ class Database:
                 logger.warning(f"Invalid target_url for backlink query: {target_url}")
                 return []
 
-            # Query for backlinks where the target_domain_name matches the domain of the target_url
-            # This will retrieve all backlinks pointing to any page on that domain.
+            # Revert query to use target_url.startswith
             orm_backlinks = session.query(BacklinkORM).filter(
-                BacklinkORM.target_domain_name == target_domain
+                BacklinkORM.target_url.startswith(target_url)
             ).all()
             
-            logger.info(f"Found {len(orm_backlinks)} ORM backlinks for target_domain_name {target_domain}")
+            logger.info(f"Found {len(orm_backlinks)} ORM backlinks for target_url starting with {target_url}")
+
+            # Add debug logging for retrieved backlinks' target URLs
+            for i, bl in enumerate(orm_backlinks):
+                 logger.debug(f"Retrieved backlink {i+1}: Target URL: {bl.target_url}")
+
 
             dataclass_backlinks = [self._to_dataclass(bl) for bl in orm_backlinks]
             logger.info(f"Returning {len(dataclass_backlinks)} dataclass backlinks for target {target_url}")
@@ -356,8 +359,7 @@ class Database:
     def get_all_backlinks(self) -> List[Backlink]:
         session = self._get_session()
         try:
-            # Explicitly expire/clear the session to ensure fresh data
-            session.rollback() # Rollback any pending changes and clear the session
+            # Removed session.rollback()
 
             logger.info("Attempting to retrieve all backlinks from the database.")
             orm_backlinks = session.query(BacklinkORM).all()
@@ -394,8 +396,7 @@ class Database:
     def get_link_profile(self, target_url: str) -> Optional[LinkProfile]:
         session = self._get_session()
         try:
-            # Explicitly expire/clear the session to ensure fresh data
-            session.rollback() # Rollback any pending changes and clear the session
+            # Removed session.rollback()
 
             orm_profile = session.query(LinkProfileORM).get(target_url)
             if orm_profile:
@@ -426,8 +427,7 @@ class Database:
     def get_crawl_job(self, job_id: str) -> Optional[CrawlJob]:
         session = self._get_session()
         try:
-            # Explicitly expire/clear the session to ensure fresh data
-            session.rollback() # Rollback any pending changes and clear the session
+            # Removed session.rollback()
 
             orm_job = session.query(CrawlJobORM).get(job_id)
             if orm_job:
@@ -473,8 +473,7 @@ class Database:
     def get_pending_crawl_jobs(self) -> List[CrawlJob]:
         session = self._get_session()
         try:
-            # Explicitly expire/clear the session to ensure fresh data
-            session.rollback() # Rollback any pending changes and clear the session
+            # Removed session.rollback()
 
             orm_jobs = session.query(CrawlJobORM).filter(
                 CrawlJobORM.status == CrawlStatusEnum.PENDING.value
@@ -502,8 +501,7 @@ class Database:
     def get_domain(self, name: str) -> Optional[Domain]:
         session = self._get_session()
         try:
-            # Explicitly expire/clear the session to ensure fresh data
-            session.rollback() # Rollback any pending changes and clear the session
+            # Removed session.rollback()
 
             orm_domain = session.query(DomainORM).get(name)
             if orm_domain:
@@ -535,8 +533,7 @@ class Database:
     def get_url(self, url_str: str) -> Optional[URL]:
         session = self._get_session()
         try:
-            # Explicitly expire/clear the session to ensure fresh data
-            session.rollback() # Rollback any pending changes and clear the session
+            # Removed session.rollback()
 
             orm_url = session.query(URLORM).get(url_str)
             if orm_url:
@@ -568,8 +565,7 @@ class Database:
     def get_seo_metrics(self, url_str: str) -> Optional[SEOMetrics]:
         session = self._get_session()
         try:
-            # Explicitly expire/clear the session to ensure fresh data
-            session.rollback() # Rollback any pending changes and clear the session
+            # Removed session.rollback()
 
             orm_seo_metrics = session.query(SEOMetricsORM).get(url_str)
             if orm_seo_metrics:
