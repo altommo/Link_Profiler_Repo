@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 import json
+from typing import List # Import List
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -97,4 +98,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
