@@ -236,7 +236,7 @@ class BacklinkResponse(BaseModel):
     is_image_link: bool
     alt_text: Optional[str]
     discovered_date: datetime
-    authority_passed: bool
+    authority_passed: float # Changed type from bool to float
     spam_level: SpamLevel 
 
     @classmethod
