@@ -10,7 +10,7 @@ import os
 from urllib.parse import urlparse # Import urlparse
 
 # --- SQLAlchemy Imports ---
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, or_ # Import or_
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import IntegrityError
 from Link_Profiler.database.models import ( # Import ORM models
@@ -145,7 +145,7 @@ class Database:
                 seo_score=orm_obj.seo_score,
                 issues=orm_obj.issues
             )
-        return None # Should not happen if used correctly
+        return None
 
     # --- Helper to convert dataclass objects to ORM objects ---
     def _to_orm(self, dc_obj: Any):
@@ -322,24 +322,35 @@ class Database:
     def get_backlinks_for_target(self, target_url: str) -> List[Backlink]:
         session = self._get_session()
         try:
-            # Removed session.rollback()
-
             parsed_target = urlparse(target_url)
             target_domain = parsed_target.netloc.lower() # Lowercase for consistent comparison
-            # target_path = parsed_target.path # Not needed for domain-wide query
+            target_path = parsed_target.path
 
-            logger.info(f"Querying backlinks for target_url: {target_url}, domain: {target_domain}")
+            logger.info(f"Querying backlinks for target_url: {target_url}, domain: {target_domain}, path: {target_path}")
 
             if not target_domain:
                 logger.warning(f"Invalid target_url for backlink query: {target_url}")
                 return []
 
-            # Revert query to use target_url.startswith
+            # Build the filter condition
+            filter_condition = BacklinkORM.target_url.startswith(target_url)
+
+            # If the target_url is the root URL without a trailing slash,
+            # also include backlinks pointing to the root URL *with* a trailing slash.
+            if target_path in ["", "/"] and not target_url.endswith('/'):
+                 target_url_with_slash = target_url + '/'
+                 logger.debug(f"Adding filter for target_url with trailing slash: {target_url_with_slash}")
+                 filter_condition = or_(
+                     filter_condition,
+                     BacklinkORM.target_url.startswith(target_url_with_slash)
+                 )
+
+
             orm_backlinks = session.query(BacklinkORM).filter(
-                BacklinkORM.target_url.startswith(target_url)
+                filter_condition
             ).all()
             
-            logger.info(f"Found {len(orm_backlinks)} ORM backlinks for target_url starting with {target_url}")
+            logger.info(f"Found {len(orm_backlinks)} ORM backlinks matching the filter.")
 
             # Add debug logging for retrieved backlinks' target URLs
             for i, bl in enumerate(orm_backlinks):
@@ -359,8 +370,6 @@ class Database:
     def get_all_backlinks(self) -> List[Backlink]:
         session = self._get_session()
         try:
-            # Removed session.rollback()
-
             logger.info("Attempting to retrieve all backlinks from the database.")
             orm_backlinks = session.query(BacklinkORM).all()
             logger.info(f"Retrieved {len(orm_backlinks)} ORM backlinks.")
@@ -396,8 +405,6 @@ class Database:
     def get_link_profile(self, target_url: str) -> Optional[LinkProfile]:
         session = self._get_session()
         try:
-            # Removed session.rollback()
-
             orm_profile = session.query(LinkProfileORM).get(target_url)
             if orm_profile:
                 return self._to_dataclass(orm_profile)
@@ -427,8 +434,6 @@ class Database:
     def get_crawl_job(self, job_id: str) -> Optional[CrawlJob]:
         session = self._get_session()
         try:
-            # Removed session.rollback()
-
             orm_job = session.query(CrawlJobORM).get(job_id)
             if orm_job:
                 return self._to_dataclass(orm_job)
@@ -473,12 +478,10 @@ class Database:
     def get_pending_crawl_jobs(self) -> List[CrawlJob]:
         session = self._get_session()
         try:
-            # Removed session.rollback()
-
             orm_jobs = session.query(CrawlJobORM).filter(
                 CrawlJobORM.status == CrawlStatusEnum.PENDING.value
             ).all()
-            return [self._to_dataclass(job) for job in orm_jobs]
+            return [self._to_dataclass(job) for job in or_jobs]
         except Exception as e:
             logger.error(f"Error getting pending crawl jobs: {e}")
             return []
@@ -501,8 +504,6 @@ class Database:
     def get_domain(self, name: str) -> Optional[Domain]:
         session = self._get_session()
         try:
-            # Removed session.rollback()
-
             orm_domain = session.query(DomainORM).get(name)
             if orm_domain:
                 return self._to_dataclass(orm_domain)
@@ -533,8 +534,6 @@ class Database:
     def get_url(self, url_str: str) -> Optional[URL]:
         session = self._get_session()
         try:
-            # Removed session.rollback()
-
             orm_url = session.query(URLORM).get(url_str)
             if orm_url:
                 return self._to_dataclass(orm_url)
@@ -565,14 +564,12 @@ class Database:
     def get_seo_metrics(self, url_str: str) -> Optional[SEOMetrics]:
         session = self._get_session()
         try:
-            # Removed session.rollback()
-
             orm_seo_metrics = session.query(SEOMetricsORM).get(url_str)
             if orm_seo_metrics:
                 return self._to_dataclass(orm_seo_metrics)
             return None
         except Exception as e:
             logger.error(f"Error getting SEO metrics for {url_str}: {e}")
-            return None
+            return []
         finally:
             session.close()
