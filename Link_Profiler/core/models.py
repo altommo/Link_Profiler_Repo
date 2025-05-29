@@ -35,6 +35,8 @@ class CrawlStatus(Enum):
     """Status of crawling operations"""
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
+    PAUSED = "paused" # Added PAUSED status
+    STOPPED = "stopped" # Added STOPPED status
     COMPLETED = "completed"
     FAILED = "failed"
     TIMEOUT = "timeout"
@@ -172,8 +174,10 @@ class Backlink:
     def __post_init__(self):
         """Extract domain information from URLs"""
         try:
-            self.source_domain = urlparse(self.source_url).netloc.lower()
-            self.target_domain = urlparse(self.target_url).netloc.lower()
+            parsed = urlparse(self.source_url)
+            self.source_domain = parsed.netloc.lower()
+            parsed = urlparse(self.target_url)
+            self.target_domain = parsed.netloc.lower()
         except Exception:
             pass  # Will be validated elsewhere
     
@@ -298,7 +302,7 @@ class CrawlJob:
     @property
     def is_completed(self) -> bool:
         """Check if job is completed"""
-        return self.status in [CrawlStatus.COMPLETED, CrawlStatus.FAILED]
+        return self.status in [CrawlStatus.COMPLETED, CrawlStatus.FAILED, CrawlStatus.STOPPED] # Added STOPPED
     
     def add_error(self, error_message: str) -> None:
         """Add an error to the job log"""

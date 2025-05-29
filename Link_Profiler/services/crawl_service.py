@@ -84,6 +84,9 @@ class CrawlService:
         self.db.update_crawl_job(job)
         self.logger.info(f"Starting crawl job {job.id} for {job.target_url}")
 
+        crawler = WebCrawler(config)
+        self.active_crawlers[job.id] = crawler # Store active crawler instance
+
         discovered_backlinks: List[Backlink] = []
         urls_crawled_count = 0
         
@@ -115,12 +118,35 @@ class CrawlService:
             # For now, we'll always crawl the initial seed URLs to get SEO metrics
             # and potentially discover more backlinks.
             
-            crawler = WebCrawler(config)
-            self.active_crawlers[job.id] = crawler # Store active crawler instance
-
             with open(debug_file_path, 'a', encoding='utf-8') as debug_file:
                 async with crawler as wc:
                     async for crawl_result in wc.crawl_for_backlinks(job.target_url, initial_seed_urls):
+                        # Check for pause/stop status at each iteration
+                        current_job = self.db.get_crawl_job(job.id)
+                        if current_job and current_job.status == CrawlStatus.PAUSED:
+                            self.logger.info(f"Crawl job {job.id} paused. Saving current state.")
+                            job.status = CrawlStatus.PAUSED
+                            self.db.update_crawl_job(job)
+                            # Wait until resumed or stopped
+                            while True:
+                                await asyncio.sleep(5) # Check every 5 seconds
+                                current_job = self.db.get_crawl_job(job.id)
+                                if current_job and current_job.status == CrawlStatus.IN_PROGRESS:
+                                    self.logger.info(f"Crawl job {job.id} resumed.")
+                                    break
+                                elif current_job and current_job.status == CrawlStatus.STOPPED:
+                                    self.logger.info(f"Crawl job {job.id} stopped during pause.")
+                                    job.status = CrawlStatus.STOPPED
+                                    job.completed_date = datetime.now()
+                                    self.db.update_crawl_job(job)
+                                    return # Exit crawl loop
+                        elif current_job and current_job.status == CrawlStatus.STOPPED:
+                            self.logger.info(f"Crawl job {job.id} stopped.")
+                            job.status = CrawlStatus.STOPPED
+                            job.completed_date = datetime.now()
+                            self.db.update_crawl_job(job)
+                            return # Exit crawl loop
+
                         urls_crawled_count += 1
                         job.urls_crawled = urls_crawled_count
                         
@@ -266,6 +292,47 @@ class CrawlService:
         """Retrieves the current status of a crawl job."""
         return self.db.get_crawl_job(job_id)
 
+    async def pause_crawl_job(self, job_id: str) -> CrawlJob:
+        """Pauses an in-progress crawl job."""
+        job = self.db.get_crawl_job(job_id)
+        if not job:
+            raise ValueError(f"Crawl job {job_id} not found.")
+        if job.status == CrawlStatus.IN_PROGRESS:
+            job.status = CrawlStatus.PAUSED
+            self.db.update_crawl_job(job)
+            self.logger.info(f"Crawl job {job_id} paused.")
+            return job
+        else:
+            raise ValueError(f"Crawl job {job_id} cannot be paused from status {job.status.value}.")
+
+    async def resume_crawl_job(self, job_id: str) -> CrawlJob:
+        """Resumes a paused crawl job."""
+        job = self.db.get_crawl_job(job_id)
+        if not job:
+            raise ValueError(f"Crawl job {job_id} not found.")
+        if job.status == CrawlStatus.PAUSED:
+            job.status = CrawlStatus.IN_PROGRESS
+            self.db.update_crawl_job(job)
+            self.logger.info(f"Crawl job {job_id} resumed.")
+            # The _run_backlink_crawl loop will pick this up
+            return job
+        else:
+            raise ValueError(f"Crawl job {job_id} cannot be resumed from status {job.status.value}.")
+
+    async def stop_crawl_job(self, job_id: str) -> CrawlJob:
+        """Stops an active or paused crawl job."""
+        job = self.db.get_crawl_job(job_id)
+        if not job:
+            raise ValueError(f"Crawl job {job_id} not found.")
+        if job.status in [CrawlStatus.IN_PROGRESS, CrawlStatus.PAUSED]:
+            job.status = CrawlStatus.STOPPED
+            job.completed_date = datetime.now()
+            self.db.update_crawl_job(job)
+            self.logger.info(f"Crawl job {job_id} stopped.")
+            return job
+        else:
+            raise ValueError(f"Crawl job {job_id} cannot be stopped from status {job.status.value}.")
+
     def get_link_profile_for_url(self, target_url: str) -> Optional[LinkProfile]:
         """Retrieves the link profile for a given URL."""
         return self.db.get_link_profile(target_url)
@@ -273,3 +340,8 @@ class CrawlService:
     def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
         """Retrieves all raw backlinks for a given URL."""
         return self.db.get_backlinks_for_target(target_url)
+
+    # Future methods could include:
+    # - get_all_jobs()
+    # - create_seo_audit_job()
+    # - create_domain_analysis_job()

@@ -333,6 +333,48 @@ async def get_crawl_status(job_id: str):
         raise HTTPException(status_code=404, detail="Crawl job not found.")
     return CrawlJobResponse.from_crawl_job(job)
 
+@app.post("/crawl/pause/{job_id}", response_model=CrawlJobResponse)
+async def pause_crawl_job(job_id: str):
+    """
+    Pauses an in-progress crawl job.
+    """
+    try:
+        job = await crawl_service.pause_crawl_job(job_id)
+        return CrawlJobResponse.from_crawl_job(job)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error pausing crawl job {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to pause job: {e}")
+
+@app.post("/crawl/resume/{job_id}", response_model=CrawlJobResponse)
+async def resume_crawl_job(job_id: str):
+    """
+    Resumes a paused crawl job.
+    """
+    try:
+        job = await crawl_service.resume_crawl_job(job_id)
+        return CrawlJobResponse.from_crawl_job(job)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error resuming crawl job {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to resume job: {e}")
+
+@app.post("/crawl/stop/{job_id}", response_model=CrawlJobResponse)
+async def stop_crawl_job(job_id: str):
+    """
+    Stops an active or paused crawl job.
+    """
+    try:
+        job = await crawl_service.stop_crawl_job(job_id)
+        return CrawlJobResponse.from_crawl_job(job)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error stopping crawl job {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to stop job: {e}")
+
 @app.get("/link_profile/{target_url:path}", response_model=LinkProfileResponse)
 async def get_link_profile(target_url: str):
     """

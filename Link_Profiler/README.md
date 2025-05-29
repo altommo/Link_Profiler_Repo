@@ -10,6 +10,7 @@ A comprehensive, open-source link analysis and expired domain discovery system i
 - **Multi-threaded Processing**: Concurrent crawling with configurable limits
 - **Robust Error Handling**: Comprehensive retry mechanisms and timeout handling
 - **Content Type Support**: HTML, PDF, and image link extraction
+- **Crawl Job Management**: Ability to pause, resume, and stop active crawl jobs.
 
 ### 🔍 **Link Analysis & Profiling**
 - **Comprehensive Backlink Discovery**: Find all links pointing to target domains, either by crawling or via external APIs.
@@ -316,6 +317,15 @@ POST /crawl/start_backlink_discovery
 # Check job status
 GET /crawl/status/{job_id}
 
+# Pause a crawl job
+POST /crawl/pause/{job_id}
+
+# Resume a crawl job
+POST /crawl/resume/{job_id}
+
+# Stop a crawl job
+POST /crawl/stop/{job_id}
+
 # Get link profile results
 GET /link_profile/https://example.com
 
@@ -461,8 +471,7 @@ The project has a solid foundation with core crawling, link analysis, and domain
 #### **Immediate Next Steps (High Priority)**
 
 1.  **Advanced Crawl Management**:
-    *   Add API endpoints and internal logic to pause, resume, and stop active crawl jobs gracefully.
-    *   Implement a job queue system (e.g., using Redis and Celery) for more robust background task management and distributed processing.
+    *   **Completed**: Added API endpoints and internal logic to pause, resume, and stop active crawl jobs gracefully.
 2.  **Comprehensive Error Reporting**:
     *   Enhance `CrawlJob`'s `error_log` to capture more structured and actionable error details during crawling.
     *   Implement a mechanism to retry failed URLs or segments of a crawl.
@@ -475,7 +484,7 @@ The project has a solid foundation with core crawling, link analysis, and domain
 
 1.  **Distributed Crawling Architecture**:
     *   Enable the crawler to run across multiple machines or containers for large-scale data collection.
-    *   Implement a robust message queue (e.g., RabbitMQ, Kafka) for inter-service communication and task distribution.
+    *   Implement a robust message queue (e.g., using Redis and Celery) for more robust background task management and distributed processing.
 2.  **Machine Learning for Link Quality**:
     *   Develop ML models to predict link quality, spam likelihood, and domain value based on a wider array of features.
 3.  **Real-time Monitoring & Alerts**:
