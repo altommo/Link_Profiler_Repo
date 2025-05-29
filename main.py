@@ -9,6 +9,7 @@ from typing import List, Optional, Dict, Any, Union
 import logging
 from urllib.parse import urlparse
 from datetime import datetime # Import datetime for Pydantic models
+from contextlib import asynccontextmanager # Import asynccontextmanager
 
 from services.crawl_service import CrawlService
 from services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
@@ -21,19 +22,39 @@ from core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize database
+db = Database()
+
+# Initialize DomainService globally, but manage its lifecycle with lifespan
+# The api_client is passed here, and its session will be managed by the lifespan event.
+domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient())
+
+# Initialize other services that depend on domain_service
+crawl_service = CrawlService(db) 
+domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
+expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Context manager for managing the lifespan of the FastAPI application.
+    Ensures resources like aiohttp sessions are properly opened and closed.
+    """
+    logger.info("Application startup: Entering DomainService context.")
+    async with domain_service_instance as ds:
+        # Yield control to the application
+        yield
+    logger.info("Application shutdown: Exiting DomainService context.")
+
+
 app = FastAPI(
     title="Link Profiler API",
     description="API for discovering backlinks and generating link profiles.",
     version="0.1.0",
+    lifespan=lifespan # Register the lifespan context manager
 )
 
-# Initialize services
-db = Database()
-# Pass the specific API client to DomainService
-domain_service = DomainService(api_client=SimulatedDomainAPIClient()) 
-crawl_service = CrawlService(db) # CrawlService will instantiate its own DomainService
-domain_analyzer_service = DomainAnalyzerService(db, domain_service)
-expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service, domain_analyzer_service)
 
 # --- Pydantic Models for API Request/Response ---
 
@@ -260,8 +281,8 @@ async def check_domain_availability(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    async with domain_service as ds: # Use domain_service as context manager
-        is_available = await ds.check_domain_availability(domain_name)
+    # domain_service_instance is managed by lifespan, so direct calls are fine
+    is_available = await domain_service_instance.check_domain_availability(domain_name)
     return {"domain_name": domain_name, "is_available": is_available}
 
 @app.get("/domain/whois/{domain_name}", response_model=Dict)
@@ -272,8 +293,8 @@ async def get_domain_whois(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    async with domain_service as ds: # Use domain_service as context manager
-        whois_info = await ds.get_whois_info(domain_name)
+    # domain_service_instance is managed by lifespan, so direct calls are fine
+    whois_info = await domain_service_instance.get_whois_info(domain_name)
     if not whois_info:
         raise HTTPException(status_code=404, detail="WHOIS information not found for this domain.")
     return whois_info
@@ -286,8 +307,8 @@ async def get_domain_info(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    async with domain_service as ds: # Use domain_service as context manager
-        domain_obj = await ds.get_domain_info(domain_name)
+    # domain_service_instance is managed by lifespan, so direct calls are fine
+    domain_obj = await domain_service_instance.get_domain_info(domain_name)
     if not domain_obj:
         raise HTTPException(status_code=404, detail="Domain information not found.")
     return DomainResponse.from_domain(domain_obj)
@@ -300,11 +321,7 @@ async def analyze_domain(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    # domain_analyzer_service already takes domain_service in its constructor,
-    # and domain_service is instantiated globally.
-    # The context manager for domain_service should be handled at the top-level
-    # of the application or within the service that directly uses it.
-    # For this endpoint, we assume domain_service is already managed.
+    # domain_analyzer_service uses domain_service_instance internally, which is managed by lifespan
     analysis_result = await domain_analyzer_service.analyze_domain_for_expiration_value(domain_name)
     
     if not analysis_result:
@@ -320,9 +337,7 @@ async def find_expired_domains(request: FindExpiredDomainsRequest):
     if not request.potential_domains:
         raise HTTPException(status_code=400, detail="No potential domains provided.")
     
-    # Similar to analyze_domain, expired_domain_finder_service already takes domain_service
-    # in its constructor. The context manager for domain_service should be handled
-    # at the top-level or within the service that directly uses it.
+    # expired_domain_finder_service uses domain_service_instance internally, which is managed by lifespan
     found_domains = await expired_domain_finder_service.find_valuable_expired_domains(
         potential_domains=request.potential_domains,
         min_value_score=request.min_value_score,
