@@ -344,10 +344,8 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
                 # This interactive flow is not suitable for a headless server.
                 # You would typically run this part once on a local machine to get token.json.
                 try:
-                    flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-                    # Use a dummy port for local testing, or configure for web app flow
-                    flow.redirect_uri = "http://localhost:8080/" # Or a real redirect URI for web apps
-                    self._creds = flow.run_local_server(port=0) # Opens browser for authentication
+                    # Use asyncio.to_thread to run the synchronous OAuth flow
+                    self._creds = await asyncio.to_thread(InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES).run_local_server, port=0)
                     with open(TOKEN_FILE, 'w') as token:
                         token.write(self._creds.to_json())
                     self.logger.info(f"GSC token.json generated. Please restart the application.")
@@ -359,7 +357,8 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
                     self._creds = None
 
         if self._creds:
-            self.service = build('webmasters', 'v3', credentials=self._creds)
+            # Build GSC service synchronously, as build() is not async
+            self.service = await asyncio.to_thread(build, 'webmasters', 'v3', credentials=self._creds)
             self.logger.info("GSC service built successfully.")
         else:
             self.logger.error("GSC authentication failed. GSC API client will not be functional.")
@@ -393,49 +392,39 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
             # We'll fetch 'top linking sites' as a proxy for backlink data.
             # This requires the property to be verified in GSC.
             
-            # Example: Fetching top linking sites
-            # This is a synchronous call, so it needs to be run in a thread pool executor
-            # if this method is called from an async context without `await`ing it.
-            # For simplicity in this async method, we'll assume it's fine for now.
+            # Use asyncio.to_thread to run the synchronous GSC API call
+            # This fetches top linking sites, which is the closest to "backlinks" GSC offers for general use.
+            gsc_response = await asyncio.to_thread(
+                self.service.links().search,
+                siteUrl=property_url,
+                linkType='external', # 'external' for backlinks
+                direction='incoming', # 'incoming' for backlinks to your site
+                relationship='all' # 'all' or 'dofollow'
+            )
+            result = await asyncio.to_thread(gsc_response.execute)
             
-            # The actual GSC API call for links is more complex and involves pagination.
-            # For a basic demonstration, we'll simulate a successful response.
-            
-            # Example of how you might call the GSC API for top linking sites:
-            # result = self.service.links().search(
-            #     siteUrl=property_url,
-            #     linkType='external', # 'external' for backlinks
-            #     direction='incoming', # 'incoming' for backlinks to your site
-            #     relationship='all' # 'all' or 'dofollow'
-            # ).execute()
-            # self.logger.debug(f"GSC API response: {result}")
-            
-            # For now, return simulated data to ensure flow works without live GSC setup
-            self.logger.warning("GSCBacklinkAPIClient: Returning simulated data. Actual GSC API integration for backlinks is complex and requires property verification.")
-            
-            # Simulate some GSC-like backlinks
-            return [
-                Backlink(
-                    id=str(uuid.uuid4()), # Generate a unique ID
-                    source_url=f"http://gsc-source1.com/article/{random.randint(100,999)}",
-                    target_url=target_url,
-                    anchor_text="GSC Link 1",
-                    link_type=LinkType.FOLLOW,
-                    context_text="Context from GSC source 1",
-                    discovered_date=datetime.now() - timedelta(days=random.randint(10, 300)),
-                    spam_level=SpamLevel.CLEAN
-                ),
-                Backlink(
-                    id=str(uuid.uuid4()), # Generate a unique ID
-                    source_url=f"http://gsc-source2.net/blog/{random.randint(100,999)}",
-                    target_url=target_url,
-                    anchor_text="GSC Link 2",
-                    link_type=LinkType.NOFOLLOW,
-                    context_text="Context from GSC source 2",
-                    discovered_date=datetime.now() - timedelta(days=random.randint(10, 300)),
-                    spam_level=SpamLevel.CLEAN
-                )
-            ]
+            backlinks = []
+            # Parse the GSC response into Backlink objects
+            # GSC 'links' data is aggregated, so source_url will be the linking domain,
+            # and target_url will be the property_url. Anchor text is not provided.
+            for site_row in result.get('linkingSites', []):
+                source_domain = site_row.get('siteUrl')
+                if source_domain:
+                    # GSC provides siteUrl, not specific page URL, so we'll use domain as source_url
+                    backlinks.append(
+                        Backlink(
+                            id=str(uuid.uuid4()),
+                            source_url=source_domain,
+                            target_url=property_url, # Target is the property itself
+                            anchor_text="", # GSC API doesn't provide anchor text for this report
+                            link_type=LinkType.FOLLOW, # GSC doesn't specify nofollow for this report
+                            context_text="From GSC Top Linking Site",
+                            discovered_date=datetime.now(), # GSC doesn't provide discovery date for this report
+                            spam_level=SpamLevel.CLEAN # Assume clean from GSC
+                        )
+                    )
+            self.logger.info(f"GSCBacklinkAPIClient: Found {len(backlinks)} backlinks for {target_url} from GSC.")
+            return backlinks
 
         except Exception as e:
             self.logger.error(f"Error fetching GSC backlinks for {property_url}: {e}. Returning empty list.")

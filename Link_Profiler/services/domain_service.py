@@ -372,31 +372,32 @@ class DomainService:
         creation_date = None
         expiration_date = None
 
-        try:
-            if creation_date_str:
-                # Attempt to parse common date formats
-                for fmt in ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
-                    try:
-                        creation_date = datetime.strptime(creation_date_str, fmt)
-                        break
-                    except ValueError:
-                        continue
-            if expiration_date_str:
-                for fmt in ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
-                    try:
-                        expiration_date = datetime.strptime(expiration_date_str, fmt)
-                        break
-                    except ValueError:
-                        continue
-            
-            if creation_date_str and not creation_date:
-                self.logger.warning(f"Could not parse creation_date: '{creation_date_str}' for {domain_name}")
-            if expiration_date_str and not expiration_date:
-                self.logger.warning(f"Could not parse expiration_date: '{expiration_date_str}' for {domain_name}")
+        # Define common date formats to try
+        date_formats = [
+            "%Y-%m-%d",         # e.g., 2023-01-01
+            "%Y-%m-%dT%H:%M:%S", # e.g., 2023-01-01T12:30:00
+            "%Y-%m-%d %H:%M:%S", # e.g., 2023-01-01 12:30:00
+            "%Y-%m-%d %H:%M:%S.%f", # e.g., 2023-01-01 12:30:00.123456
+            "%b %d %Y",         # e.g., Jan 01 2023
+            "%d-%b-%Y",         # e.g., 01-Jan-2023
+            "%d-%m-%Y",         # e.g., 01-01-2023
+            "%Y.%m.%d"          # e.g., 2023.01.01
+        ]
 
-        except Exception as e:
-            self.logger.warning(f"Unexpected error parsing dates from WHOIS data for {domain_name}: {e}")
+        def parse_date_robustly(date_str: str) -> Optional[datetime]:
+            if not date_str:
+                return None
+            for fmt in date_formats:
+                try:
+                    return datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
+            self.logger.warning(f"Could not parse date string: '{date_str}'")
+            return None
 
+        creation_date = parse_date_robustly(creation_date_str)
+        expiration_date = parse_date_robustly(expiration_date_str)
+        
         # Calculate age if creation date is available
         age_days = None
         if creation_date:

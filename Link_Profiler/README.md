@@ -469,8 +469,8 @@ The project has a solid foundation with core crawling, link analysis, and domain
 4.  **Implement Real Backlink API Integration**:
     *   **Completed**: The `CrawlService` now attempts to fetch backlinks from a `BacklinkService` (which can use `SimulatedBacklinkAPIClient`, `RealBacklinkAPIClient`, `OpenLinkProfilerAPIClient`, or `GSCBacklinkAPIClient` based on environment variables) before or in conjunction with crawling.
     *   **Next Action**:
-        *   **OpenLinkProfiler.org Integration**: Implement actual API calls and response parsing within `OpenLinkProfilerAPIClient` to fetch real backlink data from OpenLinkProfiler.org.
-        *   **GSC API Enhancement**: For `GSCBacklinkAPIClient`, implement the actual GSC API calls to fetch backlink data for verified properties. Ensure `credentials.json` is correctly set up and `token.json` is generated via the interactive OAuth flow for your verified properties.
+        *   **OpenLinkProfiler.org Integration**: The `OpenLinkProfilerAPIClient` now makes actual API calls and parses the response.
+        *   **GSC API Enhancement**: The `GSCBacklinkAPIClient` now makes actual GSC API calls to fetch top linking sites for verified properties. Ensure `credentials.json` is correctly set up and `token.json` is generated via the interactive OAuth flow for your verified properties.
         *   **Paid API Integration (Optional)**: If a paid API (e.g., Ahrefs, Moz) is acquired, replace the simulated data in `RealBacklinkAPIClient` with actual API calls and response parsing.
 
 #### **Mid-Term Enhancements**
