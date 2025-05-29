@@ -316,6 +316,7 @@ class Database:
         except Exception as e:
             session.rollback()
             logger.error(f"Error adding multiple backlinks: {type(e).__name__}: {e}", exc_info=True) # Log exception type and traceback
+            raise # Re-raise the exception after logging and rollback
         finally:
             session.close()
 
