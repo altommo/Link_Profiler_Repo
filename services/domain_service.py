@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 from urllib.parse import urlparse
 import random
 from datetime import datetime # Import datetime for parsing WHOIS dates
+import aiohttp # Import aiohttp
 
 from ..core.models import Domain
 
@@ -28,17 +29,42 @@ class BaseDomainAPIClient:
 class SimulatedDomainAPIClient(BaseDomainAPIClient):
     """
     A simulated client for domain information APIs.
+    Uses aiohttp to simulate network requests.
     """
     def __init__(self):
         self.logger = logging.getLogger(__name__ + ".SimulatedDomainAPIClient")
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def _close_session(self):
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def get_domain_availability(self, domain_name: str) -> bool:
         """
         Simulates checking if a domain name is available for registration.
+        Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for availability of: {domain_name}")
-        await asyncio.sleep(0.5) # Simulate network delay
+        session = await self._get_session()
+        try:
+            # Simulate an actual HTTP request, even if it's to a dummy URL
+            # This helps test aiohttp session management
+            async with session.get(f"http://localhost:8080/simulate_availability/{domain_name}") as response:
+                # We don't care about the actual response, just that the request was made
+                pass
+        except aiohttp.ClientConnectorError:
+            # This is expected if localhost:8080 is not running, simulating network activity
+            pass
+        except Exception as e:
+            self.logger.warning(f"Unexpected error during simulated availability check: {e}")
 
+        # Actual simulated logic
         if domain_name.lower() in ["example.com", "testdomain.org", "available.net"]:
             return True
         elif domain_name.lower() in ["google.com", "microsoft.com", "apple.com"]:
@@ -49,10 +75,20 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
     async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
         """
         Simulates fetching WHOIS information for a domain.
+        Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for WHOIS info of: {domain_name}")
-        await asyncio.sleep(1.0) # Simulate network delay
+        session = await self._get_session()
+        try:
+            # Simulate an actual HTTP request
+            async with session.get(f"http://localhost:8080/simulate_whois/{domain_name}") as response:
+                pass
+        except aiohttp.ClientConnectorError:
+            pass
+        except Exception as e:
+            self.logger.warning(f"Unexpected error during simulated WHOIS check: {e}")
 
+        # Actual simulated logic
         if domain_name.lower() == "example.com":
             return {
                 "domain_name": "EXAMPLE.COM",
