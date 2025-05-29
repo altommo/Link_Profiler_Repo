@@ -10,7 +10,7 @@ from uuid import uuid4
 from datetime import datetime
 from urllib.parse import urlparse # Import urlparse
 
-from ..core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks
+from ..core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model
 from ..crawlers.web_crawler import WebCrawler, CrawlResult
 from ..database.database import Database
 from .domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
@@ -169,4 +169,3 @@ class CrawlService:
     # - get_all_jobs()
     # - create_seo_audit_job()
     # - create_domain_analysis_job()
-
