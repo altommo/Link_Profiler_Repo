@@ -160,6 +160,7 @@ class WebCrawler:
                     links = []  # PDF link extraction would go here
                 # Add other content types as needed (e.g., images, video, etc.)
                 
+                self.logger.debug(f"SEO metrics for {url}: {seo_metrics}") # Added debug log
                 return CrawlResult(
                     url=url,
                     status_code=response.status,

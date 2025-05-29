@@ -46,7 +46,7 @@ class CrawlService:
             The created CrawlJob object.
         """
         job_id = str(uuid4())
-        if config is None:
+        if config === None:
             config = CrawlConfig() # Use default config
 
         # For testing purposes, explicitly set respect_robots_txt to False
@@ -121,6 +121,7 @@ class CrawlService:
                                 self.logger.error(f"Error adding backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
                                 job.add_error(f"DB error adding backlinks for {crawl_result.url}: {str(db_e)}")
                         
+                        self.logger.debug(f"CrawlResult.seo_metrics for {crawl_result.url}: {crawl_result.seo_metrics}") # Added debug log
                         # Persist SEO metrics if available
                         if crawl_result.seo_metrics:
                             try:
