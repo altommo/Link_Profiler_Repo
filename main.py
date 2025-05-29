@@ -260,7 +260,8 @@ async def check_domain_availability(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    is_available = await domain_service.check_domain_availability(domain_name)
+    async with domain_service as ds: # Use domain_service as context manager
+        is_available = await ds.check_domain_availability(domain_name)
     return {"domain_name": domain_name, "is_available": is_available}
 
 @app.get("/domain/whois/{domain_name}", response_model=Dict)
@@ -271,7 +272,8 @@ async def get_domain_whois(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    whois_info = await domain_service.get_whois_info(domain_name)
+    async with domain_service as ds: # Use domain_service as context manager
+        whois_info = await ds.get_whois_info(domain_name)
     if not whois_info:
         raise HTTPException(status_code=404, detail="WHOIS information not found for this domain.")
     return whois_info
@@ -284,7 +286,8 @@ async def get_domain_info(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    domain_obj = await domain_service.get_domain_info(domain_name)
+    async with domain_service as ds: # Use domain_service as context manager
+        domain_obj = await ds.get_domain_info(domain_name)
     if not domain_obj:
         raise HTTPException(status_code=404, detail="Domain information not found.")
     return DomainResponse.from_domain(domain_obj)
@@ -297,6 +300,11 @@ async def analyze_domain(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
+    # domain_analyzer_service already takes domain_service in its constructor,
+    # and domain_service is instantiated globally.
+    # The context manager for domain_service should be handled at the top-level
+    # of the application or within the service that directly uses it.
+    # For this endpoint, we assume domain_service is already managed.
     analysis_result = await domain_analyzer_service.analyze_domain_for_expiration_value(domain_name)
     
     if not analysis_result:
@@ -312,6 +320,9 @@ async def find_expired_domains(request: FindExpiredDomainsRequest):
     if not request.potential_domains:
         raise HTTPException(status_code=400, detail="No potential domains provided.")
     
+    # Similar to analyze_domain, expired_domain_finder_service already takes domain_service
+    # in its constructor. The context manager for domain_service should be handled
+    # at the top-level or within the service that directly uses it.
     found_domains = await expired_domain_finder_service.find_valuable_expired_domains(
         potential_domains=request.potential_domains,
         min_value_score=request.min_value_score,
