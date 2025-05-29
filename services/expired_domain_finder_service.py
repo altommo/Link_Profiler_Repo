@@ -44,31 +44,34 @@ class ExpiredDomainFinderService:
         
         valuable_expired_domains = []
         
-        for i, domain_name in enumerate(potential_domains):
-            if limit and len(valuable_expired_domains) >= limit:
-                self.logger.info(f"Reached limit of {limit} valuable expired domains.")
-                break
+        async with self.domain_service as ds: # Use domain_service as context manager
+            for i, domain_name in enumerate(potential_domains):
+                if limit and len(valuable_expired_domains) >= limit:
+                    self.logger.info(f"Reached limit of {limit} valuable expired domains.")
+                    break
 
-            self.logger.info(f"Processing domain {i+1}/{len(potential_domains)}: {domain_name}")
-            
-            # Step 1: Check if the domain is available
-            is_available = await self.domain_service.check_domain_availability(domain_name)
-            
-            if not is_available:
-                self.logger.info(f"Domain {domain_name} is NOT available. Skipping analysis.")
-                continue # Skip to the next domain if not available
-            
-            self.logger.info(f"Domain {domain_name} IS available. Proceeding with analysis.")
-            
-            # Step 2: Analyze the domain's value
-            analysis_result = await self.domain_analyzer_service.analyze_domain_for_expiration_value(domain_name)
-            
-            if analysis_result.get("is_valuable") and analysis_result.get("value_score", 0) >= min_value_score:
-                self.logger.info(f"Domain {domain_name} is valuable (Score: {analysis_result.get('value_score'):.2f}). Adding to results.")
-                valuable_expired_domains.append(analysis_result)
-            else:
-                self.logger.info(f"Domain {domain_name} is not valuable enough (Score: {analysis_result.get('value_score'):.2f}).")
+                self.logger.info(f"Processing domain {i+1}/{len(potential_domains)}: {domain_name}")
                 
+                # Step 1: Check if the domain is available
+                is_available = await ds.check_domain_availability(domain_name) # Use ds from context manager
+                
+                if not is_available:
+                    self.logger.info(f"Domain {domain_name} is NOT available. Skipping analysis.")
+                    continue # Skip to the next domain if not available
+                
+                self.logger.info(f"Domain {domain_name} IS available. Proceeding with analysis.")
+                
+                # Step 2: Analyze the domain's value
+                # domain_analyzer_service already uses domain_service internally,
+                # and it will use the same context-managed instance passed to it.
+                analysis_result = await self.domain_analyzer_service.analyze_domain_for_expiration_value(domain_name)
+                
+                if analysis_result.get("is_valuable") and analysis_result.get("value_score", 0) >= min_value_score:
+                    self.logger.info(f"Domain {domain_name} is valuable (Score: {analysis_result.get('value_score'):.2f}). Adding to results.")
+                    valuable_expired_domains.append(analysis_result)
+                else:
+                    self.logger.info(f"Domain {domain_name} is not valuable enough (Score: {analysis_result.get('value_score'):.2f}).")
+                    
         self.logger.info(f"Finished search. Found {len(valuable_expired_domains)} valuable expired domains.")
         return valuable_expired_domains
 

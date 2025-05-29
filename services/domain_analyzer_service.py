@@ -6,7 +6,7 @@ File: services/domain_analyzer_service.py
 import logging
 from typing import Optional, Dict, Any
 
-from ..core.models import Domain, LinkProfile, SpamLevel
+from ..core.models import Domain, LinkProfile, SpamLevel, serialize_model # Import serialize_model
 from .domain_service import DomainService # To potentially get fresh domain info if not provided
 from ..database.database import Database # To retrieve stored domain and link profile data
 
@@ -45,21 +45,23 @@ class DomainAnalyzerService:
         self.logger.info(f"Analyzing domain {domain_name} for expiration value.")
         
         domain_obj = self.db.get_domain(domain_name)
-        if not domain_obj:
-            # If not found in DB, try to fetch fresh info (though this might be slow for many domains)
-            self.logger.info(f"Domain {domain_name} not found in DB, fetching fresh info.")
-            domain_obj = await self.domain_service.get_domain_info(domain_name)
+        
+        async with self.domain_service as ds: # Use domain_service as context manager
             if not domain_obj:
-                return {
-                    "domain_name": domain_name,
-                    "value_score": 0,
-                    "is_valuable": False,
-                    "reasons": ["Domain information could not be retrieved."],
-                    "details": {}
-                }
+                # If not found in DB, try to fetch fresh info (though this might be slow for many domains)
+                self.logger.info(f"Domain {domain_name} not found in DB, fetching fresh info.")
+                domain_obj = await ds.get_domain_info(domain_name) # Use ds from context manager
+                if not domain_obj:
+                    return {
+                        "domain_name": domain_name,
+                        "value_score": 0,
+                        "is_valuable": False,
+                        "reasons": ["Domain information could not be retrieved."],
+                        "details": {}
+                    }
 
-        # Check availability (crucial for expired domains)
-        is_available = await self.domain_service.check_domain_availability(domain_name)
+            # Check availability (crucial for expired domains)
+            is_available = await ds.check_domain_availability(domain_name) # Use ds from context manager
         
         # Retrieve link profile if available
         link_profile = self.db.get_link_profile(f"https://{domain_name}/") # Assuming root URL for profile

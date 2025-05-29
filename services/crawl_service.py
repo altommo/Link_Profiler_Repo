@@ -111,33 +111,34 @@ class CrawlService:
             # --- Fetch and store Domain information for the target domain ---
             target_domain_name = urlparse(job.target_url).netloc
             self.logger.info(f"Fetching domain info for target domain: {target_domain_name}")
-            target_domain_obj = await self.domain_service.get_domain_info(target_domain_name)
-            if target_domain_obj:
-                self.db.save_domain(target_domain_obj)
-                job.results['target_domain_info'] = serialize_model(target_domain_obj)
-                self.logger.info(f"Saved domain info for {target_domain_name}.")
-            else:
-                self.logger.warning(f"Could not retrieve domain info for {target_domain_name}.")
+            async with self.domain_service as ds: # Use domain_service as context manager
+                target_domain_obj = await ds.get_domain_info(target_domain_name)
+                if target_domain_obj:
+                    self.db.save_domain(target_domain_obj)
+                    job.results['target_domain_info'] = serialize_model(target_domain_obj)
+                    self.logger.info(f"Saved domain info for {target_domain_name}.")
+                else:
+                    self.logger.warning(f"Could not retrieve domain info for {target_domain_name}.")
 
-            # --- Fetch and store Domain information for referring domains ---
-            if discovered_backlinks:
-                unique_referring_domains = {bl.source_domain for bl in discovered_backlinks}
-                self.logger.info(f"Fetching domain info for {len(unique_referring_domains)} unique referring domains.")
-                
-                # Use asyncio.gather to fetch domain info concurrently for efficiency
-                domain_info_tasks = [
-                    self.domain_service.get_domain_info(referring_domain_name)
-                    for referring_domain_name in unique_referring_domains
-                    if referring_domain_name != target_domain_name # Avoid re-fetching target domain
-                ]
-                
-                referring_domain_objs = await asyncio.gather(*domain_info_tasks)
-                
-                for referring_domain_obj in referring_domain_objs:
-                    if referring_domain_obj:
-                        self.db.save_domain(referring_domain_obj)
-                        self.logger.info(f"Saved domain info for referring domain: {referring_domain_obj.name}.")
-                    # else: warning already logged by domain_service.get_domain_info if it returns None
+                # --- Fetch and store Domain information for referring domains ---
+                if discovered_backlinks:
+                    unique_referring_domains = {bl.source_domain for bl in discovered_backlinks}
+                    self.logger.info(f"Fetching domain info for {len(unique_referring_domains)} unique referring domains.")
+                    
+                    # Use asyncio.gather to fetch domain info concurrently for efficiency
+                    domain_info_tasks = [
+                        ds.get_domain_info(referring_domain_name) # Use ds from context manager
+                        for referring_domain_name in unique_referring_domains
+                        if referring_domain_name != target_domain_name # Avoid re-fetching target domain
+                    ]
+                    
+                    referring_domain_objs = await asyncio.gather(*domain_info_tasks)
+                    
+                    for referring_domain_obj in referring_domain_objs:
+                        if referring_domain_obj:
+                            self.db.save_domain(referring_domain_obj)
+                            self.logger.info(f"Saved domain info for referring domain: {referring_domain_obj.name}.")
+                        # else: warning already logged by domain_service.get_domain_info if it returns None
 
             job.status = CrawlStatus.COMPLETED
             self.logger.info(f"Crawl job {job.id} completed.")
