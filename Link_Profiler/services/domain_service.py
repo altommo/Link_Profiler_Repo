@@ -61,23 +61,9 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
     async def get_domain_availability(self, domain_name: str) -> bool:
         """
         Simulates checking if a domain name is available for registration.
-        Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for availability of: {domain_name}")
-        # The session is guaranteed to be active because __aenter__ is called by DomainService
-        try:
-            # Simulate an actual HTTP request, even if it's to a dummy URL
-            # This helps test aiohttp session management
-            async with self._session.get(f"http://localhost:8080/simulate_availability/{domain_name}", timeout=5) as response: # Added timeout
-                # We don't care about the actual response, just that the request was made
-                pass
-        except aiohttp.ClientConnectorError:
-            # This is expected if localhost:8080 is not running, simulating network activity
-            pass
-        except asyncio.TimeoutError: # Catch timeout specifically
-            self.logger.warning(f"Simulated availability check timed out for {domain_name}.")
-        except Exception as e:
-            self.logger.warning(f"Unexpected error during simulated availability check: {e}")
+        await asyncio.sleep(0.1) # Simulate network delay
 
         # Actual simulated logic
         if domain_name.lower() in ["example.com", "testdomain.org", "available.net"]:
@@ -90,20 +76,9 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
     async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
         """
         Simulates fetching WHOIS information for a domain.
-        Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for WHOIS info of: {domain_name}")
-        # The session is guaranteed to be active because __aenter__ is called by DomainService
-        try:
-            # Simulate an actual HTTP request
-            async with self._session.get(f"http://localhost:8080/simulate_whois/{domain_name}", timeout=5) as response: # Added timeout
-                pass
-        except aiohttp.ClientConnectorError:
-            pass
-        except asyncio.TimeoutError: # Catch timeout specifically
-            self.logger.warning(f"Simulated WHOIS check timed out for {domain_name}.")
-        except Exception as e:
-            self.logger.warning(f"Unexpected error during simulated WHOIS check: {e}")
+        await asyncio.sleep(0.2) # Simulate network delay
 
         # Actual simulated logic
         if domain_name.lower() == "example.com":
