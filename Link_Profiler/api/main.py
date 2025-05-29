@@ -8,13 +8,13 @@ import sys
 
 # --- Robust Project Root Discovery ---
 # This method searches upwards from the current file's directory
-# until it finds a known marker file (e.g., setup.py or main.py launcher).
+# until it finds a known marker file (e.g., setup.py).
 # This is more resilient to different ways of launching the application.
 current_dir = os.path.dirname(os.path.abspath(__file__))
 found_project_root = None
 for _ in range(5): # Search up to 5 levels
-    if os.path.exists(os.path.join(current_dir, 'setup.py')) or \
-       os.path.exists(os.path.join(current_dir, 'main.py')): # Assuming main.py is in project root
+    # Look for setup.py as the primary indicator of the project root.
+    if os.path.exists(os.path.join(current_dir, 'setup.py')):
         found_project_root = current_dir
         break
     current_dir = os.path.dirname(current_dir)
@@ -45,8 +45,7 @@ from Link_Profiler.database.database import Database # Changed to absolute impor
 from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain # Changed to absolute import
 
 # Configure logging
-# Temporarily set level to DEBUG to see detailed logs from database operations
-logging.basicConfig(level=logging.DEBUG) 
+logging.basicConfig(level=logging.INFO) 
 logger = logging.getLogger(__name__)
 
 # Initialize database
@@ -433,4 +432,3 @@ async def find_expired_domains(request: FindExpiredDomainsRequest):
         total_candidates_processed=len(request.potential_domains),
         valuable_domains_found=len(found_domains)
     )
-
