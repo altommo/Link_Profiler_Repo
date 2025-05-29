@@ -484,11 +484,8 @@ def serialize_model(obj) -> Dict:
             elif hasattr(value, '__dataclass_fields__'):
                 result[field_name] = serialize_model(value)
             elif isinstance(value, list) and value and hasattr(value[0], '__dataclass_fields__'):
-                # Handle list of dataclasses (like CrawlError)
-                if field_name == 'error_log' and all(isinstance(item, CrawlError) for item in value):
-                    result[field_name] = [serialize_model(item) for item in value]
-                else:
-                    result[field_name] = value
+                # Recursively serialize lists of dataclasses
+                result[field_name] = [serialize_model(item) for item in value]
             else:
                 result[field_name] = value
         return result

@@ -74,6 +74,7 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
         else:
             try:
                 # Simulate an actual HTTP request, even if it's to a dummy URL
+                # This helps test aiohttp session management
                 async with self._session.get(f"http://localhost:8080/simulate_backlinks/{target_url}") as response:
                     # We don't care about the actual response, just that the request was made
                     pass
@@ -94,6 +95,7 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
             
             backlinks.append(
                 Backlink(
+                    id=str(uuid.uuid4()), # Ensure ID is generated
                     source_url=source_url,
                     target_url=target_url,
                     anchor_text=f"Anchor Text {i}",
@@ -112,6 +114,7 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
         if "quotes.toscrape.com" in target_url:
             backlinks.extend([
                 Backlink(
+                    id=str(uuid.uuid4()), # Ensure ID is generated
                     source_url="http://example.com/blog/quotes-review",
                     target_url="http://quotes.toscrape.com/",
                     anchor_text="Great Quotes Site",
@@ -120,6 +123,7 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
                     spam_level=SpamLevel.CLEAN
                 ),
                 Backlink(
+                    id=str(uuid.uuid4()), # Ensure ID is generated
                     source_url="http://anotherblog.net/top-sites",
                     target_url="http://quotes.toscrape.com/login",
                     anchor_text="Login to Quotes",
