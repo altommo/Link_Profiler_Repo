@@ -38,25 +38,20 @@ class BaseDomainAPIClient:
 class SimulatedDomainAPIClient(BaseDomainAPIClient):
     """
     A simulated client for domain information APIs.
-    Uses aiohttp to simulate network requests.
+    Does not use aiohttp, only simulates delays.
     """
     def __init__(self):
         self.logger = logging.getLogger(__name__ + ".SimulatedDomainAPIClient")
-        self._session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
-        """Async context manager entry for client session."""
+        """Async context manager entry - no-op for simulated client."""
         self.logger.debug("Entering SimulatedDomainAPIClient context.")
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit for client session."""
+        """Async context manager exit - no-op for simulated client."""
         self.logger.debug("Exiting SimulatedDomainAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        pass
 
     async def get_domain_availability(self, domain_name: str) -> bool:
         """
