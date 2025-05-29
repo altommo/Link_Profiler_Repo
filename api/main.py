@@ -5,9 +5,18 @@ File: api/main.py
 
 import os
 import sys
-# Add the project root to the Python path to allow absolute imports
-# This assumes 'api/main.py' is in 'api' and the project root is its parent
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Ensure the project root is in sys.path for correct relative imports
+# This assumes the project structure is:
+# Link_Profiler/
+# ├── api/
+# │   └── main.py
+# ├── services/
+# └── core/
+# The project root is the parent directory of 'api'.
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
