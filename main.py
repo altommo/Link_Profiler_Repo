@@ -6,18 +6,26 @@ File: Link_Profiler/api/main.py
 import os
 import sys
 
-# Explicitly add the project root to sys.path to ensure imports work correctly.
-# This is a robust workaround for ModuleNotFoundError issues, especially with reloaders.
-# The project root is the parent directory of 'Link_Profiler/api'.
-# If this file is at Link_Profiler/api/main.py, then '..' from 'api' is 'Link_Profiler',
-# and '..' from 'Link_Profiler' is the actual project root.
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+# --- Robust Project Root Discovery ---
+# This method searches upwards from the current file's directory
+# until it finds a known marker file (e.g., setup.py or main.py launcher).
+# This is more resilient to different ways of launching the application.
+current_dir = os.path.dirname(os.path.abspath(__file__))
+found_project_root = None
+for _ in range(5): # Search up to 5 levels
+    if os.path.exists(os.path.join(current_dir, 'setup.py')) or \
+       os.path.exists(os.path.join(current_dir, 'main.py')): # Assuming main.py is in project root
+        found_project_root = current_dir
+        break
+    current_dir = os.path.dirname(current_dir)
+
+if found_project_root and found_project_root not in sys.path:
+    sys.path.insert(0, found_project_root)
+# --- End Robust Project Root Discovery ---
 
 # --- Debugging Print Statements ---
-print("PROJECT_ROOT (from Link_Profiler/api/main.py):", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-print("SYS.PATH (from Link_Profiler/api/main.py):", sys.path[:5])  # show the first few entries
+print("PROJECT_ROOT (discovered):", found_project_root)
+print("SYS.PATH (after discovery):", sys.path[:5])  # show the first few entries
 # --- End Debugging Print Statements ---
 
 
