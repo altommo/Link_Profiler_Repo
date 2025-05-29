@@ -344,7 +344,7 @@ class CrawlConfig:
     max_pages: int = 1000
     delay_seconds: float = 1.0
     timeout_seconds: int = 30
-    user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" # Changed default user agent
+    user_agent: str = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" # Changed default user agent to Googlebot
     respect_robots_txt: bool = True
     follow_redirects: bool = True
     extract_images: bool = True

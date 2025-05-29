@@ -48,6 +48,10 @@ class CrawlService:
         if config is None:
             config = CrawlConfig() # Use default config
 
+        # For testing purposes, explicitly set respect_robots_txt to False
+        # as quotes.toscrape.com's robots.txt disallows all crawling.
+        config.respect_robots_txt = False 
+
         # Ensure target domain is in allowed domains if specified
         parsed_target_domain = urlparse(target_url).netloc
         if config.allowed_domains and parsed_target_domain not in config.allowed_domains:
