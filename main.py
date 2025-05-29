@@ -12,7 +12,8 @@ from datetime import datetime # Import datetime for Pydantic models
 
 from services.crawl_service import CrawlService
 from services.domain_service import DomainService
-from services.domain_analyzer_service import DomainAnalyzerService # Import DomainAnalyzerService
+from services.domain_analyzer_service import DomainAnalyzerService
+from services.expired_domain_finder_service import ExpiredDomainFinderService # Import ExpiredDomainFinderService
 from database.database import Database
 from core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain
 
@@ -30,7 +31,8 @@ app = FastAPI(
 db = Database()
 crawl_service = CrawlService(db)
 domain_service = DomainService()
-domain_analyzer_service = DomainAnalyzerService(db, domain_service) # Instantiate DomainAnalyzerService
+domain_analyzer_service = DomainAnalyzerService(db, domain_service)
+expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service, domain_analyzer_service) # Instantiate ExpiredDomainFinderService
 
 # --- Pydantic Models for API Request/Response ---
 
@@ -161,6 +163,16 @@ class DomainAnalysisResponse(BaseModel):
     reasons: List[str]
     details: Dict[str, Any]
 
+class FindExpiredDomainsRequest(BaseModel):
+    potential_domains: List[str] = Field(..., description="A list of domain names to check for expiration and value.")
+    min_value_score: float = Field(50.0, description="Minimum value score a domain must have to be considered valuable.")
+    limit: Optional[int] = Field(None, description="Maximum number of valuable domains to return.")
+
+class FindExpiredDomainsResponse(BaseModel):
+    found_domains: List[DomainAnalysisResponse]
+    total_candidates_processed: int
+    valuable_domains_found: int
+
 
 # --- API Endpoints ---
 
@@ -290,4 +302,24 @@ async def analyze_domain(domain_name: str):
         raise HTTPException(status_code=500, detail="Failed to perform domain analysis.")
     
     return analysis_result
+
+@app.post("/domain/find_expired_domains", response_model=FindExpiredDomainsResponse)
+async def find_expired_domains(request: FindExpiredDomainsRequest):
+    """
+    Searches for valuable expired domains among a list of potential candidates.
+    """
+    if not request.potential_domains:
+        raise HTTPException(status_code=400, detail="No potential domains provided.")
+    
+    found_domains = await expired_domain_finder_service.find_valuable_expired_domains(
+        potential_domains=request.potential_domains,
+        min_value_score=request.min_value_score,
+        limit=request.limit
+    )
+    
+    return FindExpiredDomainsResponse(
+        found_domains=found_domains,
+        total_candidates_processed=len(request.potential_domains),
+        valuable_domains_found=len(found_domains)
+    )
 
