@@ -13,7 +13,7 @@ from urllib.parse import urlparse # Import urlparse
 from ..core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks
 from ..crawlers.web_crawler import WebCrawler, CrawlResult
 from ..database.database import Database
-from .domain_service import DomainService # Import DomainService
+from .domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
 
 
 class CrawlService:
@@ -25,7 +25,7 @@ class CrawlService:
         self.db = database
         self.logger = logging.getLogger(__name__)
         self.active_crawlers: Dict[str, WebCrawler] = {} # Store active crawler instances by job ID
-        self.domain_service = DomainService() # Instantiate DomainService
+        self.domain_service = DomainService(api_client=SimulatedDomainAPIClient()) # Instantiate DomainService with explicit client
 
     async def create_and_start_backlink_crawl_job(
         self, 

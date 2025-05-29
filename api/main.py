@@ -5,14 +5,17 @@ File: api/main.py
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any, Union
 import logging
 from urllib.parse import urlparse
 from datetime import datetime # Import datetime for Pydantic models
 
 from services.crawl_service import CrawlService
+from services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
+from services.domain_analyzer_service import DomainAnalyzerService
+from services.expired_domain_finder_service import ExpiredDomainFinderService
 from database.database import Database
-from core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel
+from core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,11 +27,13 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Initialize database and crawl service
-# In a production environment, these would likely be managed by a dependency injection system
-# or passed in a more structured way (e.g., via a factory or global state management).
+# Initialize services
 db = Database()
-crawl_service = CrawlService(db)
+# Pass the specific API client to DomainService
+domain_service = DomainService(api_client=SimulatedDomainAPIClient()) 
+crawl_service = CrawlService(db) # CrawlService will instantiate its own DomainService
+domain_analyzer_service = DomainAnalyzerService(db, domain_service)
+expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service, domain_analyzer_service)
 
 # --- Pydantic Models for API Request/Response ---
 
@@ -128,6 +133,47 @@ class BacklinkResponse(BaseModel):
             backlink_dict['discovered_date'] = datetime.fromisoformat(backlink_dict['discovered_date'])
         return cls(**backlink_dict)
 
+class DomainResponse(BaseModel):
+    name: str
+    authority_score: float
+    trust_score: float
+    spam_score: float
+    age_days: Optional[int]
+    country: Optional[str]
+    ip_address: Optional[str]
+    whois_data: Dict
+    total_pages: int
+    total_backlinks: int
+    referring_domains: int
+    first_seen: Optional[datetime]
+    last_crawled: Optional[datetime]
+
+    @classmethod
+    def from_domain(cls, domain: Domain):
+        domain_dict = serialize_model(domain)
+        if isinstance(domain_dict.get('first_seen'), str):
+            domain_dict['first_seen'] = datetime.fromisoformat(domain_dict['first_seen'])
+        if isinstance(domain_dict.get('last_crawled'), str):
+            domain_dict['last_crawled'] = datetime.fromisoformat(domain_dict['last_crawled'])
+        return cls(**domain_dict)
+
+class DomainAnalysisResponse(BaseModel):
+    domain_name: str
+    value_score: float
+    is_valuable: bool
+    reasons: List[str]
+    details: Dict[str, Any]
+
+class FindExpiredDomainsRequest(BaseModel):
+    potential_domains: List[str] = Field(..., description="A list of domain names to check for expiration and value.")
+    min_value_score: float = Field(50.0, description="Minimum value score a domain must have to be considered valuable.")
+    limit: Optional[int] = Field(None, description="Maximum number of valuable domains to return.")
+
+class FindExpiredDomainsResponse(BaseModel):
+    found_domains: List[DomainAnalysisResponse]
+    total_candidates_processed: int
+    valuable_domains_found: int
+
 
 # --- API Endpoints ---
 
@@ -206,8 +252,75 @@ async def get_backlinks(target_url: str):
     
     return [BacklinkResponse.from_backlink(bl) for bl in backlinks]
 
-# Example of how to run the API (for development)
-# if __name__ == "__main__":
-#     import uvicorn
-#     uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.get("/domain/availability/{domain_name}", response_model=Dict[str, Union[str, bool]])
+async def check_domain_availability(domain_name: str):
+    """
+    Checks if a domain name is available for registration.
+    """
+    if not domain_name or '.' not in domain_name:
+        raise HTTPException(status_code=400, detail="Invalid domain name format.")
+    
+    is_available = await domain_service.check_domain_availability(domain_name)
+    return {"domain_name": domain_name, "is_available": is_available}
+
+@app.get("/domain/whois/{domain_name}", response_model=Dict)
+async def get_domain_whois(domain_name: str):
+    """
+    Retrieves WHOIS information for a given domain name.
+    """
+    if not domain_name or '.' not in domain_name:
+        raise HTTPException(status_code=400, detail="Invalid domain name format.")
+    
+    whois_info = await domain_service.get_whois_info(domain_name)
+    if not whois_info:
+        raise HTTPException(status_code=404, detail="WHOIS information not found for this domain.")
+    return whois_info
+
+@app.get("/domain/info/{domain_name}", response_model=DomainResponse)
+async def get_domain_info(domain_name: str):
+    """
+    Retrieves comprehensive domain information, including simulated WHOIS and availability.
+    """
+    if not domain_name or '.' not in domain_name:
+        raise HTTPException(status_code=400, detail="Invalid domain name format.")
+    
+    domain_obj = await domain_service.get_domain_info(domain_name)
+    if not domain_obj:
+        raise HTTPException(status_code=404, detail="Domain information not found.")
+    return DomainResponse.from_domain(domain_obj)
+
+@app.get("/domain/analyze/{domain_name}", response_model=DomainAnalysisResponse)
+async def analyze_domain(domain_name: str):
+    """
+    Analyzes a domain for its potential value, especially for expired domains.
+    """
+    if not domain_name or '.' not in domain_name:
+        raise HTTPException(status_code=400, detail="Invalid domain name format.")
+    
+    analysis_result = await domain_analyzer_service.analyze_domain_for_expiration_value(domain_name)
+    
+    if not analysis_result:
+        raise HTTPException(status_code=500, detail="Failed to perform domain analysis.")
+    
+    return analysis_result
+
+@app.post("/domain/find_expired_domains", response_model=FindExpiredDomainsResponse)
+async def find_expired_domains(request: FindExpiredDomainsRequest):
+    """
+    Searches for valuable expired domains among a list of potential candidates.
+    """
+    if not request.potential_domains:
+        raise HTTPException(status_code=400, detail="No potential domains provided.")
+    
+    found_domains = await expired_domain_finder_service.find_valuable_expired_domains(
+        potential_domains=request.potential_domains,
+        min_value_score=request.min_value_score,
+        limit=request.limit
+    )
+    
+    return FindExpiredDomainsResponse(
+        found_domains=found_domains,
+        total_candidates_processed=len(request.potential_domains),
+        valuable_domains_found=len(found_domains)
+    )
 
