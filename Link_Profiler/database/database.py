@@ -286,19 +286,23 @@ class Database:
         session = self._get_session()
         try:
             logger.info(f"Attempting to add {len(backlinks)} backlinks to the database.")
-            for backlink in backlinks:
+            logger.debug("Starting session.add() loop for backlinks.")
+            for i, backlink in enumerate(backlinks):
                 # Ensure source and target domains exist
                 source_domain_name = urlparse(backlink.source_url).netloc.lower()
                 target_domain_name = urlparse(backlink.target_url).netloc.lower()
                 
-                # Add debug logging here to see the target_domain_name being saved
-                logger.debug(f"Adding backlink from {backlink.source_url} (Domain: {source_domain_name}) to {backlink.target_url} (Domain: {target_domain_name}). Target domain being saved: {target_domain_name}")
+                logger.debug(f"Processing backlink {i+1}/{len(backlinks)}: from {backlink.source_url} (Domain: {source_domain_name}) to {backlink.target_url} (Domain: {target_domain_name}). Target domain being saved: {target_domain_name}")
 
                 session.merge(DomainORM(name=source_domain_name))
                 session.merge(DomainORM(name=target_domain_name))
 
                 orm_backlink = self._to_orm(backlink)
+                logger.debug(f"Adding ORM backlink {orm_backlink.id} to session.")
                 session.add(orm_backlink)
+                logger.debug(f"Added ORM backlink {orm_backlink.id} to session.")
+
+            logger.debug("Finished session.add() loop. Attempting session.commit().")
             session.commit()
             logger.info(f"Successfully added/merged {len(backlinks)} backlinks.")
         except IntegrityError:
@@ -306,7 +310,7 @@ class Database:
             logger.warning(f"One or more backlinks already exist. Some may have been skipped.")
         except Exception as e:
             session.rollback()
-            logger.error(f"Error adding multiple backlinks: {e}")
+            logger.error(f"Error adding multiple backlinks: {type(e).__name__}: {e}", exc_info=True) # Log exception type and traceback
         finally:
             session.close()
 
