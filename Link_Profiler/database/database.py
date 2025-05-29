@@ -7,6 +7,7 @@ from typing import List, Dict, Optional
 from Link_Profiler.core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model, CrawlStatus # Changed to absolute import and added CrawlStatus
 import json
 import os
+from urllib.parse import urlparse # Import urlparse
 
 # For demonstration, we'll use a simple in-memory storage or JSON file.
 # In a real application, this would be replaced with a proper database (e.g., PostgreSQL, MongoDB).
@@ -109,8 +110,30 @@ class Database:
         self._save_data()
 
     def get_backlinks_for_target(self, target_url: str) -> List[Backlink]:
-        """Retrieves all backlinks for a given target URL."""
-        return [bl for bl in self._backlinks if bl.target_url == target_url]
+        """
+        Retrieves all backlinks for a given target URL or domain.
+        If target_url is a domain (e.g., http://example.com), it returns backlinks
+        to any page on that domain.
+        """
+        parsed_target = urlparse(target_url)
+        target_domain = parsed_target.netloc
+
+        if not target_domain:
+            # If target_url is not a valid URL with a domain, return empty
+            return []
+
+        # If the target_url is just a domain (e.g., "http://example.com"),
+        # we want all backlinks whose target_domain matches.
+        # If it's a specific path (e.g., "http://example.com/page1"),
+        # we want backlinks whose target_url starts with the given target_url.
+        if parsed_target.path in ["", "/"]:
+            # It's a domain or root path, so match by target_domain
+            return [bl for bl in self._backlinks if bl.target_domain == target_domain]
+        else:
+            # It's a specific URL, so match by target_url starting with the given URL
+            # This handles cases like http://example.com/page1 and http://example.com/page1#section
+            return [bl for bl in self._backlinks if bl.target_url.startswith(target_url)]
+
 
     def get_all_backlinks(self) -> List[Backlink]:
         """Retrieves all stored backlinks."""
