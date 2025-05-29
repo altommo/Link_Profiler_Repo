@@ -75,7 +75,7 @@ class WebCrawler:
     def __init__(self, config: CrawlConfig):
         self.config = config
         self.rate_limiter = RateLimiter(1.0 / config.delay_seconds)
-        self.robots_parser = RobotsParser()
+        self.robots_parser = RobotsParser() # Initialise, but session managed by __aenter__
         self.link_extractor = LinkExtractor()
         self.content_parser = ContentParser() 
         self.session: Optional[aiohttp.ClientSession] = None
@@ -105,12 +105,16 @@ class WebCrawler:
                 **self.config.custom_headers
             }
         )
+        # Enter robots_parser's context to manage its aiohttp session
+        await self.robots_parser.__aenter__()
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
         if self.session:
             await self.session.close()
+        # Exit robots_parser's context
+        await self.robots_parser.__aexit__(exc_type, exc_val, exc_tb)
     
     async def crawl_url(self, url: str) -> CrawlResult:
         """Crawl a single URL and extract links"""
@@ -128,6 +132,7 @@ class WebCrawler:
         
         # Check robots.txt if enabled
         if self.config.respect_robots_txt:
+            # self.robots_parser's session is now managed by WebCrawler's __aenter__
             can_crawl = await self.robots_parser.can_fetch(url, self.config.user_agent)
             if not can_crawl:
                 return CrawlResult(
@@ -224,7 +229,7 @@ class WebCrawler:
         # not just the target domain itself.
         
         # For now, let's return a dummy set of external URLs that *might* link
-        # to the target. In a real system, this would be populated by
+        # to the target. In a real system, these would be populated by
         # external data sources or a more sophisticated discovery phase.
         
         # If the goal is to find expired domains, you might start by crawling
@@ -240,19 +245,6 @@ class WebCrawler:
         # Let's return an empty set for now, and rely on an external process
         # to feed URLs into the crawl. The `crawl_domain_for_backlinks`
         # method will need to be initiated with some starting URLs.
-        
-        # For a minimal viable product, one might manually provide a list of
-        # high-authority sites to crawl, or use a very basic search query.
-        
-        # For now, let's just return the target URL itself as a seed,
-        # assuming it might have internal links that eventually lead to external ones
-        # (though this is not ideal for *finding* backlinks from *other* sites).
-        # A better approach would be to have a separate module that queries
-        # search engines or backlink databases to get initial "source" URLs.
-        
-        # Let's assume for now that the `crawl_domain_for_backlinks` method
-        # will be given an initial set of URLs to start with, rather than
-        # generating them here. This method will be removed or refactored.
         
         # Instead, the `crawl_domain_for_backlinks` will take an initial list of
         # `seed_urls` as an argument.

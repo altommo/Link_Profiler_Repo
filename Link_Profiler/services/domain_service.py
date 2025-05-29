@@ -64,24 +64,20 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for availability of: {domain_name}")
-        if self._session is None or self._session.closed:
-            self.logger.warning("aiohttp session not active. Call client within async with block.")
-            # Fallback to simple sleep if session not managed by context manager
-            await asyncio.sleep(0.1) # Reduced sleep
-        else:
-            try:
-                # Simulate an actual HTTP request, even if it's to a dummy URL
-                # This helps test aiohttp session management
-                async with self._session.get(f"http://localhost:8080/simulate_availability/{domain_name}", timeout=5) as response: # Added timeout
-                    # We don't care about the actual response, just that the request was made
-                    pass
-            except aiohttp.ClientConnectorError:
-                # This is expected if localhost:8080 is not running, simulating network activity
+        # The session is guaranteed to be active because __aenter__ is called by DomainService
+        try:
+            # Simulate an actual HTTP request, even if it's to a dummy URL
+            # This helps test aiohttp session management
+            async with self._session.get(f"http://localhost:8080/simulate_availability/{domain_name}", timeout=5) as response: # Added timeout
+                # We don't care about the actual response, just that the request was made
                 pass
-            except asyncio.TimeoutError: # Catch timeout specifically
-                self.logger.warning(f"Simulated availability check timed out for {domain_name}.")
-            except Exception as e:
-                self.logger.warning(f"Unexpected error during simulated availability check: {e}")
+        except aiohttp.ClientConnectorError:
+            # This is expected if localhost:8080 is not running, simulating network activity
+            pass
+        except asyncio.TimeoutError: # Catch timeout specifically
+            self.logger.warning(f"Simulated availability check timed out for {domain_name}.")
+        except Exception as e:
+            self.logger.warning(f"Unexpected error during simulated availability check: {e}")
 
         # Actual simulated logic
         if domain_name.lower() in ["example.com", "testdomain.org", "available.net"]:
@@ -97,21 +93,17 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for WHOIS info of: {domain_name}")
-        if self._session is None or self._session.closed:
-            self.logger.warning("aiohttp session not active. Call client within async with block.")
-            # Fallback to simple sleep if session not managed by context manager
-            await asyncio.sleep(0.2) # Reduced sleep
-        else:
-            try:
-                # Simulate an actual HTTP request
-                async with self._session.get(f"http://localhost:8080/simulate_whois/{domain_name}", timeout=5) as response: # Added timeout
-                    pass
-            except aiohttp.ClientConnectorError:
+        # The session is guaranteed to be active because __aenter__ is called by DomainService
+        try:
+            # Simulate an actual HTTP request
+            async with self._session.get(f"http://localhost:8080/simulate_whois/{domain_name}", timeout=5) as response: # Added timeout
                 pass
-            except asyncio.TimeoutError: # Catch timeout specifically
-                self.logger.warning(f"Simulated WHOIS check timed out for {domain_name}.")
-            except Exception as e:
-                self.logger.warning(f"Unexpected error during simulated WHOIS check: {e}")
+        except aiohttp.ClientConnectorError:
+            pass
+        except asyncio.TimeoutError: # Catch timeout specifically
+            self.logger.warning(f"Simulated WHOIS check timed out for {domain_name}.")
+        except Exception as e:
+            self.logger.warning(f"Unexpected error during simulated WHOIS check: {e}")
 
         # Actual simulated logic
         if domain_name.lower() == "example.com":
