@@ -8,10 +8,11 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 import logging
 from urllib.parse import urlparse
+from datetime import datetime # Import datetime for Pydantic models
 
 from services.crawl_service import CrawlService
 from database.database import Database
-from core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus
+from core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -70,7 +71,15 @@ class CrawlJobResponse(BaseModel):
     def from_crawl_job(cls, job: CrawlJob):
         # Convert CrawlStatus Enum to its value for Pydantic serialization
         job_dict = serialize_model(job)
-        job_dict['status'] = job.status.value
+        # Ensure datetime objects are correctly handled by Pydantic
+        if isinstance(job_dict.get('created_date'), str):
+            job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
+        if isinstance(job_dict.get('started_date'), str):
+            job_dict['started_date'] = datetime.fromisoformat(job_dict['started_date'])
+        if isinstance(job_dict.get('completed_date'), str):
+            job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
+        
+        job_dict['status'] = job.status # Pydantic handles Enum directly if type hint is Enum
         return cls(**job_dict)
 
 class LinkProfileResponse(BaseModel):
@@ -91,6 +100,8 @@ class LinkProfileResponse(BaseModel):
     def from_link_profile(cls, profile: LinkProfile):
         profile_dict = serialize_model(profile)
         profile_dict['referring_domains'] = list(profile.referring_domains) # Ensure it's a list
+        if isinstance(profile_dict.get('analysis_date'), str):
+            profile_dict['analysis_date'] = datetime.fromisoformat(profile_dict['analysis_date'])
         return cls(**profile_dict)
 
 class BacklinkResponse(BaseModel):
@@ -99,19 +110,22 @@ class BacklinkResponse(BaseModel):
     source_domain: str
     target_domain: str
     anchor_text: str
-    link_type: str # Convert Enum to string
+    link_type: LinkType # Pydantic handles Enum directly
     context_text: str
     is_image_link: bool
     alt_text: Optional[str]
     discovered_date: datetime
     authority_passed: bool
-    spam_level: str # Convert Enum to string
+    spam_level: SpamLevel # Pydantic handles Enum directly
 
     @classmethod
     def from_backlink(cls, backlink: Backlink):
         backlink_dict = serialize_model(backlink)
-        backlink_dict['link_type'] = backlink.link_type.value
-        backlink_dict['spam_level'] = backlink.spam_level.value
+        # Pydantic handles Enum directly if type hint is Enum
+        backlink_dict['link_type'] = backlink.link_type
+        backlink_dict['spam_level'] = backlink.spam_level
+        if isinstance(backlink_dict.get('discovered_date'), str):
+            backlink_dict['discovered_date'] = datetime.fromisoformat(backlink_dict['discovered_date'])
         return cls(**backlink_dict)
 
 
@@ -128,15 +142,8 @@ async def start_backlink_discovery(
     """
     logger.info(f"Received request to start backlink discovery for {request.target_url}")
     
-    # Convert Pydantic CrawlConfigRequest to internal CrawlConfig dataclass
-    crawl_config_data = request.config.dict() if request.config else {}
-    # Ensure sets are correctly handled from lists in Pydantic model
-    if 'allowed_domains' in crawl_config_data and crawl_config_data['allowed_domains'] is not None:
-        crawl_config_data['allowed_domains'] = set(crawl_config_data['allowed_domains'])
-    if 'blocked_domains' in crawl_config_data and crawl_config_data['blocked_domains'] is not None:
-        crawl_config_data['blocked_domains'] = set(crawl_config_data['blocked_domains'])
-
-    crawl_config = CrawlConfig(**crawl_config_data)
+    # Convert Pydantic CrawlConfigRequest to internal CrawlConfig dataclass using from_dict
+    crawl_config = CrawlConfig.from_dict(request.config.dict() if request.config else {})
 
     # Validate target_url and initial_seed_urls
     if not urlparse(request.target_url).scheme or not urlparse(request.target_url).netloc:
