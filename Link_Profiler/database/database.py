@@ -25,7 +25,7 @@ class Database:
     """
     A class for database operations using SQLAlchemy with PostgreSQL.
     """
-    def __init__(self, db_url: str = "postgresql://user:password@localhost:5432/link_profiler_db"):
+    def __init__(self, db_url: str = "postgresql://postgres:postgres@localhost:5432/link_profiler_db"):
         self.engine = create_engine(db_url)
         self.Session = scoped_session(sessionmaker(bind=self.engine))
         self._create_tables()
