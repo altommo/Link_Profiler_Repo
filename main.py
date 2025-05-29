@@ -11,9 +11,9 @@ from urllib.parse import urlparse
 from datetime import datetime # Import datetime for Pydantic models
 
 from services.crawl_service import CrawlService
-from services.domain_service import DomainService
+from services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
 from services.domain_analyzer_service import DomainAnalyzerService
-from services.expired_domain_finder_service import ExpiredDomainFinderService # Import ExpiredDomainFinderService
+from services.expired_domain_finder_service import ExpiredDomainFinderService
 from database.database import Database
 from core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain
 
@@ -29,10 +29,11 @@ app = FastAPI(
 
 # Initialize services
 db = Database()
-crawl_service = CrawlService(db)
-domain_service = DomainService()
+# Pass the specific API client to DomainService
+domain_service = DomainService(api_client=SimulatedDomainAPIClient()) 
+crawl_service = CrawlService(db) # CrawlService will instantiate its own DomainService
 domain_analyzer_service = DomainAnalyzerService(db, domain_service)
-expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service, domain_analyzer_service) # Instantiate ExpiredDomainFinderService
+expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service, domain_analyzer_service)
 
 # --- Pydantic Models for API Request/Response ---
 
