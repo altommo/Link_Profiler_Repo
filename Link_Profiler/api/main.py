@@ -339,6 +339,18 @@ async def get_backlinks(target_url: str):
     
     return [BacklinkResponse.from_backlink(bl) for bl in backlinks]
 
+# Temporary endpoint to get ALL backlinks for debugging
+@app.get("/debug/all_backlinks", response_model=List[BacklinkResponse])
+async def debug_get_all_backlinks():
+    """
+    DEBUG endpoint: Retrieves ALL raw backlinks from the database.
+    """
+    logger.info("DEBUG endpoint: Received request for all backlinks.")
+    backlinks = db.get_all_backlinks()
+    logger.info(f"DEBUG endpoint: Retrieved {len(backlinks)} backlinks from DB.")
+    return [BacklinkResponse.from_backlink(bl) for bl in backlinks]
+
+
 @app.get("/domain/availability/{domain_name}", response_model=Dict[str, Union[str, bool]])
 async def check_domain_availability(domain_name: str):
     """
