@@ -5,13 +5,14 @@ File: api/main.py
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any, Union
 import logging
 from urllib.parse import urlparse
 from datetime import datetime # Import datetime for Pydantic models
 
 from services.crawl_service import CrawlService
-from services.domain_service import DomainService # Import DomainService
+from services.domain_service import DomainService
+from services.domain_analyzer_service import DomainAnalyzerService # Import DomainAnalyzerService
 from database.database import Database
 from core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain
 
@@ -28,7 +29,8 @@ app = FastAPI(
 # Initialize services
 db = Database()
 crawl_service = CrawlService(db)
-domain_service = DomainService() # Instantiate DomainService
+domain_service = DomainService()
+domain_analyzer_service = DomainAnalyzerService(db, domain_service) # Instantiate DomainAnalyzerService
 
 # --- Pydantic Models for API Request/Response ---
 
@@ -152,6 +154,13 @@ class DomainResponse(BaseModel):
             domain_dict['last_crawled'] = datetime.fromisoformat(domain_dict['last_crawled'])
         return cls(**domain_dict)
 
+class DomainAnalysisResponse(BaseModel):
+    domain_name: str
+    value_score: float
+    is_valuable: bool
+    reasons: List[str]
+    details: Dict[str, Any]
+
 
 # --- API Endpoints ---
 
@@ -266,4 +275,19 @@ async def get_domain_info(domain_name: str):
     if not domain_obj:
         raise HTTPException(status_code=404, detail="Domain information not found.")
     return DomainResponse.from_domain(domain_obj)
+
+@app.get("/domain/analyze/{domain_name}", response_model=DomainAnalysisResponse)
+async def analyze_domain(domain_name: str):
+    """
+    Analyzes a domain for its potential value, especially for expired domains.
+    """
+    if not domain_name or '.' not in domain_name:
+        raise HTTPException(status_code=400, detail="Invalid domain name format.")
+    
+    analysis_result = await domain_analyzer_service.analyze_domain_for_expiration_value(domain_name)
+    
+    if not analysis_result:
+        raise HTTPException(status_code=500, detail="Failed to perform domain analysis.")
+    
+    return analysis_result
 
