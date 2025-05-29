@@ -6,9 +6,9 @@ File: services/domain_analyzer_service.py
 import logging
 from typing import Optional, Dict, Any
 
-from ..core.models import Domain, LinkProfile, SpamLevel, serialize_model # Import serialize_model
-from .domain_service import DomainService # To potentially get fresh domain info if not provided
-from ..database.database import Database # To retrieve stored domain and link profile data
+from Link_Profiler.core.models import Domain, LinkProfile, SpamLevel, serialize_model # Changed to absolute import
+from Link_Profiler.services.domain_service import DomainService # Changed to absolute import
+from Link_Profiler.database.database import Database # Changed to absolute import
 
 
 class DomainAnalyzerService:

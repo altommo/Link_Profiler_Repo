@@ -11,7 +11,7 @@ import random
 from datetime import datetime # Import datetime for parsing WHOIS dates
 import aiohttp # Import aiohttp
 
-from ..core.models import Domain
+from Link_Profiler.core.models import Domain # Changed to absolute import
 
 # --- Placeholder for a future Domain API Client ---
 class BaseDomainAPIClient:

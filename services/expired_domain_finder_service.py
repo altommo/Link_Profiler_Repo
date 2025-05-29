@@ -6,9 +6,9 @@ File: services/expired_domain_finder_service.py
 import logging
 from typing import List, Dict, Any, Optional
 
-from .domain_service import DomainService
-from .domain_analyzer_service import DomainAnalyzerService
-from ..database.database import Database # To potentially store discovered valuable domains
+from Link_Profiler.services.domain_service import DomainService # Changed to absolute import
+from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Changed to absolute import
+from Link_Profiler.database.database import Database # Changed to absolute import
 
 
 class ExpiredDomainFinderService:

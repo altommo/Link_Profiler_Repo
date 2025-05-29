@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import re
 from datetime import datetime, timedelta
 
-from ..core.models import (
+from Link_Profiler.core.models import ( # Changed to absolute import
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
     CrawlJob, ContentType
 )

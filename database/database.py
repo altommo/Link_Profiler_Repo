@@ -4,8 +4,7 @@ File: database/database.py
 """
 
 from typing import List, Dict, Optional
-from ..core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model
-from ..core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics # Import models directly for from_dict
+from Link_Profiler.core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model # Changed to absolute import
 import json
 import os
 
