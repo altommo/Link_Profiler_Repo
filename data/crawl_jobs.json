@@ -1,0 +1,600 @@
+[
+    {
+        "id": "27bbafbb-98d9-4602-b33c-eb5c4f301091",
+        "target_url": "http://testtarget.com",
+        "job_type": "backlink_discovery",
+        "status": "failed",
+        "priority": 5,
+        "created_date": "2025-05-29T09:06:46.013895",
+        "started_date": "2025-05-29T09:06:46.028864",
+        "completed_date": "2025-05-29T09:06:46.040625",
+        "progress_percentage": 0.0,
+        "urls_discovered": 0,
+        "urls_crawled": 0,
+        "links_found": 0,
+        "errors_count": 1,
+        "config": {
+            "max_depth": 1,
+            "max_pages": 5,
+            "delay_seconds": 0.1,
+            "timeout_seconds": 30,
+            "user_agent": "LinkProfiler/1.0",
+            "respect_robots_txt": true,
+            "follow_redirects": true,
+            "extract_images": true,
+            "extract_pdfs": false,
+            "max_file_size_mb": 10,
+            "allowed_domains": null,
+            "blocked_domains": null,
+            "custom_headers": null
+        },
+        "results": {},
+        "error_log": [
+            "2025-05-29T09:06:46.037683: Crawl failed: 'NoneType' object is not a mapping"
+        ]
+    },
+    {
+        "id": "2cc5e6a4-3497-4ecd-b113-b1d0f917412e",
+        "target_url": "http://testtarget.com",
+        "job_type": "backlink_discovery",
+        "status": "failed",
+        "priority": 5,
+        "created_date": "2025-05-29T09:08:33.014203",
+        "started_date": "2025-05-29T09:08:33.023551",
+        "completed_date": "2025-05-29T09:08:33.035860",
+        "progress_percentage": 0.0,
+        "urls_discovered": 0,
+        "urls_crawled": 0,
+        "links_found": 0,
+        "errors_count": 1,
+        "config": {
+            "max_depth": 1,
+            "max_pages": 5,
+            "delay_seconds": 0.1,
+            "timeout_seconds": 30,
+            "user_agent": "LinkProfiler/1.0",
+            "respect_robots_txt": true,
+            "follow_redirects": true,
+            "extract_images": true,
+            "extract_pdfs": false,
+            "max_file_size_mb": 10,
+            "allowed_domains": null,
+            "blocked_domains": null,
+            "custom_headers": null
+        },
+        "results": {},
+        "error_log": [
+            "2025-05-29T09:08:33.033480: Crawl failed: 'NoneType' object is not a mapping"
+        ]
+    },
+    {
+        "id": "dc650e45-d065-4dd6-98d8-38c82ddfacc9",
+        "target_url": "http://testtarget.com",
+        "job_type": "backlink_discovery",
+        "status": "failed",
+        "priority": 5,
+        "created_date": "2025-05-29T09:09:33.589930",
+        "started_date": "2025-05-29T09:09:33.613634",
+        "completed_date": "2025-05-29T09:09:33.624036",
+        "progress_percentage": 0.0,
+        "urls_discovered": 0,
+        "urls_crawled": 0,
+        "links_found": 0,
+        "errors_count": 1,
+        "config": {
+            "max_depth": 1,
+            "max_pages": 5,
+            "delay_seconds": 0.1,
+            "timeout_seconds": 30,
+            "user_agent": "LinkProfiler/1.0",
+            "respect_robots_txt": true,
+            "follow_redirects": true,
+            "extract_images": true,
+            "extract_pdfs": false,
+            "max_file_size_mb": 10,
+            "allowed_domains": null,
+            "blocked_domains": null,
+            "custom_headers": null
+        },
+        "results": {},
+        "error_log": [
+            "2025-05-29T09:09:33.622009: Crawl failed: 'NoneType' object is not a mapping"
+        ]
+    },
+    {
+        "id": "a77a1137-c6e7-46c1-9597-528dfb8b54dd",
+        "target_url": "http://testtarget.com",
+        "job_type": "backlink_discovery",
+        "status": "completed",
+        "priority": 5,
+        "created_date": "2025-05-29T09:11:03.486779",
+        "started_date": "2025-05-29T09:11:03.508692",
+        "completed_date": "2025-05-29T09:11:08.230175",
+        "progress_percentage": 0.0,
+        "urls_discovered": 0,
+        "urls_crawled": 0,
+        "links_found": 0,
+        "errors_count": 0,
+        "config": {
+            "max_depth": 1,
+            "max_pages": 5,
+            "delay_seconds": 0.1,
+            "timeout_seconds": 30,
+            "user_agent": "LinkProfiler/1.0",
+            "respect_robots_txt": true,
+            "follow_redirects": true,
+            "extract_images": true,
+            "extract_pdfs": false,
+            "max_file_size_mb": 10,
+            "allowed_domains": null,
+            "blocked_domains": null,
+            "custom_headers": {}
+        },
+        "results": {
+            "target_domain_info": {
+                "name": "testtarget.com",
+                "authority_score": 47.26031610305606,
+                "trust_score": 99.94137395506061,
+                "spam_score": 61.28250964538523,
+                "age_days": 1975,
+                "country": null,
+                "ip_address": null,
+                "whois_data": {
+                    "domain_name": "TESTTARGET.COM",
+                    "registrar": "Simulated Registrar",
+                    "creation_date": "2020-01-01",
+                    "expiration_date": "2025-01-01",
+                    "name_servers": [
+                        "NS1.SIMULATED.COM",
+                        "NS2.SIMULATED.COM"
+                    ],
+                    "status": "ok",
+                    "emails": [
+                        "admin@testtarget.com"
+                    ],
+                    "updated_date": "2023-01-01"
+                },
+                "total_pages": 0,
+                "total_backlinks": 0,
+                "referring_domains": 0,
+                "first_seen": "2020-01-01T00:00:00",
+                "last_crawled": null
+            }
+        },
+        "error_log": []
+    },
+    {
+        "id": "953d083f-4a52-48e1-8d13-d8520e5e8f8d",
+        "target_url": "http://testtarget.com",
+        "job_type": "backlink_discovery",
+        "status": "completed",
+        "priority": 5,
+        "created_date": "2025-05-29T09:12:51.957467",
+        "started_date": "2025-05-29T09:12:51.969236",
+        "completed_date": "2025-05-29T09:12:54.369185",
+        "progress_percentage": 0.0,
+        "urls_discovered": 0,
+        "urls_crawled": 0,
+        "links_found": 0,
+        "errors_count": 0,
+        "config": {
+            "max_depth": 1,
+            "max_pages": 5,
+            "delay_seconds": 0.1,
+            "timeout_seconds": 30,
+            "user_agent": "LinkProfiler/1.0",
+            "respect_robots_txt": true,
+            "follow_redirects": true,
+            "extract_images": true,
+            "extract_pdfs": false,
+            "max_file_size_mb": 10,
+            "allowed_domains": null,
+            "blocked_domains": null,
+            "custom_headers": {}
+        },
+        "results": {
+            "target_domain_info": {
+                "name": "testtarget.com",
+                "authority_score": 59.273698863556554,
+                "trust_score": 10.471676697291144,
+                "spam_score": 97.4429372974544,
+                "age_days": 1975,
+                "country": null,
+                "ip_address": null,
+                "whois_data": {
+                    "domain_name": "TESTTARGET.COM",
+                    "registrar": "Simulated Registrar",
+                    "creation_date": "2020-01-01",
+                    "expiration_date": "2025-01-01",
+                    "name_servers": [
+                        "NS1.SIMULATED.COM",
+                        "NS2.SIMULATED.COM"
+                    ],
+                    "status": "ok",
+                    "emails": [
+                        "admin@testtarget.com"
+                    ],
+                    "updated_date": "2023-01-01"
+                },
+                "total_pages": 0,
+                "total_backlinks": 0,
+                "referring_domains": 0,
+                "first_seen": "2020-01-01T00:00:00",
+                "last_crawled": null
+            }
+        },
+        "error_log": []
+    },
+    {
+        "id": "83ee231a-60f0-4101-8f53-aed61d500ac8",
+        "target_url": "http://testtarget.com",
+        "job_type": "backlink_discovery",
+        "status": "completed",
+        "priority": 5,
+        "created_date": "2025-05-29T09:17:31.134739",
+        "started_date": "2025-05-29T09:17:31.147078",
+        "completed_date": "2025-05-29T09:17:33.530445",
+        "progress_percentage": 0.0,
+        "urls_discovered": 0,
+        "urls_crawled": 0,
+        "links_found": 0,
+        "errors_count": 0,
+        "config": {
+            "max_depth": 1,
+            "max_pages": 5,
+            "delay_seconds": 0.1,
+            "timeout_seconds": 30,
+            "user_agent": "LinkProfiler/1.0",
+            "respect_robots_txt": true,
+            "follow_redirects": true,
+            "extract_images": true,
+            "extract_pdfs": false,
+            "max_file_size_mb": 10,
+            "allowed_domains": null,
+            "blocked_domains": null,
+            "custom_headers": {}
+        },
+        "results": {
+            "target_domain_info": {
+                "name": "testtarget.com",
+                "authority_score": 85.16567071218024,
+                "trust_score": 45.3041576831007,
+                "spam_score": 73.54109603989724,
+                "age_days": 1975,
+                "country": null,
+                "ip_address": null,
+                "whois_data": {
+                    "domain_name": "TESTTARGET.COM",
+                    "registrar": "Simulated Registrar",
+                    "creation_date": "2020-01-01",
+                    "expiration_date": "2025-01-01",
+                    "name_servers": [
+                        "NS1.SIMULATED.COM",
+                        "NS2.SIMULATED.COM"
+                    ],
+                    "status": "ok",
+                    "emails": [
+                        "admin@testtarget.com"
+                    ],
+                    "updated_date": "2023-01-01"
+                },
+                "total_pages": 0,
+                "total_backlinks": 0,
+                "referring_domains": 0,
+                "first_seen": "2020-01-01T00:00:00",
+                "last_crawled": null
+            }
+        },
+        "error_log": []
+    },
+    {
+        "id": "bffc1c9e-4a6c-4c4b-974d-9076c664f6f0",
+        "target_url": "http://testtarget.com",
+        "job_type": "backlink_discovery",
+        "status": "completed",
+        "priority": 5,
+        "created_date": "2025-05-29T09:19:26.744624",
+        "started_date": "2025-05-29T09:19:26.759034",
+        "completed_date": "2025-05-29T09:19:29.152927",
+        "progress_percentage": 0.0,
+        "urls_discovered": 0,
+        "urls_crawled": 0,
+        "links_found": 0,
+        "errors_count": 0,
+        "config": {
+            "max_depth": 1,
+            "max_pages": 5,
+            "delay_seconds": 0.1,
+            "timeout_seconds": 30,
+            "user_agent": "LinkProfiler/1.0",
+            "respect_robots_txt": true,
+            "follow_redirects": true,
+            "extract_images": true,
+            "extract_pdfs": false,
+            "max_file_size_mb": 10,
+            "allowed_domains": null,
+            "blocked_domains": null,
+            "custom_headers": {}
+        },
+        "results": {
+            "target_domain_info": {
+                "name": "testtarget.com",
+                "authority_score": 12.085879613335216,
+                "trust_score": 42.97550692854772,
+                "spam_score": 36.46787714444889,
+                "age_days": 1975,
+                "country": null,
+                "ip_address": null,
+                "whois_data": {
+                    "domain_name": "TESTTARGET.COM",
+                    "registrar": "Simulated Registrar",
+                    "creation_date": "2020-01-01",
+                    "expiration_date": "2025-01-01",
+                    "name_servers": [
+                        "NS1.SIMULATED.COM",
+                        "NS2.SIMULATED.COM"
+                    ],
+                    "status": "ok",
+                    "emails": [
+                        "admin@testtarget.com"
+                    ],
+                    "updated_date": "2023-01-01"
+                },
+                "total_pages": 0,
+                "total_backlinks": 0,
+                "referring_domains": 0,
+                "first_seen": "2020-01-01T00:00:00",
+                "last_crawled": null
+            }
+        },
+        "error_log": []
+    },
+    {
+        "id": "507fed51-b987-478b-97c0-f2619e4dbd81",
+        "target_url": "http://testtarget.com",
+        "job_type": "backlink_discovery",
+        "status": "completed",
+        "priority": 5,
+        "created_date": "2025-05-29T09:20:37.867686",
+        "started_date": "2025-05-29T09:20:37.879885",
+        "completed_date": "2025-05-29T09:20:40.240475",
+        "progress_percentage": 0.0,
+        "urls_discovered": 0,
+        "urls_crawled": 0,
+        "links_found": 0,
+        "errors_count": 0,
+        "config": {
+            "max_depth": 1,
+            "max_pages": 5,
+            "delay_seconds": 0.1,
+            "timeout_seconds": 30,
+            "user_agent": "LinkProfiler/1.0",
+            "respect_robots_txt": true,
+            "follow_redirects": true,
+            "extract_images": true,
+            "extract_pdfs": false,
+            "max_file_size_mb": 10,
+            "allowed_domains": null,
+            "blocked_domains": null,
+            "custom_headers": {}
+        },
+        "results": {
+            "target_domain_info": {
+                "name": "testtarget.com",
+                "authority_score": 62.51198433023004,
+                "trust_score": 73.0299435968475,
+                "spam_score": 75.79654805377852,
+                "age_days": 1975,
+                "country": null,
+                "ip_address": null,
+                "whois_data": {
+                    "domain_name": "TESTTARGET.COM",
+                    "registrar": "Simulated Registrar",
+                    "creation_date": "2020-01-01",
+                    "expiration_date": "2025-01-01",
+                    "name_servers": [
+                        "NS1.SIMULATED.COM",
+                        "NS2.SIMULATED.COM"
+                    ],
+                    "status": "ok",
+                    "emails": [
+                        "admin@testtarget.com"
+                    ],
+                    "updated_date": "2023-01-01"
+                },
+                "total_pages": 0,
+                "total_backlinks": 0,
+                "referring_domains": 0,
+                "first_seen": "2020-01-01T00:00:00",
+                "last_crawled": null
+            }
+        },
+        "error_log": []
+    },
+    {
+        "id": "794c6ac2-bd40-40cb-893f-136cd328e9c2",
+        "target_url": "http://quotes.toscrape.com",
+        "job_type": "backlink_discovery",
+        "status": "completed",
+        "priority": 5,
+        "created_date": "2025-05-29T09:21:55.455810",
+        "started_date": "2025-05-29T09:21:55.466274",
+        "completed_date": "2025-05-29T09:21:58.291756",
+        "progress_percentage": 0.0,
+        "urls_discovered": 0,
+        "urls_crawled": 0,
+        "links_found": 0,
+        "errors_count": 0,
+        "config": {
+            "max_depth": 1,
+            "max_pages": 5,
+            "delay_seconds": 0.1,
+            "timeout_seconds": 30,
+            "user_agent": "LinkProfiler/1.0",
+            "respect_robots_txt": true,
+            "follow_redirects": true,
+            "extract_images": true,
+            "extract_pdfs": false,
+            "max_file_size_mb": 10,
+            "allowed_domains": null,
+            "blocked_domains": null,
+            "custom_headers": {}
+        },
+        "results": {
+            "target_domain_info": {
+                "name": "quotes.toscrape.com",
+                "authority_score": 44.228008846037746,
+                "trust_score": 38.323492761691405,
+                "spam_score": 65.24662656227066,
+                "age_days": 1975,
+                "country": null,
+                "ip_address": null,
+                "whois_data": {
+                    "domain_name": "QUOTES.TOSCRAPE.COM",
+                    "registrar": "Simulated Registrar",
+                    "creation_date": "2020-01-01",
+                    "expiration_date": "2025-01-01",
+                    "name_servers": [
+                        "NS1.SIMULATED.COM",
+                        "NS2.SIMULATED.COM"
+                    ],
+                    "status": "ok",
+                    "emails": [
+                        "admin@quotes.toscrape.com"
+                    ],
+                    "updated_date": "2023-01-01"
+                },
+                "total_pages": 0,
+                "total_backlinks": 0,
+                "referring_domains": 0,
+                "first_seen": "2020-01-01T00:00:00",
+                "last_crawled": null
+            }
+        },
+        "error_log": []
+    },
+    {
+        "id": "aef41954-8064-49f1-b6b0-c67d513ea7b9",
+        "target_url": "http://quotes.toscrape.com",
+        "job_type": "backlink_discovery",
+        "status": "completed",
+        "priority": 5,
+        "created_date": "2025-05-29T09:23:56.224715",
+        "started_date": "2025-05-29T09:23:56.236712",
+        "completed_date": "2025-05-29T09:23:57.548077",
+        "progress_percentage": 0.0,
+        "urls_discovered": 0,
+        "urls_crawled": 0,
+        "links_found": 0,
+        "errors_count": 0,
+        "config": {
+            "max_depth": 1,
+            "max_pages": 5,
+            "delay_seconds": 0.1,
+            "timeout_seconds": 30,
+            "user_agent": "LinkProfiler/1.0",
+            "respect_robots_txt": true,
+            "follow_redirects": true,
+            "extract_images": true,
+            "extract_pdfs": false,
+            "max_file_size_mb": 10,
+            "allowed_domains": null,
+            "blocked_domains": null,
+            "custom_headers": {}
+        },
+        "results": {
+            "target_domain_info": {
+                "name": "quotes.toscrape.com",
+                "authority_score": 7.92758214873035,
+                "trust_score": 31.251997706269353,
+                "spam_score": 63.29339777977038,
+                "age_days": 1975,
+                "country": null,
+                "ip_address": null,
+                "whois_data": {
+                    "domain_name": "QUOTES.TOSCRAPE.COM",
+                    "registrar": "Simulated Registrar",
+                    "creation_date": "2020-01-01",
+                    "expiration_date": "2025-01-01",
+                    "name_servers": [
+                        "NS1.SIMULATED.COM",
+                        "NS2.SIMULATED.COM"
+                    ],
+                    "status": "ok",
+                    "emails": [
+                        "admin@quotes.toscrape.com"
+                    ],
+                    "updated_date": "2023-01-01"
+                },
+                "total_pages": 0,
+                "total_backlinks": 0,
+                "referring_domains": 0,
+                "first_seen": "2020-01-01T00:00:00",
+                "last_crawled": null
+            }
+        },
+        "error_log": []
+    },
+    {
+        "id": "aacd6090-6c18-4882-a861-1cf01f4453cd",
+        "target_url": "http://quotes.toscrape.com",
+        "job_type": "backlink_discovery",
+        "status": "completed",
+        "priority": 5,
+        "created_date": "2025-05-29T09:25:21.594832",
+        "started_date": "2025-05-29T09:25:21.610646",
+        "completed_date": "2025-05-29T09:25:22.096576",
+        "progress_percentage": 0.0,
+        "urls_discovered": 0,
+        "urls_crawled": 0,
+        "links_found": 0,
+        "errors_count": 0,
+        "config": {
+            "max_depth": 1,
+            "max_pages": 5,
+            "delay_seconds": 0.1,
+            "timeout_seconds": 30,
+            "user_agent": "LinkProfiler/1.0",
+            "respect_robots_txt": true,
+            "follow_redirects": true,
+            "extract_images": true,
+            "extract_pdfs": false,
+            "max_file_size_mb": 10,
+            "allowed_domains": null,
+            "blocked_domains": null,
+            "custom_headers": {}
+        },
+        "results": {
+            "target_domain_info": {
+                "name": "quotes.toscrape.com",
+                "authority_score": 38.01094841830152,
+                "trust_score": 0.7224368051467978,
+                "spam_score": 64.72461268034176,
+                "age_days": 1975,
+                "country": null,
+                "ip_address": null,
+                "whois_data": {
+                    "domain_name": "QUOTES.TOSCRAPE.COM",
+                    "registrar": "Simulated Registrar",
+                    "creation_date": "2020-01-01",
+                    "expiration_date": "2025-01-01",
+                    "name_servers": [
+                        "NS1.SIMULATED.COM",
+                        "NS2.SIMULATED.COM"
+                    ],
+                    "status": "ok",
+                    "emails": [
+                        "admin@quotes.toscrape.com"
+                    ],
+                    "updated_date": "2023-01-01"
+                },
+                "total_pages": 0,
+                "total_backlinks": 0,
+                "referring_domains": 0,
+                "first_seen": "2020-01-01T00:00:00",
+                "last_crawled": null
+            }
+        },
+        "error_log": []
+    }
+]
