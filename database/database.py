@@ -4,7 +4,7 @@ File: database/database.py
 """
 
 from typing import List, Dict, Optional
-from Link_Profiler.core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model # Changed to absolute import
+from Link_Profiler.core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model, CrawlStatus # Changed to absolute import and added CrawlStatus
 import json
 import os
 
@@ -201,4 +201,3 @@ class Database:
     def get_seo_metrics(self, url_str: str) -> Optional[SEOMetrics]:
         """Retrieves SEO metrics for a URL."""
         return next((sm for sm in self._seo_metrics if sm.url == url_str), None)
-
