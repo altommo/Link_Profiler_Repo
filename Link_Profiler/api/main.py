@@ -194,8 +194,8 @@ class CrawlJobResponse(BaseModel):
                  job_dict['completed_date'] = None # Or handle as error
 
         # Convert CrawlError dataclasses to CrawlErrorResponse Pydantic models
-        if 'error_log' in job_dict and isinstance(job_dict['error_log'], list):
-            job_dict['error_log'] = [CrawlErrorResponse.from_crawl_error(err) for err in job.error_log]
+        # Ensure job.error_log is treated as a list of CrawlError objects
+        job_dict['error_log'] = [CrawlErrorResponse.from_crawl_error(err) for err in job.error_log]
 
         return cls(**job_dict)
 

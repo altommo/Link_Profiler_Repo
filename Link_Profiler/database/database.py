@@ -27,6 +27,12 @@ class Database:
     """
     def __init__(self, db_url: str = "postgresql://postgres:postgres@localhost:5432/link_profiler_db"):
         self.engine = create_engine(db_url)
+        
+        # Check if we need to reset the database
+        if os.getenv("RESET_DB_ON_START", "false").lower() == "true":
+            self._drop_all_tables()
+            logger.info("Database tables reset successfully.")
+
         self.Session = scoped_session(sessionmaker(bind=self.engine))
         self._create_tables()
 
@@ -34,6 +40,12 @@ class Database:
         """Creates database tables based on SQLAlchemy models."""
         Base.metadata.create_all(self.engine)
         logger.info("Database tables checked/created.")
+
+    def _drop_all_tables(self):
+        """Drops all tables defined by Base.metadata."""
+        logger.warning("Dropping all database tables...")
+        Base.metadata.drop_all(self.engine)
+        logger.warning("All database tables dropped.")
 
     def _get_session(self):
         """Returns a new session from the session factory."""

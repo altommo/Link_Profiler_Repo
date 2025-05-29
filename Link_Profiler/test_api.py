@@ -29,12 +29,18 @@ async def test_start_crawl_job(target_url: str, initial_seed_urls: List[str]):
     async with httpx.AsyncClient() as client:
         response = await client.post(f"{BASE_URL}/crawl/start_backlink_discovery", json=payload)
         print(f"Status Code: {response.status_code}")
-        job_response = response.json()
-        print(f"Response: {json.dumps(job_response, indent=2)}")
-        response.raise_for_status()
-        assert "id" in job_response
-        print(f"Crawl job started with ID: {job_response['id']}")
-        return job_response['id']
+        
+        if response.status_code == 202: # Check for successful job creation
+            job_response = response.json()
+            print(f"Response: {json.dumps(job_response, indent=2)}")
+            assert "id" in job_response
+            print(f"Crawl job started with ID: {job_response['id']}")
+            return job_response['id']
+        else:
+            print(f"Error starting crawl job: {response.text}")
+            response.raise_for_status() # Raise exception for other errors
+            return None
+
 
 async def test_get_crawl_status(job_id: str) -> Tuple[bool, bool]:
     """
@@ -48,19 +54,28 @@ async def test_get_crawl_status(job_id: str) -> Tuple[bool, bool]:
         while True:
             response = await client.get(f"{BASE_URL}/crawl/status/{job_id}")
             print(f"Status Code: {response.status_code}")
-            status_response = response.json()
-            print(f"Current Status: {status_response['status']}, Progress: {status_response['progress_percentage']:.2f}%")
             
-            if status_response['status'] == "completed":
-                job_completed_successfully = True
-                # Check if 'link_profile_summary' exists and is not empty
-                if status_response.get('results', {}).get('link_profile_summary', {}).get('total_backlinks', 0) > 0:
-                    link_profile_generated = True
-                print(f"Final Status: {json.dumps(status_response, indent=2)}")
+            if response.status_code == 200:
+                status_response = response.json()
+                print(f"Current Status: {status_response['status']}, Progress: {status_response['progress_percentage']:.2f}%")
+                
+                if status_response['status'] == "completed":
+                    job_completed_successfully = True
+                    # Check if 'link_profile_summary' exists and is not empty
+                    if status_response.get('results', {}).get('link_profile_summary', {}).get('total_backlinks', 0) > 0:
+                        link_profile_generated = True
+                    print(f"Final Status: {json.dumps(status_response, indent=2)}")
+                    break
+                elif status_response['status'] == "failed":
+                    print(f"Final Status: {json.dumps(status_response, indent=2)}")
+                    break
+            elif response.status_code == 404:
+                print(f"Job {job_id} not found. It might have failed immediately or been cleaned up.")
                 break
-            elif status_response['status'] == "failed":
-                print(f"Final Status: {json.dumps(status_response, indent=2)}")
-                break
+            else:
+                print(f"Unexpected status code: {response.status_code}. Response: {response.text}")
+                break # Exit loop on unexpected error
+
             await asyncio.sleep(2) # Wait a bit before polling again
     return job_completed_successfully, link_profile_generated
 
@@ -112,7 +127,7 @@ async def main():
         "http://quotes.toscrape.com", # Target URL
         ["http://quotes.toscrape.com/page/1/", "http://quotes.toscrape.com/page/2/"] # Seed URLs
     )
-    if crawl_job_id:
+    if crawl_job_id: # Only proceed if job was successfully created
         job_success, profile_generated = await test_get_crawl_status(crawl_job_id)
         if job_success and profile_generated:
             try:
