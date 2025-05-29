@@ -38,7 +38,7 @@ from datetime import datetime # Import datetime for Pydantic models
 from contextlib import asynccontextmanager # Import asynccontextmanager
 
 from Link_Profiler.services.crawl_service import CrawlService # Changed to absolute import
-from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient # Changed to absolute import
+from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient # Changed to absolute import
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Changed to absolute import
 from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService # Changed to absolute import
 from Link_Profiler.database.database import Database # Changed to absolute import
@@ -53,7 +53,14 @@ db = Database()
 
 # Initialize DomainService globally, but manage its lifecycle with lifespan
 # The api_client is passed here, and its session will be managed by the lifespan event.
-domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient())
+# Determine which DomainAPIClient to use
+if os.getenv("USE_REAL_DOMAIN_API", "false").lower() == "true":
+    # REAL_DOMAIN_API_KEY should be set as an environment variable
+    # e.g., export REAL_DOMAIN_API_KEY="your_api_key_here"
+    domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=os.getenv("REAL_DOMAIN_API_KEY", "dummy_key")))
+else:
+    domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient())
+
 
 # Initialize other services that depend on domain_service
 crawl_service = CrawlService(db) 

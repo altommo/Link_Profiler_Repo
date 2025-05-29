@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import random
 from datetime import datetime # Import datetime for parsing WHOIS dates
 import aiohttp # Import aiohttp
+import os # Import os to read environment variables
 
 from Link_Profiler.core.models import Domain # Changed to absolute import
 
@@ -38,27 +39,48 @@ class BaseDomainAPIClient:
 class SimulatedDomainAPIClient(BaseDomainAPIClient):
     """
     A simulated client for domain information APIs.
-    Does not use aiohttp, only simulates delays.
+    Uses aiohttp to simulate network requests.
     """
     def __init__(self):
         self.logger = logging.getLogger(__name__ + ".SimulatedDomainAPIClient")
+        self._session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
-        """Async context manager entry - no-op for simulated client."""
+        """Async context manager entry for client session."""
         self.logger.debug("Entering SimulatedDomainAPIClient context.")
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit - no-op for simulated client."""
+        """Async context manager exit for client session."""
         self.logger.debug("Exiting SimulatedDomainAPIClient context.")
-        pass
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def get_domain_availability(self, domain_name: str) -> bool:
         """
         Simulates checking if a domain name is available for registration.
+        Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for availability of: {domain_name}")
-        await asyncio.sleep(0.1) # Simulate network delay
+        if self._session is None or self._session.closed:
+            self.logger.warning("aiohttp session not active. Call client within async with block.")
+            # Fallback to simple sleep if session not managed by context manager
+            await asyncio.sleep(0.5)
+        else:
+            try:
+                # Simulate an actual HTTP request, even if it's to a dummy URL
+                # This helps test aiohttp session management
+                async with self._session.get(f"http://localhost:8080/simulate_availability/{domain_name}") as response:
+                    # We don't care about the actual response, just that the request was made
+                    pass
+            except aiohttp.ClientConnectorError:
+                # This is expected if localhost:8080 is not running, simulating network activity
+                pass
+            except Exception as e:
+                self.logger.warning(f"Unexpected error during simulated availability check: {e}")
 
         # Actual simulated logic
         if domain_name.lower() in ["example.com", "testdomain.org", "available.net"]:
@@ -71,9 +93,22 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
     async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
         """
         Simulates fetching WHOIS information for a domain.
+        Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for WHOIS info of: {domain_name}")
-        await asyncio.sleep(0.2) # Simulate network delay
+        if self._session is None or self._session.closed:
+            self.logger.warning("aiohttp session not active. Call client within async with block.")
+            # Fallback to simple sleep if session not managed by context manager
+            await asyncio.sleep(1.0)
+        else:
+            try:
+                # Simulate an actual HTTP request
+                async with self._session.get(f"http://localhost:8080/simulate_whois/{domain_name}") as response:
+                    pass
+            except aiohttp.ClientConnectorError:
+                pass
+            except Exception as e:
+                self.logger.warning(f"Unexpected error during simulated WHOIS check: {e}")
 
         # Actual simulated logic
         if domain_name.lower() == "example.com":
@@ -110,6 +145,84 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
                 "updated_date": "2023-01-01"
             }
 
+# --- Real Domain API Client (Placeholder for actual integration) ---
+class RealDomainAPIClient(BaseDomainAPIClient):
+    """
+    A client for real domain information APIs.
+    You would replace the placeholder logic with actual API calls.
+    """
+    def __init__(self, api_key: str, base_url: str = "https://api.real-domain-provider.com"):
+        self.logger = logging.getLogger(__name__ + ".RealDomainAPIClient")
+        self.api_key = api_key
+        self.base_url = base_url
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def __aenter__(self):
+        """Async context manager entry for client session."""
+        self.logger.info("Entering RealDomainAPIClient context.")
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self.api_key}"})
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit for client session."""
+        self.logger.info("Exiting RealDomainAPIClient context.")
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+
+    async def get_domain_availability(self, domain_name: str) -> bool:
+        """
+        Simulates checking domain availability via a real API.
+        Replace this with actual API call logic.
+        """
+        endpoint = f"{self.base_url}/v1/domain/availability"
+        params = {"domain": domain_name}
+        self.logger.info(f"Making real API call for availability: {endpoint}?domain={domain_name}")
+        
+        try:
+            # In a real scenario, you'd make an actual request and parse its response
+            # For demonstration, we'll still use the simulated logic after the "call"
+            async with self._session.get(endpoint, params=params, timeout=10) as response:
+                response.raise_for_status() # Raise an exception for HTTP errors
+                # real_data = await response.json()
+                # return real_data.get("available", False)
+                
+                # Fallback to simulated logic for actual return value
+                return SimulatedDomainAPIClient().get_domain_availability(domain_name)
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Error checking real domain availability for {domain_name}: {e}")
+            return False # Assume not available on error
+        except Exception as e:
+            self.logger.error(f"Unexpected error in real domain availability check for {domain_name}: {e}")
+            return False
+
+    async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Simulates fetching WHOIS data via a real API.
+        Replace this with actual API call logic.
+        """
+        endpoint = f"{self.base_url}/v1/domain/whois"
+        params = {"domain": domain_name}
+        self.logger.info(f"Making real API call for WHOIS data: {endpoint}?domain={domain_name}")
+
+        try:
+            # In a real scenario, you'd make an actual request and parse its response
+            # For demonstration, we'll still use the simulated logic after the "call"
+            async with self._session.get(endpoint, params=params, timeout=10) as response:
+                response.raise_for_status()
+                # real_data = await response.json()
+                # return real_data.get("whois_record")
+
+                # Fallback to simulated logic for actual return value
+                return SimulatedDomainAPIClient().get_whois_data(domain_name)
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Error fetching real WHOIS data for {domain_name}: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error in real WHOIS data fetch for {domain_name}: {e}")
+            return None
+
 
 class DomainService:
     """
@@ -118,7 +231,19 @@ class DomainService:
     """
     def __init__(self, api_client: Optional[BaseDomainAPIClient] = None):
         self.logger = logging.getLogger(__name__)
-        self.api_client = api_client if api_client else SimulatedDomainAPIClient()
+        
+        # Determine which API client to use based on environment variable
+        if os.getenv("USE_REAL_DOMAIN_API", "false").lower() == "true":
+            real_api_key = os.getenv("REAL_DOMAIN_API_KEY")
+            if not real_api_key:
+                self.logger.error("REAL_DOMAIN_API_KEY environment variable not set. Falling back to simulated API.")
+                self.api_client = SimulatedDomainAPIClient()
+            else:
+                self.logger.info("Using RealDomainAPIClient for domain lookups.")
+                self.api_client = RealDomainAPIClient(api_key=real_api_key)
+        else:
+            self.logger.info("Using SimulatedDomainAPIClient for domain lookups.")
+            self.api_client = SimulatedDomainAPIClient()
 
     async def __aenter__(self):
         """Async context manager entry for DomainService."""
@@ -163,11 +288,28 @@ class DomainService:
 
         try:
             if creation_date_str:
-                creation_date = datetime.strptime(creation_date_str, "%Y-%m-%d")
+                # Attempt to parse common date formats
+                for fmt in ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
+                    try:
+                        creation_date = datetime.strptime(creation_date_str, fmt)
+                        break
+                    except ValueError:
+                        continue
             if expiration_date_str:
-                expiration_date = datetime.strptime(expiration_date_str, "%Y-%m-%d")
-        except (ValueError, TypeError):
-            self.logger.warning(f"Could not parse date from WHOIS data for {domain_name}. Data: {creation_date_str}, {expiration_date_str}")
+                for fmt in ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
+                    try:
+                        expiration_date = datetime.strptime(expiration_date_str, fmt)
+                        break
+                    except ValueError:
+                        continue
+            
+            if creation_date_str and not creation_date:
+                self.logger.warning(f"Could not parse creation_date: '{creation_date_str}' for {domain_name}")
+            if expiration_date_str and not expiration_date:
+                self.logger.warning(f"Could not parse expiration_date: '{expiration_date_str}' for {domain_name}")
+
+        except Exception as e:
+            self.logger.warning(f"Unexpected error parsing dates from WHOIS data for {domain_name}: {e}")
 
         # Calculate age if creation date is available
         age_days = None

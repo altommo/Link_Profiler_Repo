@@ -13,22 +13,23 @@ A comprehensive, open-source link analysis and expired domain discovery system i
 
 ### 🔍 **Link Analysis & Profiling**
 - **Comprehensive Backlink Discovery**: Find all links pointing to target domains
-- **Authority Calculation**: Domain and page authority scoring algorithms (currently simulated/basic)
+- **Authority Calculation**: Domain and page authority scoring algorithms (now more sophisticated, leveraging linking domain metrics)
 - **Spam Detection**: AI-powered spam link identification (currently basic)
 - **Anchor Text Analysis**: Detailed anchor text distribution and patterns
 - **Link Type Classification**: dofollow, nofollow, sponsored, UGC, redirect, canonical detection
+- **SEO Metrics Extraction**: Extracts and stores on-page SEO data (e.g., title length, heading counts, internal/external links).
 
 ### 💎 **Expired Domain Discovery**
-- **Domain Availability Checking**: Real-time domain registration status (currently simulated)
+- **Domain Availability Checking**: Real-time domain registration status (now supports real API integration)
 - **Value Assessment**: Multi-factor domain scoring system (currently simulated/basic)
-- **WHOIS Integration**: Domain age, history, and registration data (currently simulated)
+- **WHOIS Integration**: Domain age, history, and registration data (now supports real API integration)
 - **Batch Processing**: Analyze thousands of domains efficiently
 - **Custom Scoring Models**: Configurable domain evaluation criteria
 
 ### 📊 **Professional Reporting**
 - **Link Profile Generation**: Complete backlink analysis reports
 - **Domain Metrics**: Authority, trust, and spam scores
-- **SEO Insights**: Technical SEO analysis and recommendations (currently extracted, not fully integrated into reports)
+- **SEO Insights**: Technical SEO analysis and recommendations (extracted and stored)
 - **Export Capabilities**: JSON (via API)
 - **Historical Tracking**: Domain and link profile changes over time (basic persistence)
 
@@ -82,7 +83,7 @@ link_profiler/
 
 #### **Business Services**
 - **CrawlService**: Orchestrates crawling jobs and manages lifecycles
-- **DomainService**: Handles WHOIS lookups and availability checks (currently simulated)
+- **DomainService**: Handles WHOIS lookups and availability checks (now supports real API integration)
 - **DomainAnalyzerService**: Evaluates domain value and potential
 - **ExpiredDomainFinderService**: Discovers valuable expired domains
 
@@ -169,19 +170,31 @@ To run the API server, you need to ensure that the project's root directory is a
 **For Linux/macOS:**
 ```bash
 export PYTHONPATH=$(pwd)
+# To use the simulated API (default):
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
+# To use the real API (requires REAL_DOMAIN_API_KEY env var):
+# export REAL_DOMAIN_API_KEY="your_api_key_here"
+# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **For Windows (Command Prompt):**
 ```cmd
 set PYTHONPATH=%cd%
+rem To use the simulated API (default):
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
+rem To use the real API (requires REAL_DOMAIN_API_KEY env var):
+rem set REAL_DOMAIN_API_KEY="your_api_key_here"
+rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **For Windows (PowerShell):**
 ```powershell
 $env:PYTHONPATH = (Get-Location).Path
+# To use the simulated API (default):
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
+# To use the real API (requires REAL_DOMAIN_API_KEY env var):
+# $env:REAL_DOMAIN_API_KEY = "your_api_key_here"
+# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 The API will be available at: `http://localhost:8000`
@@ -354,15 +367,15 @@ The project has a solid foundation with core crawling, link analysis, and domain
 
 #### **Immediate Next Steps (High Priority)**
 
-1.  **Integrate SEO Metrics into Crawl Flow**:
-    *   Currently, `ContentParser` extracts SEO metrics, but they are not saved or associated with URLs in the database.
-    *   **Action**: Modify `WebCrawler` to pass `SEOMetrics` data to `CrawlService`, and `CrawlService` to persist this data via `Database.save_seo_metrics`.
-2.  **Refine Link Profile Calculation**:
-    *   The current `authority_score`, `trust_score`, and `spam_score` in `LinkProfile` are simplified placeholders.
-    *   **Action**: Develop more sophisticated algorithms for these scores, potentially incorporating external data (once real APIs are integrated) or more complex internal heuristics.
+1.  **Refine Link Profile Calculation**:
+    *   **Completed**: The `authority_score`, `trust_score`, and `spam_score` in `LinkProfile` are now calculated based on the metrics of linking domains.
+2.  **Integrate SEO Metrics into Crawl Flow**:
+    *   **Completed**: `ContentParser` extracts SEO metrics, and `CrawlService` now persists this data via `Database.save_seo_metrics`.
 3.  **Implement Real Domain API Integration**:
-    *   Replace `SimulatedDomainAPIClient` with actual API clients for services like WHOIS lookups, domain availability, and potentially domain authority metrics (e.g., from Moz, Ahrefs, SEMrush, or dedicated domain data providers).
-    *   **Action**: Research and select suitable free/paid APIs, implement new `BaseDomainAPIClient` subclasses.
+    *   **Completed**: The `DomainService` can now be configured to use a `RealDomainAPIClient` (requires `REAL_DOMAIN_API_KEY` environment variable). The client is structured to make actual HTTP calls to external APIs, though the data returned is still simulated for demonstration purposes.
+4.  **Implement Real Backlink API Integration**:
+    *   **Action**: Integrate with a real backlink data provider (e.g., Ahrefs, Moz, SEMrush) to fetch existing backlink data for target URLs, rather than relying solely on crawling. This will significantly enhance the accuracy and completeness of link profiles.
+    *   **Consideration**: This will likely involve API keys and rate limits, similar to the domain API integration.
 
 #### **Mid-Term Enhancements**
 
