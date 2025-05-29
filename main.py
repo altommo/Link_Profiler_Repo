@@ -7,17 +7,15 @@ import uvicorn
 import os
 import sys
 
-# Add the project root to the Python path to allow absolute imports
-# This assumes 'main.py' is in the project root and 'api' is a subdirectory
-# This line is kept as a defensive measure, though --app-dir should handle it.
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+# Removed sys.path.insert here. Relying on uvicorn's app_dir.
 
 # The application is now imported as a module from the Link_Profiler package.
 # This requires the 'Link_Profiler' directory to be on the PYTHONPATH,
 # which is typically handled by 'pip install -e .' or by setting PYTHONPATH.
 # When running with uvicorn, --app-dir . ensures the current directory
 # (which should be the project root) is added to sys.path.
-from Link_Profiler.api.main import app
+# The import below is commented out as it's not needed for uvicorn.run()
+# from Link_Profiler.api.main import app 
 
 if __name__ == "__main__":
     # Run uvicorn, specifying the app module and the application directory.
