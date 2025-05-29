@@ -287,6 +287,22 @@ class CrawlConfig:
             return False
         return True
 
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'CrawlConfig':
+        """Create a CrawlConfig instance from a dictionary."""
+        # Handle sets which are serialized as lists
+        if 'allowed_domains' in data and isinstance(data['allowed_domains'], list):
+            data['allowed_domains'] = set(data['allowed_domains'])
+        if 'blocked_domains' in data and isinstance(data['blocked_domains'], list):
+            data['blocked_domains'] = set(data['blocked_domains'])
+        
+        # Filter out any keys not in the dataclass constructor
+        # This prevents errors if the dict contains extra serialization metadata
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+
+        return cls(**filtered_data)
+
 
 @dataclass 
 class SEOMetrics:
