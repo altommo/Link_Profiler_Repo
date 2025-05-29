@@ -352,7 +352,7 @@ class CrawlConfig:
     max_file_size_mb: int = 10
     allowed_domains: Set[str] = field(default_factory=set)
     blocked_domains: Set[str] = field(default_factory=set)
-    custom_headers: Dict[str, str] = field(default_factory=dict)
+    custom_headers: Dict[str, str] = field(default_factory=dict) # Ensure default is a dict
     
     def is_domain_allowed(self, domain: str) -> bool:
         """Check if domain is allowed for crawling"""
@@ -371,6 +371,10 @@ class CrawlConfig:
         if 'blocked_domains' in data and isinstance(data['blocked_domains'], list):
             data['blocked_domains'] = set(data['blocked_domains'])
         
+        # Ensure custom_headers is a dict, even if it was None in input data
+        if 'custom_headers' in data and data['custom_headers'] is None:
+            data['custom_headers'] = {}
+
         # Filter out any keys not in the dataclass constructor
         # This prevents errors if the dict contains extra serialization metadata
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
