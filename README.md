@@ -13,24 +13,24 @@ A comprehensive, open-source link analysis and expired domain discovery system i
 
 ### 🔍 **Link Analysis & Profiling**
 - **Comprehensive Backlink Discovery**: Find all links pointing to target domains
-- **Authority Calculation**: Domain and page authority scoring algorithms
-- **Spam Detection**: AI-powered spam link identification
+- **Authority Calculation**: Domain and page authority scoring algorithms (currently simulated/basic)
+- **Spam Detection**: AI-powered spam link identification (currently basic)
 - **Anchor Text Analysis**: Detailed anchor text distribution and patterns
-- **Link Type Classification**: dofollow, nofollow, sponsored, UGC detection
+- **Link Type Classification**: dofollow, nofollow, sponsored, UGC, redirect, canonical detection
 
 ### 💎 **Expired Domain Discovery**
-- **Domain Availability Checking**: Real-time domain registration status
-- **Value Assessment**: Multi-factor domain scoring system
-- **WHOIS Integration**: Domain age, history, and registration data
+- **Domain Availability Checking**: Real-time domain registration status (currently simulated)
+- **Value Assessment**: Multi-factor domain scoring system (currently simulated/basic)
+- **WHOIS Integration**: Domain age, history, and registration data (currently simulated)
 - **Batch Processing**: Analyze thousands of domains efficiently
 - **Custom Scoring Models**: Configurable domain evaluation criteria
 
 ### 📊 **Professional Reporting**
 - **Link Profile Generation**: Complete backlink analysis reports
 - **Domain Metrics**: Authority, trust, and spam scores
-- **SEO Insights**: Technical SEO analysis and recommendations
-- **Export Capabilities**: JSON, CSV, and custom report formats
-- **Historical Tracking**: Domain and link profile changes over time
+- **SEO Insights**: Technical SEO analysis and recommendations (currently extracted, not fully integrated into reports)
+- **Export Capabilities**: JSON (via API)
+- **Historical Tracking**: Domain and link profile changes over time (basic persistence)
 
 ### 🚀 **RESTful API**
 - **Complete API Coverage**: All features accessible via REST endpoints
@@ -47,24 +47,28 @@ link_profiler/
 ├── core/                   # Core data models and schemas
 │   └── models.py          # Domain, URL, Backlink, LinkProfile models
 ├── crawlers/              # Web crawling engines
-│   └── web_crawler.py     # Main crawler with rate limiting
+│   ├── web_crawler.py     # Main crawler with rate limiting
+│   ├── link_extractor.py  # Extracts links from HTML
+│   ├── content_parser.py  # Extracts SEO metrics from content
+│   └── robots_parser.py   # Handles robots.txt fetching and parsing
 ├── services/              # Business logic layer
 │   ├── crawl_service.py           # Crawling orchestration
 │   ├── domain_service.py          # Domain information retrieval
 │   ├── domain_analyzer_service.py # Domain value analysis
 │   └── expired_domain_finder_service.py # Expired domain discovery
 ├── database/              # Data persistence layer
-│   └── database.py        # JSON-based storage (easily replaceable)
+│   ├── database.py        # SQLAlchemy ORM for PostgreSQL
+│   └── models.py          # SQLAlchemy ORM models
 ├── api/                   # REST API endpoints
 │   └── main.py           # FastAPI application and routes
-└── main.py               # Application entry point
+└── setup.py              # Project setup and dependencies
 ```
 
 ### **Key Components**
 
 #### **Core Models** (`core/models.py`)
 - **Domain**: Authority scores, trust metrics, spam detection
-- **URL**: Status tracking, metadata, crawl information
+- **URL**: Status tracking, metadata, crawl information  
 - **Backlink**: Source/target mapping, anchor text, link types
 - **LinkProfile**: Aggregated metrics and analysis results
 - **CrawlJob**: Job status, progress tracking, error handling
@@ -78,14 +82,19 @@ link_profiler/
 
 #### **Business Services**
 - **CrawlService**: Orchestrates crawling jobs and manages lifecycles
-- **DomainService**: Handles WHOIS lookups and availability checks
+- **DomainService**: Handles WHOIS lookups and availability checks (currently simulated)
 - **DomainAnalyzerService**: Evaluates domain value and potential
 - **ExpiredDomainFinderService**: Discovers valuable expired domains
+
+#### **Data Persistence** (`database/`)
+- **PostgreSQL Database**: Used for structured storage of all crawl data, link profiles, and domain information.
+- **SQLAlchemy ORM**: Provides an object-relational mapping layer for Python objects to database tables.
+- **Upsert Logic**: Ensures data integrity by updating existing records or inserting new ones, preventing duplicate key errors.
 
 ## 🛠 Installation & Setup
 
 ### **Prerequisites**
-- Python 3.8+
+- Python 3.8+ 
 - pip (Python package manager)
 - 4GB+ RAM recommended for large crawls
 - Stable internet connection
@@ -155,7 +164,7 @@ psycopg2-binary  # PostgreSQL adapter for Python
 
 To run the API server, you need to ensure that the project's root directory is added to your `PYTHONPATH`. This allows Python to correctly resolve internal package imports.
 
-**From the project root directory (where `main.py` is located):**
+**From the project root directory (where `setup.py` is located):**
 
 **For Linux/macOS:**
 ```bash
@@ -284,7 +293,7 @@ For expired domain discovery:
 - **Concurrent Requests**: 5-50+ parallel connections
 - **Throughput**: 100-1000+ pages per minute (depending on configuration)
 - **Memory Usage**: ~50-200MB for typical crawls
-- **Storage**: JSON files (~1KB per domain, ~500B per link) - **Note: Now using PostgreSQL**
+- **Storage**: PostgreSQL Database for structured, queryable data.
 - **Scalability**: Horizontal scaling via multiple instances
 
 ### **Rate Limiting & Ethics**
@@ -341,21 +350,45 @@ For expired domain discovery:
 
 ## 🔮 Roadmap & Future Enhancements
 
-### **Planned Features**
-- **Advanced Analytics**: Machine learning-based link quality scoring
-- **Real-time Monitoring**: Live domain and link change tracking
-- **Competitor Analysis**: Side-by-side domain comparisons
-- **API Keys & Authentication**: User management and rate limiting
-- **Webhook Support**: Real-time notifications for job completion
-- **Export Formats**: PDF reports, Excel spreadsheets
-- **Historical Data**: Long-term trend analysis and reporting
+The project has a solid foundation with core crawling, link analysis, and domain assessment capabilities. Future development will focus on enhancing these features, improving scalability, and integrating with real-world data sources.
 
-### **Scalability Improvements**
-- **Distributed Crawling**: Multi-server coordination
-- **Queue Management**: Redis/RabbitMQ integration
-- **Caching Layer**: Redis for frequently accessed data
-- **Load Balancing**: Multiple API instances
-- **Monitoring**: Prometheus/Grafana dashboards
+#### **Immediate Next Steps (High Priority)**
+
+1.  **Integrate SEO Metrics into Crawl Flow**:
+    *   Currently, `ContentParser` extracts SEO metrics, but they are not saved or associated with URLs in the database.
+    *   **Action**: Modify `WebCrawler` to pass `SEOMetrics` data to `CrawlService`, and `CrawlService` to persist this data via `Database.save_seo_metrics`.
+2.  **Refine Link Profile Calculation**:
+    *   The current `authority_score`, `trust_score`, and `spam_score` in `LinkProfile` are simplified placeholders.
+    *   **Action**: Develop more sophisticated algorithms for these scores, potentially incorporating external data (once real APIs are integrated) or more complex internal heuristics.
+3.  **Implement Real Domain API Integration**:
+    *   Replace `SimulatedDomainAPIClient` with actual API clients for services like WHOIS lookups, domain availability, and potentially domain authority metrics (e.g., from Moz, Ahrefs, SEMrush, or dedicated domain data providers).
+    *   **Action**: Research and select suitable free/paid APIs, implement new `BaseDomainAPIClient` subclasses.
+
+#### **Mid-Term Enhancements**
+
+1.  **Advanced Crawl Management**:
+    *   Add API endpoints and internal logic to pause, resume, and stop active crawl jobs gracefully.
+    *   Implement a job queue system (e.g., using Redis and Celery) for more robust background task management and distributed processing.
+2.  **Comprehensive Error Reporting**:
+    *   Enhance `CrawlJob`'s `error_log` to capture more structured and actionable error details during crawling.
+    *   Implement a mechanism to retry failed URLs or segments of a crawl.
+3.  **User Interface / Dashboard**:
+    *   Develop a simple web-based UI to interact with the FastAPI endpoints, visualise crawl progress, link profiles, and domain analysis results.
+
+#### **Long-Term Vision**
+
+1.  **Distributed Crawling Architecture**:
+    *   Enable the crawler to run across multiple machines or containers for large-scale data collection.
+    *   Implement a robust message queue (e.g., RabbitMQ, Kafka) for inter-service communication and task distribution.
+2.  **Machine Learning for Link Quality**:
+    *   Develop ML models to predict link quality, spam likelihood, and domain value based on a wider array of features.
+3.  **Real-time Monitoring & Alerts**:
+    *   Integrate with monitoring tools (e.g., Prometheus, Grafana) to track crawler performance, API health, and database metrics.
+    *   Implement webhook support for real-time notifications on job completion or critical errors.
+4.  **Authentication & User Management**:
+    *   Add API key management and user authentication for secure access to the system.
+5.  **Advanced Reporting & Export**:
+    *   Generate professional PDF reports, Excel spreadsheets, and other custom export formats for analysis results.
 
 ## 🤝 Contributing
 
@@ -363,7 +396,7 @@ We welcome contributions! Areas where you can help:
 
 ### **Development**
 - Additional link analysis algorithms
-- New domain scoring models
+- New domain scoring models  
 - Performance optimizations
 - Bug fixes and stability improvements
 
@@ -381,15 +414,15 @@ We welcome contributions! Areas where you can help:
 
 ## 📄 License
 
-This project is open source and available under the MIT License.
+This project is open source and available under the MIT License. 
 
 ## 🆘 Support & Community
 
 ### **Getting Help**
-1. **Documentation**: Check this README and API docs first
-2. **Issues**: Create GitHub issues for bugs and feature requests
-3. **Discussions**: Use GitHub Discussions for questions and ideas
-4. **Code Review**: Submit pull requests for improvements
+1.  **Documentation**: Check this README and API docs first
+2.  **Issues**: Create GitHub issues for bugs and feature requests
+3.  **Discussions**: Use GitHub Discussions for questions and ideas
+4.  **Code Review**: Submit pull requests for improvements
 
 ### **Best Practices**
 - Start with small test crawls before large operations
