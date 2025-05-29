@@ -10,10 +10,10 @@ from uuid import uuid4
 from datetime import datetime
 from urllib.parse import urlparse # Import urlparse
 
-from ..core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model
-from ..crawlers.web_crawler import WebCrawler, CrawlResult
-from ..database.database import Database
-from .domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
+from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model
+from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult
+from Link_Profiler.database.database import Database
+from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
 
 
 class CrawlService:
@@ -78,7 +78,7 @@ class CrawlService:
         self.logger.info(f"Starting crawl job {job.id} for {job.target_url}")
 
         crawler = WebCrawler(config)
-        self.active_crawlers[job.id] = crawler # Keep track of active crawler
+        self.active_crawlers: Dict[str, WebCrawler] = {} # Keep track of active crawler
 
         discovered_backlinks: List[Backlink] = []
         urls_crawled_count = 0
