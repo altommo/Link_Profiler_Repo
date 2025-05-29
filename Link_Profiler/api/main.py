@@ -43,7 +43,8 @@ from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBa
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Changed to absolute import
 from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService # Changed to absolute import
 from Link_Profiler.database.database import Database # Changed to absolute import
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain # Changed to absolute import
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError # Import CrawlError
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO) 
@@ -123,11 +124,26 @@ class CrawlConfigRequest(BaseModel):
     allowed_domains: Optional[List[str]] = Field(None, description="List of domains explicitly allowed to crawl. If empty, all domains are allowed unless blocked.")
     blocked_domains: Optional[List[str]] = Field(None, description="List of domains explicitly blocked from crawling.")
     custom_headers: Optional[Dict[str, str]] = Field(None, description="Custom HTTP headers to send with requests.")
+    max_retries: int = Field(3, description="Maximum number of retries for failed URL fetches.")
+    retry_delay_seconds: float = Field(5.0, description="Delay between retries in seconds.")
+
 
 class StartCrawlRequest(BaseModel):
     target_url: str = Field(..., description="The URL for which to find backlinks (e.g., 'https://example.com').")
     initial_seed_urls: List[str] = Field(..., description="A list of URLs to start crawling from to discover backlinks.")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration.")
+
+class CrawlErrorResponse(BaseModel):
+    timestamp: datetime
+    url: str
+    error_type: str
+    message: str
+    details: Optional[str]
+
+    @classmethod
+    def from_crawl_error(cls, error: CrawlError):
+        return cls(**serialize_model(error))
+
 
 class CrawlJobResponse(BaseModel):
     id: str
@@ -141,7 +157,7 @@ class CrawlJobResponse(BaseModel):
     urls_crawled: int
     links_found: int
     errors_count: int
-    error_log: List[str]
+    error_log: List[CrawlErrorResponse] # Changed to List[CrawlErrorResponse]
     results: Dict = Field(default_factory=dict)
 
     @classmethod
@@ -176,6 +192,10 @@ class CrawlJobResponse(BaseModel):
              except ValueError:
                  logger.warning(f"Could not parse completed_date string: {job_dict.get('completed_date')}")
                  job_dict['completed_date'] = None # Or handle as error
+
+        # Convert CrawlError dataclasses to CrawlErrorResponse Pydantic models
+        if 'error_log' in job_dict and isinstance(job_dict['error_log'], list):
+            job_dict['error_log'] = [CrawlErrorResponse.from_crawl_error(err) for err in job.error_log]
 
         return cls(**job_dict)
 

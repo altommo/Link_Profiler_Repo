@@ -273,6 +273,22 @@ class LinkProfile:
 
 
 @dataclass
+class CrawlError:
+    """Represents a structured error encountered during crawling."""
+    timestamp: datetime = field(default_factory=datetime.now)
+    url: str = ""
+    error_type: str = "UnknownError"
+    message: str = "An unexpected error occurred."
+    details: Optional[str] = None # e.g., traceback, specific API error message
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'CrawlError':
+        if 'timestamp' in data and isinstance(data['timestamp'], str):
+            data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        return cls(**data)
+
+
+@dataclass
 class CrawlJob:
     """Represents a crawling job"""
     id: str
@@ -290,7 +306,7 @@ class CrawlJob:
     errors_count: int = 0
     config: Dict = field(default_factory=dict)
     results: Dict = field(default_factory=dict)
-    error_log: List[str] = field(default_factory=list)
+    error_log: List[CrawlError] = field(default_factory=list) # Changed to List[CrawlError]
     
     @property
     def duration_seconds(self) -> Optional[float]:
@@ -304,9 +320,10 @@ class CrawlJob:
         """Check if job is completed"""
         return self.status in [CrawlStatus.COMPLETED, CrawlStatus.FAILED, CrawlStatus.STOPPED] # Added STOPPED
     
-    def add_error(self, error_message: str) -> None:
-        """Add an error to the job log"""
-        self.error_log.append(f"{datetime.now().isoformat()}: {error_message}")
+    def add_error(self, url: str, error_type: str, message: str, details: Optional[str] = None) -> None:
+        """Add a structured error to the job log"""
+        error = CrawlError(url=url, error_type=error_type, message=message, details=details)
+        self.error_log.append(error)
         self.errors_count += 1
 
     @classmethod
@@ -321,6 +338,10 @@ class CrawlJob:
         if 'completed_date' in data and isinstance(data['completed_date'], str):
             data['completed_date'] = datetime.fromisoformat(data['completed_date'])
         
+        # Deserialize error_log
+        if 'error_log' in data and isinstance(data['error_log'], list):
+            data['error_log'] = [CrawlError.from_dict(err_data) for err_data in data['error_log']]
+
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered_data)
@@ -342,6 +363,8 @@ class CrawlConfig:
     allowed_domains: Set[str] = field(default_factory=set)
     blocked_domains: Set[str] = field(default_factory=set)
     custom_headers: Dict[str, str] = field(default_factory=dict) # Ensure default is a dict
+    max_retries: int = 3 # Added max_retries
+    retry_delay_seconds: float = 5.0 # Added retry_delay_seconds
     
     def is_domain_allowed(self, domain: str) -> bool:
         """Check if domain is allowed for crawling"""
@@ -461,7 +484,11 @@ def serialize_model(obj) -> Dict:
             elif hasattr(value, '__dataclass_fields__'):
                 result[field_name] = serialize_model(value)
             elif isinstance(value, list) and value and hasattr(value[0], '__dataclass_fields__'):
-                result[field_name] = [serialize_model(item) for item in value]
+                # Handle list of dataclasses (like CrawlError)
+                if field_name == 'error_log' and all(isinstance(item, CrawlError) for item in value):
+                    result[field_name] = [serialize_model(item) for item in value]
+                else:
+                    result[field_name] = value
             else:
                 result[field_name] = value
         return result

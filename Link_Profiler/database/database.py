@@ -4,7 +4,7 @@ File: Link_Profiler/database/database.py
 """
 
 from typing import List, Dict, Optional, Any
-from Link_Profiler.core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model, CrawlStatus
+from Link_Profiler.core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model, CrawlStatus, CrawlError # Import CrawlError
 import json
 import os
 from urllib.parse import urlparse
@@ -106,6 +106,10 @@ class Database:
                 backlinks=[] # Backlinks are loaded separately or via relationship if needed
             )
         elif isinstance(orm_obj, CrawlJobORM):
+            # Deserialize error_log from JSONB (list of dicts) to List[CrawlError]
+            error_log_data = orm_obj.error_log if orm_obj.error_log else []
+            error_log_dataclasses = [CrawlError.from_dict(err_data) for err_data in error_log_data]
+
             return CrawlJob(
                 id=orm_obj.id,
                 target_url=orm_obj.target_url,
@@ -122,7 +126,7 @@ class Database:
                 errors_count=orm_obj.errors_count,
                 config=orm_obj.config,
                 results=orm_obj.results,
-                error_log=orm_obj.error_log
+                error_log=error_log_dataclasses # Assign deserialized list of CrawlError
             )
         elif isinstance(orm_obj, SEOMetricsORM):
             return SEOMetrics(
@@ -217,6 +221,9 @@ class Database:
                 analysis_date=dc_obj.analysis_date
             )
         elif isinstance(dc_obj, CrawlJob):
+            # Serialize error_log from List[CrawlError] to list of dicts for JSONB
+            error_log_jsonb = [serialize_model(err) for err in dc_obj.error_log]
+
             return CrawlJobORM(
                 id=dc_obj.id,
                 target_url=dc_obj.target_url,
@@ -233,7 +240,7 @@ class Database:
                 errors_count=dc_obj.errors_count,
                 config=dc_obj.config,
                 results=dc_obj.results,
-                error_log=dc_obj.error_log
+                error_log=error_log_jsonb # Assign serialized list of dicts
             )
         elif isinstance(dc_obj, SEOMetrics):
             return SEOMetricsORM(
@@ -503,9 +510,8 @@ class Database:
                 orm_job.errors_count = job.errors_count
                 orm_job.config = job.config
                 orm_job.results = job.results
-                error_log = job.error_log # Get the list from the dataclass
-                # Ensure error_log is a list of strings before assigning to ORM
-                orm_job.error_log = [str(err) for err in error_log] if isinstance(error_log, list) else []
+                # Serialize List[CrawlError] to list of dicts for JSONB storage
+                orm_job.error_log = [serialize_model(err) for err in job.error_log]
                 session.commit()
             else:
                 raise ValueError(f"CrawlJob with ID {job.id} not found for update.")

@@ -11,7 +11,7 @@ from datetime import datetime
 from urllib.parse import urlparse # Import urlparse
 import json # Import json
 
-from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model, SEOMetrics, LinkType, SpamLevel # Import LinkType and SpamLevel
+from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model, SEOMetrics, LinkType, SpamLevel, CrawlError # Import CrawlError
 from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult # Import CrawlResult
 from Link_Profiler.database.database import Database
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
@@ -108,7 +108,7 @@ class CrawlService:
                     self.logger.info(f"Successfully added {len(api_backlinks)} API backlinks to the database.")
                 except Exception as db_e:
                     self.logger.error(f"Error adding API backlinks to database: {db_e}", exc_info=True)
-                    job.add_error(f"DB error adding API backlinks: {str(db_e)}")
+                    job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding API backlinks: {str(db_e)}", details=str(db_e))
             else:
                 self.logger.info(f"No backlinks found from API for {job.target_url}. Proceeding with web crawl.")
 
@@ -120,7 +120,15 @@ class CrawlService:
             
             with open(debug_file_path, 'a', encoding='utf-8') as debug_file:
                 async with crawler as wc:
-                    async for crawl_result in wc.crawl_for_backlinks(job.target_url, initial_seed_urls):
+                    urls_to_crawl_queue = asyncio.Queue()
+                    for url in initial_seed_urls:
+                        await urls_to_crawl_queue.put((url, 0)) # (url, depth)
+
+                    crawled_urls_set = set() # Keep track of URLs already processed to avoid redundant crawls
+
+                    while not urls_to_crawl_queue.empty() and urls_crawled_count < config.max_pages:
+                        url, current_depth = await urls_to_crawl_queue.get()
+
                         # Check for pause/stop status at each iteration
                         current_job = self.db.get_crawl_job(job.id)
                         if current_job and current_job.status == CrawlStatus.PAUSED:
@@ -147,46 +155,86 @@ class CrawlService:
                             self.db.update_crawl_job(job)
                             return # Exit crawl loop
 
+                        if url in crawled_urls_set:
+                            continue
+                        if current_depth >= config.max_depth:
+                            self.logger.debug(f"Skipping {url} due to max depth ({current_depth})")
+                            continue
+                        
+                        crawled_urls_set.add(url)
                         urls_crawled_count += 1
                         job.urls_crawled = urls_crawled_count
-                        
-                        # Serialize the CrawlResult to JSON and write to the debug file
-                        try:
-                            crawl_result_dict = serialize_model(crawl_result)
-                            debug_file.write(json.dumps(crawl_result_dict) + '\n')
-                            debug_file.flush()
-                        except Exception as e:
-                            self.logger.error(f"Error writing crawl result to debug file for {crawl_result.url}: {e}")
-                            job.add_error(f"Error writing debug data for {crawl_result.url}: {str(e)}")
 
-                        if crawl_result.links_found:
-                            self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url} via crawl.")
-                            # Only add backlinks not already found from API (simple check by source/target URL)
-                            new_backlinks = []
-                            existing_backlink_pairs = {(bl.source_url, bl.target_url) for bl in discovered_backlinks}
-                            for bl in crawl_result.links_found:
-                                if (bl.source_url, bl.target_url) not in existing_backlink_pairs:
-                                    new_backlinks.append(bl)
-                                    existing_backlink_pairs.add((bl.source_url, bl.target_url))
+                        self.logger.info(f"Crawling: {url} (Depth: {current_depth}, Crawled: {urls_crawled_count}/{config.max_pages})")
 
-                            if new_backlinks:
-                                discovered_backlinks.extend(new_backlinks)
-                                job.links_found = len(discovered_backlinks)
-                                try:
-                                    self.db.add_backlinks(new_backlinks) 
-                                except Exception as db_e:
-                                    self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
-                                    job.add_error(f"DB error adding crawled backlinks for {crawl_result.url}: {str(db_e)}")
-                        
-                        self.logger.debug(f"CrawlResult.seo_metrics for {crawl_result.url}: {crawl_result.seo_metrics}")
-                        if crawl_result.seo_metrics:
+                        crawl_result: Optional[CrawlResult] = None
+                        for attempt in range(config.max_retries + 1):
                             try:
-                                self.db.save_seo_metrics(crawl_result.seo_metrics)
-                                self.logger.info(f"Saved SEO metrics for {crawl_result.url}.")
-                            except Exception as seo_e:
-                                self.logger.error(f"Error saving SEO metrics for {crawl_result.url}: {seo_e}", exc_info=True)
-                                job.add_error(f"DB error saving SEO metrics for {crawl_result.url}: {str(seo_e)}")
+                                crawl_result = await wc.crawl_url(url)
+                                if crawl_result.error_message:
+                                    # Check for retryable errors
+                                    if crawl_result.status_code in [408, 500, 502, 503, 504] or "Network or client error" in crawl_result.error_message:
+                                        if attempt < config.max_retries:
+                                            self.logger.warning(f"Retrying {url} (Attempt {attempt + 1}/{config.max_retries + 1}) due to: {crawl_result.error_message}")
+                                            await asyncio.sleep(config.retry_delay_seconds)
+                                            continue # Retry
+                                        else:
+                                            self.logger.error(f"Failed to crawl {url} after {config.max_retries + 1} attempts: {crawl_result.error_message}")
+                                            job.add_error(url=url, error_type="CrawlError", message=f"Failed after retries: {crawl_result.error_message}", details=crawl_result.error_message)
+                                    else:
+                                        self.logger.warning(f"Failed to crawl {url}: {crawl_result.error_message}")
+                                        job.add_error(url=url, error_type="CrawlError", message=f"Non-retryable crawl error: {crawl_result.error_message}", details=crawl_result.error_message)
+                                else:
+                                    break # Success, break retry loop
+                            except Exception as e:
+                                if attempt < config.max_retries:
+                                    self.logger.warning(f"Retrying {url} (Attempt {attempt + 1}/{config.max_retries + 1}) due to unexpected error: {e}")
+                                    await asyncio.sleep(config.retry_delay_seconds)
+                                    continue
+                                else:
+                                    self.logger.error(f"Unexpected error crawling {url} after {config.max_retries + 1} attempts: {e}", exc_info=True)
+                                    job.add_error(url=url, error_type="UnexpectedError", message=f"Unexpected error: {str(e)}", details=str(e))
+                            crawl_result = None # Ensure crawl_result is None if all retries fail
 
+                        if crawl_result:
+                            # Serialize the CrawlResult to JSON and write to the debug file
+                            try:
+                                crawl_result_dict = serialize_model(crawl_result)
+                                debug_file.write(json.dumps(crawl_result_dict) + '\n')
+                                debug_file.flush()
+                            except Exception as e:
+                                self.logger.error(f"Error writing crawl result to debug file for {crawl_result.url}: {e}")
+                                job.add_error(url=crawl_result.url, error_type="FileWriteError", message=f"Error writing debug data: {str(e)}", details=str(e))
+
+                            if crawl_result.links_found:
+                                self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url} via crawl.")
+                                # Only add backlinks not already found from API (simple check by source/target URL)
+                                new_backlinks = []
+                                existing_backlink_pairs = {(bl.source_url, bl.target_url) for bl in discovered_backlinks}
+                                for bl in crawl_result.links_found:
+                                    if (bl.source_url, bl.target_url) not in existing_backlink_pairs:
+                                        new_backlinks.append(bl)
+                                        existing_backlink_pairs.add((bl.source_url, bl.target_url))
+
+                                if new_backlinks:
+                                    discovered_backlinks.extend(new_backlinks)
+                                    job.links_found = len(discovered_backlinks)
+                                    try:
+                                        self.db.add_backlinks(new_backlinks) 
+                                    except Exception as db_e:
+                                        self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
+                                        job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error adding crawled backlinks: {str(db_e)}", details=str(db_e))
+                            
+                            self.logger.debug(f"CrawlResult.seo_metrics for {crawl_result.url}: {crawl_result.seo_metrics}")
+                            if crawl_result.seo_metrics:
+                                try:
+                                    self.db.save_seo_metrics(crawl_result.seo_metrics)
+                                    self.logger.info(f"Saved SEO metrics for {crawl_result.url}.")
+                                except Exception as seo_e:
+                                    self.logger.error(f"Error saving SEO metrics for {crawl_result.url}: {seo_e}", exc_info=True)
+                                    job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error saving SEO metrics: {str(seo_e)}", details=str(seo_e))
+
+                        # Update job progress
                         job.progress_percentage = min(99.0, (urls_crawled_count / config.max_pages) * 100)
                         self.db.update_crawl_job(job)
 
@@ -257,6 +305,8 @@ class CrawlService:
                     self.logger.info(f"Saved domain info for {target_domain_name}.")
                 else:
                     self.logger.warning(f"Could not retrieve domain info for {target_domain_name}.")
+                    job.add_error(url=target_domain_name, error_type="DomainInfoError", message=f"Could not retrieve domain info for target domain.", details="Domain info API returned None.")
+
 
                 if discovered_backlinks:
                     unique_referring_domains = {bl.source_domain for bl in discovered_backlinks}
@@ -274,13 +324,18 @@ class CrawlService:
                         if referring_domain_obj:
                             self.db.save_domain(referring_domain_obj)
                             self.logger.info(f"Saved domain info for referring domain: {referring_domain_obj.name}.")
+                        else:
+                            # Log error for specific referring domain if info could not be retrieved
+                            self.logger.warning(f"Could not retrieve domain info for referring domain: {referring_domain_obj.name}.")
+                            job.add_error(url=referring_domain_obj.name, error_type="DomainInfoError", message=f"Could not retrieve domain info for referring domain.", details="Domain info API returned None.")
+
 
             job.status = CrawlStatus.COMPLETED
             self.logger.info(f"Crawl job {job.id} completed.")
 
         except Exception as e:
             job.status = CrawlStatus.FAILED
-            job.add_error(f"Crawl failed: {str(e)}")
+            job.add_error(url="N/A", error_type="CrawlJobError", message=f"Crawl failed: {str(e)}", details=str(e))
             self.logger.error(f"Crawl job {job.id} failed: {e}", exc_info=True)
         finally:
             job.completed_date = datetime.now()

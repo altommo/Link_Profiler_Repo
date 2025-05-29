@@ -35,6 +35,8 @@ class ContentTypeEnum(enum.Enum):
 class CrawlStatusEnum(enum.Enum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
+    PAUSED = "paused"
+    STOPPED = "stopped"
     COMPLETED = "completed"
     FAILED = "failed"
     TIMEOUT = "timeout"
@@ -167,7 +169,7 @@ class CrawlJobORM(Base):
     errors_count = Column(Integer, default=0)
     config = Column(JSONB, default={}) # Store CrawlConfig as JSON
     results = Column(JSONB, default={})
-    error_log = Column(ARRAY(String), default=[]) # Store as array of strings
+    error_log = Column(JSONB, default=[]) # Changed to JSONB to store list of structured errors
 
     def __repr__(self):
         return f"<CrawlJob(id='{self.id}', target_url='{self.target_url}', status='{self.status}')>"
