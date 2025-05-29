@@ -47,12 +47,11 @@ The system is structured into several key components:
     ```bash
     pip install -r requirements.txt
     ```
-    *(Note: You'll need to create a `requirements.txt` file. See "Creating requirements.txt" below.)*
 
 4.  **Create data directory:**
     The `database` module will create a `data/` directory in the project root to store JSON files. Ensure your user has write permissions to the project directory.
 
-### Creating `requirements.txt`
+## How to Run the API
 
-Create a file named `requirements.txt` in the project root with the following content:
+From the project root directory, run:
 
