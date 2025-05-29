@@ -27,12 +27,12 @@ from urllib.parse import urlparse
 from datetime import datetime # Import datetime for Pydantic models
 from contextlib import asynccontextmanager # Import asynccontextmanager
 
-from services.crawl_service import CrawlService
-from services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
-from services.domain_analyzer_service import DomainAnalyzerService
-from services.expired_domain_finder_service import ExpiredDomainFinderService
-from database.database import Database
-from core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain
+from Link_Profiler.services.crawl_service import CrawlService # Changed to absolute import
+from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient # Changed to absolute import
+from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Changed to absolute import
+from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService # Changed to absolute import
+from Link_Profiler.database.database import Database # Changed to absolute import
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain # Changed to absolute import
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

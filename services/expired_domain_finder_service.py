@@ -74,4 +74,3 @@ class ExpiredDomainFinderService:
                     
         self.logger.info(f"Finished search. Found {len(valuable_expired_domains)} valuable expired domains.")
         return valuable_expired_domains
-

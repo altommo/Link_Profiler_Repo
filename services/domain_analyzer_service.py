@@ -130,4 +130,3 @@ class DomainAnalyzerService:
             "reasons": reasons,
             "details": details
         }
-
