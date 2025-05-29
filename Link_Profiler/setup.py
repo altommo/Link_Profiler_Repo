@@ -10,6 +10,8 @@ setup(
         "aiohttp",
         "beautifulsoup4",
         "lxml",
+        "SQLAlchemy",
+        "psycopg2-binary",
     ],
     # Add other metadata as needed
     author="Your Name",
