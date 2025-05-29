@@ -119,23 +119,25 @@ class CrawlService:
             else:
                 self.logger.warning(f"Could not retrieve domain info for {target_domain_name}.")
 
-            # --- Optionally, fetch and store Domain information for referring domains ---
-            # This can be resource-intensive, so it's an optional future enhancement.
-            # if discovered_backlinks:
-            #     unique_referring_domains = {bl.source_domain for bl in discovered_backlinks}
-            #     self.logger.info(f"Fetching domain info for {len(unique_referring_domains)} unique referring domains.")
-            #     for referring_domain_name in unique_referring_domains:
-            #         # Avoid re-fetching target domain info if it's also a referring domain
-            #         if referring_domain_name == target_domain_name:
-            #             continue
-            #         referring_domain_obj = await self.domain_service.get_domain_info(referring_domain_name)
-            #         if referring_domain_obj:
-            #             self.db.save_domain(referring_domain_obj)
-            #             # You might want to store these in a separate collection or link them to the backlink
-            #             # For now, not adding to job.results to keep it concise.
-            #         else:
-            #             self.logger.warning(f"Could not retrieve domain info for referring domain: {referring_domain_name}.")
-
+            # --- Fetch and store Domain information for referring domains ---
+            if discovered_backlinks:
+                unique_referring_domains = {bl.source_domain for bl in discovered_backlinks}
+                self.logger.info(f"Fetching domain info for {len(unique_referring_domains)} unique referring domains.")
+                
+                # Use asyncio.gather to fetch domain info concurrently for efficiency
+                domain_info_tasks = [
+                    self.domain_service.get_domain_info(referring_domain_name)
+                    for referring_domain_name in unique_referring_domains
+                    if referring_domain_name != target_domain_name # Avoid re-fetching target domain
+                ]
+                
+                referring_domain_objs = await asyncio.gather(*domain_info_tasks)
+                
+                for referring_domain_obj in referring_domain_objs:
+                    if referring_domain_obj:
+                        self.db.save_domain(referring_domain_obj)
+                        self.logger.info(f"Saved domain info for referring domain: {referring_domain_obj.name}.")
+                    # else: warning already logged by domain_service.get_domain_info if it returns None
 
             job.status = CrawlStatus.COMPLETED
             self.logger.info(f"Crawl job {job.id} completed.")
