@@ -284,6 +284,10 @@ class LinkProfile:
         if 'backlinks' in data and isinstance(data['backlinks'], list):
             data['backlinks'] = [Backlink.from_dict(bl_data) for bl_data in data['backlinks']]
         
+        # Remove 'target_domain' from data if present,
+        # as it is calculated in __post_init__ and not part of __init__
+        data.pop('target_domain', None)
+
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered_data)
