@@ -5,13 +5,13 @@ File: Link_Profiler/services/crawl_service.py
 
 import asyncio
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 from uuid import uuid4
 from datetime import datetime
 from urllib.parse import urlparse # Import urlparse
 import json # Import json
 
-from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model, SEOMetrics # Import SEOMetrics
+from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model, SEOMetrics, LinkType, SpamLevel # Import LinkType and SpamLevel
 from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult # Import CrawlResult
 from Link_Profiler.database.database import Database
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
@@ -46,7 +46,7 @@ class CrawlService:
             The created CrawlJob object.
         """
         job_id = str(uuid4())
-        if config is None: # Corrected from === to is
+        if config is None:
             config = CrawlConfig() # Use default config
 
         # For testing purposes, explicitly set respect_robots_txt to False
@@ -135,12 +135,66 @@ class CrawlService:
                         job.progress_percentage = min(99.0, (urls_crawled_count / config.max_pages) * 100)
                         self.db.update_crawl_job(job)
 
-            # After crawl completes, create/update LinkProfile
+            # After crawl completes, calculate and create/update LinkProfile
             if discovered_backlinks:
-                link_profile = create_link_profile_from_backlinks(job.target_url, discovered_backlinks)
+                # Calculate refined LinkProfile scores
+                total_authority_score_sum = 0.0
+                total_trust_score_sum = 0.0
+                total_spam_score_sum = 0.0
+                dofollow_count = 0
+                clean_count = 0
+                spam_count = 0
+                
+                unique_referring_domains_for_profile: Set[str] = set()
+                anchor_text_distribution: Dict[str, int] = {}
+
+                for backlink in discovered_backlinks:
+                    unique_referring_domains_for_profile.add(backlink.source_domain)
+                    
+                    # Aggregate anchor text
+                    if backlink.anchor_text:
+                        anchor_text_distribution[backlink.anchor_text] = \
+                            anchor_text_distribution.get(backlink.anchor_text, 0) + 1
+
+                    # Fetch source domain's metrics for weighted calculation
+                    source_domain_obj = self.db.get_domain(backlink.source_domain)
+                    if source_domain_obj:
+                        if backlink.link_type == LinkType.FOLLOW:
+                            total_authority_score_sum += source_domain_obj.authority_score
+                            dofollow_count += 1
+                        
+                        if backlink.spam_level == SpamLevel.CLEAN:
+                            total_trust_score_sum += source_domain_obj.trust_score
+                            clean_count += 1
+                        
+                        if backlink.spam_level in [SpamLevel.LIKELY_SPAM, SpamLevel.CONFIRMED_SPAM]:
+                            total_spam_score_sum += source_domain_obj.spam_score
+                            spam_count += 1
+                
+                # Calculate final scores for the LinkProfile
+                profile_authority_score = total_authority_score_sum / dofollow_count if dofollow_count > 0 else 0.0
+                profile_trust_score = total_trust_score_sum / clean_count if clean_count > 0 else 0.0
+                profile_spam_score = total_spam_score_sum / spam_count if spam_count > 0 else 0.0
+
+                # Create the LinkProfile object with calculated scores
+                link_profile = LinkProfile(
+                    target_url=job.target_url,
+                    total_backlinks=len(discovered_backlinks),
+                    unique_domains=len(unique_referring_domains_for_profile),
+                    dofollow_links=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.FOLLOW),
+                    nofollow_links=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.NOFOLLOW), # Assuming other types are not nofollow
+                    authority_score=profile_authority_score,
+                    trust_score=profile_trust_score,
+                    spam_score=profile_spam_score,
+                    anchor_text_distribution=anchor_text_distribution,
+                    referring_domains=unique_referring_domains_for_profile,
+                    backlinks=discovered_backlinks,
+                    analysis_date=datetime.now()
+                )
+                
                 self.db.save_link_profile(link_profile)
                 job.results['link_profile_summary'] = serialize_model(link_profile)
-                self.logger.info(f"Link profile created for {job.target_url} with {len(discovered_backlinks)} backlinks.")
+                self.logger.info(f"Link profile created for {job.target_url} with {len(discovered_backlinks)} backlinks. Authority: {profile_authority_score:.2f}, Trust: {profile_trust_score:.2f}, Spam: {profile_spam_score:.2f}")
             else:
                 self.logger.info(f"No backlinks found for {job.target_url}.")
 

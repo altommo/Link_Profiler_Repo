@@ -247,32 +247,7 @@ class LinkProfile:
             self.anchor_text_distribution[backlink.anchor_text] = \
                 self.anchor_text_distribution.get(backlink.anchor_text, 0) + 1
     
-    def calculate_metrics(self) -> None:
-        """Calculate link profile metrics"""
-        if not self.backlinks:
-            return
-            
-        self.total_backlinks = len(self.backlinks)
-        self.unique_domains = len(self.referring_domains)
-        
-        # Count link types
-        self.dofollow_links = sum(1 for bl in self.backlinks 
-                                if bl.link_type == LinkType.FOLLOW)
-        self.nofollow_links = self.total_backlinks - self.dofollow_links
-        
-        # Calculate authority (simplified)
-        authority_links = [bl for bl in self.backlinks if bl.passes_authority]
-        self.authority_score = min(100.0, len(authority_links) * 2.5)
-        
-        # Calculate trust score based on clean links
-        clean_links = sum(1 for bl in self.backlinks 
-                         if bl.spam_level == SpamLevel.CLEAN)
-        self.trust_score = (clean_links / self.total_backlinks) * 100 if self.total_backlinks > 0 else 0
-        
-        # Calculate spam score
-        spam_links = sum(1 for bl in self.backlinks 
-                        if bl.spam_level in [SpamLevel.LIKELY_SPAM, SpamLevel.CONFIRMED_SPAM])
-        self.spam_score = (spam_links / self.total_backlinks) * 100 if self.total_backlinks > 0 else 0
+    # Removed calculate_metrics method. This logic will be handled in the service layer.
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'LinkProfile':
@@ -490,11 +465,15 @@ def serialize_model(obj) -> Dict:
 
 
 def create_link_profile_from_backlinks(target_url: str, backlinks: List[Backlink]) -> LinkProfile:
-    """Create a LinkProfile from a list of backlinks"""
+    """
+    Create a LinkProfile from a list of backlinks.
+    Note: This function no longer calculates authority/trust/spam scores,
+    as that logic is moved to the service layer where it can access domain data.
+    """
     profile = LinkProfile(target_url=target_url)
     
     for backlink in backlinks:
         profile.add_backlink(backlink)
     
-    profile.calculate_metrics()
+    # Removed profile.calculate_metrics() call
     return profile
