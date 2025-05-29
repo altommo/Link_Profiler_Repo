@@ -3,7 +3,7 @@ Database Module - Placeholder for data persistence operations
 File: Link_Profiler/database/database.py
 """
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any # Added Any import
 from Link_Profiler.core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model, CrawlStatus # Changed to absolute import and added CrawlStatus
 import json
 import os
