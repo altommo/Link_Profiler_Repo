@@ -18,6 +18,7 @@ A comprehensive, open-source link analysis and expired domain discovery system i
 - **Anchor Text Analysis**: Detailed anchor text distribution and patterns
 - **Link Type Classification**: dofollow, nofollow, sponsored, UGC, redirect, canonical detection
 - **SEO Metrics Extraction**: Extracts and stores on-page SEO data (e.g., title length, heading counts, internal/external links).
+- **Backlink API Integration**: Can fetch existing backlink data from external APIs (simulated for now).
 
 ### 💎 **Expired Domain Discovery**
 - **Domain Availability Checking**: Real-time domain registration status (now supports real API integration)
@@ -55,6 +56,7 @@ link_profiler/
 ├── services/              # Business logic layer
 │   ├── crawl_service.py           # Crawling orchestration
 │   ├── domain_service.py          # Domain information retrieval
+│   ├── backlink_service.py        # Backlink API integration
 │   ├── domain_analyzer_service.py # Domain value analysis
 │   └── expired_domain_finder_service.py # Expired domain discovery
 ├── database/              # Data persistence layer
@@ -84,6 +86,7 @@ link_profiler/
 #### **Business Services**
 - **CrawlService**: Orchestrates crawling jobs and manages lifecycles
 - **DomainService**: Handles WHOIS lookups and availability checks (now supports real API integration)
+- **BacklinkService**: Integrates with external backlink data providers (simulated for now)
 - **DomainAnalyzerService**: Evaluates domain value and potential
 - **ExpiredDomainFinderService**: Discovers valuable expired domains
 
@@ -170,30 +173,45 @@ To run the API server, you need to ensure that the project's root directory is a
 **For Linux/macOS:**
 ```bash
 export PYTHONPATH=$(pwd)
-# To use the simulated API (default):
+# To use the simulated APIs (default):
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use the real API (requires REAL_DOMAIN_API_KEY env var):
-# export REAL_DOMAIN_API_KEY="your_api_key_here"
+# To use the real Domain API (requires REAL_DOMAIN_API_KEY env var):
+# export USE_REAL_DOMAIN_API="true"
+# export REAL_DOMAIN_API_KEY="your_domain_api_key_here"
+# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
+# To use the real Backlink API (requires REAL_BACKLINK_API_KEY env var):
+# export USE_REAL_BACKLINK_API="true"
+# export REAL_BACKLINK_API_KEY="your_backlink_api_key_here"
 # uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **For Windows (Command Prompt):**
 ```cmd
 set PYTHONPATH=%cd%
-rem To use the simulated API (default):
+rem To use the simulated APIs (default):
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-rem To use the real API (requires REAL_DOMAIN_API_KEY env var):
-rem set REAL_DOMAIN_API_KEY="your_api_key_here"
+rem To use the real Domain API (requires REAL_DOMAIN_API_KEY env var):
+rem set USE_REAL_DOMAIN_API="true"
+rem set REAL_DOMAIN_API_KEY="your_domain_api_key_here"
+rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
+rem To use the real Backlink API (requires REAL_BACKLINK_API_KEY env var):
+rem set USE_REAL_BACKLINK_API="true"
+rem set REAL_BACKLINK_API_KEY="your_backlink_api_key_here"
 rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **For Windows (PowerShell):**
 ```powershell
 $env:PYTHONPATH = (Get-Location).Path
-# To use the simulated API (default):
+# To use the simulated APIs (default):
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use the real API (requires REAL_DOMAIN_API_KEY env var):
-# $env:REAL_DOMAIN_API_KEY = "your_api_key_here"
+# To use the real Domain API (requires REAL_DOMAIN_API_KEY env var):
+# $env:USE_REAL_DOMAIN_API = "true"
+# $env:REAL_DOMAIN_API_KEY = "your_domain_api_key_here"
+# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
+# To use the real Backlink API (requires REAL_BACKLINK_API_KEY env var):
+# $env:USE_REAL_BACKLINK_API = "true"
+# $env:REAL_BACKLINK_API_KEY = "your_backlink_api_key_here"
 # uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -374,8 +392,8 @@ The project has a solid foundation with core crawling, link analysis, and domain
 3.  **Implement Real Domain API Integration**:
     *   **Completed**: The `DomainService` can now be configured to use a `RealDomainAPIClient` (requires `REAL_DOMAIN_API_KEY` environment variable). The client is structured to make actual HTTP calls to external APIs, though the data returned is still simulated for demonstration purposes.
 4.  **Implement Real Backlink API Integration**:
-    *   **Action**: Integrate with a real backlink data provider (e.g., Ahrefs, Moz, SEMrush) to fetch existing backlink data for target URLs, rather than relying solely on crawling. This will significantly enhance the accuracy and completeness of link profiles.
-    *   **Consideration**: This will likely involve API keys and rate limits, similar to the domain API integration.
+    *   **Completed**: The `CrawlService` now attempts to fetch backlinks from a `BacklinkService` (which can use a `SimulatedBacklinkAPIClient` or `RealBacklinkAPIClient` based on `USE_REAL_BACKLINK_API` environment variable) before or in conjunction with crawling.
+    *   **Next Action**: Enhance the `RealBacklinkAPIClient` to integrate with a specific external backlink data provider (e.g., Ahrefs, Moz, SEMrush) by replacing the simulated data with actual API calls and response parsing. This will require choosing a specific API and implementing its request/response format.
 
 #### **Mid-Term Enhancements**
 

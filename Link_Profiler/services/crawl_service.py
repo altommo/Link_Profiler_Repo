@@ -15,6 +15,7 @@ from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, Backli
 from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult # Import CrawlResult
 from Link_Profiler.database.database import Database
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
+from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient # Import BacklinkService and SimulatedBacklinkAPIClient
 
 
 class CrawlService:
@@ -22,11 +23,12 @@ class CrawlService:
     Orchestrates web crawling jobs, manages their state,
     and persists results to the database.
     """
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, backlink_service: Optional[BacklinkService] = None):
         self.db = database
         self.logger = logging.getLogger(__name__)
         self.active_crawlers: Dict[str, WebCrawler] = {} # Store active crawler instances by job ID
         self.domain_service = DomainService(api_client=SimulatedDomainAPIClient()) # Instantiate DomainService with explicit client
+        self.backlink_service = backlink_service if backlink_service else BacklinkService(api_client=SimulatedBacklinkAPIClient()) # Instantiate BacklinkService
 
     async def create_and_start_backlink_crawl_job(
         self, 
@@ -82,9 +84,6 @@ class CrawlService:
         self.db.update_crawl_job(job)
         self.logger.info(f"Starting crawl job {job.id} for {job.target_url}")
 
-        crawler = WebCrawler(config)
-        self.active_crawlers[job.id] = crawler # Store active crawler instance
-
         discovered_backlinks: List[Backlink] = []
         urls_crawled_count = 0
         
@@ -92,7 +91,33 @@ class CrawlService:
         debug_file_path = f"data/crawl_results_debug_{job.id}.jsonl" # Using .jsonl for line-delimited JSON
 
         try:
-            # Open the debug file in append mode
+            # --- Step 1: Attempt to fetch backlinks from API first ---
+            self.logger.info(f"Attempting to fetch backlinks for {job.target_url} from API.")
+            async with self.backlink_service as bs:
+                api_backlinks = await bs.get_backlinks_from_api(job.target_url)
+                
+            if api_backlinks:
+                self.logger.info(f"Found {len(api_backlinks)} backlinks from API for {job.target_url}.")
+                discovered_backlinks.extend(api_backlinks)
+                job.links_found = len(discovered_backlinks)
+                try:
+                    self.db.add_backlinks(api_backlinks)
+                    self.logger.info(f"Successfully added {len(api_backlinks)} API backlinks to the database.")
+                except Exception as db_e:
+                    self.logger.error(f"Error adding API backlinks to database: {db_e}", exc_info=True)
+                    job.add_error(f"DB error adding API backlinks: {str(db_e)}")
+            else:
+                self.logger.info(f"No backlinks found from API for {job.target_url}. Proceeding with web crawl.")
+
+            # --- Step 2: Perform web crawl (if needed or to supplement API data) ---
+            # If API provided some backlinks, we might still want to crawl to find more
+            # or to get SEO metrics for the source pages.
+            # For now, we'll always crawl the initial seed URLs to get SEO metrics
+            # and potentially discover more backlinks.
+            
+            crawler = WebCrawler(config)
+            self.active_crawlers[job.id] = crawler # Store active crawler instance
+
             with open(debug_file_path, 'a', encoding='utf-8') as debug_file:
                 async with crawler as wc:
                     async for crawl_result in wc.crawl_for_backlinks(job.target_url, initial_seed_urls):
@@ -101,28 +126,33 @@ class CrawlService:
                         
                         # Serialize the CrawlResult to JSON and write to the debug file
                         try:
-                            # Convert CrawlResult dataclass to a serializable dictionary
                             crawl_result_dict = serialize_model(crawl_result)
                             debug_file.write(json.dumps(crawl_result_dict) + '\n')
-                            debug_file.flush() # Ensure data is written immediately
+                            debug_file.flush()
                         except Exception as e:
                             self.logger.error(f"Error writing crawl result to debug file for {crawl_result.url}: {e}")
                             job.add_error(f"Error writing debug data for {crawl_result.url}: {str(e)}")
 
                         if crawl_result.links_found:
-                            self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url}")
-                            discovered_backlinks.extend(crawl_result.links_found)
-                            job.links_found = len(discovered_backlinks)
-                            
-                            # Persist backlinks as they are found
-                            try:
-                                self.db.add_backlinks(crawl_result.links_found) 
-                            except Exception as db_e:
-                                self.logger.error(f"Error adding backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
-                                job.add_error(f"DB error adding backlinks for {crawl_result.url}: {str(db_e)}")
+                            self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url} via crawl.")
+                            # Only add backlinks not already found from API (simple check by source/target URL)
+                            new_backlinks = []
+                            existing_backlink_pairs = {(bl.source_url, bl.target_url) for bl in discovered_backlinks}
+                            for bl in crawl_result.links_found:
+                                if (bl.source_url, bl.target_url) not in existing_backlink_pairs:
+                                    new_backlinks.append(bl)
+                                    existing_backlink_pairs.add((bl.source_url, bl.target_url))
+
+                            if new_backlinks:
+                                discovered_backlinks.extend(new_backlinks)
+                                job.links_found = len(discovered_backlinks)
+                                try:
+                                    self.db.add_backlinks(new_backlinks) 
+                                except Exception as db_e:
+                                    self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
+                                    job.add_error(f"DB error adding crawled backlinks for {crawl_result.url}: {str(db_e)}")
                         
-                        self.logger.debug(f"CrawlResult.seo_metrics for {crawl_result.url}: {crawl_result.seo_metrics}") # Added debug log
-                        # Persist SEO metrics if available
+                        self.logger.debug(f"CrawlResult.seo_metrics for {crawl_result.url}: {crawl_result.seo_metrics}")
                         if crawl_result.seo_metrics:
                             try:
                                 self.db.save_seo_metrics(crawl_result.seo_metrics)
@@ -131,13 +161,10 @@ class CrawlService:
                                 self.logger.error(f"Error saving SEO metrics for {crawl_result.url}: {seo_e}", exc_info=True)
                                 job.add_error(f"DB error saving SEO metrics for {crawl_result.url}: {str(seo_e)}")
 
-                        # Update job progress
                         job.progress_percentage = min(99.0, (urls_crawled_count / config.max_pages) * 100)
                         self.db.update_crawl_job(job)
 
-            # After crawl completes, calculate and create/update LinkProfile
             if discovered_backlinks:
-                # Calculate refined LinkProfile scores
                 total_authority_score_sum = 0.0
                 total_trust_score_sum = 0.0
                 total_spam_score_sum = 0.0
@@ -151,12 +178,10 @@ class CrawlService:
                 for backlink in discovered_backlinks:
                     unique_referring_domains_for_profile.add(backlink.source_domain)
                     
-                    # Aggregate anchor text
                     if backlink.anchor_text:
                         anchor_text_distribution[backlink.anchor_text] = \
                             anchor_text_distribution.get(backlink.anchor_text, 0) + 1
 
-                    # Fetch source domain's metrics for weighted calculation
                     source_domain_obj = self.db.get_domain(backlink.source_domain)
                     if source_domain_obj:
                         if backlink.link_type == LinkType.FOLLOW:
@@ -171,18 +196,16 @@ class CrawlService:
                             total_spam_score_sum += source_domain_obj.spam_score
                             spam_count += 1
                 
-                # Calculate final scores for the LinkProfile
                 profile_authority_score = total_authority_score_sum / dofollow_count if dofollow_count > 0 else 0.0
                 profile_trust_score = total_trust_score_sum / clean_count if clean_count > 0 else 0.0
                 profile_spam_score = total_spam_score_sum / spam_count if spam_count > 0 else 0.0
 
-                # Create the LinkProfile object with calculated scores
                 link_profile = LinkProfile(
                     target_url=job.target_url,
                     total_backlinks=len(discovered_backlinks),
                     unique_domains=len(unique_referring_domains_for_profile),
                     dofollow_links=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.FOLLOW),
-                    nofollow_links=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.NOFOLLOW), # Assuming other types are not nofollow
+                    nofollow_links=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.NOFOLLOW),
                     authority_score=profile_authority_score,
                     trust_score=profile_trust_score,
                     spam_score=profile_spam_score,
@@ -198,10 +221,9 @@ class CrawlService:
             else:
                 self.logger.info(f"No backlinks found for {job.target_url}.")
 
-            # --- Fetch and store Domain information for the target domain ---
             target_domain_name = urlparse(job.target_url).netloc
             self.logger.info(f"Fetching domain info for target domain: {target_domain_name}")
-            async with self.domain_service as ds: # Use domain_service as context manager
+            async with self.domain_service as ds:
                 target_domain_obj = await ds.get_domain_info(target_domain_name)
                 if target_domain_obj:
                     self.db.save_domain(target_domain_obj)
@@ -210,16 +232,14 @@ class CrawlService:
                 else:
                     self.logger.warning(f"Could not retrieve domain info for {target_domain_name}.")
 
-                # --- Fetch and store Domain information for referring domains ---
                 if discovered_backlinks:
                     unique_referring_domains = {bl.source_domain for bl in discovered_backlinks}
                     self.logger.info(f"Fetching domain info for {len(unique_referring_domains)} unique referring domains.")
                     
-                    # Use asyncio.gather to fetch domain info concurrently for efficiency
                     domain_info_tasks = [
-                        ds.get_domain_info(referring_domain_name) # Use ds from context manager
+                        ds.get_domain_info(referring_domain_name)
                         for referring_domain_name in unique_referring_domains
-                        if referring_domain_name != target_domain_name # Avoid re-fetching target domain
+                        if referring_domain_name != target_domain_name
                     ]
                     
                     referring_domain_objs = await asyncio.gather(*domain_info_tasks)
@@ -228,7 +248,6 @@ class CrawlService:
                         if referring_domain_obj:
                             self.db.save_domain(referring_domain_obj)
                             self.logger.info(f"Saved domain info for referring domain: {referring_domain_obj.name}.")
-                        # else: warning already logged by domain_service.get_domain_info if it returns None
 
             job.status = CrawlStatus.COMPLETED
             self.logger.info(f"Crawl job {job.id} completed.")
@@ -241,7 +260,7 @@ class CrawlService:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
             if job.id in self.active_crawlers:
-                del self.active_crawlers[job.id] # Remove crawler instance
+                del self.active_crawlers[job.id]
 
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:
         """Retrieves the current status of a crawl job."""
@@ -254,9 +273,3 @@ class CrawlService:
     def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
         """Retrieves all raw backlinks for a given URL."""
         return self.db.get_backlinks_for_target(target_url)
-
-    # Future methods could include:
-    # - stop_crawl_job(job_id)
-    # - get_all_jobs()
-    # - create_seo_audit_job()
-    # - create_domain_analysis_job()
