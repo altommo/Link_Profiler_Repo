@@ -57,6 +57,31 @@ class Database:
         except Exception as e:
             print(f"Error loading crawl jobs: {e}")
 
+        try: # Load domains
+            with open(self._get_file_path("domains.json"), 'r') as f:
+                self._domains = [Domain.from_dict(item) for item in json.load(f)]
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Error loading domains: {e}")
+
+        try: # Load URLs
+            with open(self._get_file_path("urls.json"), 'r') as f:
+                self._urls = [URL.from_dict(item) for item in json.load(f)]
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Error loading URLs: {e}")
+
+        try: # Load SEO Metrics
+            with open(self._get_file_path("seo_metrics.json"), 'r') as f:
+                self._seo_metrics = [SEOMetrics.from_dict(item) for item in json.load(f)]
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Error loading SEO metrics: {e}")
+
+
     def _save_data(self):
         """Save current in-memory data to JSON files."""
         with open(self._get_file_path("backlinks.json"), 'w') as f:
@@ -65,6 +90,13 @@ class Database:
             json.dump([serialize_model(lp) for lp in self._link_profiles], f, indent=4)
         with open(self._get_file_path("crawl_jobs.json"), 'w') as f:
             json.dump([serialize_model(cj) for cj in self._crawl_jobs], f, indent=4)
+        with open(self._get_file_path("domains.json"), 'w') as f:
+            json.dump([serialize_model(d) for d in self._domains], f, indent=4)
+        with open(self._get_file_path("urls.json"), 'w') as f:
+            json.dump([serialize_model(u) for u in self._urls], f, indent=4)
+        with open(self._get_file_path("seo_metrics.json"), 'w') as f:
+            json.dump([serialize_model(sm) for sm in self._seo_metrics], f, indent=4)
+
 
     # --- Backlink Operations ---
     def add_backlink(self, backlink: Backlink) -> None:
@@ -126,39 +158,37 @@ class Database:
         """Retrieves all pending crawl jobs."""
         return [job for job in self._crawl_jobs if job.status == CrawlStatus.PENDING]
 
-    # --- Domain Operations (Placeholder) ---
+    # --- Domain Operations ---
     def save_domain(self, domain: Domain) -> None:
         """Saves or updates domain information."""
-        # Similar to LinkProfile, replace if exists
         existing_domain_index = next((i for i, d in enumerate(self._domains) 
                                       if d.name == domain.name), -1)
         if existing_domain_index != -1:
             self._domains[existing_domain_index] = domain
         else:
             self._domains.append(domain)
-        # No save_data call here, as domains might be updated frequently.
-        # A separate commit/flush mechanism would be used in a real DB.
+        self._save_data() # Ensure persistence
 
     def get_domain(self, name: str) -> Optional[Domain]:
         """Retrieves domain information by name."""
         return next((d for d in self._domains if d.name == name), None)
 
-    # --- URL Operations (Placeholder) ---
+    # --- URL Operations ---
     def save_url(self, url_obj: URL) -> None:
         """Saves or updates URL information."""
-        # Similar to Domain, no immediate save_data
         existing_url_index = next((i for i, u in enumerate(self._urls) 
                                    if u.url == url_obj.url), -1)
         if existing_url_index != -1:
             self._urls[existing_url_index] = url_obj
         else:
             self._urls.append(url_obj)
+        self._save_data() # Ensure persistence
 
     def get_url(self, url_str: str) -> Optional[URL]:
         """Retrieves URL information by URL string."""
         return next((u for u in self._urls if u.url == url_str), None)
 
-    # --- SEOMetrics Operations (Placeholder) ---
+    # --- SEOMetrics Operations ---
     def save_seo_metrics(self, seo_metrics: SEOMetrics) -> None:
         """Saves or updates SEO metrics for a URL."""
         existing_metrics_index = next((i for i, sm in enumerate(self._seo_metrics) 
@@ -167,6 +197,7 @@ class Database:
             self._seo_metrics[existing_metrics_index] = seo_metrics
         else:
             self._seo_metrics.append(seo_metrics)
+        self._save_data() # Ensure persistence
 
     def get_seo_metrics(self, url_str: str) -> Optional[SEOMetrics]:
         """Retrieves SEO metrics for a URL."""
