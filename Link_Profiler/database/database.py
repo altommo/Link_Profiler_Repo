@@ -285,16 +285,21 @@ class Database:
     def add_backlinks(self, backlinks: List[Backlink]) -> None:
         session = self._get_session()
         try:
+            logger.info(f"Attempting to add {len(backlinks)} backlinks to the database.")
             for backlink in backlinks:
                 # Ensure source and target domains exist
                 source_domain_name = urlparse(backlink.source_url).netloc.lower()
                 target_domain_name = urlparse(backlink.target_url).netloc.lower()
+                
+                logger.debug(f"Adding backlink from {backlink.source_url} (Domain: {source_domain_name}) to {backlink.target_url} (Domain: {target_domain_name})")
+
                 session.merge(DomainORM(name=source_domain_name))
                 session.merge(DomainORM(name=target_domain_name))
 
                 orm_backlink = self._to_orm(backlink)
                 session.add(orm_backlink)
             session.commit()
+            logger.info(f"Successfully added/merged {len(backlinks)} backlinks.")
         except IntegrityError:
             session.rollback()
             logger.warning(f"One or more backlinks already exist. Some may have been skipped.")
