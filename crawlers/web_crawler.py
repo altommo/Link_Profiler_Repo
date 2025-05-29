@@ -147,20 +147,23 @@ class WebCrawler:
                 content_type = response.headers.get('content-type', '').lower()
                 
                 # Read content based on type
+                content = ""
+                links = []
+                
                 if 'text/html' in content_type:
                     content = await response.text()
                     links = await self._extract_links_from_html(url, content)
+                    # Future: Pass content to ContentParser for SEO metrics
+                    # seo_metrics = await self.content_parser.parse_seo_metrics(url, content)
                 elif 'application/pdf' in content_type and self.config.extract_pdfs:
-                    content = await response.read()
+                    content = await response.read() # Read as bytes for PDF
                     links = []  # PDF link extraction would go here
-                else:
-                    content = ""
-                    links = []
+                # Add other content types as needed (e.g., images, video, etc.)
                 
                 return CrawlResult(
                     url=url,
                     status_code=response.status,
-                    content=content,
+                    content=content, # Store content for further parsing if needed
                     headers=dict(response.headers),
                     links_found=links,
                     redirect_url=str(response.url) if str(response.url) != url else None,
@@ -198,47 +201,146 @@ class WebCrawler:
             self.logger.error(f"Error extracting links from {source_url}: {e}")
             return []
     
-    async def crawl_domain_for_backlinks(self, target_url: str) -> AsyncGenerator[CrawlResult, None]:
-        """Crawl web to find backlinks to target URL/domain"""
+    async def _get_seed_urls_for_backlink_discovery(self, target_domain: str) -> Set[str]:
+        """
+        Placeholder for generating initial seed URLs for backlink discovery.
+        In a real system, this might involve:
+        - Querying search engines (e.g., Google, Bing) for pages mentioning the target domain.
+        - Using known backlink databases (e.g., Ahrefs, SEMrush APIs - if available/free tier).
+        - Starting with common directories or industry-specific sites.
+        For now, we'll use a very basic approach: just the target domain itself.
+        """
+        self.logger.info(f"Generating seed URLs for target domain: {target_domain}")
+        # Example: A very basic seed could be the target domain's homepage
+        # or a few common pages. For finding backlinks, we need *other* sites.
+        # This is a complex problem. For a simple start, we might assume
+        # we have a list of "known good" sites to crawl.
+        
+        # For demonstration, let's assume we have a few external sites
+        # that might link to our target. In a real scenario, these would
+        # come from a more intelligent discovery process.
+        
+        # IMPORTANT: For finding backlinks, we need to crawl *other* domains,
+        # not just the target domain itself.
+        
+        # For now, let's return a dummy set of external URLs that *might* link
+        # to the target. In a real system, this would be populated by
+        # external data sources or a more sophisticated discovery phase.
+        
+        # If the goal is to find expired domains, you might start by crawling
+        # lists of expired domains or domains known to have many backlinks.
+        
+        # For the purpose of demonstrating the backlink discovery,
+        # let's assume we have a few external sites to start crawling.
+        # These would typically be discovered via external means (e.g., search queries).
+        
+        # This is a critical point: the crawler needs to know *where to look* for backlinks.
+        # Without external data, it's hard to find them.
+        
+        # Let's return an empty set for now, and rely on an external process
+        # to feed URLs into the crawl. The `crawl_domain_for_backlinks`
+        # method will need to be initiated with some starting URLs.
+        
+        # For a minimal viable product, one might manually provide a list of
+        # high-authority sites to crawl, or use a very basic search query.
+        
+        # For now, let's just return the target URL itself as a seed,
+        # assuming it might have internal links that eventually lead to external ones
+        # (though this is not ideal for *finding* backlinks from *other* sites).
+        # A better approach would be to have a separate module that queries
+        # search engines or backlink databases to get initial "source" URLs.
+        
+        # Let's assume for now that the `crawl_domain_for_backlinks` method
+        # will be given an initial set of URLs to start with, rather than
+        # generating them here. This method will be removed or refactored.
+        
+        # Instead, the `crawl_domain_for_backlinks` will take an initial list of
+        # `seed_urls` as an argument.
+        return set() # This method will be refactored out or replaced.
+    
+    async def crawl_for_backlinks(self, target_url: str, initial_seed_urls: List[str]) -> AsyncGenerator[CrawlResult, None]:
+        """
+        Crawl web to find backlinks to target URL/domain.
+        Starts with initial_seed_urls and explores up to max_depth.
+        """
         target_domain = urlparse(target_url).netloc
         
-        # Start with seed URLs (you'd implement this based on your strategy)
-        seed_urls = await self._get_seed_urls_for_backlink_discovery(target_domain)
-        
-        urls_to_crawl = set(seed_urls)
+        # Use a queue for URLs to crawl, storing (url, current_depth)
+        # A simple set for visited URLs is fine for now.
+        urls_to_visit = asyncio.Queue()
+        for url in initial_seed_urls:
+            await urls_to_visit.put((url, 0)) # (url, depth)
+            
+        self.crawled_urls.clear() # Reset for new crawl job
+        self.failed_urls.clear()
         crawled_count = 0
         
-        while urls_to_crawl and crawled_count < self.config.max_pages:
-            # Get next batch of URLs
-            batch_size = min(10, len(urls_to_crawl))
-            current_batch = [urls_to_crawl.pop() for _ in range(batch_size)]
+        while not urls_to_visit.empty() and crawled_count < self.config.max_pages:
+            url, current_depth = await urls_to_visit.get()
             
-            # Crawl batch concurrently
-            tasks = [self.crawl_url(url) for url in current_batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            if url in self.crawled_urls:
+                continue
             
-            for url, result in zip(current_batch, results):
-                if isinstance(result, Exception):
-                    self.logger.error(f"Error crawling {url}: {result}")
-                    continue
+            if current_depth >= self.config.max_depth:
+                self.logger.debug(f"Skipping {url} due to max depth ({current_depth})")
+                continue
+            
+            self.crawled_urls.add(url)
+            crawled_count += 1
+            
+            self.logger.info(f"Crawling: {url} (Depth: {current_depth}, Crawled: {crawled_count}/{self.config.max_pages})")
+            
+            result = await self.crawl_url(url)
+            
+            if result.error_message:
+                self.logger.warning(f"Failed to crawl {url}: {result.error_message}")
+                self.failed_urls.add(url)
+                continue
+            
+            # Check if this page links to our target
+            target_links = [link for link in result.links_found 
+                            if self._is_link_to_target(link, target_url, target_domain)]
+            
+            if target_links:
+                # Found backlinks! Update the result and yield
+                result.links_found = target_links
+                yield result
+            
+            # Add new URLs to crawl queue for further exploration
+            # Only add internal links of the *source* domain for deeper crawling
+            # if we are trying to find more potential sources of backlinks.
+            # For backlink discovery, we typically only care about the first level
+            # of links from a source page. However, if we want to find *more*
+            # potential source pages, we might follow internal links on the source.
+            
+            # For now, let's follow all discovered links (internal and external)
+            # up to max_depth, but only yield results for links *to the target*.
+            
+            for link in result.links_found:
+                # Only add links that are within the allowed domains or are external
+                # and could potentially lead to more backlink sources.
+                # This logic needs careful consideration based on the crawl strategy.
                 
-                if isinstance(result, CrawlResult):
-                    self.crawled_urls.add(url)
-                    crawled_count += 1
-                    
-                    # Check if this page links to our target
-                    target_links = [link for link in result.links_found 
-                                  if self._is_link_to_target(link, target_url, target_domain)]
-                    
-                    if target_links:
-                        # Found backlinks! Update the result
-                        result.links_found = target_links
-                        yield result
-                    
-                    # Add new URLs to crawl queue (for deeper discovery)
-                    if crawled_count < self.config.max_pages:
-                        new_urls = await self._extract_urls_for_further_crawling(result)
-                        urls_to_crawl.update(new_urls - self.crawled_urls)
+                # For a backlink crawler, we are interested in finding pages that link
+                # to our target. So, we crawl a page, extract its links. If any of
+                # those links point to our target, we record it.
+                # If we want to find *more* pages that might link to our target,
+                # we need to decide which *other* links on the current page to follow.
+                
+                # A common strategy for backlink discovery is a "breadth-first"
+                # approach on external domains.
+                
+                # Let's refine: we add *any* discovered URL to the queue if it hasn't
+                # been crawled and is within depth limits. The `_is_link_to_target`
+                # filters what we *yield* as a backlink.
+                
+                # Ensure we don't re-add already crawled URLs or exceed max_pages
+                if link.target_url not in self.crawled_urls and \
+                   crawled_count + urls_to_visit.qsize() < self.config.max_pages:
+                    # Only add if the domain is allowed by the config
+                    parsed_link_url = urlparse(link.target_url)
+                    if self.config.is_domain_allowed(parsed_link_url.netloc):
+                        await urls_to_visit.put((link.target_url, current_depth + 1))
     
     def _is_link_to_target(self, link: Backlink, target_url: str, target_domain: str) -> bool:
         """Check if a link points to our target URL or domain"""
@@ -257,5 +359,3 @@ class WebCrawler:
             return True
             
         return False
-    
-    async def
