@@ -314,7 +314,7 @@ class Database:
         session = self._get_session()
         try:
             parsed_target = urlparse(target_url)
-            target_domain = parsed_target.netloc
+            target_domain = parsed_target.netloc.lower() # Lowercase for consistent comparison
             # target_path = parsed_target.path # Not needed for domain-wide query
 
             logger.info(f"Querying backlinks for target_url: {target_url}, domain: {target_domain}")
