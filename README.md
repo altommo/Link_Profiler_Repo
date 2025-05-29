@@ -119,11 +119,26 @@ lxml             # XML/HTML parser (faster than html.parser)
 ## 🚀 Usage Guide
 
 ### **Starting the API Server**
-```bash
-# From project root directory
-python main.py
 
-# Or using uvicorn directly
+To run the API server, you need to ensure that the project's root directory is added to your `PYTHONPATH`. This allows Python to correctly resolve internal package imports.
+
+**From the project root directory (where `main.py` is located):**
+
+**For Linux/macOS:**
+```bash
+export PYTHONPATH=$(pwd)
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**For Windows (Command Prompt):**
+```cmd
+set PYTHONPATH=%cd%
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**For Windows (PowerShell):**
+```powershell
+$env:PYTHONPATH = (Get-Location).Path
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -187,7 +202,7 @@ POST /domain/find_expired_domains
 {
     "max_depth": 3,              # Crawling depth from seed URLs
     "max_pages": 1000,           # Maximum pages to crawl
-    "delay_seconds": 1.0,        # Delay between requests
+    "delay_seconds": 1.0,        # Request delay
     "timeout_seconds": 30,       # Request timeout
     "user_agent": "LinkProfiler/1.0",
     "respect_robots_txt": true,  # Honor robots.txt
