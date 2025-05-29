@@ -7,6 +7,7 @@ from typing import List, Optional # Added Optional import
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import logging
+import uuid # Import uuid
 
 from Link_Profiler.core.models import Backlink, LinkType # Absolute import
 
@@ -36,6 +37,7 @@ class LinkExtractor:
 
             links.append(
                 Backlink(
+                    id=str(uuid.uuid4()), # Generate a unique ID for each backlink
                     source_url=base_url,
                     target_url=full_url,
                     anchor_text=anchor_text,
@@ -51,6 +53,7 @@ class LinkExtractor:
             if canonical_url:
                 links.append(
                     Backlink(
+                        id=str(uuid.uuid4()), # Generate a unique ID for the canonical link
                         source_url=base_url,
                         target_url=canonical_url,
                         anchor_text="canonical",
