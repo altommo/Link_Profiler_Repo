@@ -71,7 +71,7 @@ else:
 # Initialize other services that depend on domain_service and backlink_service
 crawl_service = CrawlService(db, backlink_service=backlink_service_instance) 
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
-expired_domain_finder_service = ExpiredDomainFinder_Service(db, domain_service_instance, domain_analyzer_service)
+expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service) # Corrected class name
 
 
 @asynccontextmanager
