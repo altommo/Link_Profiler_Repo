@@ -39,7 +39,7 @@ from contextlib import asynccontextmanager # Import asynccontextmanager
 
 from Link_Profiler.services.crawl_service import CrawlService # Changed to absolute import
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient # Changed to absolute import
-from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient # Import new BacklinkService components
+from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient # Import new BacklinkService components
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Changed to absolute import
 from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService # Changed to absolute import
 from Link_Profiler.database.database import Database # Changed to absolute import
@@ -60,7 +60,9 @@ else:
     domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient())
 
 # Initialize BacklinkService
-if os.getenv("USE_REAL_BACKLINK_API", "false").lower() == "true":
+if os.getenv("USE_GSC_API", "false").lower() == "true":
+    backlink_service_instance = BacklinkService(api_client=GSCBacklinkAPIClient())
+elif os.getenv("USE_REAL_BACKLINK_API", "false").lower() == "true":
     backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=os.getenv("REAL_BACKLINK_API_KEY", "dummy_backlink_key")))
 else:
     backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient())
@@ -69,7 +71,7 @@ else:
 # Initialize other services that depend on domain_service and backlink_service
 crawl_service = CrawlService(db, backlink_service=backlink_service_instance) 
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
-expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service)
+expired_domain_finder_service = ExpiredDomainFinder_Service(db, domain_service_instance, domain_analyzer_service)
 
 
 @asynccontextmanager
@@ -286,7 +288,7 @@ async def start_backlink_discovery(
     background_tasks: BackgroundTasks
 ):
     """
-    Starts a new backlink discovery crawl job for a given target URL.
+    Starts a new backlink discovery job for a given target URL.
     The crawl runs in the background.
     """
     logger.info(f"Received request to start backlink discovery for {request.target_url}")

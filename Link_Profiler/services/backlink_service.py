@@ -7,9 +7,20 @@ from datetime import datetime, timedelta
 import random
 import aiohttp
 
+# Google API imports for GSC
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+
 from Link_Profiler.core.models import Backlink, LinkType, SpamLevel, Domain # Assuming Domain model might be needed for context
 
 logger = logging.getLogger(__name__)
+
+# If modifying these scopes, delete the file token.json.
+SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
+CREDENTIALS_FILE = 'credentials.json'
+TOKEN_FILE = 'token.json'
 
 class BaseBacklinkAPIClient:
     """
@@ -197,6 +208,133 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
             self.logger.error(f"Unexpected error in real backlink fetch for {target_url}: {e}. Returning empty list.")
             return []
 
+class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
+    """
+    A client for Google Search Console API.
+    Requires OAuth 2.0 authentication setup.
+    """
+    def __init__(self):
+        self.logger = logging.getLogger(__name__ + ".GSCBacklinkAPIClient")
+        self.service = None
+        self._creds = None
+
+    async def __aenter__(self):
+        """Authenticates and builds the GSC service."""
+        self.logger.info("Entering GSCBacklinkAPIClient context. Attempting authentication.")
+        
+        # This part would typically be run once interactively to generate token.json
+        # For a server application, you'd usually have a pre-generated token.json
+        # or a more complex OAuth flow.
+        
+        if os.path.exists(TOKEN_FILE):
+            self._creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        
+        if not self._creds or not self._creds.valid:
+            if self._creds and self._creds.expired and self._creds.refresh_token:
+                self.logger.info("Refreshing GSC access token.")
+                self._creds.refresh(Request())
+            else:
+                self.logger.warning(f"GSC token.json not found or invalid. Attempting interactive flow. Ensure {CREDENTIALS_FILE} exists.")
+                # This interactive flow is not suitable for a headless server.
+                # You would typically run this part once on a local machine to get token.json.
+                try:
+                    flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+                    # Use a dummy port for local testing, or configure for web app flow
+                    flow.redirect_uri = "http://localhost:8080/" # Or a real redirect URI for web apps
+                    self._creds = flow.run_local_server(port=0) # Opens browser for authentication
+                    with open(TOKEN_FILE, 'w') as token:
+                        token.write(self._creds.to_json())
+                    self.logger.info(f"GSC token.json generated. Please restart the application.")
+                except FileNotFoundError:
+                    self.logger.error(f"GSC credentials.json not found at {CREDENTIALS_FILE}. GSC API will not function.")
+                    self._creds = None
+                except Exception as e:
+                    self.logger.error(f"Error during GSC interactive authentication flow: {e}")
+                    self._creds = None
+
+        if self._creds:
+            self.service = build('webmasters', 'v3', credentials=self._creds)
+            self.logger.info("GSC service built successfully.")
+        else:
+            self.logger.error("GSC authentication failed. GSC API client will not be functional.")
+        
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """No specific cleanup needed for GSC service object."""
+        self.logger.info("Exiting GSCBacklinkAPIClient context.")
+        pass
+
+    async def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
+        """
+        Fetches backlinks for a given target URL from Google Search Console.
+        Note: GSC API only provides data for verified properties.
+        """
+        if not self.service:
+            self.logger.error("GSC service not initialized. Cannot fetch backlinks.")
+            return []
+
+        parsed_target_url = urlparse(target_url)
+        # GSC API expects the property URL to be the root domain or a verified prefix
+        # For simplicity, we'll use the scheme and netloc as the property URL
+        property_url = f"{parsed_target_url.scheme}://{parsed_target_url.netloc}/"
+        
+        self.logger.info(f"Attempting to fetch GSC backlinks for property: {property_url}")
+
+        try:
+            # This is a simplified example. Real GSC API calls for backlinks
+            # are more complex and involve specific report types.
+            # The 'links' endpoint is for external links to your property.
+            # You might need to iterate through pages of results.
+            
+            # Example: Fetching top linking sites
+            # request = self.service.searchanalytics().query(
+            #     siteUrl=property_url,
+            #     body={
+            #         'startDate': (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d'),
+            #         'endDate': datetime.now().strftime('%Y-%m-%d'),
+            #         'dimensions': ['query', 'page'],
+            #         'rowLimit': 1000
+            #     }
+            # )
+            # response = request.execute()
+            # self.logger.debug(f"GSC API response: {response}")
+
+            # For backlinks, you'd typically use the 'links' resource, but it's complex:
+            # https://developers.google.com/webmaster-tools/v3/links
+            # Example: request = self.service.links().search(siteUrl=property_url, linkType='external')
+
+            # Since direct backlink data is complex and requires property verification,
+            # we'll return simulated data for now, even if the service is built.
+            self.logger.warning("GSCBacklinkAPIClient: Returning simulated data. Actual GSC API integration for backlinks is complex and requires property verification.")
+            
+            # Simulate some GSC-like backlinks
+            return [
+                Backlink(
+                    source_url=f"http://gsc-source1.com/article/{random.randint(100,999)}",
+                    target_url=target_url,
+                    anchor_text="GSC Link 1",
+                    link_type=LinkType.FOLLOW,
+                    context_text="Context from GSC source 1",
+                    discovered_date=datetime.now() - timedelta(days=random.randint(10, 300)),
+                    spam_level=SpamLevel.CLEAN
+                ),
+                Backlink(
+                    source_url=f"http://gsc-source2.net/blog/{random.randint(100,999)}",
+                    target_url=target_url,
+                    anchor_text="GSC Link 2",
+                    link_type=LinkType.NOFOLLOW,
+                    context_text="Context from GSC source 2",
+                    discovered_date=datetime.now() - timedelta(days=random.randint(10, 300)),
+                    spam_level=SpamLevel.CLEAN
+                )
+            ]
+
+        except Exception as e:
+            self.logger.error(f"Error fetching GSC backlinks for {property_url}: {e}. Returning empty list.")
+            return []
+
+
 class BacklinkService:
     """
     Service for retrieving backlink information, either from a crawler or an API.
@@ -205,7 +343,10 @@ class BacklinkService:
         self.logger = logging.getLogger(__name__)
         
         # Determine which API client to use based on environment variable
-        if os.getenv("USE_REAL_BACKLINK_API", "false").lower() == "true":
+        if os.getenv("USE_GSC_API", "false").lower() == "true":
+            self.logger.info("Using GSCBacklinkAPIClient for backlink lookups.")
+            self.api_client = GSCBacklinkAPIClient()
+        elif os.getenv("USE_REAL_BACKLINK_API", "false").lower() == "true":
             real_api_key = os.getenv("REAL_BACKLINK_API_KEY")
             if not real_api_key:
                 self.logger.error("REAL_BACKLINK_API_KEY environment variable not set. Falling back to simulated Backlink API.")
