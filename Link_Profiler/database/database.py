@@ -3,17 +3,17 @@ Database Module - Placeholder for data persistence operations
 File: Link_Profiler/database/database.py
 """
 
-from typing import List, Dict, Optional, Any # Added Any import
-from Link_Profiler.core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model, CrawlStatus # Changed to absolute import and added CrawlStatus
+from typing import List, Dict, Optional, Any
+from Link_Profiler.core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model, CrawlStatus
 import json
 import os
-from urllib.parse import urlparse # Import urlparse
+from urllib.parse import urlparse
 
 # --- SQLAlchemy Imports ---
-from sqlalchemy import create_engine, or_ # Import or_
+from sqlalchemy import create_engine, or_
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import IntegrityError
-from Link_Profiler.database.models import ( # Import ORM models
+from Link_Profiler.database.models import (
     Base, DomainORM, URLORM, BacklinkORM, LinkProfileORM, CrawlJobORM, SEOMetricsORM,
     LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum
 )
@@ -266,102 +266,94 @@ class Database:
             source_domain_name = urlparse(backlink.source_url).netloc.lower()
             target_domain_name = urlparse(backlink.target_url).netloc.lower()
 
-            # Add domains if they don't exist
             session.merge(DomainORM(name=source_domain_name))
             session.merge(DomainORM(name=target_domain_name))
 
-            orm_backlink = self._to_orm(backlink)
-            session.add(orm_backlink)
+            # Check if backlink already exists based on source_url and target_url
+            existing_orm_backlink = session.query(BacklinkORM).filter_by(
+                source_url=backlink.source_url,
+                target_url=backlink.target_url
+            ).first()
+
+            if existing_orm_backlink:
+                # Update existing backlink's last_seen_date and other relevant fields
+                logger.debug(f"Updating existing backlink: from {backlink.source_url} to {backlink.target_url}")
+                existing_orm_backlink.last_seen_date = backlink.last_seen_date
+                existing_orm_backlink.anchor_text = backlink.anchor_text
+                existing_orm_backlink.link_type = backlink.link_type.value
+                existing_orm_backlink.context_text = backlink.context_text
+                existing_orm_backlink.is_image_link = backlink.is_image_link
+                existing_orm_backlink.alt_text = backlink.alt_text
+                existing_orm_backlink.authority_passed = backlink.authority_passed
+                existing_orm_backlink.is_active = backlink.is_active
+                existing_orm_backlink.spam_level = backlink.spam_level.value
+            else:
+                # Add new backlink
+                logger.debug(f"Adding new backlink: from {backlink.source_url} to {backlink.target_url}")
+                orm_backlink = self._to_orm(backlink)
+                if orm_backlink is None:
+                    logger.error(f"Failed to convert backlink dataclass to ORM for {backlink.source_url} -> {backlink.target_url}")
+                    return # Exit if conversion failed
+                session.add(orm_backlink)
+            
             session.commit()
-        except IntegrityError:
-            session.rollback()
-            logger.warning(f"Backlink from {backlink.source_url} to {backlink.target_url} already exists. Skipping.")
+            logger.info(f"Successfully added/updated backlink from {backlink.source_url} to {backlink.target_url}.")
         except Exception as e:
             session.rollback()
-            logger.error(f"Error adding backlink: {e}")
+            logger.error(f"Error adding/updating backlink: {type(e).__name__}: {e}", exc_info=True)
+            raise # Re-raise to indicate failure
         finally:
             session.close()
 
     def add_backlinks(self, backlinks: List[Backlink]) -> None:
         session = self._get_session()
         try:
-            logger.info(f"Attempting to add {len(backlinks)} backlinks to the database.")
+            logger.info(f"Attempting to add/update {len(backlinks)} backlinks to the database.")
             
-            # --- TEMPORARY DEBUG: Only add the first backlink ---
-            if backlinks:
-                backlink = backlinks[0]
+            for i, backlink in enumerate(backlinks):
+                # Ensure source and target domains exist
                 source_domain_name = urlparse(backlink.source_url).netloc.lower()
                 target_domain_name = urlparse(backlink.target_url).netloc.lower()
                 
-                logger.debug(f"TEMPORARY DEBUG: Processing ONLY the first backlink: from {backlink.source_url} (Domain: {source_domain_name}) to {backlink.target_url} (Domain: {target_domain_name}). Target domain being saved: {target_domain_name}")
-
+                # Add domains if they don't exist (merge handles upsert for domains)
                 session.merge(DomainORM(name=source_domain_name))
                 session.merge(DomainORM(name=target_domain_name))
 
-                orm_backlink = self._to_orm(backlink)
-                if orm_backlink is None:
-                     logger.error(f"TEMPORARY DEBUG: Failed to convert the first backlink dataclass to ORM.")
+                # Check if backlink already exists based on source_url and target_url
+                existing_orm_backlink = session.query(BacklinkORM).filter_by(
+                    source_url=backlink.source_url,
+                    target_url=backlink.target_url
+                ).first()
+
+                if existing_orm_backlink:
+                    # Update existing backlink's last_seen_date and other relevant fields
+                    logger.debug(f"Updating existing backlink: from {backlink.source_url} to {backlink.target_url}")
+                    existing_orm_backlink.last_seen_date = backlink.last_seen_date
+                    existing_orm_backlink.anchor_text = backlink.anchor_text
+                    existing_orm_backlink.link_type = backlink.link_type.value
+                    existing_orm_backlink.context_text = backlink.context_text
+                    existing_orm_backlink.is_image_link = backlink.is_image_link
+                    existing_orm_backlink.alt_text = backlink.alt_text
+                    existing_orm_backlink.authority_passed = backlink.authority_passed
+                    existing_orm_backlink.is_active = backlink.is_active
+                    existing_orm_backlink.spam_level = backlink.spam_level.value
+                    # No need to add to session, it's already managed
                 else:
-                    logger.debug(f"TEMPORARY DEBUG: Adding ORM backlink {orm_backlink.id} to session.")
+                    # Add new backlink
+                    logger.debug(f"Adding new backlink: from {backlink.source_url} to {backlink.target_url}")
+                    orm_backlink = self._to_orm(backlink)
+                    if orm_backlink is None:
+                        logger.error(f"Failed to convert backlink dataclass to ORM for backlink {i+1}/{len(backlinks)}")
+                        continue # Skip this backlink if conversion failed
                     session.add(orm_backlink)
-                    logger.debug(f"TEMPORARY DEBUG: Added ORM backlink {orm_backlink.id} to session.")
-
-                logger.debug("TEMPORARY DEBUG: Attempting session.commit() for the first backlink.")
-                
-                try:
-                    session.commit()
-                    logger.debug("TEMPORARY DEBUG: session.commit() successful for the first backlink.")
-                    logger.info(f"TEMPORARY DEBUG: Successfully added/merged the first backlink.")
-                except Exception as commit_e:
-                     session.rollback()
-                     logger.error(f"TEMPORARY DEBUG: Error during session.commit() for the first backlink: {type(commit_e).__name__}: {commit_e}", exc_info=True)
-                     raise # Re-raise the commit exception
-
-            else:
-                logger.info("No backlinks provided to add.")
-            # --- END TEMPORARY DEBUG ---
-
-            # --- Original batch add logic (commented out) ---
-            # logger.debug("Starting session.add() loop for backlinks.")
-            # for i, backlink in enumerate(backlinks):
-            #     # Ensure source and target domains exist
-            #     source_domain_name = urlparse(backlink.source_url).netloc.lower()
-            #     target_domain_name = urlparse(backlink.target_url).netloc.lower()
-                
-            #     logger.debug(f"Processing backlink {i+1}/{len(backlinks)}: from {backlink.source_url} (Domain: {source_domain_name}) to {backlink.target_url} (Domain: {target_domain_name}). Target domain being saved: {target_domain_name}")
-
-            #     session.merge(DomainORM(name=source_domain_name))
-            #     session.merge(DomainORM(name=target_domain_name))
-
-            #     orm_backlink = self._to_orm(backlink)
-            #     # Check if ORM object was created successfully (should be now with UUID)
-            #     if orm_backlink is None:
-            #          logger.error(f"Failed to convert backlink dataclass to ORM for backlink {i+1}/{len(backlinks)}")
-            #          continue # Skip this backlink if conversion failed
-
-            #     logger.debug(f"Adding ORM backlink {orm_backlink.id} to session.")
-            #     session.add(orm_backlink)
-            #     logger.debug(f"Added ORM backlink {orm_backlink.id} to session.")
-
-            # logger.debug("Finished session.add() loop. Attempting session.commit().")
             
-            # try:
-            #     session.commit()
-            #     logger.debug("session.commit() successful.")
-            #     logger.info(f"Successfully added/merged {len(backlinks)} backlinks.")
-            # except Exception as commit_e:
-            #      session.rollback()
-            #      logger.error(f"Error during session.commit() for backlinks: {type(commit_e).__name__}: {commit_e}", exc_info=True)
-            #      raise # Re-raise the commit exception
-            # --- END Original batch add logic ---
+            logger.debug("Attempting session.commit() for all backlinks.")
+            session.commit()
+            logger.info(f"Successfully added/updated {len(backlinks)} backlinks.")
 
-
-        except IntegrityError:
+        except Exception as e: # Catching general Exception for now, can refine later
             session.rollback()
-            logger.warning(f"One or more backlinks already exist. Some may have been skipped.")
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error adding multiple backlinks (before commit): {type(e).__name__}: {e}", exc_info=True) # Log exception type and traceback
+            logger.error(f"Error adding/updating backlinks: {type(e).__name__}: {e}", exc_info=True)
             raise # Re-raise the exception after logging and rollback
         finally:
             session.close()
