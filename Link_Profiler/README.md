@@ -460,21 +460,6 @@ The project has a solid foundation with core crawling, link analysis, and domain
 
 #### **Immediate Next Steps (High Priority)**
 
-1.  **Refine Link Profile Calculation**:
-    *   **Completed**: The `authority_score`, `trust_score`, and `spam_score` in `LinkProfile` are now calculated based on the metrics of linking domains.
-2.  **Integrate SEO Metrics into Crawl Flow**:
-    *   **Completed**: `ContentParser` extracts SEO metrics, and `CrawlService` now persists this data via `Database.save_seo_metrics`.
-3.  **Implement Real Domain API Integration**:
-    *   **Completed**: The `DomainService` can now be configured to use `AbstractDomainAPIClient` (free tier available) for WHOIS and availability.
-4.  **Implement Real Backlink API Integration**:
-    *   **Completed**: The `CrawlService` now attempts to fetch backlinks from a `BacklinkService` (which can use `SimulatedBacklinkAPIClient`, `RealBacklinkAPIClient`, `OpenLinkProfilerAPIClient`, or `GSCBacklinkAPIClient` based on environment variables) before or in conjunction with crawling.
-    *   **Next Action**:
-        *   **OpenLinkProfiler.org Integration**: The `OpenLinkProfilerAPIClient` now makes actual API calls and parses the response.
-        *   **GSC API Enhancement**: The `GSCBacklinkAPIClient` now makes actual GSC API calls to fetch top linking sites for verified properties. Ensure `credentials.json` is correctly set up and `token.json` is generated via the interactive OAuth flow for your verified properties.
-        *   **Paid API Integration (Optional)**: If a paid API (e.g., Ahrefs, Moz) is acquired, replace the simulated data in `RealBacklinkAPIClient` with actual API calls and response parsing.
-
-#### **Mid-Term Enhancements**
-
 1.  **Advanced Crawl Management**:
     *   Add API endpoints and internal logic to pause, resume, and stop active crawl jobs gracefully.
     *   Implement a job queue system (e.g., using Redis and Celery) for more robust background task management and distributed processing.
@@ -486,7 +471,7 @@ The project has a solid foundation with core crawling, link analysis, and domain
 4.  **Competitor Backlink Analysis**:
     *   Add API endpoints and logic to perform link intersect analysis (find common backlinks between domains) and unique backlink discovery.
 
-#### **Long-Term Vision**
+#### **Mid-Term Enhancements**
 
 1.  **Distributed Crawling Architecture**:
     *   Enable the crawler to run across multiple machines or containers for large-scale data collection.

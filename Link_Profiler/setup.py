@@ -12,6 +12,8 @@ setup(
         "lxml",
         "SQLAlchemy",
         "psycopg2-binary",
+        "google-api-python-client",
+        "google-auth-oauthlib",
     ],
     # Add other metadata as needed
     author="Your Name",
