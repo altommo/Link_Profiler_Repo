@@ -5,6 +5,7 @@ File: database/database.py
 
 from typing import List, Dict, Optional
 from ..core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model
+from ..core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics # Import models directly for from_dict
 import json
 import os
 
@@ -34,7 +35,7 @@ class Database:
         """Load data from JSON files if they exist."""
         try:
             with open(self._get_file_path("backlinks.json"), 'r') as f:
-                self._backlinks = [Backlink(**item) for item in json.load(f)]
+                self._backlinks = [Backlink.from_dict(item) for item in json.load(f)]
         except FileNotFoundError:
             pass
         except Exception as e:
@@ -42,7 +43,7 @@ class Database:
 
         try:
             with open(self._get_file_path("link_profiles.json"), 'r') as f:
-                self._link_profiles = [LinkProfile(**item) for item in json.load(f)]
+                self._link_profiles = [LinkProfile.from_dict(item) for item in json.load(f)]
         except FileNotFoundError:
             pass
         except Exception as e:
@@ -50,7 +51,7 @@ class Database:
         
         try:
             with open(self._get_file_path("crawl_jobs.json"), 'r') as f:
-                self._crawl_jobs = [CrawlJob(**item) for item in json.load(f)]
+                self._crawl_jobs = [CrawlJob.from_dict(item) for item in json.load(f)]
         except FileNotFoundError:
             pass
         except Exception as e:
