@@ -46,7 +46,8 @@ class DomainAnalyzerService:
         
         domain_obj = self.db.get_domain(domain_name)
         
-        async with self.domain_service as ds: # Use domain_service as context manager
+        # Ensure domain_service is used as a context manager for its API client
+        async with self.domain_service as ds: 
             if not domain_obj:
                 # If not found in DB, try to fetch fresh info (though this might be slow for many domains)
                 self.logger.info(f"Domain {domain_name} not found in DB, fetching fresh info.")

@@ -44,7 +44,8 @@ class ExpiredDomainFinderService:
         
         valuable_expired_domains = []
         
-        async with self.domain_service as ds: # Use domain_service as context manager
+        # Ensure domain_service is used as a context manager for its API client
+        async with self.domain_service as ds: 
             for i, domain_name in enumerate(potential_domains):
                 if limit and len(valuable_expired_domains) >= limit:
                     self.logger.info(f"Reached limit of {limit} valuable expired domains.")
