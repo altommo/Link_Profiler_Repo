@@ -11,7 +11,7 @@ from datetime import datetime
 from urllib.parse import urlparse # Import urlparse
 import json # Import json
 
-from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model
+from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model, SEOMetrics # Import SEOMetrics
 from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult # Import CrawlResult
 from Link_Profiler.database.database import Database
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
@@ -121,6 +121,15 @@ class CrawlService:
                                 self.logger.error(f"Error adding backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
                                 job.add_error(f"DB error adding backlinks for {crawl_result.url}: {str(db_e)}")
                         
+                        # Persist SEO metrics if available
+                        if crawl_result.seo_metrics:
+                            try:
+                                self.db.save_seo_metrics(crawl_result.seo_metrics)
+                                self.logger.info(f"Saved SEO metrics for {crawl_result.url}.")
+                            except Exception as seo_e:
+                                self.logger.error(f"Error saving SEO metrics for {crawl_result.url}: {seo_e}", exc_info=True)
+                                job.add_error(f"DB error saving SEO metrics for {crawl_result.url}: {str(seo_e)}")
+
                         # Update job progress
                         job.progress_percentage = min(99.0, (urls_crawled_count / config.max_pages) * 100)
                         self.db.update_crawl_job(job)

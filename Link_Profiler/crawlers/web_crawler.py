@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 
 from Link_Profiler.core.models import ( # Changed to absolute import
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
-    CrawlJob, ContentType, serialize_model # Import serialize_model
+    CrawlJob, ContentType, serialize_model, SEOMetrics # Import SEOMetrics
 )
 from .link_extractor import LinkExtractor
 from .content_parser import ContentParser
@@ -61,13 +61,7 @@ class CrawlResult:
     error_message: Optional[str] = None
     crawl_time_ms: int = 0
     content_type: str = "text/html"
-    
-    # __post_init__ is not needed with field(default_factory=...)
-    # def __post_init__(self):
-    #     if self.headers is None:
-    #         self.headers = {}
-    #     if self.links_found is None:
-    #         self.links_found = []
+    seo_metrics: Optional[SEOMetrics] = None # Added for SEO metrics
 
 
 class WebCrawler:
@@ -155,12 +149,12 @@ class WebCrawler:
                 # Read content based on type
                 content = ""
                 links = []
+                seo_metrics = None # Initialize seo_metrics
                 
                 if 'text/html' in content_type:
                     content = await response.text()
                     links = await self._extract_links_from_html(url, content)
-                    # Future: Pass content to ContentParser for SEO metrics
-                    # seo_metrics = await self.content_parser.parse_seo_metrics(url, content)
+                    seo_metrics = await self.content_parser.parse_seo_metrics(url, content) # Parse SEO metrics
                 elif 'application/pdf' in content_type and self.config.extract_pdfs:
                     content = await response.read() # Read as bytes for PDF
                     links = []  # PDF link extraction would go here
@@ -174,7 +168,8 @@ class WebCrawler:
                     links_found=links,
                     redirect_url=str(response.url) if str(response.url) != url else None,
                     crawl_time_ms=crawl_time_ms,
-                    content_type=content_type
+                    content_type=content_type,
+                    seo_metrics=seo_metrics # Pass SEO metrics in CrawlResult
                 )
                 
         except asyncio.TimeoutError:
@@ -229,10 +224,6 @@ class WebCrawler:
         
         # IMPORTANT: For finding backlinks, we need to crawl *other* domains,
         # not just the target domain itself.
-        
-        # For now, let's return a dummy set of external URLs that *might* link
-        # to the target. In a real system, these would be populated by
-        # external data sources or a more sophisticated discovery phase.
         
         # If the goal is to find expired domains, you might start by crawling
         # lists of expired domains or domains known to have many backlinks.
