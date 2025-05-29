@@ -18,7 +18,7 @@ A comprehensive, open-source link analysis and expired domain discovery system i
 - **Anchor Text Analysis**: Detailed anchor text distribution and patterns
 - **Link Type Classification**: dofollow, nofollow, sponsored, UGC, redirect, canonical detection
 - **SEO Metrics Extraction**: Extracts and stores on-page SEO data (e.g., title length, heading counts, internal/external links).
-- **Backlink API Integration**: Can fetch existing backlink data from external APIs (simulated for now).
+- **Backlink API Integration**: Can fetch existing backlink data from external APIs (simulated for now, ready for real API integration).
 
 ### 💎 **Expired Domain Discovery**
 - **Domain Availability Checking**: Real-time domain registration status (now supports real API integration)
@@ -284,7 +284,7 @@ POST /domain/find_expired_domains
     "respect_robots_txt": true,  # Honor robots.txt
     "follow_redirects": true,    # Follow HTTP redirects
     "extract_images": true,      # Extract image links
-    "extract_pdfs": false,       # Extract PDF links
+    "extract_pdfs": false,       # Extract PDF documents
     "max_file_size_mb": 10,      # Max download size
     "allowed_domains": [],       # Whitelist domains
     "blocked_domains": [],       # Blacklist domains

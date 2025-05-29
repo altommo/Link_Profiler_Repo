@@ -63,6 +63,7 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
             try:
                 # Simulate an actual HTTP request, even if it's to a dummy URL
                 async with self._session.get(f"http://localhost:8080/simulate_backlinks/{target_url}") as response:
+                    # We don't care about the actual response, just that the request was made
                     pass
             except aiohttp.ClientConnectorError:
                 pass
@@ -152,40 +153,48 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
         """
         endpoint = f"{self.base_url}/v1/backlinks"
         params = {"target": target_url, "limit": 100} # Example parameters
-        self.logger.info(f"Making real API call for backlinks: {endpoint}?target={target_url}...")
+        self.logger.info(f"Attempting real API call for backlinks: {endpoint}?target={target_url}...")
 
         try:
+            # Simulate an actual HTTP request to a dummy endpoint.
+            # In a real scenario, this would be your actual API endpoint.
             async with self._session.get(endpoint, params=params, timeout=30) as response:
                 response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
-                data = await response.json()
                 
                 # --- Placeholder for parsing real API response into Backlink objects ---
                 # This part is highly dependent on the actual API's response structure.
-                # For demonstration, we'll simulate data if the real API call was successful
-                # but we don't have actual parsing logic.
+                # You would parse `await response.json()` here.
                 
-                # Example of how you might parse a real API response:
-                # parsed_backlinks = []
-                # for item in data.get("backlinks", []):
-                #     parsed_backlinks.append(Backlink(
-                #         source_url=item.get("source_url"),
-                #         target_url=item.get("target_url"),
-                #         anchor_text=item.get("anchor_text", ""),
-                #         link_type=LinkType(item.get("link_type", "follow").lower()),
-                #         # ... map other fields
-                #     ))
-                # return parsed_backlinks
-
-                # For now, if the API call itself succeeds, return simulated data
-                # to keep the flow working without a real API key.
-                self.logger.warning("RealBacklinkAPIClient is using simulated data. Replace with actual parsing.")
-                return await SimulatedBacklinkAPIClient().get_backlinks_for_url(target_url)
+                self.logger.warning("RealBacklinkAPIClient: Returning simulated data. Replace with actual API response parsing.")
+                
+                # Return a fixed set of dummy backlinks to represent a successful API call
+                # This is distinct from SimulatedBacklinkAPIClient's random generation
+                return [
+                    Backlink(
+                        source_url="http://real-api-source1.com/page/1",
+                        target_url=target_url,
+                        anchor_text="Real API Link 1",
+                        link_type=LinkType.FOLLOW,
+                        context_text="Context from real API source 1",
+                        discovered_date=datetime.now() - timedelta(days=30),
+                        spam_level=SpamLevel.CLEAN
+                    ),
+                    Backlink(
+                        source_url="http://real-api-source2.com/blog/post",
+                        target_url=target_url,
+                        anchor_text="Real API Link 2",
+                        link_type=LinkType.NOFOLLOW,
+                        context_text="Context from real API source 2",
+                        discovered_date=datetime.now() - timedelta(days=60),
+                        spam_level=SpamLevel.SUSPICIOUS
+                    )
+                ]
 
         except aiohttp.ClientError as e:
-            self.logger.error(f"Error fetching real backlinks for {target_url}: {e}")
-            return [] # Return empty list on error
+            self.logger.error(f"Error fetching real backlinks for {target_url}: {e}. Returning empty list.")
+            return [] # Return empty list on network/client error
         except Exception as e:
-            self.logger.error(f"Unexpected error in real backlink fetch for {target_url}: {e}")
+            self.logger.error(f"Unexpected error in real backlink fetch for {target_url}: {e}. Returning empty list.")
             return []
 
 class BacklinkService:
