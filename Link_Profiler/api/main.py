@@ -187,20 +187,25 @@ class BacklinkResponse(BaseModel):
     source_domain: str
     target_domain: str
     anchor_text: str
-    link_type: LinkType # Pydantic handles Enum directly
+    link_type: LinkType 
     context_text: str
     is_image_link: bool
     alt_text: Optional[str]
     discovered_date: datetime
     authority_passed: bool
-    spam_level: SpamLevel # Pydantic handles Enum directly
+    spam_level: SpamLevel 
 
     @classmethod
     def from_backlink(cls, backlink: Backlink):
         backlink_dict = serialize_model(backlink)
-        # Pydantic handles Enum directly if type hint is Enum
-        backlink_dict['link_type'] = backlink.link_type
-        backlink_dict['spam_level'] = backlink.spam_level
+        
+        # Convert database Enum types to core Enum types for Pydantic validation.
+        # The Backlink dataclass might contain Enum instances from Link_Profiler.database.models
+        # if they were directly mapped from ORM objects. Pydantic expects an instance
+        # of the *exact* Enum type specified in the model (Link_Profiler.core.models.LinkType/SpamLevel).
+        backlink_dict['link_type'] = LinkType(backlink.link_type.value)
+        backlink_dict['spam_level'] = SpamLevel(backlink.spam_level.value)
+        
         if isinstance(backlink_dict.get('discovered_date'), str):
             try:
                 backlink_dict['discovered_date'] = datetime.fromisoformat(backlink_dict['discovered_date'])
