@@ -80,6 +80,19 @@ class Domain:
         """Extract top-level domain"""
         return self.name.split('.')[-1]
 
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'Domain':
+        """Create a Domain instance from a dictionary."""
+        # Convert datetime strings back to datetime objects
+        if 'first_seen' in data and isinstance(data['first_seen'], str):
+            data['first_seen'] = datetime.fromisoformat(data['first_seen'])
+        if 'last_crawled' in data and isinstance(data['last_crawled'], str):
+            data['last_crawled'] = datetime.fromisoformat(data['last_crawled'])
+        
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
 
 @dataclass 
 class URL:
@@ -118,6 +131,22 @@ class URL:
     def is_crawlable(self) -> bool:
         """Check if URL can be crawled"""
         return self.crawl_status in [CrawlStatus.PENDING, CrawlStatus.FAILED]
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'URL':
+        """Create a URL instance from a dictionary."""
+        if 'content_type' in data and isinstance(data['content_type'], str):
+            data['content_type'] = ContentType(data['content_type'])
+        if 'last_modified' in data and isinstance(data['last_modified'], str):
+            data['last_modified'] = datetime.fromisoformat(data['last_modified'])
+        if 'crawl_status' in data and isinstance(data['crawl_status'], str):
+            data['crawl_status'] = CrawlStatus(data['crawl_status'])
+        if 'crawl_date' in data and isinstance(data['crawl_date'], str):
+            data['crawl_date'] = datetime.fromisoformat(data['crawl_date'])
+        
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
 
 
 @dataclass
@@ -159,6 +188,22 @@ class Backlink:
         return (self.link_type == LinkType.FOLLOW and 
                 self.spam_level == SpamLevel.CLEAN and
                 self.is_active)
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'Backlink':
+        """Create a Backlink instance from a dictionary."""
+        if 'link_type' in data and isinstance(data['link_type'], str):
+            data['link_type'] = LinkType(data['link_type'])
+        if 'spam_level' in data and isinstance(data['spam_level'], str):
+            data['spam_level'] = SpamLevel(data['spam_level'])
+        if 'discovered_date' in data and isinstance(data['discovered_date'], str):
+            data['discovered_date'] = datetime.fromisoformat(data['discovered_date'])
+        if 'last_seen_date' in data and isinstance(data['last_seen_date'], str):
+            data['last_seen_date'] = datetime.fromisoformat(data['last_seen_date'])
+        
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
 
 
 @dataclass
@@ -223,6 +268,20 @@ class LinkProfile:
                         if bl.spam_level in [SpamLevel.LIKELY_SPAM, SpamLevel.CONFIRMED_SPAM])
         self.spam_score = (spam_links / self.total_backlinks) * 100 if self.total_backlinks > 0 else 0
 
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'LinkProfile':
+        """Create a LinkProfile instance from a dictionary."""
+        if 'analysis_date' in data and isinstance(data['analysis_date'], str):
+            data['analysis_date'] = datetime.fromisoformat(data['analysis_date'])
+        if 'referring_domains' in data and isinstance(data['referring_domains'], list):
+            data['referring_domains'] = set(data['referring_domains'])
+        if 'backlinks' in data and isinstance(data['backlinks'], list):
+            data['backlinks'] = [Backlink.from_dict(bl_data) for bl_data in data['backlinks']]
+        
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
 
 @dataclass
 class CrawlJob:
@@ -260,6 +319,22 @@ class CrawlJob:
         """Add an error to the job log"""
         self.error_log.append(f"{datetime.now().isoformat()}: {error_message}")
         self.errors_count += 1
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'CrawlJob':
+        """Create a CrawlJob instance from a dictionary."""
+        if 'status' in data and isinstance(data['status'], str):
+            data['status'] = CrawlStatus(data['status'])
+        if 'created_date' in data and isinstance(data['created_date'], str):
+            data['created_date'] = datetime.fromisoformat(data['created_date'])
+        if 'started_date' in data and isinstance(data['started_date'], str):
+            data['started_date'] = datetime.fromisoformat(data['started_date'])
+        if 'completed_date' in data and isinstance(data['completed_date'], str):
+            data['completed_date'] = datetime.fromisoformat(data['completed_date'])
+        
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
 
 
 @dataclass
@@ -368,6 +443,13 @@ class SEOMetrics:
             
         self.seo_score = max(0.0, score)
         return self.seo_score
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'SEOMetrics':
+        """Create a SEOMetrics instance from a dictionary."""
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
 
 
 # Utility functions for model operations
