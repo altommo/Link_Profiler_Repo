@@ -10,13 +10,13 @@ from typing import List, Dict, Set, Optional, AsyncGenerator, Tuple
 from urllib.parse import urljoin, urlparse, urlencode
 from urllib.robotparser import RobotFileParser
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field # Import field
 import re
 from datetime import datetime, timedelta
 
 from Link_Profiler.core.models import ( # Changed to absolute import
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
-    CrawlJob, ContentType
+    CrawlJob, ContentType, serialize_model # Import serialize_model
 )
 from .link_extractor import LinkExtractor
 from .content_parser import ContentParser
@@ -49,24 +49,25 @@ class RateLimiter:
         self.last_request_time[domain] = time.time()
 
 
-@dataclass
+@dataclass # Convert to dataclass
 class CrawlResult:
     """Result of a single page crawl"""
     url: str
     status_code: int
     content: str = ""
-    headers: Dict[str, str] = None
-    links_found: List[Backlink] = None
+    headers: Dict[str, str] = field(default_factory=dict) # Use field(default_factory=dict)
+    links_found: List[Backlink] = field(default_factory=list) # Use field(default_factory=list)
     redirect_url: Optional[str] = None
     error_message: Optional[str] = None
     crawl_time_ms: int = 0
     content_type: str = "text/html"
     
-    def __post_init__(self):
-        if self.headers is None:
-            self.headers = {}
-        if self.links_found is None:
-            self.links_found = []
+    # __post_init__ is not needed with field(default_factory=...)
+    # def __post_init__(self):
+    #     if self.headers is None:
+    #         self.headers = {}
+    #     if self.links_found is None:
+    #         self.links_found = []
 
 
 class WebCrawler:
@@ -310,29 +311,12 @@ class WebCrawler:
             # up to max_depth, but only yield results for links *to the target*.
             
             for link in result.links_found:
-                # Only add links that are within the allowed domains or are external
-                # and could potentially lead to more backlink sources.
-                # This logic needs careful consideration based on the crawl strategy.
-                
-                # For a backlink crawler, we are interested in finding pages that link
-                # to our target. So, we crawl a page, extract its links. If any of
-                # those links point to our target, we record it.
-                # If we want to find *more* pages that might link to our target,
-                # we need to decide which *other* links on the current page to follow.
-                
-                # A common strategy for backlink discovery is a "breadth-first"
-                # approach on external domains.
-                
-                # Let's refine: we add *any* discovered URL to the queue if it hasn't
-                # been crawled and is within depth limits. The `_is_link_to_target`
-                # filters what we *yield* as a backlink.
-                
-                # Ensure we don't re-add already crawled URLs or exceed max_pages
-                if link.target_url not in self.crawled_urls and \
-                   crawled_count + urls_to_visit.qsize() < self.config.max_pages:
-                    # Only add if the domain is allowed by the config
-                    parsed_link_url = urlparse(link.target_url)
-                    if self.config.is_domain_allowed(parsed_link_url.netloc):
+                # Only add if the domain is allowed by the config
+                parsed_link_url = urlparse(link.target_url)
+                if self.config.is_domain_allowed(parsed_link_url.netloc):
+                    # Ensure we don't re-add already crawled URLs or exceed max_pages
+                    if link.target_url not in self.crawled_urls and \
+                       crawled_count + urls_to_visit.qsize() < self.config.max_pages:
                         await urls_to_visit.put((link.target_url, current_depth + 1))
     
     def _is_link_to_target(self, link: Backlink, target_url: str, target_domain: str) -> bool:

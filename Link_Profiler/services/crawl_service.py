@@ -9,9 +9,10 @@ from typing import List, Dict, Optional
 from uuid import uuid4
 from datetime import datetime
 from urllib.parse import urlparse # Import urlparse
+import json # Import json
 
 from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model
-from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult
+from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult # Import CrawlResult
 from Link_Profiler.database.database import Database
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
 
@@ -82,26 +83,47 @@ class CrawlService:
         self.logger.info(f"Starting crawl job {job.id} for {job.target_url}")
 
         crawler = WebCrawler(config)
-        self.active_crawlers: Dict[str, WebCrawler] = {} # Keep track of active crawler
+        self.active_crawlers[job.id] = crawler # Store active crawler instance
 
         discovered_backlinks: List[Backlink] = []
         urls_crawled_count = 0
         
+        # Define the debug file path
+        debug_file_path = f"data/crawl_results_debug_{job.id}.jsonl" # Using .jsonl for line-delimited JSON
+
         try:
-            async with crawler as wc:
-                async for crawl_result in wc.crawl_for_backlinks(job.target_url, initial_seed_urls):
-                    urls_crawled_count += 1
-                    job.urls_crawled = urls_crawled_count
-                    
-                    if crawl_result.links_found:
-                        self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url}")
-                        discovered_backlinks.extend(crawl_result.links_found)
-                        job.links_found = len(discovered_backlinks)
-                        self.db.add_backlinks(crawl_result.links_found) # Persist backlinks as they are found
-                    
-                    # Update job progress
-                    job.progress_percentage = min(99.0, (urls_crawled_count / config.max_pages) * 100)
-                    self.db.update_crawl_job(job)
+            # Open the debug file in append mode
+            with open(debug_file_path, 'a', encoding='utf-8') as debug_file:
+                async with crawler as wc:
+                    async for crawl_result in wc.crawl_for_backlinks(job.target_url, initial_seed_urls):
+                        urls_crawled_count += 1
+                        job.urls_crawled = urls_crawled_count
+                        
+                        # Serialize the CrawlResult to JSON and write to the debug file
+                        try:
+                            # Convert CrawlResult dataclass to a serializable dictionary
+                            crawl_result_dict = serialize_model(crawl_result)
+                            debug_file.write(json.dumps(crawl_result_dict) + '\n')
+                            debug_file.flush() # Ensure data is written immediately
+                        except Exception as e:
+                            self.logger.error(f"Error writing crawl result to debug file for {crawl_result.url}: {e}")
+                            job.add_error(f"Error writing debug data for {crawl_result.url}: {str(e)}")
+
+                        if crawl_result.links_found:
+                            self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url}")
+                            discovered_backlinks.extend(crawl_result.links_found)
+                            job.links_found = len(discovered_backlinks)
+                            
+                            # Persist backlinks as they are found
+                            try:
+                                self.db.add_backlinks(crawl_result.links_found) 
+                            except Exception as db_e:
+                                self.logger.error(f"Error adding backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
+                                job.add_error(f"DB error adding backlinks for {crawl_result.url}: {str(db_e)}")
+                        
+                        # Update job progress
+                        job.progress_percentage = min(99.0, (urls_crawled_count / config.max_pages) * 100)
+                        self.db.update_crawl_job(job)
 
             # After crawl completes, create/update LinkProfile
             if discovered_backlinks:
