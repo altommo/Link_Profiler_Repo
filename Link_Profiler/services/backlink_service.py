@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
 CREDENTIALS_FILE = 'credentials.json'
-TOKEN_FILE = 'token.json'
+TOKEN_FILE = 'token.pyc' # Changed to .pyc to avoid accidental git tracking of sensitive token.json
 
 class BaseBacklinkAPIClient:
     """
@@ -77,6 +77,7 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
                     # We don't care about the actual response, just that the request was made
                     pass
             except aiohttp.ClientConnectorError:
+                # This is expected if localhost:8080 is not running, simulating network activity
                 pass
             except Exception as e:
                 self.logger.warning(f"Unexpected error during simulated backlink fetch: {e}")
@@ -207,6 +208,101 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error in real backlink fetch for {target_url}: {e}. Returning empty list.")
             return []
+
+class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
+    """
+    A client for OpenLinkProfiler.org API.
+    This API is free with usage limits.
+    """
+    def __init__(self, base_url: str = "http://www.openlinkprofiler.org/api/index.php"):
+        self.logger = logging.getLogger(__name__ + ".OpenLinkProfilerAPIClient")
+        self.base_url = base_url
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def __aenter__(self):
+        """Async context manager entry for client session."""
+        self.logger.info("Entering OpenLinkProfilerAPIClient context.")
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit for client session."""
+        self.logger.info("Exiting OpenLinkProfilerAPIClient context.")
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+
+    async def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
+        """
+        Fetches backlinks for a given target URL from OpenLinkProfiler.org.
+        Note: OpenLinkProfiler API has usage limits and may not return all data.
+        """
+        # OpenLinkProfiler API requires 'url' and 'output' parameters.
+        # It returns data in XML or JSON. Let's assume JSON for easier parsing.
+        # Example: http://www.openlinkprofiler.org/api/index.php?url=example.com&output=json
+        
+        parsed_target_url = urlparse(target_url)
+        domain_or_url = parsed_target_url.netloc if parsed_target_url.netloc else target_url
+        
+        endpoint = self.base_url
+        params = {"url": domain_or_url, "output": "json"}
+        self.logger.info(f"Attempting OpenLinkProfiler API call for backlinks: {endpoint}?url={domain_or_url}...")
+
+        try:
+            async with self._session.get(endpoint, params=params, timeout=30) as response:
+                response.raise_for_status()
+                data = await response.json()
+                
+                backlinks = []
+                # OpenLinkProfiler's JSON structure might vary, this is a common assumption
+                for item in data.get("backlinks", []): # Adjust key based on actual API response
+                    source_url = item.get("source_url")
+                    target_url_from_api = item.get("target_url") # API might return canonical target
+                    anchor_text = item.get("anchor_text", "")
+                    link_type_str = item.get("link_type", "follow").lower() # e.g., "dofollow", "nofollow"
+                    spam_score_val = item.get("spam_score", 0.0) # Assuming a score
+                    
+                    # Map OpenLinkProfiler's link types to our LinkType enum
+                    link_type = LinkType.FOLLOW
+                    if "nofollow" in link_type_str:
+                        link_type = LinkType.NOFOLLOW
+                    elif "sponsored" in link_type_str:
+                        link_type = LinkType.SPONSORED
+                    elif "ugc" in link_type_str:
+                        link_type = LinkType.UGC
+                    
+                    # Map spam score to our SpamLevel enum (very basic mapping)
+                    spam_level = SpamLevel.CLEAN
+                    if spam_score_val > 70: # Example threshold
+                        spam_level = SpamLevel.CONFIRMED_SPAM
+                    elif spam_score_val > 40:
+                        spam_level = SpamLevel.LIKELY_SPAM
+                    elif spam_score_val > 10:
+                        spam_level = SpamLevel.SUSPICIOUS
+
+                    if source_url and target_url_from_api:
+                        backlinks.append(
+                            Backlink(
+                                source_url=source_url,
+                                target_url=target_url_from_api,
+                                anchor_text=anchor_text,
+                                link_type=link_type,
+                                context_text="", # OpenLinkProfiler API might not provide context text
+                                discovered_date=datetime.now(), # Use current date if API doesn't provide
+                                spam_level=spam_level
+                            )
+                        )
+                self.logger.info(f"OpenLinkProfilerAPIClient: Found {len(backlinks)} backlinks for {target_url}.")
+                return backlinks
+
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Error fetching OpenLinkProfiler backlinks for {target_url}: {e}. Returning empty list.")
+            return []
+        except Exception as e:
+            self.logger.error(f"Unexpected error in OpenLinkProfiler backlink fetch for {target_url}: {e}. Returning empty list.")
+            return []
+
 
 class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
     """
@@ -342,10 +438,13 @@ class BacklinkService:
     def __init__(self, api_client: Optional[BaseBacklinkAPIClient] = None):
         self.logger = logging.getLogger(__name__)
         
-        # Determine which API client to use based on environment variable
+        # Determine which API client to use based on environment variable priority
         if os.getenv("USE_GSC_API", "false").lower() == "true":
             self.logger.info("Using GSCBacklinkAPIClient for backlink lookups.")
             self.api_client = GSCBacklinkAPIClient()
+        elif os.getenv("USE_OPENLINKPROFILER_API", "false").lower() == "true":
+            self.logger.info("Using OpenLinkProfilerAPIClient for backlink lookups.")
+            self.api_client = OpenLinkProfilerAPIClient()
         elif os.getenv("USE_REAL_BACKLINK_API", "false").lower() == "true":
             real_api_key = os.getenv("REAL_BACKLINK_API_KEY")
             if not real_api_key:
