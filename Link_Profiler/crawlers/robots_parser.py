@@ -37,6 +37,7 @@ class RobotsParser:
     async def _fetch_robots_txt(self, domain: str) -> Optional[RobotFileParser]:
         """
         Fetches and parses the robots.txt file for a given domain.
+        Returns the parser if successful, or an empty parser if not found/failed.
         """
         if domain not in self._fetch_lock:
             self._fetch_lock[domain] = asyncio.Lock()
@@ -47,44 +48,45 @@ class RobotsParser:
 
             robots_txt_url = urljoin(f"http://{domain}", "/robots.txt")
             
-            if self._session is None:
-                logger.warning(f"aiohttp session not active for fetching robots.txt for {domain}. Please use RobotsParser within an 'async with' block.")
-                # Fallback for cases where it's not used as context manager, but less efficient
-                async with aiohttp.ClientSession() as temp_session:
-                    return await self._fetch_robots_txt_with_session(domain, robots_txt_url, temp_session)
-            else:
-                return await self._fetch_robots_txt_with_session(domain, robots_txt_url, self._session)
+            # Use the session managed by __aenter__/__aexit__
+            session_to_use = self._session
+            if session_to_use is None:
+                # This case should ideally not happen if used within WebCrawler's context
+                logger.warning(f"RobotsParser session not active for {domain}. Creating temporary session.")
+                session_to_use = aiohttp.ClientSession() # Create a temporary session if not active
 
-    async def _fetch_robots_txt_with_session(self, domain: str, robots_txt_url: str, session: aiohttp.ClientSession) -> Optional[RobotFileParser]:
-        parser = RobotFileParser()
-        parser.set_url(robots_txt_url)
+            parser = RobotFileParser()
+            parser.set_url(robots_txt_url)
 
-        try:
-            async with session.get(robots_txt_url, timeout=10) as response:
-                if response.status == 200:
-                    content = await response.text()
-                    parser.parse(content.splitlines())
-                    self._parsers[domain] = parser
-                    logger.info(f"Successfully fetched and parsed robots.txt for {domain}")
-                    return parser
-                elif response.status == 404:
-                    logger.info(f"No robots.txt found for {domain} (404 Not Found). Assuming full crawl allowed.")
-                    # If no robots.txt, assume everything is allowed
-                    self._parsers[domain] = parser # Store empty parser
-                    return parser
-                else:
-                    logger.warning(f"Failed to fetch robots.txt for {domain}. Status: {response.status}")
-        except aiohttp.ClientError as e:
-            logger.warning(f"Client error fetching robots.txt for {domain}: {e}")
-        except asyncio.TimeoutError:
-            logger.warning(f"Timeout fetching robots.txt for {domain}.")
-        except Exception as e:
-            logger.error(f"Unexpected error fetching robots.txt for {domain}: {e}")
-        
-        # If fetching fails, assume everything is allowed to avoid blocking
-        # but log the failure.
-        self._parsers[domain] = parser # Store empty parser
-        return parser
+            try:
+                async with session_to_use.get(robots_txt_url, timeout=10) as response:
+                    if response.status == 200:
+                        content = await response.text()
+                        parser.parse(content.splitlines())
+                        self._parsers[domain] = parser
+                        logger.info(f"Successfully fetched and parsed robots.txt for {domain}")
+                        return parser
+                    elif response.status == 404:
+                        logger.info(f"No robots.txt found for {domain} (404 Not Found). Assuming full crawl allowed.")
+                        # If no robots.txt, assume everything is allowed. Store an empty parser.
+                        self._parsers[domain] = parser 
+                        return parser
+                    else:
+                        logger.warning(f"Failed to fetch robots.txt for {domain}. Status: {response.status}")
+            except aiohttp.ClientError as e:
+                logger.warning(f"Client error fetching robots.txt for {domain}: {e}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout fetching robots.txt for {domain}.")
+            except Exception as e:
+                logger.error(f"Unexpected error fetching robots.txt for {domain}: {e}")
+            finally:
+                if session_to_use is not self._session and not session_to_use.closed:
+                    await session_to_use.close() # Close temporary session
+
+            # If fetching fails for any reason, assume everything is allowed by default
+            # and store an empty parser to avoid re-attempting for this domain.
+            self._parsers[domain] = parser 
+            return parser
 
     async def can_fetch(self, url: str, user_agent: str) -> bool:
         """
@@ -99,11 +101,15 @@ class RobotsParser:
             return True # Cannot determine, so allow
 
         parser = await self._fetch_robots_txt(domain)
-        if parser:
-            can_crawl = parser.can_fetch(user_agent, url)
-            if not can_crawl:
-                logger.debug(f"Blocked by robots.txt: {url} for {user_agent}")
-            return can_crawl
         
-        # If parser could not be fetched or created, default to allowing
-        return True
+        # If parser is None (shouldn't happen with current _fetch_robots_txt logic)
+        # or if fetching failed and an empty parser was returned, it means
+        # we couldn't get rules, so we default to allowing.
+        if parser is None: # This case should be covered by _fetch_robots_txt returning a parser
+            return True
+        
+        # Check if the parser explicitly disallows fetching
+        can_crawl = parser.can_fetch(user_agent, url)
+        if not can_crawl:
+            logger.debug(f"Blocked by robots.txt: {url} for {user_agent}")
+        return can_crawl

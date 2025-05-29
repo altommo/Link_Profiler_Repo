@@ -127,18 +127,18 @@ class WebCrawler:
             return CrawlResult(
                 url=url,
                 status_code=403,
-                error_message="Domain not allowed"
+                error_message="Domain not allowed by config" # More specific message
             )
         
         # Check robots.txt if enabled
         if self.config.respect_robots_txt:
-            # self.robots_parser's session is now managed by WebCrawler's __aenter__
             can_crawl = await self.robots_parser.can_fetch(url, self.config.user_agent)
             if not can_crawl:
+                # This means robots.txt explicitly disallowed it
                 return CrawlResult(
                     url=url,
                     status_code=403,
-                    error_message="Blocked by robots.txt"
+                    error_message="Blocked by robots.txt rules" # More specific message
                 )
         
         # Rate limiting
@@ -184,17 +184,18 @@ class WebCrawler:
                 crawl_time_ms=int((time.time() - start_time) * 1000)
             )
         except aiohttp.ClientError as e:
+            # This will catch connection errors, DNS errors, etc.
             return CrawlResult(
                 url=url,
-                status_code=0,
-                error_message=f"Client error: {str(e)}",
+                status_code=0, # Use 0 or a specific code for network errors
+                error_message=f"Network or client error: {str(e)}", # More generic message
                 crawl_time_ms=int((time.time() - start_time) * 1000)
             )
         except Exception as e:
             return CrawlResult(
                 url=url,
                 status_code=500,
-                error_message=f"Unexpected error: {str(e)}",
+                error_message=f"Unexpected error during crawl: {str(e)}", # More specific message
                 crawl_time_ms=int((time.time() - start_time) * 1000)
             )
     
