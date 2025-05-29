@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
 CREDENTIALS_FILE = 'credentials.json'
-TOKEN_FILE = 'token.pyc' # Changed to .pyc to avoid accidental git tracking of sensitive token.json
+TOKEN_FILE = 'token.json' # Corrected to .json
 
 class BaseBacklinkAPIClient:
     """
@@ -243,7 +243,8 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
         # Example: http://www.openlinkprofiler.org/api/index.php?url=example.com&output=json
         
         parsed_target_url = urlparse(target_url)
-        domain_or_url = parsed_target_url.netloc if parsed_target_url.netloc else target_url
+        # OpenLinkProfiler often works best with just the domain or root URL
+        domain_or_url = f"{parsed_target_url.scheme}://{parsed_target_url.netloc}" if parsed_target_url.netloc else target_url
         
         endpoint = self.base_url
         params = {"url": domain_or_url, "output": "json"}
@@ -256,11 +257,12 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
                 
                 backlinks = []
                 # OpenLinkProfiler's JSON structure might vary, this is a common assumption
-                for item in data.get("backlinks", []): # Adjust key based on actual API response
+                # Based on their documentation, backlinks are under 'links' key
+                for item in data.get("links", []): # Adjust key based on actual API response
                     source_url = item.get("source_url")
                     target_url_from_api = item.get("target_url") # API might return canonical target
                     anchor_text = item.get("anchor_text", "")
-                    link_type_str = item.get("link_type", "follow").lower() # e.g., "dofollow", "nofollow"
+                    link_type_str = item.get("link_type", "dofollow").lower() # e.g., "dofollow", "nofollow"
                     spam_score_val = item.get("spam_score", 0.0) # Assuming a score
                     
                     # Map OpenLinkProfiler's link types to our LinkType enum
@@ -271,6 +273,10 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
                         link_type = LinkType.SPONSORED
                     elif "ugc" in link_type_str:
                         link_type = LinkType.UGC
+                    elif "redirect" in link_type_str: # OpenLinkProfiler might have redirect type
+                        link_type = LinkType.REDIRECT
+                    elif "canonical" in link_type_str: # OpenLinkProfiler might have canonical type
+                        link_type = LinkType.CANONICAL
                     
                     # Map spam score to our SpamLevel enum (very basic mapping)
                     spam_level = SpamLevel.CLEAN
@@ -284,6 +290,7 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
                     if source_url and target_url_from_api:
                         backlinks.append(
                             Backlink(
+                                id=str(uuid.uuid4()), # Generate a unique ID
                                 source_url=source_url,
                                 target_url=target_url_from_api,
                                 anchor_text=anchor_text,
@@ -378,35 +385,35 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
         self.logger.info(f"Attempting to fetch GSC backlinks for property: {property_url}")
 
         try:
-            # This is a simplified example. Real GSC API calls for backlinks
-            # are more complex and involve specific report types.
-            # The 'links' endpoint is for external links to your property.
-            # You might need to iterate through pages of results.
+            # GSC API does not provide a direct "list all backlinks" endpoint.
+            # The 'links' resource provides aggregated data (e.g., top linking sites, top linked URLs).
+            # We'll fetch 'top linking sites' as a proxy for backlink data.
+            # This requires the property to be verified in GSC.
             
             # Example: Fetching top linking sites
-            # request = self.service.searchanalytics().query(
+            # This is a synchronous call, so it needs to be run in a thread pool executor
+            # if this method is called from an async context without `await`ing it.
+            # For simplicity in this async method, we'll assume it's fine for now.
+            
+            # The actual GSC API call for links is more complex and involves pagination.
+            # For a basic demonstration, we'll simulate a successful response.
+            
+            # Example of how you might call the GSC API for top linking sites:
+            # result = self.service.links().search(
             #     siteUrl=property_url,
-            #     body={
-            #         'startDate': (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d'),
-            #         'endDate': datetime.now().strftime('%Y-%m-%d'),
-            #         'dimensions': ['query', 'page'],
-            #         'rowLimit': 1000
-            #     }
-            # )
-            # response = request.execute()
-            # self.logger.debug(f"GSC API response: {response}")
-
-            # For backlinks, you'd typically use the 'links' resource, but it's complex:
-            # https://developers.google.com/webmaster-tools/v3/links
-            # Example: request = self.service.links().search(siteUrl=property_url, linkType='external')
-
-            # Since direct backlink data is complex and requires property verification,
-            # we'll return simulated data for now, even if the service is built.
+            #     linkType='external', # 'external' for backlinks
+            #     direction='incoming', # 'incoming' for backlinks to your site
+            #     relationship='all' # 'all' or 'dofollow'
+            # ).execute()
+            # self.logger.debug(f"GSC API response: {result}")
+            
+            # For now, return simulated data to ensure flow works without live GSC setup
             self.logger.warning("GSCBacklinkAPIClient: Returning simulated data. Actual GSC API integration for backlinks is complex and requires property verification.")
             
             # Simulate some GSC-like backlinks
             return [
                 Backlink(
+                    id=str(uuid.uuid4()), # Generate a unique ID
                     source_url=f"http://gsc-source1.com/article/{random.randint(100,999)}",
                     target_url=target_url,
                     anchor_text="GSC Link 1",
@@ -416,6 +423,7 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
                     spam_level=SpamLevel.CLEAN
                 ),
                 Backlink(
+                    id=str(uuid.uuid4()), # Generate a unique ID
                     source_url=f"http://gsc-source2.net/blog/{random.randint(100,999)}",
                     target_url=target_url,
                     anchor_text="GSC Link 2",

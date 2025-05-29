@@ -223,6 +223,84 @@ class RealDomainAPIClient(BaseDomainAPIClient):
             self.logger.error(f"Unexpected error in real WHOIS data fetch for {domain_name}: {e}")
             return None
 
+class AbstractDomainAPIClient(BaseDomainAPIClient):
+    """
+    A client for AbstractAPI's Domain API (or similar low-cost/free-tier service).
+    Requires an API key.
+    """
+    def __init__(self, api_key: str, base_url: str = "https://companyenrichment.abstractapi.com/v1/"):
+        self.logger = logging.getLogger(__name__ + ".AbstractDomainAPIClient")
+        self.api_key = api_key
+        self.base_url = base_url
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def __aenter__(self):
+        """Async context manager entry for client session."""
+        self.logger.info("Entering AbstractDomainAPIClient context.")
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit for client session."""
+        self.logger.info("Exiting AbstractDomainAPIClient context.")
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+
+    async def get_domain_availability(self, domain_name: str) -> bool:
+        """
+        Checks domain availability using AbstractAPI.
+        """
+        endpoint = f"{self.base_url}"
+        params = {"api_key": self.api_key, "domain": domain_name, "field": "is_dead"} # AbstractAPI uses 'is_dead' for availability
+        self.logger.info(f"Making AbstractAPI call for availability: {endpoint}?domain={domain_name}...")
+
+        try:
+            async with self._session.get(endpoint, params=params, timeout=10) as response:
+                response.raise_for_status()
+                data = await response.json()
+                # AbstractAPI returns is_dead: true if domain is dead/available, false if active/registered
+                return data.get("is_dead", False) # is_dead=True means available
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Error checking AbstractAPI domain availability for {domain_name}: {e}")
+            return False # Assume not available on error
+        except Exception as e:
+            self.logger.error(f"Unexpected error in AbstractAPI domain availability check for {domain_name}: {e}")
+            return False
+
+    async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches WHOIS data using AbstractAPI.
+        """
+        endpoint = f"{self.base_url}"
+        params = {"api_key": self.api_key, "domain": domain_name}
+        self.logger.info(f"Making AbstractAPI call for WHOIS data: {endpoint}?domain={domain_name}...")
+
+        try:
+            async with self._session.get(endpoint, params=params, timeout=10) as response:
+                response.raise_for_status()
+                data = await response.json()
+                
+                # Map AbstractAPI response to a more generic WHOIS format
+                whois_info = {
+                    "domain_name": data.get("domain", {}).get("domain", domain_name).upper(),
+                    "registrar": data.get("registrar", {}).get("registrar_name"),
+                    "creation_date": data.get("registered", ""), # AbstractAPI provides 'registered'
+                    "expiration_date": data.get("expires_at", ""), # AbstractAPI provides 'expires_at'
+                    "name_servers": data.get("dns_records", {}).get("NS", []),
+                    "status": data.get("domain", {}).get("status"),
+                    "emails": [data.get("contact", {}).get("email")] if data.get("contact", {}).get("email") else [],
+                    "updated_date": data.get("last_changed_date", "")
+                }
+                return {k: v for k, v in whois_info.items() if v is not None and v != ""} # Filter out empty values
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Error fetching AbstractAPI WHOIS data for {domain_name}: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error in AbstractAPI WHOIS data fetch for {domain_name}: {e}")
+            return None
+
 
 class DomainService:
     """
@@ -233,10 +311,18 @@ class DomainService:
         self.logger = logging.getLogger(__name__)
         
         # Determine which API client to use based on environment variable
-        if os.getenv("USE_REAL_DOMAIN_API", "false").lower() == "true":
+        if os.getenv("USE_ABSTRACT_API", "false").lower() == "true":
+            abstract_api_key = os.getenv("ABSTRACT_API_KEY")
+            if not abstract_api_key:
+                self.logger.error("ABSTRACT_API_KEY environment variable not set. Falling back to simulated Domain API.")
+                self.api_client = SimulatedDomainAPIClient()
+            else:
+                self.logger.info("Using AbstractDomainAPIClient for domain lookups.")
+                self.api_client = AbstractDomainAPIClient(api_key=abstract_api_key)
+        elif os.getenv("USE_REAL_DOMAIN_API", "false").lower() == "true":
             real_api_key = os.getenv("REAL_DOMAIN_API_KEY")
             if not real_api_key:
-                self.logger.error("REAL_DOMAIN_API_KEY environment variable not set. Falling back to simulated API.")
+                self.logger.error("REAL_DOMAIN_API_KEY environment variable not set. Falling back to simulated Domain API.")
                 self.api_client = SimulatedDomainAPIClient()
             else:
                 self.logger.info("Using RealDomainAPIClient for domain lookups.")
@@ -328,4 +414,3 @@ class DomainService:
             # For simplicity, last_crawled is not set here, but could be from a separate crawl
         )
         return domain_obj
-

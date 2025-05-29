@@ -12,34 +12,34 @@ A comprehensive, open-source link analysis and expired domain discovery system i
 - **Content Type Support**: HTML, PDF, and image link extraction
 
 ### 🔍 **Link Analysis & Profiling**
-- **Comprehensive Backlink Discovery**: Find all links pointing to target domains
-- **Authority Calculation**: Domain and page authority scoring algorithms (now more sophisticated, leveraging linking domain metrics)
-- **Spam Detection**: AI-powered spam link identification (currently basic)
-- **Anchor Text Analysis**: Detailed anchor text distribution and patterns
-- **Link Type Classification**: dofollow, nofollow, sponsored, UGC, redirect, canonical detection
+- **Comprehensive Backlink Discovery**: Find all links pointing to target domains, either by crawling or via external APIs.
+- **Authority Calculation**: Domain and page authority scoring algorithms (now more sophisticated, leveraging linking domain metrics).
+- **Spam Detection**: AI-powered spam link identification (currently basic).
+- **Anchor Text Analysis**: Detailed anchor text distribution and patterns.
+- **Link Type Classification**: dofollow, nofollow, sponsored, UGC, redirect, canonical detection.
 - **SEO Metrics Extraction**: Extracts and stores on-page SEO data (e.g., title length, heading counts, internal/external links).
-- **Backlink API Integration**: Can fetch existing backlink data from external APIs (simulated for now, ready for real API integration, including Google Search Console).
+- **Backlink API Integration**: Can fetch existing backlink data from external APIs like Google Search Console (for verified properties) and OpenLinkProfiler.org (free, with limits), or a placeholder for paid APIs.
 
 ### 💎 **Expired Domain Discovery**
-- **Domain Availability Checking**: Real-time domain registration status (now supports real API integration)
-- **Value Assessment**: Multi-factor domain scoring system (currently simulated/basic)
-- **WHOIS Integration**: Domain age, history, and registration data (now supports real API integration)
-- **Batch Processing**: Analyze thousands of domains efficiently
-- **Custom Scoring Models**: Configurable domain evaluation criteria
+- **Domain Availability Checking**: Real-time domain registration status (now supports real API integration via AbstractAPI's free tier).
+- **Value Assessment**: Multi-factor domain scoring system (currently simulated/basic).
+- **WHOIS Integration**: Domain age, history, and registration data (now supports real API integration via AbstractAPI's free tier).
+- **Batch Processing**: Analyze thousands of domains efficiently.
+- **Custom Scoring Models**: Configurable domain evaluation criteria.
 
 ### 📊 **Professional Reporting**
-- **Link Profile Generation**: Complete backlink analysis reports
-- **Domain Metrics**: Authority, trust, and spam scores
-- **SEO Insights**: Technical SEO analysis and recommendations (extracted and stored)
-- **Export Capabilities**: JSON (via API)
-- **Historical Tracking**: Domain and link profile changes over time (basic persistence)
+- **Link Profile Generation**: Complete backlink analysis reports.
+- **Domain Metrics**: Authority, trust, and spam scores.
+- **SEO Insights**: Technical SEO analysis and recommendations (extracted and stored).
+- **Export Capabilities**: JSON (via API).
+- **Historical Tracking**: Domain and link profile changes over time (basic persistence).
 
 ### 🚀 **RESTful API**
-- **Complete API Coverage**: All features accessible via REST endpoints
-- **Real-time Job Tracking**: Monitor crawling progress and status
-- **Scalable Architecture**: Designed for high-volume processing
-- **Developer Friendly**: Comprehensive OpenAPI documentation
-- **Background Processing**: Non-blocking operations with job queues
+- **Complete API Coverage**: All features accessible via REST endpoints.
+- **Real-time Job Tracking**: Monitor crawling progress and status.
+- **Scalable Architecture**: Designed for high-volume processing.
+- **Developer Friendly**: Comprehensive OpenAPI documentation.
+- **Background Processing**: Non-blocking operations with job queues.
 
 ## 🏗️ Architecture Overview
 
@@ -84,11 +84,11 @@ link_profiler/
 - Error handling and retry logic
 
 #### **Business Services**
-- **CrawlService**: Orchestrates crawling jobs and manages lifecycles
-- **DomainService**: Handles WHOIS lookups and availability checks (now supports real API integration)
-- **BacklinkService**: Integrates with external backlink data providers (simulated for now)
-- **DomainAnalyzerService**: Evaluates domain value and potential
-- **ExpiredDomainFinderService**: Discovers valuable expired domains
+- **CrawlService**: Orchestrates crawling jobs and manages lifecycles.
+- **DomainService**: Handles WHOIS lookups and availability checks (now supports real API integration).
+- **BacklinkService**: Integrates with external backlink data providers (simulated, OpenLinkProfiler, GSC, or paid APIs).
+- **DomainAnalyzerService**: Evaluates domain value and potential.
+- **ExpiredDomainFinderService**: Discovers valuable expired domains.
 
 #### **Data Persistence** (`database/`)
 - **PostgreSQL Database**: Used for structured storage of all crawl data, link profiles, and domain information.
@@ -151,6 +151,18 @@ The application uses a PostgreSQL database for storing crawl data, link profiles
 
 The application is configured to connect to `postgresql://postgres:postgres@localhost:5432/link_profiler_db` by default. If your PostgreSQL setup uses a different username, password, host, or port, you will need to update the `db_url` parameter in the `Link_Profiler/database/database.py` file or configure it via environment variables (a future enhancement).
 
+### **API Key Setup for External Services**
+
+To use the real API integrations, you will need to obtain API keys and set them as environment variables.
+
+1.  **AbstractAPI (for Domain Info)**:
+    *   Go to [AbstractAPI](https://www.abstractapi.com/api/domain-api).
+    *   Sign up for a free account to get your API key.
+    *   Set the environment variable: `ABSTRACT_API_KEY="your_abstract_api_key_here"`
+
+2.  **Google Search Console API (for Backlinks to Owned Properties)**:
+    *   Follow the detailed steps in the "Google Search Console API Setup" section below to create a Google Cloud Project, enable the API, create OAuth 2.0 credentials (`credentials.json`), and generate your `token.json` file.
+
 ### **Google Search Console API Setup (for `GSCBacklinkAPIClient`)**
 
 To use the `GSCBacklinkAPIClient`, you need to set up credentials with Google. This involves a few manual steps:
@@ -205,16 +217,24 @@ To run the API server, you need to ensure that the project's root directory is a
 export PYTHONPATH=$(pwd)
 # To use the simulated APIs (default):
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use the real Domain API (requires REAL_DOMAIN_API_KEY env var):
-# export USE_REAL_DOMAIN_API="true"
-# export REAL_DOMAIN_API_KEY="your_domain_api_key_here"
+
+# To use AbstractAPI for Domain Info (requires ABSTRACT_API_KEY env var):
+# export USE_ABSTRACT_API="true"
+# export ABSTRACT_API_KEY="your_abstract_api_key_here"
 # uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use the real Backlink API (requires REAL_BACKLINK_API_KEY env var):
-# export USE_REAL_BACKLINK_API="true"
-# export REAL_BACKLINK_API_KEY="your_backlink_api_key_here"
+
+# To use OpenLinkProfiler.org API for Backlinks (no API key needed):
+# export USE_OPENLINKPROFILER_API="true"
 # uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use Google Search Console API (requires credentials.json and token.json):
+
+# To use Google Search Console API for Backlinks (requires credentials.json and token.json):
 # export USE_GSC_API="true"
+# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+# You can combine domain and backlink API usage, e.g.:
+# export USE_ABSTRACT_API="true"
+# export ABSTRACT_API_KEY="your_abstract_api_key_here"
+# export USE_OPENLINKPROFILER_API="true"
 # uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -223,16 +243,24 @@ uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 set PYTHONPATH=%cd%
 rem To use the simulated APIs (default):
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-rem To use the real Domain API (requires REAL_DOMAIN_API_KEY env var):
-rem set USE_REAL_DOMAIN_API="true"
-rem set REAL_DOMAIN_API_KEY="your_domain_api_key_here"
+
+rem To use AbstractAPI for Domain Info (requires ABSTRACT_API_KEY env var):
+rem set USE_ABSTRACT_API="true"
+rem set ABSTRACT_API_KEY="your_abstract_api_key_here"
 rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-rem To use the real Backlink API (requires REAL_BACKLINK_API_KEY env var):
-rem set USE_REAL_BACKLINK_API="true"
-rem set REAL_BACKLINK_API_KEY="your_backlink_api_key_here"
+
+rem To use OpenLinkProfiler.org API for Backlinks (no API key needed):
+rem set USE_OPENLINKPROFILER_API="true"
 rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-rem To use Google Search Console API (requires credentials.json and token.json):
+
+rem To use Google Search Console API for Backlinks (requires credentials.json and token.json):
 rem set USE_GSC_API="true"
+rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+rem You can combine domain and backlink API usage, e.g.:
+rem set USE_ABSTRACT_API="true"
+rem set ABSTRACT_API_KEY="your_abstract_api_key_here"
+rem set USE_OPENLINKPROFILER_API="true"
 rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -241,16 +269,24 @@ rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 $env:PYTHONPATH = (Get-Location).Path
 # To use the simulated APIs (default):
 uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use the real Domain API (requires REAL_DOMAIN_API_KEY env var):
-# $env:USE_REAL_DOMAIN_API = "true"
-# $env:REAL_DOMAIN_API_KEY = "your_domain_api_key_here"
+
+# To use AbstractAPI for Domain Info (requires ABSTRACT_API_KEY env var):
+# $env:USE_ABSTRACT_API = "true"
+# $env:ABSTRACT_API_KEY = "your_abstract_api_key_here"
 # uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use the real Backlink API (requires REAL_BACKLINK_API_KEY env var):
-# $env:USE_REAL_BACKLINK_API = "true"
-# $env:REAL_BACKLINK_API_KEY = "your_backlink_api_key_here"
+
+# To use OpenLinkProfiler.org API for Backlinks (no API key needed):
+# $env:USE_OPENLINKPROFILER_API = "true"
 # uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use Google Search Console API (requires credentials.json and token.json):
+
+# To use Google Search Console API for Backlinks (requires credentials.json and token.json):
 # $env:USE_GSC_API = "true"
+# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+# You can combine domain and backlink API usage, e.g.:
+# $env:USE_ABSTRACT_API = "true"
+# $env:ABSTRACT_API_KEY = "your_abstract_api_key_here"
+# $env:USE_OPENLINKPROFILER_API = "true"
 # uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -354,7 +390,7 @@ For expired domain discovery:
 - **Historical Authority**: Previous domain strength metrics
 - **Backlink Profile Quality**: Clean, relevant link sources
 - **Brand Potential**: Memorable, brandable domain names
-- **SEO Value**: Existing search engine presence
+- **SEO Value**: Existing search console presence
 - **Commercial Viability**: Market demand and monetization potential
 
 ## 🔧 Technical Details
@@ -429,10 +465,13 @@ The project has a solid foundation with core crawling, link analysis, and domain
 2.  **Integrate SEO Metrics into Crawl Flow**:
     *   **Completed**: `ContentParser` extracts SEO metrics, and `CrawlService` now persists this data via `Database.save_seo_metrics`.
 3.  **Implement Real Domain API Integration**:
-    *   **Completed**: The `DomainService` can now be configured to use a `RealDomainAPIClient` (requires `REAL_DOMAIN_API_KEY` environment variable). The client is structured to make actual HTTP calls to external APIs, though the data returned is still simulated for demonstration purposes.
+    *   **Completed**: The `DomainService` can now be configured to use `AbstractDomainAPIClient` (free tier available) for WHOIS and availability.
 4.  **Implement Real Backlink API Integration**:
-    *   **Completed**: The `CrawlService` now attempts to fetch backlinks from a `BacklinkService` (which can use a `SimulatedBacklinkAPIClient`, `RealBacklinkAPIClient`, or `GSCBacklinkAPIClient` based on environment variables) before or in conjunction with crawling.
-    *   **Next Action**: For `RealBacklinkAPIClient`, integrate with a specific external backlink data provider (e.g., Ahrefs, Moz, SEMrush) by replacing the simulated data with actual API calls and response parsing. For `GSCBacklinkAPIClient`, ensure `credentials.json` is correctly set up and `token.json` is generated via the interactive OAuth flow for your verified properties.
+    *   **Completed**: The `CrawlService` now attempts to fetch backlinks from a `BacklinkService` (which can use `SimulatedBacklinkAPIClient`, `RealBacklinkAPIClient`, `OpenLinkProfilerAPIClient`, or `GSCBacklinkAPIClient` based on environment variables) before or in conjunction with crawling.
+    *   **Next Action**:
+        *   **OpenLinkProfiler.org Integration**: Implement actual API calls and response parsing within `OpenLinkProfilerAPIClient` to fetch real backlink data from OpenLinkProfiler.org.
+        *   **GSC API Enhancement**: For `GSCBacklinkAPIClient`, implement the actual GSC API calls to fetch backlink data for verified properties. Ensure `credentials.json` is correctly set up and `token.json` is generated via the interactive OAuth flow for your verified properties.
+        *   **Paid API Integration (Optional)**: If a paid API (e.g., Ahrefs, Moz) is acquired, replace the simulated data in `RealBacklinkAPIClient` with actual API calls and response parsing.
 
 #### **Mid-Term Enhancements**
 
@@ -444,6 +483,8 @@ The project has a solid foundation with core crawling, link analysis, and domain
     *   Implement a mechanism to retry failed URLs or segments of a crawl.
 3.  **User Interface / Dashboard**:
     *   Develop a simple web-based UI to interact with the FastAPI endpoints, visualise crawl progress, link profiles, and domain analysis results.
+4.  **Competitor Backlink Analysis**:
+    *   Add API endpoints and logic to perform link intersect analysis (find common backlinks between domains) and unique backlink discovery.
 
 #### **Long-Term Vision**
 

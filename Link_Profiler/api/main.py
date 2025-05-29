@@ -38,7 +38,7 @@ from datetime import datetime # Import datetime for Pydantic models
 from contextlib import asynccontextmanager # Import asynccontextmanager
 
 from Link_Profiler.services.crawl_service import CrawlService # Changed to absolute import
-from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient # Changed to absolute import
+from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient # Import new DomainService components
 from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient # Import new BacklinkService components
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Changed to absolute import
 from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService # Changed to absolute import
@@ -53,8 +53,15 @@ logger = logging.getLogger(__name__)
 db = Database()
 
 # Initialize DomainService globally, but manage its lifecycle with lifespan
-# Determine which DomainAPIClient to use
-if os.getenv("USE_REAL_DOMAIN_API", "false").lower() == "true":
+# Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > Simulated
+if os.getenv("USE_ABSTRACT_API", "false").lower() == "true":
+    abstract_api_key = os.getenv("ABSTRACT_API_KEY")
+    if not abstract_api_key:
+        logger.error("ABSTRACT_API_KEY environment variable not set. Falling back to simulated Domain API.")
+        domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient())
+    else:
+        domain_service_instance = DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key))
+elif os.getenv("USE_REAL_DOMAIN_API", "false").lower() == "true":
     domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=os.getenv("REAL_DOMAIN_API_KEY", "dummy_domain_key")))
 else:
     domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient())
