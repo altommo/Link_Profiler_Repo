@@ -53,7 +53,8 @@ async def test_get_crawl_status(job_id: str) -> Tuple[bool, bool]:
             
             if status_response['status'] == "completed":
                 job_completed_successfully = True
-                if status_response.get('results', {}).get('link_profile_summary'):
+                # Check if 'link_profile_summary' exists and is not empty
+                if status_response.get('results', {}).get('link_profile_summary', {}).get('total_backlinks', 0) > 0:
                     link_profile_generated = True
                 print(f"Final Status: {json.dumps(status_response, indent=2)}")
                 break
@@ -106,18 +107,17 @@ async def main():
     await test_domain_availability("nonexistent.xyz")
 
     # Test Crawl Service Endpoints
-    # Note: These URLs don't need to be real, but the crawler will attempt to connect.
-    # For a more realistic test, use actual websites that you have permission to crawl.
+    # Using a real, crawlable website for demonstration
     crawl_job_id = await test_start_crawl_job(
-        "http://testtarget.com",
-        ["http://testsource1.com/page", "http://testsource2.com/another-page"]
+        "http://quotes.toscrape.com", # Target URL
+        ["http://quotes.toscrape.com/page/1/", "http://quotes.toscrape.com/page/2/"] # Seed URLs
     )
     if crawl_job_id:
         job_success, profile_generated = await test_get_crawl_status(crawl_job_id)
         if job_success and profile_generated:
             try:
-                await test_get_link_profile("http://testtarget.com")
-                await test_get_backlinks("http://testtarget.com")
+                await test_get_link_profile("http://quotes.toscrape.com")
+                await test_get_backlinks("http://quotes.toscrape.com")
             except httpx.HTTPStatusError as e:
                 print(f"Warning: Could not retrieve link profile or backlinks: {e.response.status_code} - {e.response.json().get('detail', 'Unknown error')}")
         else:
