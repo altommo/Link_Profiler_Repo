@@ -46,7 +46,7 @@ class CrawlService:
             The created CrawlJob object.
         """
         job_id = str(uuid4())
-        if config === None:
+        if config is None: # Corrected from === to is
             config = CrawlConfig() # Use default config
 
         # For testing purposes, explicitly set respect_robots_txt to False
