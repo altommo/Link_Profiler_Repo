@@ -309,63 +309,21 @@ class Database:
         try:
             parsed_target = urlparse(target_url)
             target_domain = parsed_target.netloc
-            target_path = parsed_target.path
+            # target_path = parsed_target.path # Not needed for domain-wide query
 
-            logger.info(f"Querying backlinks for target_url: {target_url}, domain: {target_domain}, path: {target_path}")
+            logger.info(f"Querying backlinks for target_url: {target_url}, domain: {target_domain}")
 
             if not target_domain:
                 logger.warning(f"Invalid target_url for backlink query: {target_url}")
                 return []
 
-            # Query for backlinks where the target_url starts with the provided target_url
-            # This handles cases like querying for "http://example.com" and getting
-            # backlinks to "http://example.com/", "http://example.com/page1", etc.
-            # Or querying for "http://example.com/page1" and getting backlinks
-            # specifically to that page.
+            # Query for backlinks where the target_domain_name matches the domain of the target_url
+            # This will retrieve all backlinks pointing to any page on that domain.
             orm_backlinks = session.query(BacklinkORM).filter(
-                BacklinkORM.target_url.startswith(target_url)
+                BacklinkORM.target_domain_name == target_domain
             ).all()
             
-            logger.info(f"Found {len(orm_backlinks)} ORM backlinks for target_url starting with {target_url}")
-
-            # If the target_url is just the root domain (e.g., "http://example.com"),
-            # we might also want to include backlinks where the target_url is
-            # exactly the root path ("http://example.com/").
-            # The startswith check above should cover "http://example.com/" if the stored URL is exactly that.
-            # However, if the stored URL is just "http://example.com", the startswith check won't match.
-            # Let's refine the query slightly to handle the root domain case explicitly if needed,
-            # but startswith is generally more flexible.
-
-            # Let's stick with startswith for now as it's simpler and covers most cases.
-            # The 404 might be because no backlinks were actually found *to* the target URL
-            # that match the startswith condition, or perhaps the data wasn't committed correctly.
-            # The logs show backlinks being found and added, so the issue is likely in retrieval.
-
-            # Let's double-check the LinkProfile creation logic in CrawlService.
-            # It creates a profile for the `job.target_url`.
-            # The `get_link_profile` method in Database queries by `target_url`.
-            # The `get_backlinks_for_target` method queries by `target_url.startswith`.
-
-            # It seems the logic *should* work. The 404 suggests no matching backlinks were found in the DB.
-            # This could happen if the backlinks found during the crawl (which point to specific pages like /page/1)
-            # are not considered backlinks *to* the root target_url ("http://quotes.toscrape.com") by this query.
-
-            # Let's adjust the query for the root URL case to match by target_domain_name
-            # if the path is empty or just '/'. This aligns with the LinkProfile logic.
-            if target_path in ["", "/"]:
-                 logger.info(f"Querying backlinks by target_domain_name: {target_domain} for root URL {target_url}")
-                 orm_backlinks = session.query(BacklinkORM).filter(
-                    BacklinkORM.target_domain_name == target_domain
-                 ).all()
-                 logger.info(f"Found {len(orm_backlinks)} ORM backlinks for target_domain_name {target_domain}")
-            else:
-                 # Keep the startswith logic for specific paths
-                 logger.info(f"Querying backlinks by target_url.startswith: {target_url} for specific path")
-                 orm_backlinks = session.query(BacklinkORM).filter(
-                    BacklinkORM.target_url.startswith(target_url)
-                 ).all()
-                 logger.info(f"Found {len(orm_backlinks)} ORM backlinks for target_url starting with {target_url}")
-
+            logger.info(f"Found {len(orm_backlinks)} ORM backlinks for target_domain_name {target_domain}")
 
             dataclass_backlinks = [self._to_dataclass(bl) for bl in orm_backlinks]
             logger.info(f"Returning {len(dataclass_backlinks)} dataclass backlinks for target {target_url}")
