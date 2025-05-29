@@ -464,7 +464,9 @@ class Database:
                 orm_job.errors_count = job.errors_count
                 orm_job.config = job.config
                 orm_job.results = job.results
-                orm_job.error_log = job.error_log
+                error_log = job.error_log # Get the list from the dataclass
+                # Ensure error_log is a list of strings before assigning to ORM
+                orm_job.error_log = [str(err) for err in error_log] if isinstance(error_log, list) else []
                 session.commit()
             else:
                 raise ValueError(f"CrawlJob with ID {job.id} not found for update.")
@@ -481,7 +483,7 @@ class Database:
             orm_jobs = session.query(CrawlJobORM).filter(
                 CrawlJobORM.status == CrawlStatusEnum.PENDING.value
             ).all()
-            return [self._to_dataclass(job) for job in or_jobs]
+            return [self._to_dataclass(job) for job in orm_jobs]
         except Exception as e:
             logger.error(f"Error getting pending crawl jobs: {e}")
             return []
