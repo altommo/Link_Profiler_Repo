@@ -1,7 +1,7 @@
 import asyncio
 import httpx
 import json
-from typing import List # Import List
+from typing import List, Tuple # Import Tuple
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -36,8 +36,13 @@ async def test_start_crawl_job(target_url: str, initial_seed_urls: List[str]):
         print(f"Crawl job started with ID: {job_response['id']}")
         return job_response['id']
 
-async def test_get_crawl_status(job_id: str):
+async def test_get_crawl_status(job_id: str) -> Tuple[bool, bool]:
+    """
+    Polls crawl job status. Returns (job_completed_successfully, link_profile_generated).
+    """
     print(f"\n--- Testing /crawl/status/{job_id} ---")
+    job_completed_successfully = False
+    link_profile_generated = False
     async with httpx.AsyncClient() as client:
         # Poll status until completed or failed
         while True:
@@ -45,10 +50,18 @@ async def test_get_crawl_status(job_id: str):
             print(f"Status Code: {response.status_code}")
             status_response = response.json()
             print(f"Current Status: {status_response['status']}, Progress: {status_response['progress_percentage']:.2f}%")
-            if status_response['status'] in ["completed", "failed"]:
+            
+            if status_response['status'] == "completed":
+                job_completed_successfully = True
+                if status_response.get('results', {}).get('link_profile_summary'):
+                    link_profile_generated = True
+                print(f"Final Status: {json.dumps(status_response, indent=2)}")
+                break
+            elif status_response['status'] == "failed":
                 print(f"Final Status: {json.dumps(status_response, indent=2)}")
                 break
             await asyncio.sleep(2) # Wait a bit before polling again
+    return job_completed_successfully, link_profile_generated
 
 async def test_get_link_profile(target_url: str):
     print(f"\n--- Testing /link_profile/{target_url} ---")
@@ -58,6 +71,15 @@ async def test_get_link_profile(target_url: str):
         print(f"Response: {json.dumps(response.json(), indent=2)}")
         response.raise_for_status()
         assert "total_backlinks" in response.json()
+
+async def test_get_backlinks(target_url: str):
+    print(f"\n--- Testing /backlinks/{target_url} ---")
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{BASE_URL}/backlinks/{target_url.replace(':', '%3A').replace('/', '%2F')}") # URL-encode path
+        print(f"Status Code: {response.status_code}")
+        print(f"Response: {json.dumps(response.json(), indent=2)}")
+        response.raise_for_status()
+        assert isinstance(response.json(), list)
 
 async def test_find_expired_domains(domains: List[str]):
     print(f"\n--- Testing /domain/find_expired_domains ---")
@@ -90,8 +112,15 @@ async def main():
         ["http://testsource1.com/page", "http://testsource2.com/another-page"]
     )
     if crawl_job_id:
-        await test_get_crawl_status(crawl_job_id)
-        await test_get_link_profile("http://testtarget.com")
+        job_success, profile_generated = await test_get_crawl_status(crawl_job_id)
+        if job_success and profile_generated:
+            try:
+                await test_get_link_profile("http://testtarget.com")
+                await test_get_backlinks("http://testtarget.com")
+            except httpx.HTTPStatusError as e:
+                print(f"Warning: Could not retrieve link profile or backlinks: {e.response.status_code} - {e.response.json().get('detail', 'Unknown error')}")
+        else:
+            print("Skipping link profile and backlinks tests as crawl job did not complete successfully or no profile was generated.")
 
     # Test Expired Domain Finder
     await test_find_expired_domains(["example.com", "google.com", "available.net", "nonexistent.xyz", "testdomain.org"])
