@@ -308,14 +308,22 @@ class Database:
                 logger.debug(f"Added ORM backlink {orm_backlink.id} to session.")
 
             logger.debug("Finished session.add() loop. Attempting session.commit().")
-            session.commit()
-            logger.info(f"Successfully added/merged {len(backlinks)} backlinks.")
+            
+            try:
+                session.commit()
+                logger.debug("session.commit() successful.")
+                logger.info(f"Successfully added/merged {len(backlinks)} backlinks.")
+            except Exception as commit_e:
+                 session.rollback()
+                 logger.error(f"Error during session.commit() for backlinks: {type(commit_e).__name__}: {commit_e}", exc_info=True)
+                 raise # Re-raise the commit exception
+
         except IntegrityError:
             session.rollback()
             logger.warning(f"One or more backlinks already exist. Some may have been skipped.")
         except Exception as e:
             session.rollback()
-            logger.error(f"Error adding multiple backlinks: {type(e).__name__}: {e}", exc_info=True) # Log exception type and traceback
+            logger.error(f"Error adding multiple backlinks (before commit): {type(e).__name__}: {e}", exc_info=True) # Log exception type and traceback
             raise # Re-raise the exception after logging and rollback
         finally:
             session.close()
