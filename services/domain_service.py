@@ -25,6 +25,15 @@ class BaseDomainAPIClient:
     async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
+    async def __aenter__(self):
+        """Async context manager entry for client session."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit for client session."""
+        pass # No-op for base class
+
+
 # --- Simulated Domain API Client ---
 class SimulatedDomainAPIClient(BaseDomainAPIClient):
     """
@@ -35,12 +44,16 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         self.logger = logging.getLogger(__name__ + ".SimulatedDomainAPIClient")
         self._session: Optional[aiohttp.ClientSession] = None
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    async def __aenter__(self):
+        """Async context manager entry for client session."""
+        self.logger.debug("Entering SimulatedDomainAPIClient context.")
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
-        return self._session
+        return self
 
-    async def _close_session(self):
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit for client session."""
+        self.logger.debug("Exiting SimulatedDomainAPIClient context.")
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
@@ -51,18 +64,22 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for availability of: {domain_name}")
-        session = await self._get_session()
-        try:
-            # Simulate an actual HTTP request, even if it's to a dummy URL
-            # This helps test aiohttp session management
-            async with session.get(f"http://localhost:8080/simulate_availability/{domain_name}") as response:
-                # We don't care about the actual response, just that the request was made
+        if self._session is None or self._session.closed:
+            self.logger.warning("aiohttp session not active. Call client within async with block.")
+            # Fallback to simple sleep if session not managed by context manager
+            await asyncio.sleep(0.5)
+        else:
+            try:
+                # Simulate an actual HTTP request, even if it's to a dummy URL
+                # This helps test aiohttp session management
+                async with self._session.get(f"http://localhost:8080/simulate_availability/{domain_name}") as response:
+                    # We don't care about the actual response, just that the request was made
+                    pass
+            except aiohttp.ClientConnectorError:
+                # This is expected if localhost:8080 is not running, simulating network activity
                 pass
-        except aiohttp.ClientConnectorError:
-            # This is expected if localhost:8080 is not running, simulating network activity
-            pass
-        except Exception as e:
-            self.logger.warning(f"Unexpected error during simulated availability check: {e}")
+            except Exception as e:
+                self.logger.warning(f"Unexpected error during simulated availability check: {e}")
 
         # Actual simulated logic
         if domain_name.lower() in ["example.com", "testdomain.org", "available.net"]:
@@ -78,15 +95,19 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for WHOIS info of: {domain_name}")
-        session = await self._get_session()
-        try:
-            # Simulate an actual HTTP request
-            async with session.get(f"http://localhost:8080/simulate_whois/{domain_name}") as response:
+        if self._session is None or self._session.closed:
+            self.logger.warning("aiohttp session not active. Call client within async with block.")
+            # Fallback to simple sleep if session not managed by context manager
+            await asyncio.sleep(1.0)
+        else:
+            try:
+                # Simulate an actual HTTP request
+                async with self._session.get(f"http://localhost:8080/simulate_whois/{domain_name}") as response:
+                    pass
+            except aiohttp.ClientConnectorError:
                 pass
-        except aiohttp.ClientConnectorError:
-            pass
-        except Exception as e:
-            self.logger.warning(f"Unexpected error during simulated WHOIS check: {e}")
+            except Exception as e:
+                self.logger.warning(f"Unexpected error during simulated WHOIS check: {e}")
 
         # Actual simulated logic
         if domain_name.lower() == "example.com":
@@ -132,6 +153,17 @@ class DomainService:
     def __init__(self, api_client: Optional[BaseDomainAPIClient] = None):
         self.logger = logging.getLogger(__name__)
         self.api_client = api_client if api_client else SimulatedDomainAPIClient()
+
+    async def __aenter__(self):
+        """Async context manager entry for DomainService."""
+        self.logger.debug("Entering DomainService context.")
+        await self.api_client.__aenter__() # Enter the client's context
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit for DomainService."""
+        self.logger.debug("Exiting DomainService context.")
+        await self.api_client.__aexit__(exc_type, exc_val, exc_tb) # Exit the client's context
 
     async def check_domain_availability(self, domain_name: str) -> bool:
         """
