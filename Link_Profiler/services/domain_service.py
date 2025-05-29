@@ -67,17 +67,19 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         if self._session is None or self._session.closed:
             self.logger.warning("aiohttp session not active. Call client within async with block.")
             # Fallback to simple sleep if session not managed by context manager
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.1) # Reduced sleep
         else:
             try:
                 # Simulate an actual HTTP request, even if it's to a dummy URL
                 # This helps test aiohttp session management
-                async with self._session.get(f"http://localhost:8080/simulate_availability/{domain_name}") as response:
+                async with self._session.get(f"http://localhost:8080/simulate_availability/{domain_name}", timeout=5) as response: # Added timeout
                     # We don't care about the actual response, just that the request was made
                     pass
             except aiohttp.ClientConnectorError:
                 # This is expected if localhost:8080 is not running, simulating network activity
                 pass
+            except asyncio.TimeoutError: # Catch timeout specifically
+                self.logger.warning(f"Simulated availability check timed out for {domain_name}.")
             except Exception as e:
                 self.logger.warning(f"Unexpected error during simulated availability check: {e}")
 
@@ -98,14 +100,16 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         if self._session is None or self._session.closed:
             self.logger.warning("aiohttp session not active. Call client within async with block.")
             # Fallback to simple sleep if session not managed by context manager
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.2) # Reduced sleep
         else:
             try:
                 # Simulate an actual HTTP request
-                async with self._session.get(f"http://localhost:8080/simulate_whois/{domain_name}") as response:
+                async with self._session.get(f"http://localhost:8080/simulate_whois/{domain_name}", timeout=5) as response: # Added timeout
                     pass
             except aiohttp.ClientConnectorError:
                 pass
+            except asyncio.TimeoutError: # Catch timeout specifically
+                self.logger.warning(f"Simulated WHOIS check timed out for {domain_name}.")
             except Exception as e:
                 self.logger.warning(f"Unexpected error during simulated WHOIS check: {e}")
 
@@ -186,7 +190,7 @@ class DomainService:
             self.logger.warning(f"No WHOIS data found for {domain_name}.")
             return None
 
-        is_available = await self.check_domain_availability(domain_name)
+        # is_available = await self.check_domain_availability(domain_name) # Not strictly needed for Domain object creation
 
         # Parse dates from WHOIS data
         creation_date_str = whois_data.get("creation_date")

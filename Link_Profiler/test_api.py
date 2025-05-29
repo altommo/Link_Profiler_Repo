@@ -88,7 +88,8 @@ async def test_find_expired_domains(domains: List[str]):
         "min_value_score": 60,
         "limit": 5
     }
-    async with httpx.AsyncClient() as client:
+    # Increase timeout for this specific test as it involves multiple simulated API calls
+    async with httpx.AsyncClient(timeout=30.0) as client: # Increased timeout to 30 seconds
         response = await client.post(f"{BASE_URL}/domain/find_expired_domains", json=payload)
         print(f"Status Code: {response.status_code}")
         find_response = response.json()
