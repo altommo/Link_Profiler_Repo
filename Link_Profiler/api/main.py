@@ -330,24 +330,14 @@ async def get_backlinks(target_url: str):
     if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
         raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
 
-    # Temporarily retrieve ALL backlinks to debug why filtering isn't working
-    backlinks = db.get_all_backlinks() 
+    # Revert to using the database method directly
+    backlinks = db.get_backlinks_for_target(target_url) 
     
     if not backlinks:
-        raise HTTPException(status_code=404, detail="No backlinks found in the database at all.")
+        # This will now correctly return 404 if the database query returns 0
+        raise HTTPException(status_code=404, detail=f"No backlinks found for target URL {target_url}.")
     
-    # Filter the retrieved backlinks by the target domain name manually for debugging
-    parsed_target = urlparse(target_url)
-    target_domain = parsed_target.netloc.lower()
-    
-    filtered_backlinks = [bl for bl in backlinks if bl.target_domain == target_domain]
-
-    logger.debug(f"Attempted to retrieve all backlinks ({len(backlinks)} found). Manually filtered to {len(filtered_backlinks)} for target domain {target_domain}.")
-
-    if not filtered_backlinks:
-         raise HTTPException(status_code=404, detail=f"No backlinks found for target domain {target_domain} after manual filtering.")
-
-    return [BacklinkResponse.from_backlink(bl) for bl in filtered_backlinks]
+    return [BacklinkResponse.from_backlink(bl) for bl in backlinks]
 
 @app.get("/domain/availability/{domain_name}", response_model=Dict[str, Union[str, bool]])
 async def check_domain_availability(domain_name: str):
