@@ -8,10 +8,12 @@ import logging
 from typing import List, Dict, Optional
 from uuid import uuid4
 from datetime import datetime
+from urllib.parse import urlparse # Import urlparse
 
 from ..core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks
 from ..crawlers.web_crawler import WebCrawler, CrawlResult
-from ..database.database import Database # Assuming database.py is in a 'database' directory
+from ..database.database import Database
+from .domain_service import DomainService # Import DomainService
 
 
 class CrawlService:
@@ -23,6 +25,7 @@ class CrawlService:
         self.db = database
         self.logger = logging.getLogger(__name__)
         self.active_crawlers: Dict[str, WebCrawler] = {} # Store active crawler instances by job ID
+        self.domain_service = DomainService() # Instantiate DomainService
 
     async def create_and_start_backlink_crawl_job(
         self, 
@@ -104,6 +107,35 @@ class CrawlService:
                 self.logger.info(f"Link profile created for {job.target_url} with {len(discovered_backlinks)} backlinks.")
             else:
                 self.logger.info(f"No backlinks found for {job.target_url}.")
+
+            # --- Fetch and store Domain information for the target domain ---
+            target_domain_name = urlparse(job.target_url).netloc
+            self.logger.info(f"Fetching domain info for target domain: {target_domain_name}")
+            target_domain_obj = await self.domain_service.get_domain_info(target_domain_name)
+            if target_domain_obj:
+                self.db.save_domain(target_domain_obj)
+                job.results['target_domain_info'] = serialize_model(target_domain_obj)
+                self.logger.info(f"Saved domain info for {target_domain_name}.")
+            else:
+                self.logger.warning(f"Could not retrieve domain info for {target_domain_name}.")
+
+            # --- Optionally, fetch and store Domain information for referring domains ---
+            # This can be resource-intensive, so it's an optional future enhancement.
+            # if discovered_backlinks:
+            #     unique_referring_domains = {bl.source_domain for bl in discovered_backlinks}
+            #     self.logger.info(f"Fetching domain info for {len(unique_referring_domains)} unique referring domains.")
+            #     for referring_domain_name in unique_referring_domains:
+            #         # Avoid re-fetching target domain info if it's also a referring domain
+            #         if referring_domain_name == target_domain_name:
+            #             continue
+            #         referring_domain_obj = await self.domain_service.get_domain_info(referring_domain_name)
+            #         if referring_domain_obj:
+            #             self.db.save_domain(referring_domain_obj)
+            #             # You might want to store these in a separate collection or link them to the backlink
+            #             # For now, not adding to job.results to keep it concise.
+            #         else:
+            #             self.logger.warning(f"Could not retrieve domain info for referring domain: {referring_domain_name}.")
+
 
             job.status = CrawlStatus.COMPLETED
             self.logger.info(f"Crawl job {job.id} completed.")
