@@ -117,7 +117,7 @@ The application uses a PostgreSQL database for storing crawl data, link profiles
 
 2.  **Open PowerShell**: Open a new PowerShell window.
 
-3.  **Navigate to PostgreSQL bin directory (if not in PATH)**: If `psql` is not in your PATH, navigate to the `bin` directory of your PostgreSQL installation. For example:
+3.  **Navigate to PostgreSQL bin directory (if not in PATH)**: If `psql` is not in your PATH, navigate to the `bin` directory of your PostgreSQL installation. **Remember to use double quotes for paths with spaces.** For example:
     ```powershell
     cd "C:\Program Files\PostgreSQL\14\bin" # Adjust version number if needed
     ```
