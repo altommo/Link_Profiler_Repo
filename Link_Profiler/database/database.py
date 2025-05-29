@@ -344,7 +344,14 @@ class Database:
     def get_all_backlinks(self) -> List[Backlink]:
         session = self._get_session()
         try:
+            logger.info("Attempting to retrieve all backlinks from the database.")
             orm_backlinks = session.query(BacklinkORM).all()
+            logger.info(f"Retrieved {len(orm_backlinks)} ORM backlinks.")
+            
+            # Add debug logging to show domain names of retrieved backlinks
+            for i, bl in enumerate(orm_backlinks):
+                 logger.debug(f"Retrieved backlink {i+1}: Source Domain: {bl.source_domain_name}, Target Domain: {bl.target_domain_name}")
+
             return [self._to_dataclass(bl) for bl in orm_backlinks]
         except Exception as e:
             logger.error(f"Error getting all backlinks: {e}")
