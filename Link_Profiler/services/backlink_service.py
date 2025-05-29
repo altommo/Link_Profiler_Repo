@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from datetime import datetime, timedelta
 import random
 import aiohttp
+import uuid # Import uuid module
 
 # Google API imports for GSC
 from google.oauth2.credentials import Credentials
@@ -183,6 +184,7 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
                 # This is distinct from SimulatedBacklinkAPIClient's random generation
                 return [
                     Backlink(
+                        id=str(uuid.uuid4()), # Generate a unique ID
                         source_url="http://real-api-source1.com/page/1",
                         target_url=target_url,
                         anchor_text="Real API Link 1",
@@ -192,6 +194,7 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
                         spam_level=SpamLevel.CLEAN
                     ),
                     Backlink(
+                        id=str(uuid.uuid4()), # Generate a unique ID
                         source_url="http://real-api-source2.com/blog/post",
                         target_url=target_url,
                         anchor_text="Real API Link 2",
