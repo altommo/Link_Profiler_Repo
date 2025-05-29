@@ -3,22 +3,17 @@ Main entry point for the Link Profiler API application.
 File: main.py
 """
 
-# This file is primarily for documentation purposes on how to run the application.
-# The actual FastAPI application is located in api/main.py.
+import uvicorn
+import os
+import sys
 
-# To run the application, use uvicorn directly from your project root:
-# uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+# Add the project root to the Python path to allow absolute imports
+# This assumes 'main.py' is in the project root and 'api' is a subdirectory
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-# The --reload flag is useful for development as it restarts the server on code changes.
-# For production, you would typically omit --reload and use a process manager like Gunicorn.
+from api.main import app
 
-# Example of how to run it programmatically (less common for production setup):
-# import uvicorn
-# from api.main import app
-#
-# if __name__ == "__main__":
-#     uvicorn.run(app, host="0.0.0.0", port=8000)
-
-# The previous sys.path.insert and direct import were causing issues with relative imports
-# when this file was run directly. By instructing to run via `uvicorn api.main:app`,
-# Python correctly interprets `api` as a package.
+if __name__ == "__main__":
+    # You can configure uvicorn here.
+    # For production, consider using a process manager like Gunicorn.
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True) # Added reload for convenience

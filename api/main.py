@@ -3,12 +3,20 @@ API Endpoints for the Link Profiler System
 File: api/main.py
 """
 
+import os
+import sys
+# Add the project root to the Python path to allow absolute imports
+# This assumes 'api/main.py' is in 'api' and the project root is its parent
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
 import logging
 from urllib.parse import urlparse
 from datetime import datetime # Import datetime for Pydantic models
+from contextlib import asynccontextmanager # Import asynccontextmanager
 
 from services.crawl_service import CrawlService
 from services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
@@ -21,19 +29,39 @@ from core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize database
+db = Database()
+
+# Initialize DomainService globally, but manage its lifecycle with lifespan
+# The api_client is passed here, and its session will be managed by the lifespan event.
+domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient())
+
+# Initialize other services that depend on domain_service
+crawl_service = CrawlService(db) 
+domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
+expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Context manager for managing the lifespan of the FastAPI application.
+    Ensures resources like aiohttp sessions are properly opened and closed.
+    """
+    logger.info("Application startup: Entering DomainService context.")
+    async with domain_service_instance as ds:
+        # Yield control to the application
+        yield
+    logger.info("Application shutdown: Exiting DomainService context.")
+
+
 app = FastAPI(
     title="Link Profiler API",
     description="API for discovering backlinks and generating link profiles.",
     version="0.1.0",
+    lifespan=lifespan # Register the lifespan context manager
 )
 
-# Initialize services
-db = Database()
-# Pass the specific API client to DomainService
-domain_service = DomainService(api_client=SimulatedDomainAPIClient()) 
-crawl_service = CrawlService(db) # CrawlService will instantiate its own DomainService
-domain_analyzer_service = DomainAnalyzerService(db, domain_service)
-expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service, domain_analyzer_service)
 
 # --- Pydantic Models for API Request/Response ---
 
@@ -260,7 +288,7 @@ async def check_domain_availability(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    is_available = await domain_service.check_domain_availability(domain_name)
+    is_available = await domain_service_instance.check_domain_availability(domain_name)
     return {"domain_name": domain_name, "is_available": is_available}
 
 @app.get("/domain/whois/{domain_name}", response_model=Dict)
@@ -271,7 +299,7 @@ async def get_domain_whois(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    whois_info = await domain_service.get_whois_info(domain_name)
+    whois_info = await domain_service_instance.get_whois_info(domain_name)
     if not whois_info:
         raise HTTPException(status_code=404, detail="WHOIS information not found for this domain.")
     return whois_info
@@ -284,7 +312,7 @@ async def get_domain_info(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    domain_obj = await domain_service.get_domain_info(domain_name)
+    domain_obj = await domain_service_instance.get_domain_info(domain_name)
     if not domain_obj:
         raise HTTPException(status_code=404, detail="Domain information not found.")
     return DomainResponse.from_domain(domain_obj)
