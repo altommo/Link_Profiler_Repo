@@ -291,7 +291,8 @@ class Database:
                 source_domain_name = urlparse(backlink.source_url).netloc.lower()
                 target_domain_name = urlparse(backlink.target_url).netloc.lower()
                 
-                logger.debug(f"Adding backlink from {backlink.source_url} (Domain: {source_domain_name}) to {backlink.target_url} (Domain: {target_domain_name})")
+                # Add debug logging here to see the target_domain_name being saved
+                logger.debug(f"Adding backlink from {backlink.source_url} (Domain: {source_domain_name}) to {backlink.target_url} (Domain: {target_domain_name}). Target domain being saved: {target_domain_name}")
 
                 session.merge(DomainORM(name=source_domain_name))
                 session.merge(DomainORM(name=target_domain_name))

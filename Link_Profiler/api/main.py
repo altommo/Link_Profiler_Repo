@@ -45,7 +45,8 @@ from Link_Profiler.database.database import Database # Changed to absolute impor
 from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain # Changed to absolute import
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+# Temporarily set level to DEBUG to see detailed logs from database operations
+logging.basicConfig(level=logging.DEBUG) 
 logger = logging.getLogger(__name__)
 
 # Initialize database
