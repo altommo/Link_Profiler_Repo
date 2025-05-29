@@ -7,7 +7,11 @@ import uvicorn
 import os
 import sys
 
-# Removed sys.path.insert here. Relying on uvicorn's app_dir.
+# Explicitly add the project root to sys.path to ensure imports work correctly.
+# This is a robust workaround for ModuleNotFoundError issues, especially with reloaders.
+project_root = os.path.abspath(os.path.dirname(__file__))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 # The application is now imported as a module from the Link_Profiler package.
 # This requires the 'Link_Profiler' directory to be on the PYTHONPATH,
