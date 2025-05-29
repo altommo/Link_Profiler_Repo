@@ -6,6 +6,7 @@ File: Link_Profiler/crawlers/content_parser.py
 from typing import Optional, Dict, Any
 from bs4 import BeautifulSoup
 import logging
+from urllib.parse import urlparse, urljoin # Added import
 
 from Link_Profiler.core.models import SEOMetrics # Absolute import
 

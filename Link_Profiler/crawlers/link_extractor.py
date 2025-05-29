@@ -3,7 +3,7 @@ Link Extractor - Extracts links from HTML content.
 File: Link_Profiler/crawlers/link_extractor.py
 """
 
-from typing import List
+from typing import List, Optional # Added Optional import
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import logging
