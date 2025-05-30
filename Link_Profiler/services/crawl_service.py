@@ -206,7 +206,7 @@ class CrawlService:
                                 debug_file.flush()
                             except Exception as e:
                                 self.logger.error(f"Error writing crawl result to debug file for {crawl_result.url}: {e}")
-                                job.add_error(url=crawl_result.url, error_type="FileWriteError", message=f"Error writing debug data: {str(e)}", details=str(e)}")
+                                job.add_error(url=crawl_result.url, error_type="FileWriteError", message=f"Error writing debug data: {str(e)}", details=str(e)) # Corrected this line
 
                             if crawl_result.links_found:
                                 self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url} via crawl.")
@@ -225,7 +225,7 @@ class CrawlService:
                                         self.db.add_backlinks(new_backlinks) 
                                     except Exception as db_e:
                                         self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
-                                        job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error adding crawled backlinks: {str(db_e)}", details=str(db_e)}")
+                                        job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error adding crawled backlinks: {str(db_e)}", details=str(db_e)) # Corrected this line
                             
                             self.logger.debug(f"CrawlResult.seo_metrics for {crawl_result.url}: {crawl_result.seo_metrics}")
                             if crawl_result.seo_metrics:
@@ -234,7 +234,7 @@ class CrawlService:
                                     self.logger.info(f"Saved SEO metrics for {crawl_result.url}.")
                                 except Exception as seo_e:
                                     self.logger.error(f"Error saving SEO metrics for {crawl_result.url}: {seo_e}", exc_info=True)
-                                    job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error saving SEO metrics: {str(seo_e)}", details=str(seo_e)}")
+                                    job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error saving SEO metrics: {str(seo_e)}", details=str(seo_e)) # Corrected this line
 
                         # Update job progress
                         job.progress_percentage = min(99.0, (urls_crawled_count / config.max_pages) * 100)
