@@ -280,6 +280,18 @@ class Database:
         finally:
             session.close()
 
+    def get_backlinks_from_source(self, source_url: str) -> List[Backlink]:
+        """Retrieves all outgoing links (backlinks) from a specific source URL."""
+        session = self._get_session()
+        try:
+            orm_backlinks = session.query(BacklinkORM).filter_by(source_url=source_url).all()
+            return [self._to_dataclass(bl) for bl in orm_backlinks]
+        except Exception as e:
+            logger.error(f"Error retrieving outgoing backlinks from source {source_url}: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
     def get_all_backlinks(self) -> List[Backlink]:
         """Retrieves all backlinks from the database."""
         session = self._get_session()
