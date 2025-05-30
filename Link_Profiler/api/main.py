@@ -79,7 +79,7 @@ else:
 
 
 # Initialize other services that depend on domain_service and backlink_service
-crawl_service = CrawlService(db, backlink_service=backlink_service_instance) 
+crawl_service = CrawlService(db, backlink_service=backlink_service_instance, domain_service=domain_service_instance) # Pass domain_service_instance
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service)
 
@@ -491,7 +491,6 @@ async def analyze_domain(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    # domain_analyzer_service uses the context-managed domain_service_instance internally
     analysis_result = await domain_analyzer_service.analyze_domain_for_expiration_value(domain_name)
     
     if not analysis_result:
@@ -508,7 +507,6 @@ async def find_expired_domains(request: FindExpiredDomainsRequest):
     if not request.potential_domains:
         raise HTTPException(status_code=400, detail="No potential domains provided.")
     
-    # expired_domain_finder_service uses the context-managed domain_service_instance internally
     found_domains = await expired_domain_finder_service.find_valuable_expired_domains(
         potential_domains=request.potential_domains,
         min_value_score=request.min_value_score,

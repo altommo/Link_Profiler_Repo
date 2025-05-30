@@ -10,12 +10,13 @@ from uuid import uuid4
 from datetime import datetime
 from urllib.parse import urlparse # Import urlparse
 import json # Import json
+import os # Import os for WARC output directory
 
 from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model, SEOMetrics, LinkType, SpamLevel, CrawlError # Import CrawlError
 from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult # Import CrawlResult
 from Link_Profiler.database.database import Database
-from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient # Import DomainService and SimulatedDomainAPIClient
-from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient # Import BacklinkService and SimulatedBacklinkAPIClient
+from Link_Profiler.services.domain_service import DomainService # Import DomainService
+from Link_Profiler.services.backlink_service import BacklinkService # Import BacklinkService
 
 
 class CrawlService:
@@ -23,12 +24,12 @@ class CrawlService:
     Orchestrates web crawling jobs, manages their state,
     and persists results to the database.
     """
-    def __init__(self, database: Database, backlink_service: Optional[BacklinkService] = None):
+    def __init__(self, database: Database, backlink_service: BacklinkService, domain_service: DomainService):
         self.db = database
         self.logger = logging.getLogger(__name__)
         self.active_crawlers: Dict[str, WebCrawler] = {} # Store active crawler instances by job ID
-        self.domain_service = DomainService(api_client=SimulatedDomainAPIClient()) # Instantiate DomainService with explicit client
-        self.backlink_service = backlink_service if backlink_service else BacklinkService(api_client=SimulatedBacklinkAPIClient()) # Instantiate BacklinkService
+        self.domain_service = domain_service # Injected DomainService
+        self.backlink_service = backlink_service # Injected BacklinkService
 
     async def create_and_start_backlink_crawl_job(
         self, 
@@ -65,7 +66,7 @@ class CrawlService:
             target_url=target_url,
             job_type='backlink_discovery',
             status=CrawlStatus.PENDING,
-            config=config.__dict__ # Store config as dict for serialization
+            config=serialize_model(config) # Store config as dict for serialization
         )
         self.db.add_crawl_job(job)
         self.logger.info(f"Created crawl job {job_id} for {target_url}")
@@ -91,12 +92,13 @@ class CrawlService:
         urls_crawled_count = 0
         
         # Define the debug file path
-        debug_file_path = f"data/crawl_results_debug_{job.id}.jsonl" # Using .jsonl for line-delimited JSON
+        debug_file_path = os.path.join("data", f"crawl_results_debug_{job.id}.jsonl") # Using .jsonl for line-delimited JSON
+        os.makedirs(os.path.dirname(debug_file_path), exist_ok=True) # Ensure data directory exists
 
         try:
             # --- Step 1: Attempt to fetch backlinks from API first ---
             self.logger.info(f"Attempting to fetch backlinks for {job.target_url} from API.")
-            async with self.backlink_service as bs:
+            async with self.backlink_service as bs: # Ensure backlink_service session is active
                 api_backlinks = await bs.get_backlinks_from_api(job.target_url)
                 
             if api_backlinks:
@@ -204,7 +206,7 @@ class CrawlService:
                                 debug_file.flush()
                             except Exception as e:
                                 self.logger.error(f"Error writing crawl result to debug file for {crawl_result.url}: {e}")
-                                job.add_error(url=crawl_result.url, error_type="FileWriteError", message=f"Error writing debug data: {str(e)}", details=str(e))
+                                job.add_error(url=crawl_result.url, error_type="FileWriteError", message=f"Error writing debug data: {str(e)}", details=str(e)}")
 
                             if crawl_result.links_found:
                                 self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url} via crawl.")
@@ -223,7 +225,7 @@ class CrawlService:
                                         self.db.add_backlinks(new_backlinks) 
                                     except Exception as db_e:
                                         self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
-                                        job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error adding crawled backlinks: {str(db_e)}", details=str(db_e))
+                                        job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error adding crawled backlinks: {str(db_e)}", details=str(db_e)}")
                             
                             self.logger.debug(f"CrawlResult.seo_metrics for {crawl_result.url}: {crawl_result.seo_metrics}")
                             if crawl_result.seo_metrics:
@@ -232,7 +234,7 @@ class CrawlService:
                                     self.logger.info(f"Saved SEO metrics for {crawl_result.url}.")
                                 except Exception as seo_e:
                                     self.logger.error(f"Error saving SEO metrics for {crawl_result.url}: {seo_e}", exc_info=True)
-                                    job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error saving SEO metrics: {str(seo_e)}", details=str(seo_e))
+                                    job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error saving SEO metrics: {str(seo_e)}", details=str(seo_e)}")
 
                         # Update job progress
                         job.progress_percentage = min(99.0, (urls_crawled_count / config.max_pages) * 100)
@@ -383,10 +385,10 @@ class CrawlService:
             job.status = CrawlStatus.STOPPED
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
-            self.logger.info(f"Crawl job {job_id} stopped.")
+            self.logger.info(f"Crawl job {job.id} stopped.")
             return job
         else:
-            raise ValueError(f"Crawl job {job_id} cannot be stopped from status {job.status.value}.")
+            raise ValueError(f"Crawl job {job.id} cannot be stopped from status {job.status.value}.")
 
     def get_link_profile_for_url(self, target_url: str) -> Optional[LinkProfile]:
         """Retrieves the link profile for a given URL."""
