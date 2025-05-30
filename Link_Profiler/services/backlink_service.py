@@ -68,21 +68,25 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
         """
         self.logger.info(f"Simulating API call for backlinks for: {target_url}")
         
-        # Simulate network delay
-        if self._session is None or self._session.closed:
-            await asyncio.sleep(0.5)
-        else:
-            try:
-                # Simulate an actual HTTP request, even if it's to a dummy URL
-                # This helps test aiohttp session management
-                async with self._session.get(f"http://localhost:8080/simulate_backlinks/{target_url}") as response:
-                    # We don't care about the actual response, just that the request was made
-                    pass
-            except aiohttp.ClientConnectorError:
-                # This is expected if localhost:8080 is not running, simulating network activity
+        session_to_use = self._session
+        close_session_after_use = False
+        if session_to_use is None or session_to_use.closed:
+            self.logger.warning("SimulatedBacklinkAPIClient: aiohttp session not active. Creating temporary session for this call.")
+            session_to_use = aiohttp.ClientSession()
+            close_session_after_use = True
+
+        try:
+            async with session_to_use.get(f"http://localhost:8080/simulate_backlinks/{target_url}") as response:
+                # We don't care about the actual response, just that the request was made
                 pass
-            except Exception as e:
-                self.logger.warning(f"Unexpected error during simulated backlink fetch: {e}")
+        except aiohttp.ClientConnectorError:
+            # This is expected if localhost:8080 is not running, simulating network activity
+            pass
+        except Exception as e:
+            self.logger.warning(f"Unexpected error during simulated backlink fetch: {e}")
+        finally:
+            if close_session_after_use and not session_to_use.closed:
+                await session_to_use.close()
 
         # Generate some dummy backlinks
         num_backlinks = random.randint(5, 15)
@@ -172,10 +176,17 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
         params = {"target": target_url, "limit": 100} # Example parameters
         self.logger.info(f"Attempting real API call for backlinks: {endpoint}?target={target_url}...")
 
+        session_to_use = self._session
+        close_session_after_use = False
+        if session_to_use is None or session_to_use.closed:
+            self.logger.warning("RealBacklinkAPIClient: aiohttp session not active. Creating temporary session for this call.")
+            session_to_use = aiohttp.ClientSession(headers={"X-API-Key": self.api_key})
+            close_session_after_use = True
+        else:
+            close_session_after_use = False
+
         try:
-            # Simulate an actual HTTP request to a dummy endpoint.
-            # In a real scenario, this would be your actual API endpoint.
-            async with self._session.get(endpoint, params=params, timeout=30) as response:
+            async with session_to_use.get(endpoint, params=params, timeout=30) as response:
                 response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
                 
                 # --- Placeholder for parsing real API response into Backlink objects ---
@@ -215,6 +226,9 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error in real backlink fetch for {target_url}: {e}. Returning empty list.")
             return []
+        finally:
+            if close_session_after_use and not session_to_use.closed:
+                await session_to_use.close()
 
 class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
     """
@@ -257,8 +271,17 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
         params = {"url": domain_or_url, "output": "json"}
         self.logger.info(f"Attempting OpenLinkProfiler API call for backlinks: {endpoint}?url={domain_or_url}...")
 
+        session_to_use = self._session
+        close_session_after_use = False
+        if session_to_use is None or session_to_use.closed:
+            self.logger.warning("OpenLinkProfilerAPIClient: aiohttp session not active. Creating temporary session for this call.")
+            session_to_use = aiohttp.ClientSession()
+            close_session_after_use = True
+        else:
+            close_session_after_use = False
+
         try:
-            async with self._session.get(endpoint, params=params, timeout=30) as response:
+            async with session_to_use.get(endpoint, params=params, timeout=30) as response:
                 response.raise_for_status()
                 data = await response.json()
                 
@@ -316,6 +339,9 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error in OpenLinkProfiler backlink fetch for {target_url}: {e}. Returning empty list.")
             return []
+        finally:
+            if close_session_after_use and not session_to_use.closed:
+                await session_to_use.close()
 
 
 class GSCBacklinkAPIClient(BaseBacklinkAPIClient):

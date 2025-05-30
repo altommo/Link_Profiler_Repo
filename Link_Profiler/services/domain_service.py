@@ -65,22 +65,26 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for availability of: {domain_name}")
-        if self._session is None or self._session.closed:
-            self.logger.warning("aiohttp session not active. Call client within async with block.")
-            # Fallback to simple sleep if session not managed by context manager
-            await asyncio.sleep(0.5)
-        else:
-            try:
-                # Simulate an actual HTTP request, even if it's to a dummy URL
-                # This helps test aiohttp session management
-                async with self._session.get(f"http://localhost:8080/simulate_availability/{domain_name}") as response:
-                    # We don't care about the actual response, just that the request was made
-                    pass
-            except aiohttp.ClientConnectorError:
-                # This is expected if localhost:8080 is not running, simulating network activity
+        
+        session_to_use = self._session
+        close_session_after_use = False
+        if session_to_use is None or session_to_use.closed:
+            self.logger.warning("SimulatedDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
+            session_to_use = aiohttp.ClientSession()
+            close_session_after_use = True
+
+        try:
+            async with session_to_use.get(f"http://localhost:8080/simulate_availability/{domain_name}") as response:
+                # We don't care about the actual response, just that the request was made
                 pass
-            except Exception as e:
-                self.logger.warning(f"Unexpected error during simulated availability check: {e}")
+        except aiohttp.ClientConnectorError:
+            # This is expected if localhost:8080 is not running, simulating network activity
+            pass
+        except Exception as e:
+            self.logger.warning(f"Unexpected error during simulated availability check: {e}")
+        finally:
+            if close_session_after_use and not session_to_use.closed:
+                await session_to_use.close()
 
         # Actual simulated logic
         if domain_name.lower() in ["example.com", "testdomain.org", "available.net"]:
@@ -96,19 +100,26 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         Uses aiohttp to simulate a network call.
         """
         self.logger.debug(f"Simulating API call for WHOIS info of: {domain_name}")
-        if self._session is None or self._session.closed:
-            self.logger.warning("aiohttp session not active. Call client within async with block.")
-            # Fallback to simple sleep if session not managed by context manager
-            await asyncio.sleep(1.0)
+        
+        session_to_use = self._session
+        close_session_after_use = False
+        if session_to_use is None or session_to_use.closed:
+            self.logger.warning("SimulatedDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
+            session_to_use = aiohttp.ClientSession()
+            close_session_after_use = True
         else:
-            try:
-                # Simulate an actual HTTP request
-                async with self._session.get(f"http://localhost:8080/simulate_whois/{domain_name}") as response:
-                    pass
-            except aiohttp.ClientConnectorError:
+            close_session_after_use = False
+
+        try:
+            async with session_to_use.get(f"http://localhost:8080/simulate_whois/{domain_name}") as response:
                 pass
-            except Exception as e:
-                self.logger.warning(f"Unexpected error during simulated WHOIS check: {e}")
+        except aiohttp.ClientConnectorError:
+            pass
+        except Exception as e:
+            self.logger.warning(f"Unexpected error during simulated WHOIS check: {e}")
+        finally:
+            if close_session_after_use and not session_to_use.closed:
+                await session_to_use.close()
 
         # Actual simulated logic
         if domain_name.lower() == "example.com":
@@ -180,10 +191,17 @@ class RealDomainAPIClient(BaseDomainAPIClient):
         params = {"domain": domain_name}
         self.logger.info(f"Making real API call for availability: {endpoint}?domain={domain_name}")
         
+        session_to_use = self._session
+        close_session_after_use = False
+        if session_to_use is None or session_to_use.closed:
+            self.logger.warning("RealDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
+            session_to_use = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self.api_key}"})
+            close_session_after_use = True
+        else:
+            close_session_after_use = False
+
         try:
-            # In a real scenario, you'd make an actual request and parse its response
-            # For demonstration, we'll still use the simulated logic after the "call"
-            async with self._session.get(endpoint, params=params, timeout=10) as response:
+            async with session_to_use.get(endpoint, params=params, timeout=10) as response:
                 response.raise_for_status() # Raise an exception for HTTP errors
                 # real_data = await response.json()
                 # return real_data.get("available", False)
@@ -196,6 +214,9 @@ class RealDomainAPIClient(BaseDomainAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error in real domain availability check for {domain_name}: {e}")
             return False
+        finally:
+            if close_session_after_use and not session_to_use.closed:
+                await session_to_use.close()
 
     async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -206,10 +227,17 @@ class RealDomainAPIClient(BaseDomainAPIClient):
         params = {"domain": domain_name}
         self.logger.info(f"Making real API call for WHOIS data: {endpoint}?domain={domain_name}")
 
+        session_to_use = self._session
+        close_session_after_use = False
+        if session_to_use is None or session_to_use.closed:
+            self.logger.warning("RealDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
+            session_to_use = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self.api_key}"})
+            close_session_after_use = True
+        else:
+            close_session_after_use = False
+
         try:
-            # In a real scenario, you'd make an actual request and parse its response
-            # For demonstration, we'll still use the simulated logic after the "call"
-            async with self._session.get(endpoint, params=params, timeout=10) as response:
+            async with session_to_use.get(endpoint, params=params, timeout=10) as response:
                 response.raise_for_status()
                 # real_data = await response.json()
                 # return real_data.get("whois_record")
@@ -222,6 +250,9 @@ class RealDomainAPIClient(BaseDomainAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error in real WHOIS data fetch for {domain_name}: {e}")
             return None
+        finally:
+            if close_session_after_use and not session_to_use.closed:
+                await session_to_use.close()
 
 class AbstractDomainAPIClient(BaseDomainAPIClient):
     """
@@ -256,8 +287,17 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
         params = {"api_key": self.api_key, "domain": domain_name, "field": "is_dead"} # AbstractAPI uses 'is_dead' for availability
         self.logger.info(f"Making AbstractAPI call for availability: {endpoint}?domain={domain_name}...")
 
+        session_to_use = self._session
+        close_session_after_use = False
+        if session_to_use is None or session_to_use.closed:
+            self.logger.warning("AbstractDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
+            session_to_use = aiohttp.ClientSession()
+            close_session_after_use = True
+        else:
+            close_session_after_use = False
+
         try:
-            async with self._session.get(endpoint, params=params, timeout=10) as response:
+            async with session_to_use.get(endpoint, params=params, timeout=10) as response:
                 response.raise_for_status()
                 data = await response.json()
                 # AbstractAPI returns is_dead: true if domain is dead/available, false if active/registered
@@ -268,6 +308,9 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error in AbstractAPI domain availability check for {domain_name}: {e}")
             return False
+        finally:
+            if close_session_after_use and not session_to_use.closed:
+                await session_to_use.close()
 
     async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -277,8 +320,17 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
         params = {"api_key": self.api_key, "domain": domain_name}
         self.logger.info(f"Making AbstractAPI call for WHOIS data: {endpoint}?domain={domain_name}...")
 
+        session_to_use = self._session
+        close_session_after_use = False
+        if session_to_use is None or session_to_use.closed:
+            self.logger.warning("AbstractDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
+            session_to_use = aiohttp.ClientSession()
+            close_session_after_use = True
+        else:
+            close_session_after_use = False
+
         try:
-            async with self._session.get(endpoint, params=params, timeout=10) as response:
+            async with session_to_use.get(endpoint, params=params, timeout=10) as response:
                 response.raise_for_status()
                 data = await response.json()
                 
@@ -300,6 +352,9 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error in AbstractAPI WHOIS data fetch for {domain_name}: {e}")
             return None
+        finally:
+            if close_session_after_use and not session_to_use.closed:
+                await session_to_use.close()
 
 
 class DomainService:
@@ -363,7 +418,7 @@ class DomainService:
             self.logger.warning(f"No WHOIS data found for {domain_name}.")
             return None
 
-        # is_available = await self.check_domain_availability(domain_name) # Not strictly needed for Domain object creation
+        is_available = await self.check_domain_availability(domain_name)
 
         # Parse dates from WHOIS data
         creation_date_str = whois_data.get("creation_date")
