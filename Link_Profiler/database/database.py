@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.inspection import inspect
 from datetime import datetime
 import enum # Import enum for type checking
+from urllib.parse import urlparse # Added import for urlparse
 
 from Link_Profiler.database.models import ( # Changed to absolute import
     Base, DomainORM, URLORM, BacklinkORM, LinkProfileORM, CrawlJobORM,
