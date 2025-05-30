@@ -165,6 +165,22 @@ class WebCrawler:
                         link.crawl_timestamp = current_crawl_timestamp
 
                     seo_metrics = await self.content_parser.parse_seo_metrics(url, content) # Parse SEO metrics
+                    
+                    # Populate SEOMetrics with page-level metrics from the HTTP response
+                    if seo_metrics:
+                        seo_metrics.http_status = response.status
+                        seo_metrics.response_time_ms = crawl_time_ms
+                        # Get page size from Content-Length header or content length
+                        content_length_header = response.headers.get('Content-Length')
+                        if content_length_header:
+                            try:
+                                seo_metrics.page_size_bytes = int(content_length_header)
+                            except ValueError:
+                                self.logger.warning(f"Invalid Content-Length header for {url}: {content_length_header}")
+                                seo_metrics.page_size_bytes = len(content.encode('utf-8')) # Fallback to content length
+                        else:
+                            seo_metrics.page_size_bytes = len(content.encode('utf-8')) # Fallback to content length
+
                 elif 'application/pdf' in content_type and self.config.extract_pdfs:
                     content = await response.read() # Read as bytes for PDF
                     links = []  # PDF link extraction would go here
