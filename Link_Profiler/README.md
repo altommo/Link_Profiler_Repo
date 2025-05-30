@@ -470,21 +470,18 @@ The project has a solid foundation with core crawling, link analysis, and domain
 
 #### **Immediate Next Steps (High Priority)**
 
-1.  **Advanced Crawl Management**:
-    *   **Completed**: Added API endpoints and internal logic to pause, resume, and stop active crawl jobs gracefully.
-2.  **Comprehensive Error Reporting**:
-    *   Enhance `CrawlJob`'s `error_log` to capture more structured and actionable error details during crawling.
-    *   Implement a mechanism to retry failed URLs or segments of a crawl.
-3.  **User Interface / Dashboard**:
+1.  **Comprehensive Error Reporting**:
+    *   **Completed**: `CrawlJob`'s `error_log` now captures structured error details, and a retry mechanism for failed URLs is implemented.
+2.  **User Interface / Dashboard**:
     *   Develop a simple web-based UI to interact with the FastAPI endpoints, visualise crawl progress, link profiles, and domain analysis results.
-4.  **Competitor Backlink Analysis**:
+3.  **Competitor Backlink Analysis**:
     *   Add API endpoints and logic to perform link intersect analysis (find common backlinks between domains) and unique backlink discovery.
 
 #### **Mid-Term Enhancements**
 
 1.  **Distributed Crawling Architecture**:
     *   Enable the crawler to run across multiple machines or containers for large-scale data collection.
-    *   Implement a robust message queue (e.g., using Redis and Celery) for more robust background task management and distributed processing.
+    *   Implement a robust job queue system (e.g., using Redis and Celery) for more robust background task management and distributed processing.
 2.  **Machine Learning for Link Quality**:
     *   Develop ML models to predict link quality, spam likelihood, and domain value based on a wider array of features.
 3.  **Real-time Monitoring & Alerts**:
