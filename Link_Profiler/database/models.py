@@ -119,6 +119,10 @@ class BacklinkORM(Base):
     authority_passed = Column(Float, default=0.0)
     is_active = Column(Boolean, default=True)
     spam_level = Column(String, default=SpamLevelEnum.CLEAN.value) # Store enum value as string
+    # New fields for Backlink Data
+    http_status = Column(Integer, nullable=True) # HTTP response code when fetching source_url
+    crawl_timestamp = Column(DateTime, nullable=True) # UTC timestamp when the page was crawled
+    source_domain_metrics = Column(JSONB, default={}) # domain-level data such as estimated domain authority or PageRank
 
     # Relationships
     source_domain_rel = relationship("DomainORM", foreign_keys=[source_domain_name], back_populates="backlinks_as_source")
@@ -178,21 +182,29 @@ class CrawlJobORM(Base):
 class SEOMetricsORM(Base):
     __tablename__ = 'seo_metrics'
     url = Column(String, ForeignKey('urls.url'), primary_key=True) # One-to-one with URL
+    # Page-level Metrics
+    http_status = Column(Integer, nullable=True) # HTTP response code
+    response_time_ms = Column(Float, nullable=True) # Time to first byte and full load
+    page_size_bytes = Column(Integer, nullable=True) # Total HTML size
+    # SEO Checks
     title_length = Column(Integer, default=0)
-    description_length = Column(Integer, default=0)
+    meta_description_length = Column(Integer, default=0) # Renamed from description_length
     h1_count = Column(Integer, default=0)
     h2_count = Column(Integer, default=0)
     internal_links = Column(Integer, default=0)
     external_links = Column(Integer, default=0)
     images_count = Column(Integer, default=0)
     images_without_alt = Column(Integer, default=0)
-    page_size_kb = Column(Float, default=0.0)
-    load_time_ms = Column(Float, default=0.0)
     has_canonical = Column(Boolean, default=False)
     has_robots_meta = Column(Boolean, default=False)
     has_schema_markup = Column(Boolean, default=False)
-    mobile_friendly = Column(Boolean, default=False)
-    ssl_enabled = Column(Boolean, default=False)
+    broken_links = Column(ARRAY(String), default=[]) # List of internal/external links returning 4xx/5xx
+    # Performance & Best Practices
+    performance_score = Column(Float, nullable=True) # 0–100
+    mobile_friendly = Column(Boolean, nullable=True) # Boolean or score
+    accessibility_score = Column(Float, nullable=True) # 0–100
+    audit_timestamp = Column(DateTime, nullable=True) # UTC timestamp of audit execution
+    # Existing fields
     seo_score = Column(Float, default=0.0)
     issues = Column(ARRAY(String), default=[]) # Store as array of strings
 
@@ -201,3 +213,38 @@ class SEOMetricsORM(Base):
 
     def __repr__(self):
         return f"<SEOMetrics(url='{self.url}', seo_score={self.seo_score})>"
+
+
+class SERPResultORM(Base):
+    __tablename__ = 'serp_results'
+    id = Column(String, primary_key=True) # UUID string
+    keyword = Column(String, nullable=False, index=True)
+    position = Column(Integer, nullable=False)
+    result_url = Column(String, nullable=False)
+    title_text = Column(String, nullable=False)
+    snippet_text = Column(Text, nullable=True)
+    rich_features = Column(ARRAY(String), default=[]) # Flags or details for featured snippets, local packs, etc.
+    page_load_time = Column(Float, nullable=True) # Time to fully render the SERP page
+    crawl_timestamp = Column(DateTime, default=datetime.now) # UTC timestamp of when the search was performed
+
+    __table_args__ = (UniqueConstraint('keyword', 'result_url', name='_keyword_result_uc'),)
+
+    def __repr__(self):
+        return f"<SERPResult(keyword='{self.keyword}', position={self.position}, url='{self.result_url}')>"
+
+
+class KeywordSuggestionORM(Base):
+    __tablename__ = 'keyword_suggestions'
+    id = Column(String, primary_key=True) # UUID string
+    seed_keyword = Column(String, nullable=False, index=True)
+    suggested_keyword = Column(String, nullable=False, index=True)
+    search_volume_monthly = Column(Integer, nullable=True)
+    cpc_estimate = Column(Float, nullable=True) # Cost-per-click estimate
+    keyword_trend = Column(ARRAY(Float), default=[]) # JSON array of monthly interest values
+    competition_level = Column(String, nullable=True) # Low/Medium/High
+    data_timestamp = Column(DateTime, default=datetime.now) # UTC when this data was gathered
+
+    __table_args__ = (UniqueConstraint('seed_keyword', 'suggested_keyword', name='_seed_suggested_uc'),)
+
+    def __repr__(self):
+        return f"<KeywordSuggestion(seed='{self.seed_keyword}', suggested='{self.suggested_keyword}')>"
