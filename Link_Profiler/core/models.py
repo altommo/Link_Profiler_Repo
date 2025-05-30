@@ -170,6 +170,10 @@ class Backlink:
     authority_passed: float = 0.0
     is_active: bool = True
     spam_level: SpamLevel = SpamLevel.CLEAN
+    # New fields for Backlink Data (from Scrapy spiders)
+    http_status: Optional[int] = None # HTTP response code when fetching source_url
+    crawl_timestamp: Optional[datetime] = None # UTC timestamp when the page was crawled
+    source_domain_metrics: Dict[str, Any] = field(default_factory=dict) # domain-level data such as estimated domain authority or PageRank
     
     def __post_init__(self):
         """Extract domain information from URLs"""
@@ -204,6 +208,8 @@ class Backlink:
             data['discovered_date'] = datetime.fromisoformat(data['discovered_date'])
         if 'last_seen_date' in data and isinstance(data['last_seen_date'], str):
             data['last_seen_date'] = datetime.fromisoformat(data['last_seen_date'])
+        if 'crawl_timestamp' in data and isinstance(data['crawl_timestamp'], str):
+            data['crawl_timestamp'] = datetime.fromisoformat(data['crawl_timestamp'])
         
         # Remove 'source_domain' and 'target_domain' from data if present,
         # as they are calculated in __post_init__ and not part of __init__
@@ -293,7 +299,7 @@ class CrawlJob:
     """Represents a crawling job"""
     id: str
     target_url: str
-    job_type: str  # 'backlinks', 'seo_audit', 'competitor_analysis'
+    job_type: str  # 'backlinks', 'seo_audit', 'competitor_analysis', 'serp_analysis', 'keyword_research'
     status: CrawlStatus = CrawlStatus.PENDING
     priority: int = 5  # 1-10, higher = more priority
     created_date: datetime = field(default_factory=datetime.now)
@@ -399,21 +405,29 @@ class CrawlConfig:
 class SEOMetrics:
     """SEO metrics for a URL or domain"""
     url: str
+    # Page-level Metrics (for each page crawled)
+    http_status: Optional[int] = None # HTTP response code
+    response_time_ms: Optional[float] = None # Time to first byte and full load
+    page_size_bytes: Optional[int] = None # Total HTML size
+    # SEO Checks
     title_length: int = 0
-    description_length: int = 0
+    meta_description_length: int = 0 # Renamed from description_length
     h1_count: int = 0
     h2_count: int = 0
     internal_links: int = 0
     external_links: int = 0
     images_count: int = 0
     images_without_alt: int = 0
-    page_size_kb: float = 0.0
-    load_time_ms: float = 0.0
     has_canonical: bool = False
     has_robots_meta: bool = False
     has_schema_markup: bool = False
-    mobile_friendly: bool = False
-    ssl_enabled: bool = False
+    broken_links: List[str] = field(default_factory=list) # List of internal/external links returning 4xx/5xx
+    # Performance & Best Practices (optional with Lighthouse CI)
+    performance_score: Optional[float] = None # 0–100
+    mobile_friendly: Optional[bool] = None # Boolean or score
+    accessibility_score: Optional[float] = None # 0–100
+    audit_timestamp: Optional[datetime] = None # UTC timestamp of audit execution
+    # Existing fields
     seo_score: float = 0.0
     issues: List[str] = field(default_factory=list)
     
@@ -428,9 +442,9 @@ class SEOMetrics:
             score -= 5
             
         # Description optimization  
-        if self.description_length == 0:
+        if self.meta_description_length == 0: # Changed to meta_description_length
             score -= 10
-        elif self.description_length > 160:
+        elif self.meta_description_length > 160:
             score -= 3
             
         # Headers
@@ -446,23 +460,70 @@ class SEOMetrics:
         # Technical SEO
         if not self.has_canonical:
             score -= 5
-        if not self.ssl_enabled:
-            score -= 10
-        if not self.mobile_friendly:
+        # SSL Enabled (this can't be determined from HTML content alone, needs HTTP response info)
+        # For now, we'll assume it's true if the URL scheme is https
+        # Removed ssl_enabled from here, as it's not directly from content parsing.
+        # It should be part of the URL model or passed in from the crawler.
+        
+        # New SEO checks
+        if self.broken_links:
+            score -= len(self.broken_links) * 5 # Penalty for broken links
+        if self.performance_score is not None:
+            score -= (100 - self.performance_score) * 0.1 # Scale 0-100 to 0-10 penalty
+        if self.mobile_friendly is False:
             score -= 15
-            
-        # Performance
-        if self.load_time_ms > 3000:
-            score -= 10
-        elif self.load_time_ms > 1000:
-            score -= 5
-            
+        if self.accessibility_score is not None:
+            score -= (100 - self.accessibility_score) * 0.05 # Smaller penalty for accessibility
+
         self.seo_score = max(0.0, score)
         return self.seo_score
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'SEOMetrics':
         """Create a SEOMetrics instance from a dictionary."""
+        if 'audit_timestamp' in data and isinstance(data['audit_timestamp'], str):
+            data['audit_timestamp'] = datetime.fromisoformat(data['audit_timestamp'])
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+
+@dataclass
+class SERPResult:
+    """Represents a single search engine results page (SERP) entry."""
+    keyword: str
+    position: int
+    result_url: str
+    title_text: str
+    snippet_text: Optional[str] = None
+    rich_features: List[str] = field(default_factory=list) # Flags or details for featured snippets, local packs, etc.
+    page_load_time: Optional[float] = None # Time to fully render the SERP page
+    crawl_timestamp: datetime = field(default_factory=datetime.now) # UTC timestamp of when the search was performed
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'SERPResult':
+        if 'crawl_timestamp' in data and isinstance(data['crawl_timestamp'], str):
+            data['crawl_timestamp'] = datetime.fromisoformat(data['crawl_timestamp'])
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+
+@dataclass
+class KeywordSuggestion:
+    """Represents a keyword suggestion from a research tool."""
+    seed_keyword: str
+    suggested_keyword: str
+    search_volume_monthly: Optional[int] = None
+    cpc_estimate: Optional[float] = None # Cost-per-click estimate
+    keyword_trend: List[float] = field(default_factory=list) # JSON array of monthly interest values
+    competition_level: Optional[str] = None # Low/Medium/High
+    data_timestamp: datetime = field(default_factory=datetime.now) # UTC when this data was gathered
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'KeywordSuggestion':
+        if 'data_timestamp' in data and isinstance(data['data_timestamp'], str):
+            data['data_timestamp'] = datetime.fromisoformat(data['data_timestamp'])
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered_data)
