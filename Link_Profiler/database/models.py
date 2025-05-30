@@ -110,6 +110,7 @@ class BacklinkORM(Base):
     target_domain_name = Column(String, ForeignKey('domains.name'), nullable=False)
     anchor_text = Column(String, nullable=False)
     link_type = Column(String, default=LinkTypeEnum.FOLLOW.value) # Store enum value as string
+    rel_attributes = Column(ARRAY(String), default=[]) # New field for all rel values
     context_text = Column(Text, nullable=False)
     position_on_page = Column(Integer, default=0)
     is_image_link = Column(Boolean, default=False)

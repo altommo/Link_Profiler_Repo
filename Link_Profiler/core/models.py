@@ -161,6 +161,7 @@ class Backlink:
     target_domain: str = field(init=False)
     anchor_text: str = ""
     link_type: LinkType = LinkType.FOLLOW
+    rel_attributes: List[str] = field(default_factory=list) # New field for all rel values
     context_text: str = ""  # Surrounding text
     position_on_page: int = 0
     is_image_link: bool = False
