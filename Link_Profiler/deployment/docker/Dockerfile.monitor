@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy monitoring requirements
+COPY Link_Profiler/deployment/docker/requirements-monitor.txt .
+RUN pip install --no-cache-dir -r requirements-monitor.txt
+
+# Copy monitoring components
+COPY Link_Profiler/monitoring/ ./Link_Profiler/monitoring/
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Expose monitoring port
+EXPOSE 8001
+
+# Start monitoring dashboard
+CMD ["python", "-m", "Link_Profiler.monitoring.dashboard", "dashboard"]

@@ -30,9 +30,9 @@
     },
     {
         "name": "quotes.toscrape.com",
-        "authority_score": 38.01094841830152,
-        "trust_score": 0.7224368051467978,
-        "spam_score": 64.72461268034176,
+        "authority_score": 75.60076226910341,
+        "trust_score": 46.898961051350405,
+        "spam_score": 89.99254707974866,
         "age_days": 1975,
         "country": null,
         "ip_address": null,

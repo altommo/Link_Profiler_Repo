@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crawler-config
+  namespace: link-profiler
+data:
+  default-config.json: |
+    {
+      "max_depth": 3,
+      "max_pages": 1000,
+      "delay_seconds": 1.0,
+      "timeout_seconds": 30,
+      "respect_robots_txt": true,
+      "follow_redirects": true,
+      "extract_images": true,
+      "extract_pdfs": false,
+      "max_file_size_mb": 10
+    }

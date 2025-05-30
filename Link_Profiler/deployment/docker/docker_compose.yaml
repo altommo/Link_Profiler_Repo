@@ -1,0 +1,133 @@
+# docker-compose.yml - Complete deployment setup
+version: '3.8'
+
+services:
+  # Redis for job queue
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: link_profiler_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Central coordinator and API
+  coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/link_profiler_db
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Satellite crawler instances
+  satellite-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.satellite
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CRAWLER_ID=satellite-us-east-1
+      - REGION=us-east-1
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  satellite-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.satellite
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CRAWLER_ID=satellite-us-west-1
+      - REGION=us-west-1
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  satellite-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.satellite
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CRAWLER_ID=satellite-eu-west-1
+      - REGION=eu-west-1
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
+
+---
+# Dockerfile.coordinator - Central API and job coordinator
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Expose API port
+EXPOSE 8000
+
+# Start command
+CMD ["uvicorn", "Link_Profiler.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+---
+# Dockerfile.satellite - Lightweight satellite crawler
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies (minimal)
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*

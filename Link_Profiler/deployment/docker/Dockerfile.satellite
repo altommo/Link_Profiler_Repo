@@ -1,0 +1,31 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies (minimal)
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy only satellite requirements (lighter)
+COPY Link_Profiler/deployment/docker/requirements-satellite.txt .
+RUN pip install --no-cache-dir -r requirements-satellite.txt
+
+# Copy only necessary components for satellite
+COPY Link_Profiler/crawlers/ ./Link_Profiler/crawlers/
+COPY Link_Profiler/core/models.py ./Link_Profiler/core/models.py
+COPY Link_Profiler/core/__init__.py ./Link_Profiler/core/__init__.py
+COPY Link_Profiler/__init__.py ./Link_Profiler/__init__.py
+COPY Link_Profiler/queue_system/satellite_crawler.py .
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Default environment variables
+ENV REDIS_URL=redis://localhost:6379
+ENV REGION=default
+ENV LOG_LEVEL=INFO
+
+# Start satellite crawler
+CMD ["python", "satellite_crawler.py", "--redis-url", "$REDIS_URL", "--region", "$REGION", "--log-level", "$LOG_LEVEL"]

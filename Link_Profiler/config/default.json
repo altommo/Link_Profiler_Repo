@@ -1,0 +1,25 @@
+{
+  "crawler": {
+    "max_depth": 3,
+    "max_pages": 1000,
+    "delay_seconds": 1.0,
+    "timeout_seconds": 30,
+    "respect_robots_txt": true,
+    "follow_redirects": true,
+    "extract_images": true,
+    "extract_pdfs": false,
+    "max_file_size_mb": 10
+  },
+  "queue": {
+    "max_retries": 3,
+    "retry_delay": 5,
+    "priority_levels": [1, 5, 10],
+    "heartbeat_interval": 30,
+    "stale_timeout": 60
+  },
+  "monitoring": {
+    "dashboard_refresh": 30,
+    "max_job_history": 100,
+    "performance_window": 3600
+  }
+}
