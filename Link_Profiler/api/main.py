@@ -42,8 +42,10 @@ from Link_Profiler.services.domain_service import DomainService, SimulatedDomain
 from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient # Import new BacklinkService components
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Changed to absolute import
 from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService # Changed to absolute import
+from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient # New: Import SERPService components
+from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient # New: Import KeywordService components
 from Link_Profiler.database.database import Database # Changed to absolute import
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError # Import CrawlError
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion # Import new core models
 
 
 # Configure logging
@@ -77,6 +79,28 @@ elif os.getenv("USE_REAL_BACKLINK_API", "false").lower() == "true":
 else:
     backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient())
 
+# New: Initialize SERPService
+if os.getenv("USE_REAL_SERP_API", "false").lower() == "true":
+    real_serp_api_key = os.getenv("REAL_SERP_API_KEY")
+    if not real_serp_api_key:
+        logger.error("REAL_SERP_API_KEY environment variable not set. Falling back to simulated SERP API.")
+        serp_service_instance = SERPService(api_client=SimulatedSERPAPIClient())
+    else:
+        serp_service_instance = SERPService(api_client=RealSERPAPIClient(api_key=real_serp_api_key))
+else:
+    serp_service_instance = SERPService(api_client=SimulatedSERPAPIClient())
+
+# New: Initialize KeywordService
+if os.getenv("USE_REAL_KEYWORD_API", "false").lower() == "true":
+    real_keyword_api_key = os.getenv("REAL_KEYWORD_API_KEY")
+    if not real_keyword_api_key:
+        logger.error("REAL_KEYWORD_API_KEY environment variable not set. Falling back to simulated Keyword API.")
+        keyword_service_instance = KeywordService(api_client=SimulatedKeywordAPIClient())
+    else:
+        keyword_service_instance = KeywordService(api_client=RealKeywordAPIClient(api_key=real_keyword_api_key))
+else:
+    keyword_service_instance = KeywordService(api_client=SimulatedKeywordAPIClient())
+
 
 # Initialize other services that depend on domain_service and backlink_service
 crawl_service = CrawlService(db, backlink_service=backlink_service_instance, domain_service=domain_service_instance) # Pass domain_service_instance
@@ -94,8 +118,14 @@ async def lifespan(app: FastAPI):
     async with domain_service_instance as ds:
         logger.info("Application startup: Entering BacklinkService context.")
         async with backlink_service_instance as bs:
-            # Yield control to the application
-            yield
+            logger.info("Application startup: Entering SERPService context.") # New
+            async with serp_service_instance as ss: # New
+                logger.info("Application startup: Entering KeywordService context.") # New
+                async with keyword_service_instance as ks: # New
+                    # Yield control to the application
+                    yield
+                logger.info("Application shutdown: Exiting KeywordService context.") # New
+            logger.info("Application shutdown: Exiting SERPService context.") # New
         logger.info("Application shutdown: Exiting BacklinkService context.")
     logger.info("Application shutdown: Exiting DomainService context.")
 
@@ -238,6 +268,9 @@ class BacklinkResponse(BaseModel):
     discovered_date: datetime
     authority_passed: float # Changed type from bool to float
     spam_level: SpamLevel 
+    http_status: Optional[int] = None # New field
+    crawl_timestamp: Optional[datetime] = None # New field
+    source_domain_metrics: Dict[str, Any] = Field(default_factory=dict) # New field
 
     @classmethod
     def from_backlink(cls, backlink: Backlink):
@@ -256,6 +289,12 @@ class BacklinkResponse(BaseModel):
             except ValueError:
                  logger.warning(f"Could not parse discovered_date string: {backlink_dict.get('discovered_date')}")
                  backlink_dict['discovered_date'] = None # Or handle as error
+        if isinstance(backlink_dict.get('crawl_timestamp'), str): # New field
+            try:
+                backlink_dict['crawl_timestamp'] = datetime.fromisoformat(backlink_dict['crawl_timestamp'])
+            except ValueError:
+                 logger.warning(f"Could not parse crawl_timestamp string: {backlink_dict.get('crawl_timestamp')}")
+                 backlink_dict['crawl_timestamp'] = None # Or handle as error
         return cls(**backlink_dict)
 
 class DomainResponse(BaseModel):
@@ -307,6 +346,56 @@ class FindExpiredDomainsResponse(BaseModel):
     found_domains: List[DomainAnalysisResponse]
     total_candidates_processed: int
     valuable_domains_found: int
+
+# New: Pydantic models for SERP and Keyword data
+class SERPSearchRequest(BaseModel):
+    keyword: str = Field(..., description="The search term to get SERP results for.")
+    num_results: int = Field(10, description="Number of SERP results to fetch.")
+
+class SERPResultResponse(BaseModel):
+    keyword: str
+    position: int
+    result_url: str
+    title_text: str
+    snippet_text: Optional[str] = None
+    rich_features: List[str] = Field(default_factory=list)
+    page_load_time: Optional[float] = None
+    crawl_timestamp: datetime
+
+    @classmethod
+    def from_serp_result(cls, result: SERPResult):
+        result_dict = serialize_model(result)
+        if isinstance(result_dict.get('crawl_timestamp'), str):
+            try:
+                result_dict['crawl_timestamp'] = datetime.fromisoformat(result_dict['crawl_timestamp'])
+            except ValueError:
+                logger.warning(f"Could not parse crawl_timestamp string: {result_dict.get('crawl_timestamp')}")
+                result_dict['crawl_timestamp'] = None
+        return cls(**result_dict)
+
+class KeywordSuggestRequest(BaseModel):
+    seed_keyword: str = Field(..., description="The initial keyword to get suggestions for.")
+    num_suggestions: int = Field(10, description="Number of keyword suggestions to fetch.")
+
+class KeywordSuggestionResponse(BaseModel):
+    seed_keyword: str
+    suggested_keyword: str
+    search_volume_monthly: Optional[int] = None
+    cpc_estimate: Optional[float] = None
+    keyword_trend: List[float] = Field(default_factory=list)
+    competition_level: Optional[str] = None
+    data_timestamp: datetime
+
+    @classmethod
+    def from_keyword_suggestion(cls, suggestion: KeywordSuggestion):
+        suggestion_dict = serialize_model(suggestion)
+        if isinstance(suggestion_dict.get('data_timestamp'), str):
+            try:
+                suggestion_dict['data_timestamp'] = datetime.fromisoformat(suggestion_dict['data_timestamp'])
+            except ValueError:
+                logger.warning(f"Could not parse data_timestamp string: {suggestion_dict.get('data_timestamp')}")
+                suggestion_dict['data_timestamp'] = None
+        return cls(**suggestion_dict)
 
 
 # --- API Endpoints ---
@@ -518,3 +607,81 @@ async def find_expired_domains(request: FindExpiredDomainsRequest):
         total_candidates_processed=len(request.potential_domains),
         valuable_domains_found=len(found_domains)
     )
+
+# New: SERP Endpoints
+@app.post("/serp/search", response_model=List[SERPResultResponse])
+async def search_serp(request: SERPSearchRequest):
+    """
+    Fetches Search Engine Results Page (SERP) data for a given keyword.
+    """
+    logger.info(f"Received request to search SERP for keyword: {request.keyword}")
+    try:
+        serp_results = await serp_service_instance.get_serp_data(request.keyword, request.num_results)
+        # Persist SERP results to database
+        if serp_results:
+            await db.add_serp_results(serp_results)
+            logger.info(f"Persisted {len(serp_results)} SERP results for '{request.keyword}'.")
+        return [SERPResultResponse.from_serp_result(res) for res in serp_results]
+    except Exception as e:
+        logger.error(f"Error fetching SERP results for '{request.keyword}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch SERP results: {e}")
+
+@app.get("/serp/results/{keyword}", response_model=List[SERPResultResponse])
+async def get_serp_results(keyword: str):
+    """
+    Retrieves stored SERP results for a specific keyword.
+    """
+    logger.info(f"Received request to get stored SERP results for keyword: {keyword}")
+    try:
+        serp_results = db.get_serp_results_for_keyword(keyword)
+        if not serp_results:
+            raise HTTPException(status_code=404, detail=f"No SERP results found for keyword '{keyword}'.")
+        return [SERPResultResponse.from_serp_result(res) for res in serp_results]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving stored SERP results for '{keyword}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve SERP results: {e}")
+
+# New: Keyword Research Endpoints
+@app.post("/keyword/suggest", response_model=List[KeywordSuggestionResponse])
+async def suggest_keywords(request: KeywordSuggestRequest):
+    """
+    Fetches keyword suggestions for a given seed keyword.
+    """
+    logger.info(f"Received request to get keyword suggestions for seed: {request.seed_keyword}")
+    try:
+        suggestions = await keyword_service_instance.get_keyword_data(request.seed_keyword, request.num_suggestions)
+        # Persist keyword suggestions to database
+        if suggestions:
+            await db.add_keyword_suggestions(suggestions)
+            logger.info(f"Persisted {len(suggestions)} keyword suggestions for '{request.seed_keyword}'.")
+        return [KeywordSuggestionResponse.from_keyword_suggestion(sug) for sug in suggestions]
+    except Exception as e:
+        logger.error(f"Error fetching keyword suggestions for '{request.seed_keyword}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch keyword suggestions: {e}")
+
+@app.get("/keyword/suggestions/{seed_keyword}", response_model=List[KeywordSuggestionResponse])
+async def get_keyword_suggestions(seed_keyword: str):
+    """
+    Retrieves stored keyword suggestions for a specific seed keyword.
+    """
+    logger.info(f"Received request to get stored keyword suggestions for seed: {seed_keyword}")
+    try:
+        suggestions = db.get_keyword_suggestions_for_seed(seed_keyword)
+        if not suggestions:
+            raise HTTPException(status_code=404, detail=f"No keyword suggestions found for seed '{seed_keyword}'.")
+        return [KeywordSuggestionResponse.from_keyword_suggestion(sug) for sug in suggestions]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving stored keyword suggestions for '{seed_keyword}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve keyword suggestions: {e}")
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """
+    Basic health check endpoint.
+    """
+    return {"status": "ok", "message": "Link Profiler API is running"}
