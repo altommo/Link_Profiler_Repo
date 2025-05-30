@@ -62,6 +62,7 @@ class CrawlResult:
     crawl_time_ms: int = 0
     content_type: str = "text/html"
     seo_metrics: Optional[SEOMetrics] = None # Added for SEO metrics
+    crawl_timestamp: Optional[datetime] = None # New: UTC timestamp when the page was crawled
 
 
 class WebCrawler:
@@ -114,6 +115,7 @@ class WebCrawler:
     async def crawl_url(self, url: str) -> CrawlResult:
         """Crawl a single URL and extract links"""
         start_time = time.time()
+        current_crawl_timestamp = datetime.now() # Capture timestamp at the start of the crawl attempt
         parsed_url = urlparse(url)
         domain = parsed_url.netloc
         
@@ -122,7 +124,8 @@ class WebCrawler:
             return CrawlResult(
                 url=url,
                 status_code=403,
-                error_message="Domain not allowed by config" # More specific message
+                error_message="Domain not allowed by config", # More specific message
+                crawl_timestamp=current_crawl_timestamp
             )
         
         # Check robots.txt if enabled
@@ -133,7 +136,8 @@ class WebCrawler:
                 return CrawlResult(
                     url=url,
                     status_code=403,
-                    error_message="Blocked by robots.txt rules" # More specific message
+                    error_message="Blocked by robots.txt rules", # More specific message
+                    crawl_timestamp=current_crawl_timestamp
                 )
         
         # Rate limiting
@@ -154,6 +158,12 @@ class WebCrawler:
                 if 'text/html' in content_type:
                     content = await response.text()
                     links = await self._extract_links_from_html(url, content)
+                    
+                    # Populate http_status and crawl_timestamp for each extracted Backlink
+                    for link in links:
+                        link.http_status = response.status
+                        link.crawl_timestamp = current_crawl_timestamp
+
                     seo_metrics = await self.content_parser.parse_seo_metrics(url, content) # Parse SEO metrics
                 elif 'application/pdf' in content_type and self.config.extract_pdfs:
                     content = await response.read() # Read as bytes for PDF
@@ -170,7 +180,8 @@ class WebCrawler:
                     redirect_url=str(response.url) if str(response.url) != url else None,
                     crawl_time_ms=crawl_time_ms,
                     content_type=content_type,
-                    seo_metrics=seo_metrics # Pass SEO metrics in CrawlResult
+                    seo_metrics=seo_metrics, # Pass SEO metrics in CrawlResult
+                    crawl_timestamp=current_crawl_timestamp # Pass the crawl timestamp
                 )
                 
         except asyncio.TimeoutError:
@@ -178,7 +189,8 @@ class WebCrawler:
                 url=url,
                 status_code=408,
                 error_message="Request timeout",
-                crawl_time_ms=int((time.time() - start_time) * 1000)
+                crawl_time_ms=int((time.time() - start_time) * 1000),
+                crawl_timestamp=current_crawl_timestamp
             )
         except aiohttp.ClientError as e:
             # This will catch connection errors, DNS errors, etc.
@@ -186,14 +198,16 @@ class WebCrawler:
                 url=url,
                 status_code=0, # Use 0 or a specific code for network errors
                 error_message=f"Network or client error: {str(e)}", # More generic message
-                crawl_time_ms=int((time.time() - start_time) * 1000)
+                crawl_time_ms=int((time.time() - start_time) * 1000),
+                crawl_timestamp=current_crawl_timestamp
             )
         except Exception as e:
             return CrawlResult(
                 url=url,
                 status_code=500,
                 error_message=f"Unexpected error during crawl: {str(e)}", # More specific message
-                crawl_time_ms=int((time.time() - start_time) * 1000)
+                crawl_time_ms=int((time.time() - start_time) * 1000),
+                crawl_timestamp=current_crawl_timestamp
             )
     
     async def _extract_links_from_html(self, source_url: str, html_content: str) -> List[Backlink]:
