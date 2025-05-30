@@ -1,29 +1,26 @@
 """
-Database Module - Placeholder for data persistence operations
+Database Operations - Handles all interactions with the PostgreSQL database.
 File: Link_Profiler/database/database.py
 """
 
-from typing import List, Dict, Optional, Any
-from Link_Profiler.core.models import (
-    Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, 
-    SERPResult, KeywordSuggestion, CrawlError,
-    serialize_model, CrawlStatus, LinkType, ContentType, SpamLevel # Import all necessary Enums and models
-)
-import json
-import os
-from urllib.parse import urlparse
-import uuid # Import uuid for generating IDs for new data types
-
-# --- SQLAlchemy Imports ---
-from sqlalchemy import create_engine, or_
-from sqlalchemy.orm import sessionmaker, scoped_session
-from sqlalchemy.exc import IntegrityError
-from Link_Profiler.database.models import (
-    Base, DomainORM, URLORM, BacklinkORM, LinkProfileORM, CrawlJobORM, SEOMetricsORM,
-    SERPResultORM, KeywordSuggestionORM, # Import new ORM models
-    LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum
-)
 import logging
+from typing import List, Optional, Any, Dict
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.inspection import inspect
+from datetime import datetime
+import enum # Import enum for type checking
+
+from Link_Profiler.database.models import ( # Changed to absolute import
+    Base, DomainORM, URLORM, BacklinkORM, LinkProfileORM, CrawlJobORM,
+    SEOMetricsORM, SERPResultORM, KeywordSuggestionORM,
+    LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum # Import enums from models
+)
+from Link_Profiler.core.models import ( # Changed to absolute import
+    Domain, URL, Backlink, LinkProfile, CrawlJob, SEOMetrics,
+    SERPResult, KeywordSuggestion, serialize_model, CrawlError # Import CrawlError
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,51 +29,48 @@ class Database:
     A class for database operations using SQLAlchemy with PostgreSQL.
     """
     def __init__(self, db_url: str = "postgresql://postgres:postgres@localhost:5432/link_profiler_db"):
-        self.engine = create_engine(db_url)
-        
-        # Check if we need to reset the database
-        if os.getenv("RESET_DB_ON_START", "false").lower() == "true":
-            self._drop_all_tables()
-            logger.info("Database tables reset successfully.")
-
+        self.db_url = db_url
+        self.engine = create_engine(self.db_url)
         self.Session = scoped_session(sessionmaker(bind=self.engine))
-        self._create_tables()
+        self._create_tables() # Ensure tables exist on init
 
     def _create_tables(self):
-        """Creates database tables based on SQLAlchemy models."""
-        Base.metadata.create_all(self.engine)
-        logger.info("Database tables checked/created.")
+        """Creates all tables defined in the Base metadata."""
+        try:
+            Base.metadata.create_all(self.engine)
+            logger.info("Database tables created or already exist.")
+        except OperationalError as e:
+            logger.error(f"Could not connect to database or create tables: {e}")
+            raise
 
     def _drop_all_tables(self):
-        """Drops all tables defined by Base.metadata."""
-        logger.warning("Dropping all database tables...")
-        Base.metadata.drop_all(self.engine)
-        logger.warning("All database tables dropped.")
+        """Drops all tables defined in the Base metadata. Use with caution."""
+        try:
+            Base.metadata.drop_all(self.engine)
+            logger.warning("All database tables dropped.")
+        except OperationalError as e:
+            logger.error(f"Could not connect to database or drop tables: {e}")
+            raise
 
     def _get_session(self):
-        """Returns a new session from the session factory."""
+        """Returns a new session."""
         return self.Session()
 
-    # --- Helper to convert ORM objects to dataclass objects ---
     def _to_dataclass(self, orm_obj: Any):
+        """Converts an ORM object to its corresponding dataclass."""
+        if orm_obj is None:
+            return None
+
+        # Generic conversion for most fields
+        data = {}
+        for col in inspect(orm_obj.__class__).columns:
+            data[col.key] = getattr(orm_obj, col.key)
+        
+        # Specific handling for each ORM type
         if isinstance(orm_obj, DomainORM):
-            return Domain(
-                name=orm_obj.name,
-                authority_score=orm_obj.authority_score,
-                trust_score=orm_obj.trust_score,
-                spam_score=orm_obj.spam_score,
-                age_days=orm_obj.age_days,
-                country=orm_obj.country,
-                ip_address=orm_obj.ip_address,
-                whois_data=orm_obj.whois_data,
-                total_pages=orm_obj.total_pages,
-                total_backlinks=orm_obj.total_backlinks,
-                referring_domains=orm_obj.referring_domains,
-                first_seen=orm_obj.first_seen,
-                last_crawled=orm_obj.last_crawled
-            )
+            return Domain(**data)
         elif isinstance(orm_obj, URLORM):
-            # Note: domain and path are init=False in dataclass, so pass others
+            # URL dataclass has init=False for domain and path, so pass others
             return URL(
                 url=orm_obj.url,
                 title=orm_obj.title,
@@ -98,6 +92,7 @@ class Database:
                 target_url=orm_obj.target_url,
                 anchor_text=orm_obj.anchor_text,
                 link_type=LinkTypeEnum(orm_obj.link_type),
+                rel_attributes=orm_obj.rel_attributes, # Added this line
                 context_text=orm_obj.context_text,
                 position_on_page=orm_obj.position_on_page,
                 is_image_link=orm_obj.is_image_link,
@@ -107,130 +102,57 @@ class Database:
                 authority_passed=orm_obj.authority_passed,
                 is_active=orm_obj.is_active,
                 spam_level=SpamLevelEnum(orm_obj.spam_level),
-                http_status=orm_obj.http_status, # New field
-                crawl_timestamp=orm_obj.crawl_timestamp, # New field
-                source_domain_metrics=orm_obj.source_domain_metrics # New field
+                http_status=orm_obj.http_status,
+                crawl_timestamp=orm_obj.crawl_timestamp,
+                source_domain_metrics=orm_obj.source_domain_metrics
             )
         elif isinstance(orm_obj, LinkProfileORM):
-            return LinkProfile(
-                target_url=orm_obj.target_url,
-                total_backlinks=orm_obj.total_backlinks,
-                unique_domains=orm_obj.unique_domains,
-                dofollow_links=orm_obj.dofollow_links,
-                nofollow_links=orm_obj.nofollow_links,
-                authority_score=orm_obj.authority_score,
-                trust_score=orm_obj.trust_score,
-                spam_score=orm_obj.spam_score,
-                anchor_text_distribution=orm_obj.anchor_text_distribution,
-                referring_domains=set(orm_obj.referring_domains), # Convert list back to set
-                analysis_date=orm_obj.analysis_date,
-                backlinks=[] # Backlinks are loaded separately or via relationship if needed
-            )
+            # LinkProfile dataclass expects 'referring_domains' as a set
+            if 'referring_domains' in data and isinstance(data['referring_domains'], list):
+                data['referring_domains'] = set(data['referring_domains'])
+            # LinkProfile dataclass expects 'backlinks' field, but ORM doesn't store it directly.
+            # It's derived. So, we need to remove it from data if it's not present in ORM.
+            data.pop('backlinks', None)
+            data.pop('top_pages', None)
+            return LinkProfile(**data)
         elif isinstance(orm_obj, CrawlJobORM):
             # Deserialize error_log from JSONB (list of dicts) to List[CrawlError]
             error_log_data = orm_obj.error_log if orm_obj.error_log else []
-            error_log_dataclasses = [CrawlError.from_dict(err_data) for err_data in error_log_data]
-
-            return CrawlJob(
-                id=orm_obj.id,
-                target_url=orm_obj.target_url,
-                job_type=orm_obj.job_type,
-                status=CrawlStatusEnum(orm_obj.status),
-                priority=orm_obj.priority,
-                created_date=orm_obj.created_date,
-                started_date=orm_obj.started_date,
-                completed_date=orm_obj.completed_date,
-                progress_percentage=orm_obj.progress_percentage,
-                urls_discovered=orm_obj.urls_discovered,
-                urls_crawled=orm_obj.urls_crawled,
-                links_found=orm_obj.links_found,
-                errors_count=orm_obj.errors_count,
-                config=orm_obj.config,
-                results=orm_obj.results,
-                error_log=error_log_dataclasses # Assign deserialized list of CrawlError
-            )
+            data['error_log'] = [CrawlError.from_dict(err_data) for err_data in error_log_data]
+            # Convert status enum
+            data['status'] = CrawlStatusEnum(orm_obj.status)
+            return CrawlJob(**data)
         elif isinstance(orm_obj, SEOMetricsORM):
-            return SEOMetrics(
-                url=orm_obj.url,
-                http_status=orm_obj.http_status, # New field
-                response_time_ms=orm_obj.response_time_ms, # New field
-                page_size_bytes=orm_obj.page_size_bytes, # New field
-                title_length=orm_obj.title_length,
-                meta_description_length=orm_obj.meta_description_length, # Renamed
-                h1_count=orm_obj.h1_count,
-                h2_count=orm_obj.h2_count, # New field
-                internal_links=orm_obj.internal_links,
-                external_links=orm_obj.external_links,
-                images_count=orm_obj.images_count,
-                images_without_alt=orm_obj.images_without_alt,
-                has_canonical=orm_obj.has_canonical,
-                has_robots_meta=orm_obj.has_robots_meta,
-                has_schema_markup=orm_obj.has_schema_markup,
-                broken_links=orm_obj.broken_links, # New field
-                performance_score=orm_obj.performance_score, # New field
-                mobile_friendly=orm_obj.mobile_friendly, # New field
-                accessibility_score=orm_obj.accessibility_score, # New field
-                audit_timestamp=orm_obj.audit_timestamp, # New field
-                seo_score=orm_obj.seo_score,
-                issues=orm_obj.issues
-            )
-        elif isinstance(orm_obj, SERPResultORM): # New ORM to dataclass conversion
-            return SERPResult(
-                keyword=orm_obj.keyword,
-                position=orm_obj.position,
-                result_url=orm_obj.result_url,
-                title_text=orm_obj.title_text,
-                snippet_text=orm_obj.snippet_text,
-                rich_features=orm_obj.rich_features,
-                page_load_time=orm_obj.page_load_time,
-                crawl_timestamp=orm_obj.crawl_timestamp
-            )
-        elif isinstance(orm_obj, KeywordSuggestionORM): # New ORM to dataclass conversion
-            return KeywordSuggestion(
-                seed_keyword=orm_obj.seed_keyword,
-                suggested_keyword=orm_obj.suggested_keyword,
-                search_volume_monthly=orm_obj.search_volume_monthly,
-                cpc_estimate=orm_obj.cpc_estimate,
-                keyword_trend=orm_obj.keyword_trend,
-                competition_level=orm_obj.competition_level,
-                data_timestamp=orm_obj.data_timestamp
-            )
-        return None
+            return SEOMetrics(**data)
+        elif isinstance(orm_obj, SERPResultORM):
+            return SERPResult(**data)
+        elif isinstance(orm_obj, KeywordSuggestionORM):
+            return KeywordSuggestion(**data)
+        return orm_obj
 
-    # --- Helper to convert dataclass objects to ORM objects ---
     def _to_orm(self, dc_obj: Any):
+        """Converts a dataclass object to its corresponding ORM object."""
+        if dc_obj is None:
+            return None
+
+        data = serialize_model(dc_obj) # Use the serialize_model utility
+        
+        # Special handling for enums and sets for ORM
+        for key, value in data.items():
+            if isinstance(value, enum.Enum):
+                data[key] = value.value # Store enum value as string
+            if isinstance(value, set):
+                data[key] = list(value) # Convert set to list for ARRAY type in ORM
+
         if isinstance(dc_obj, Domain):
-            return DomainORM(
-                name=dc_obj.name,
-                authority_score=dc_obj.authority_score,
-                trust_score=dc_obj.trust_score,
-                spam_score=dc_obj.spam_score,
-                age_days=dc_obj.age_days,
-                country=dc_obj.country,
-                ip_address=dc_obj.ip_address,
-                whois_data=dc_obj.whois_data,
-                total_pages=dc_obj.total_pages,
-                total_backlinks=dc_obj.total_backlinks,
-                referring_domains=dc_obj.referring_domains,
-                first_seen=dc_obj.first_seen,
-                last_crawled=dc_obj.last_crawled
-            )
+            return DomainORM(**data)
         elif isinstance(dc_obj, URL):
+            # URL dataclass has init=False for domain and path, so pass others
             return URLORM(
                 url=dc_obj.url,
                 domain_name=dc_obj.domain, # Use the calculated domain
                 path=dc_obj.path, # Use the calculated path
-                title=dc_obj.title,
-                description=dc_obj.description,
-                content_type=dc_obj.content_type.value,
-                content_length=dc_obj.content_length,
-                status_code=dc_obj.status_code,
-                redirect_url=dc_obj.redirect_url,
-                canonical_url=dc_obj.canonical_url,
-                last_modified=dc_obj.last_modified,
-                crawl_status=dc_obj.crawl_status.value,
-                crawl_date=dc_obj.crawl_date,
-                error_message=dc_obj.error_message
+                **{k: v for k, v in data.items() if k not in ['url', 'domain', 'path']}
             )
         elif isinstance(dc_obj, Backlink):
             return BacklinkORM(
@@ -241,6 +163,7 @@ class Database:
                 target_domain_name=dc_obj.target_domain, # Use calculated domain
                 anchor_text=dc_obj.anchor_text,
                 link_type=dc_obj.link_type.value,
+                rel_attributes=dc_obj.rel_attributes,
                 context_text=dc_obj.context_text,
                 position_on_page=dc_obj.position_on_page,
                 is_image_link=dc_obj.is_image_link,
@@ -250,553 +173,466 @@ class Database:
                 authority_passed=dc_obj.authority_passed,
                 is_active=dc_obj.is_active,
                 spam_level=dc_obj.spam_level.value,
-                http_status=dc_obj.http_status, # New field
-                crawl_timestamp=dc_obj.crawl_timestamp, # New field
-                source_domain_metrics=dc_obj.source_domain_metrics # New field
+                http_status=dc_obj.http_status,
+                crawl_timestamp=dc_obj.crawl_timestamp,
+                source_domain_metrics=dc_obj.source_domain_metrics
             )
         elif isinstance(dc_obj, LinkProfile):
-            return LinkProfileORM(
-                target_url=dc_obj.target_url,
-                target_domain_name=dc_obj.target_domain, # Use calculated domain
-                total_backlinks=dc_obj.total_backlinks,
-                unique_domains=dc_obj.unique_domains,
-                dofollow_links=dc_obj.dofollow_links,
-                nofollow_links=dc_obj.nofollow_links,
-                authority_score=dc_obj.authority_score,
-                trust_score=dc_obj.trust_score,
-                spam_score=dc_obj.spam_score,
-                anchor_text_distribution=dc_obj.anchor_text_distribution,
-                referring_domains=list(dc_obj.referring_domains), # Convert set to list for ARRAY
-                analysis_date=dc_obj.analysis_date
-            )
+            # LinkProfileORM does not have 'backlinks' or 'top_pages' fields
+            data.pop('backlinks', None)
+            data.pop('top_pages', None)
+            return LinkProfileORM(**data)
         elif isinstance(dc_obj, CrawlJob):
-            # Serialize error_log from List[CrawlError] to list of dicts for JSONB
-            error_log_jsonb = [serialize_model(err) for err in dc_obj.error_log]
-
-            return CrawlJobORM(
-                id=dc_obj.id,
-                target_url=dc_obj.target_url,
-                job_type=dc_obj.job_type,
-                status=dc_obj.status.value,
-                priority=dc_obj.priority,
-                created_date=dc_obj.created_date,
-                started_date=dc_obj.started_date,
-                completed_date=dc_obj.completed_date,
-                progress_percentage=dc_obj.progress_percentage,
-                urls_discovered=dc_obj.urls_discovered,
-                urls_crawled=dc_obj.urls_crawled,
-                links_found=dc_obj.links_found,
-                errors_count=dc_obj.errors_count,
-                config=dc_obj.config,
-                results=dc_obj.results,
-                error_log=error_log_jsonb # Assign serialized list of dicts
-            )
+            # Handle nested CrawlError dataclasses
+            if 'error_log' in data and data['error_log']:
+                data['error_log'] = [serialize_model(err) for err in dc_obj.error_log] # Store as list of dicts
+            # Convert status enum to value
+            data['status'] = dc_obj.status.value
+            return CrawlJobORM(**data)
         elif isinstance(dc_obj, SEOMetrics):
-            return SEOMetricsORM(
-                url=dc_obj.url,
-                http_status=dc_obj.http_status, # New field
-                response_time_ms=dc_obj.response_time_ms, # New field
-                page_size_bytes=dc_obj.page_size_bytes, # New field
-                title_length=dc_obj.title_length,
-                meta_description_length=dc_obj.meta_description_length, # Renamed
-                h1_count=dc_obj.h1_count,
-                h2_count=dc_obj.h2_count, # New field
-                internal_links=dc_obj.internal_links,
-                external_links=dc_obj.external_links,
-                images_count=dc_obj.images_count,
-                images_without_alt=dc_obj.images_without_alt,
-                has_canonical=dc_obj.has_canonical,
-                has_robots_meta=dc_obj.has_robots_meta,
-                has_schema_markup=dc_obj.has_schema_markup,
-                broken_links=dc_obj.broken_links, # New field
-                performance_score=dc_obj.performance_score, # New field
-                mobile_friendly=dc_obj.mobile_friendly, # New field
-                accessibility_score=dc_obj.accessibility_score, # New field
-                audit_timestamp=dc_obj.audit_timestamp, # New field
-                seo_score=dc_obj.seo_score,
-                issues=dc_obj.issues
-            )
-        elif isinstance(dc_obj, SERPResult): # New dataclass to ORM conversion
-            return SERPResultORM(
-                id=str(uuid.uuid4()), # Generate UUID for primary key
-                keyword=dc_obj.keyword,
-                position=dc_obj.position,
-                result_url=dc_obj.result_url,
-                title_text=dc_obj.title_text,
-                snippet_text=dc_obj.snippet_text,
-                rich_features=dc_obj.rich_features,
-                page_load_time=dc_obj.page_load_time,
-                crawl_timestamp=dc_obj.crawl_timestamp
-            )
-        elif isinstance(dc_obj, KeywordSuggestion): # New dataclass to ORM conversion
-            return KeywordSuggestionORM(
-                id=str(uuid.uuid4()), # Generate UUID for primary key
-                seed_keyword=dc_obj.seed_keyword,
-                suggested_keyword=dc_obj.suggested_keyword,
-                search_volume_monthly=dc_obj.search_volume_monthly,
-                cpc_estimate=dc_obj.cpc_estimate,
-                keyword_trend=dc_obj.keyword_trend,
-                competition_level=dc_obj.competition_level,
-                data_timestamp=dc_obj.data_timestamp
-            )
-        return None
+            return SEOMetricsORM(**data)
+        elif isinstance(dc_obj, SERPResult):
+            return SERPResultORM(**data)
+        elif isinstance(dc_obj, KeywordSuggestion):
+            return KeywordSuggestionORM(**data)
+        return dc_obj
 
-    # --- Backlink Operations ---
     def add_backlink(self, backlink: Backlink) -> None:
+        """Adds a single backlink to the database."""
         session = self._get_session()
         try:
-            # Ensure source and target domains exist
-            source_domain_name = urlparse(backlink.source_url).netloc.lower()
-            target_domain_name = urlparse(backlink.target_url).netloc.lower()
-
-            session.merge(DomainORM(name=source_domain_name))
-            session.merge(DomainORM(name=target_domain_name))
-
-            # Check if backlink already exists based on source_url and target_url
-            existing_orm_backlink = session.query(BacklinkORM).filter_by(
-                source_url=backlink.source_url,
-                target_url=backlink.target_url
-            ).first()
-
-            if existing_orm_backlink:
-                # Update existing backlink's last_seen_date and other relevant fields
-                logger.debug(f"Updating existing backlink: from {backlink.source_url} to {backlink.target_url}")
-                existing_orm_backlink.last_seen_date = backlink.last_seen_date
-                existing_orm_backlink.anchor_text = backlink.anchor_text
-                existing_orm_backlink.link_type = backlink.link_type.value
-                existing_orm_backlink.context_text = backlink.context_text
-                existing_orm_backlink.position_on_page = backlink.position_on_page
-                existing_orm_backlink.is_image_link = backlink.is_image_link
-                existing_orm_backlink.alt_text = backlink.alt_text
-                existing_orm_backlink.authority_passed = backlink.authority_passed
-                existing_orm_backlink.is_active = backlink.is_active
-                existing_orm_backlink.spam_level = backlink.spam_level.value
-                existing_orm_backlink.http_status = backlink.http_status # New field
-                existing_orm_backlink.crawl_timestamp = backlink.crawl_timestamp # New field
-                existing_orm_backlink.source_domain_metrics = backlink.source_domain_metrics # New field
-            else:
-                # Add new backlink
-                logger.debug(f"Adding new backlink: from {backlink.source_url} to {backlink.target_url}")
-                orm_backlink = self._to_orm(backlink)
-                if orm_backlink is None:
-                    logger.error(f"Failed to convert backlink dataclass to ORM for {backlink.source_url} -> {backlink.target_url}")
-                    return # Exit if conversion failed
-                session.add(orm_backlink)
-            
+            orm_backlink = self._to_orm(backlink)
+            session.add(orm_backlink)
             session.commit()
-            logger.info(f"Successfully added/updated backlink from {backlink.source_url} to {backlink.target_url}.")
+            logger.debug(f"Added backlink: {backlink.source_url} -> {backlink.target_url}")
+        except IntegrityError:
+            session.rollback()
+            logger.debug(f"Backlink already exists (source: {backlink.source_url}, target: {backlink.target_url}). Skipping.")
         except Exception as e:
             session.rollback()
-            logger.error(f"Error adding/updating backlink: {type(e).__name__}: {e}", exc_info=True)
-            raise # Re-raise to indicate failure
+            logger.error(f"Error adding backlink {backlink.id}: {e}", exc_info=True)
         finally:
             session.close()
 
     def add_backlinks(self, backlinks: List[Backlink]) -> None:
+        """Adds multiple backlinks to the database in a single transaction."""
+        if not backlinks:
+            return
+
         session = self._get_session()
         try:
-            logger.info(f"Attempting to add/update {len(backlinks)} backlinks to the database.")
+            orm_backlinks = []
+            for backlink in backlinks:
+                try:
+                    orm_backlinks.append(self._to_orm(backlink))
+                except Exception as e:
+                    logger.error(f"Error converting backlink {backlink.id} to ORM: {e}", exc_info=True)
             
-            for i, backlink in enumerate(backlinks):
-                # Ensure source and target domains exist
-                source_domain_name = urlparse(backlink.source_url).netloc.lower()
-                target_domain_name = urlparse(backlink.target_url).netloc.lower()
-                
-                # Add domains if they don't exist (merge handles upsert for domains)
-                session.merge(DomainORM(name=source_domain_name))
-                session.merge(DomainORM(name=target_domain_name))
-
-                # Check if backlink already exists based on source_url and target_url
-                existing_orm_backlink = session.query(BacklinkORM).filter_by(
-                    source_url=backlink.source_url,
-                    target_url=backlink.target_url
-                ).first()
-
-                if existing_orm_backlink:
-                    # Update existing backlink's last_seen_date and other relevant fields
-                    logger.debug(f"Updating existing backlink: from {backlink.source_url} to {backlink.target_url}")
-                    existing_orm_backlink.last_seen_date = backlink.last_seen_date
-                    existing_orm_backlink.anchor_text = backlink.anchor_text
-                    existing_orm_backlink.link_type = backlink.link_type.value
-                    existing_orm_backlink.context_text = backlink.context_text
-                    existing_orm_backlink.position_on_page = backlink.position_on_page
-                    existing_orm_backlink.is_image_link = backlink.is_image_link
-                    existing_orm_backlink.alt_text = backlink.alt_text
-                    existing_orm_backlink.authority_passed = backlink.authority_passed
-                    existing_orm_backlink.is_active = backlink.is_active
-                    existing_orm_backlink.spam_level = backlink.spam_level.value
-                    existing_orm_backlink.http_status = backlink.http_status # New field
-                    existing_orm_backlink.crawl_timestamp = backlink.crawl_timestamp # New field
-                    existing_orm_backlink.source_domain_metrics = backlink.source_domain_metrics # New field
-                else:
-                    # Add new backlink
-                    logger.debug(f"Adding new backlink: from {backlink.source_url} to {backlink.target_url}")
-                    orm_backlink = self._to_orm(backlink)
-                    if orm_backlink is None:
-                        logger.error(f"Failed to convert backlink dataclass to ORM for backlink {i+1}/{len(backlinks)}")
-                        continue # Skip this backlink if conversion failed
-                    session.add(orm_backlink)
-            
-            logger.debug("Attempting session.commit() for all backlinks.")
+            session.add_all(orm_backlinks)
             session.commit()
-            logger.info(f"Successfully added/updated {len(backlinks)} backlinks.")
-
-        except Exception as e: # Catching general Exception for now, can refine later
+            logger.info(f"Added {len(orm_backlinks)} backlinks to the database.")
+        except IntegrityError:
             session.rollback()
-            logger.error(f"Error adding/updating backlinks: {type(e).__name__}: {e}", exc_info=True)
-            raise # Re-raise the exception after logging and rollback
+            logger.warning(f"Some backlinks already exist. Attempting individual adds for {len(backlinks)} backlinks.")
+            # Fallback to individual adds for better error reporting on duplicates
+            for backlink in backlinks:
+                self.add_backlink(backlink) # This will log duplicates as debug
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding multiple backlinks: {e}", exc_info=True)
+        finally:
+            session.close()
+
+    def update_backlink(self, backlink: Backlink) -> None:
+        """Updates an existing backlink in the database."""
+        session = self._get_session()
+        try:
+            orm_backlink = session.query(BacklinkORM).filter_by(id=backlink.id).first()
+            if orm_backlink:
+                # Update fields from the dataclass
+                updated_data = self._to_orm(backlink) # Convert dataclass to a temporary ORM for data extraction
+                for column in inspect(BacklinkORM).columns:
+                    # Skip primary key and relationships
+                    if column.key == 'id' or column.key.endswith('_rel'):
+                        continue
+                    if hasattr(updated_data, column.key):
+                        setattr(orm_backlink, column.key, getattr(updated_data, column.key))
+                session.commit()
+                logger.debug(f"Updated backlink: {backlink.id}")
+            else:
+                logger.warning(f"Backlink with ID {backlink.id} not found for update.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating backlink {backlink.id}: {e}", exc_info=True)
         finally:
             session.close()
 
     def get_backlinks_for_target(self, target_url: str) -> List[Backlink]:
+        """Retrieves all backlinks pointing to a specific target URL."""
         session = self._get_session()
         try:
-            parsed_target = urlparse(target_url)
-            target_domain = parsed_target.netloc.lower() # Lowercase for consistent comparison
-            target_path = parsed_target.path
-
-            logger.info(f"Querying backlinks for target_url: {target_url}, domain: {target_domain}, path: {target_path}")
-
-            if not target_domain:
-                logger.warning(f"Invalid target_url for backlink query: {target_url}")
-                return []
-
-            # Build the filter condition
-            filter_condition = BacklinkORM.target_url.startswith(target_url)
-
-            # If the target_url is the root URL without a trailing slash,
-            # also include backlinks pointing to the root URL *with* a trailing slash.
-            if target_path in ["", "/"] and not target_url.endswith('/'):
-                 target_url_with_slash = target_url + '/'
-                 logger.debug(f"Adding filter for target_url with trailing slash: {target_url_with_slash}")
-                 filter_condition = or_(
-                     filter_condition,
-                     BacklinkORM.target_url.startswith(target_url_with_slash)
-                 )
-
-
-            orm_backlinks = session.query(BacklinkORM).filter(
-                filter_condition
-            ).all()
-            
-            logger.info(f"Found {len(orm_backlinks)} ORM backlinks matching the filter.")
-
-            # Add debug logging for retrieved backlinks' target URLs
-            for i, bl in enumerate(orm_backlinks):
-                 logger.debug(f"Retrieved backlink {i+1}: Target URL: {bl.target_url}")
-
-
-            dataclass_backlinks = [self._to_dataclass(bl) for bl in orm_backlinks]
-            logger.info(f"Returning {len(dataclass_backlinks)} dataclass backlinks for target {target_url}")
-            return dataclass_backlinks
-
+            orm_backlinks = session.query(BacklinkORM).filter_by(target_url=target_url).all()
+            return [self._to_dataclass(bl) for bl in orm_backlinks]
         except Exception as e:
-            logger.error(f"Error getting backlinks for target {target_url}: {e}")
+            logger.error(f"Error retrieving backlinks for target {target_url}: {e}", exc_info=True)
             return []
         finally:
             session.close()
 
     def get_all_backlinks(self) -> List[Backlink]:
+        """Retrieves all backlinks from the database."""
         session = self._get_session()
         try:
-            logger.info("Attempting to retrieve all backlinks from the database.")
             orm_backlinks = session.query(BacklinkORM).all()
-            logger.info(f"Retrieved {len(orm_backlinks)} ORM backlinks.")
-            
-            # Add debug logging to show domain names of retrieved backlinks
-            for i, bl in enumerate(orm_backlinks):
-                 logger.debug(f"Retrieved backlink {i+1}: Source Domain: {bl.source_domain_name}, Target Domain: {bl.target_domain_name}")
-
             return [self._to_dataclass(bl) for bl in orm_backlinks]
         except Exception as e:
-            logger.error(f"Error getting all backlinks: {e}")
+            logger.error(f"Error retrieving all backlinks: {e}", exc_info=True)
             return []
         finally:
             session.close()
 
-    # --- LinkProfile Operations ---
     def save_link_profile(self, profile: LinkProfile) -> None:
+        """Saves or updates a link profile."""
         session = self._get_session()
         try:
-            # Ensure target domain exists
-            target_domain_name = urlparse(profile.target_url).netloc.lower()
-            session.merge(DomainORM(name=target_domain_name))
-
-            orm_profile = self._to_orm(profile)
-            session.merge(orm_profile) # Use merge for upsert
+            orm_profile = session.query(LinkProfileORM).filter_by(target_url=profile.target_url).first()
+            if orm_profile:
+                # Update existing
+                updated_data = self._to_orm(profile)
+                for column in inspect(LinkProfileORM).columns:
+                    if hasattr(updated_data, column.key):
+                        setattr(orm_profile, column.key, getattr(updated_data, column.key))
+                logger.debug(f"Updated link profile for {profile.target_url}")
+            else:
+                # Add new
+                orm_profile = self._to_orm(profile)
+                session.add(orm_profile)
+                logger.debug(f"Added link profile for {profile.target_url}")
             session.commit()
         except Exception as e:
             session.rollback()
-            logger.error(f"Error saving link profile for {profile.target_url}: {e}")
+            logger.error(f"Error saving link profile for {profile.target_url}: {e}", exc_info=True)
         finally:
             session.close()
 
     def get_link_profile(self, target_url: str) -> Optional[LinkProfile]:
+        """Retrieves a link profile by target URL."""
         session = self._get_session()
         try:
-            orm_profile = session.query(LinkProfileORM).get(target_url)
-            if orm_profile:
-                return self._to_dataclass(orm_profile)
-            return None
+            orm_profile = session.query(LinkProfileORM).filter_by(target_url=target_url).first()
+            return self._to_dataclass(orm_profile)
         except Exception as e:
-            logger.error(f"Error getting link profile for {target_url}: {e}")
+            logger.error(f"Error retrieving link profile for {target_url}: {e}", exc_info=True)
             return None
         finally:
             session.close()
 
-    # --- CrawlJob Operations ---
     def add_crawl_job(self, job: CrawlJob) -> None:
+        """Adds a new crawl job to the database."""
         session = self._get_session()
         try:
             orm_job = self._to_orm(job)
             session.add(orm_job)
             session.commit()
+            logger.info(f"Added crawl job {job.id} to DB.")
         except IntegrityError:
             session.rollback()
-            logger.warning(f"CrawlJob with ID {job.id} already exists. Skipping.")
+            logger.warning(f"Crawl job {job.id} already exists. Skipping.")
         except Exception as e:
             session.rollback()
-            logger.error(f"Error adding crawl job {job.id}: {e}")
+            logger.error(f"Error adding crawl job {job.id}: {e}", exc_info=True)
         finally:
             session.close()
 
     def get_crawl_job(self, job_id: str) -> Optional[CrawlJob]:
+        """Retrieves a crawl job by its ID."""
         session = self._get_session()
         try:
-            orm_job = session.query(CrawlJobORM).get(job_id)
-            if orm_job:
-                return self._to_dataclass(orm_job)
-            return None
+            orm_job = session.query(CrawlJobORM).filter_by(id=job_id).first()
+            return self._to_dataclass(orm_job)
         except Exception as e:
-            logger.error(f"Error getting crawl job {job_id}: {e}")
+            logger.error(f"Error retrieving crawl job {job_id}: {e}", exc_info=True)
             return None
         finally:
             session.close()
 
     def update_crawl_job(self, job: CrawlJob) -> None:
+        """Updates an existing crawl job's status and progress."""
         session = self._get_session()
         try:
-            orm_job = session.query(CrawlJobORM).get(job.id)
+            orm_job = session.query(CrawlJobORM).filter_by(id=job.id).first()
             if orm_job:
-                # Update fields manually or use merge if primary key is set
-                orm_job.target_url = job.target_url
-                orm_job.job_type = job.job_type
-                orm_job.status = job.status.value
-                orm_job.priority = job.priority
-                orm_job.created_date = job.created_date
-                orm_job.started_date = job.started_date
-                orm_job.completed_date = job.completed_date
-                orm_job.progress_percentage = job.progress_percentage
-                orm_job.urls_discovered = job.urls_discovered
-                orm_job.urls_crawled = job.urls_crawled
-                orm_job.links_found = job.links_found
-                orm_job.errors_count = job.errors_count
-                orm_job.config = job.config
-                orm_job.results = job.results
-                # Serialize List[CrawlError] to list of dicts for JSONB storage
-                orm_job.error_log = [serialize_model(err) for err in job.error_log]
+                # Update fields from the dataclass
+                updated_data = self._to_orm(job)
+                for column in inspect(CrawlJobORM).columns:
+                    # Skip primary key and relationships
+                    if column.key == 'id' or column.key.endswith('_rel'):
+                        continue
+                    if hasattr(updated_data, column.key):
+                        setattr(orm_job, column.key, getattr(updated_data, column.key))
                 session.commit()
+                logger.debug(f"Updated crawl job {job.id} status to {job.status.value}.")
             else:
-                raise ValueError(f"CrawlJob with ID {job.id} not found for update.")
+                logger.warning(f"Crawl job {job.id} not found for update.")
         except Exception as e:
             session.rollback()
-            logger.error(f"Error updating crawl job {job.id}: {e}")
-            raise # Re-raise to indicate failure
+            logger.error(f"Error updating crawl job {job.id}: {e}", exc_info=True)
         finally:
             session.close()
 
     def get_pending_crawl_jobs(self) -> List[CrawlJob]:
+        """Retrieves all pending crawl jobs."""
         session = self._get_session()
         try:
-            orm_jobs = session.query(CrawlJobORM).filter(
-                CrawlJobORM.status == CrawlStatusEnum.PENDING.value
-            ).all()
+            orm_jobs = session.query(CrawlJobORM).filter_by(status="pending").all()
             return [self._to_dataclass(job) for job in orm_jobs]
         except Exception as e:
-            logger.error(f"Error getting pending crawl jobs: {e}")
+            logger.error(f"Error retrieving pending crawl jobs: {e}", exc_info=True)
             return []
         finally:
             session.close()
 
-    # --- Domain Operations ---
     def save_domain(self, domain: Domain) -> None:
+        """Saves or updates a domain."""
         session = self._get_session()
         try:
-            orm_domain = self._to_orm(domain)
-            session.merge(orm_domain) # Use merge for upsert
+            orm_domain = session.query(DomainORM).filter_by(name=domain.name).first()
+            if orm_domain:
+                # Update existing
+                updated_data = self._to_orm(domain)
+                for column in inspect(DomainORM).columns:
+                    # Skip primary key and relationships
+                    if column.key == 'name' or column.key.endswith('_rel'):
+                        continue
+                    if hasattr(updated_data, column.key):
+                        setattr(orm_domain, column.key, getattr(updated_data, column.key))
+                logger.debug(f"Updated domain: {domain.name}")
+            else:
+                # Add new
+                orm_domain = self._to_orm(domain)
+                session.add(orm_domain)
+                logger.debug(f"Added domain: {domain.name}")
             session.commit()
         except Exception as e:
             session.rollback()
-            logger.error(f"Error saving domain {domain.name}: {e}")
+            logger.error(f"Error saving domain {domain.name}: {e}", exc_info=True)
         finally:
             session.close()
 
     def get_domain(self, name: str) -> Optional[Domain]:
+        """Retrieves a domain by its name."""
         session = self._get_session()
         try:
-            orm_domain = session.query(DomainORM).get(name)
-            if orm_domain:
-                return self._to_dataclass(orm_domain)
-            return None
+            orm_domain = session.query(DomainORM).filter_by(name=name).first()
+            return self._to_dataclass(orm_domain)
         except Exception as e:
-            logger.error(f"Error getting domain {name}: {e}")
+            logger.error(f"Error retrieving domain {name}: {e}", exc_info=True)
             return None
         finally:
             session.close()
 
-    # --- URL Operations ---
     def save_url(self, url_obj: URL) -> None:
+        """Saves or updates a URL."""
         session = self._get_session()
         try:
-            # Ensure domain exists for the URL
-            domain_name = urlparse(url_obj.url).netloc.lower()
-            session.merge(DomainORM(name=domain_name))
-
-            orm_url = self._to_orm(url_obj)
-            session.merge(orm_url) # Use merge for upsert
+            orm_url = session.query(URLORM).filter_by(url=url_obj.url).first()
+            if orm_url:
+                # Update existing
+                updated_data = self._to_orm(url_obj)
+                for column in inspect(URLORM).columns:
+                    # Skip primary key and relationships
+                    if column.key == 'url' or column.key.endswith('_rel'):
+                        continue
+                    if hasattr(updated_data, column.key):
+                        setattr(orm_url, column.key, getattr(updated_data, column.key))
+                logger.debug(f"Updated URL: {url_obj.url}")
+            else:
+                # Add new
+                orm_url = self._to_orm(url_obj)
+                session.add(orm_url)
+                logger.debug(f"Added URL: {url_obj.url}")
             session.commit()
         except Exception as e:
             session.rollback()
-            logger.error(f"Error saving URL {url_obj.url}: {e}")
+            logger.error(f"Error saving URL {url_obj.url}: {e}", exc_info=True)
         finally:
             session.close()
 
     def get_url(self, url_str: str) -> Optional[URL]:
+        """Retrieves a URL by its string representation."""
         session = self._get_session()
         try:
-            orm_url = session.query(URLORM).get(url_str)
-            if orm_url:
-                return self._to_dataclass(orm_url)
-            return None
+            orm_url = session.query(URLORM).filter_by(url=url_str).first()
+            return self._to_dataclass(orm_url)
         except Exception as e:
-            logger.error(f"Error getting URL {url_str}: {e}")
+            logger.error(f"Error retrieving URL {url_str}: {e}", exc_info=True)
             return None
         finally:
             session.close()
 
-    # --- SEOMetrics Operations ---
     def save_seo_metrics(self, seo_metrics: SEOMetrics) -> None:
+        """Saves or updates SEO metrics for a URL."""
         session = self._get_session()
         try:
-            # Ensure URL exists for SEO metrics
-            url_obj = URL(url=seo_metrics.url) # Create a dummy URL object to get domain/path
-            session.merge(URLORM(url=url_obj.url, domain_name=url_obj.domain, path=url_obj.path))
-
-            orm_seo_metrics = self._to_orm(seo_metrics)
-            session.merge(orm_seo_metrics) # Use merge for upsert
+            # Ensure the URL exists before saving metrics for it
+            url_obj = self.get_url(seo_metrics.url)
+            if not url_obj:
+                # Create a minimal URL entry if it doesn't exist
+                # This might happen if a page is crawled but not explicitly added as a URL first
+                logger.warning(f"URL {seo_metrics.url} not found in DB. Creating minimal entry before saving SEO metrics.")
+                parsed_url = urlparse(seo_metrics.url)
+                domain_name = parsed_url.netloc
+                path = parsed_url.path or '/'
+                # Ensure domain exists
+                if not self.get_domain(domain_name):
+                    self.save_domain(Domain(name=domain_name))
+                self.save_url(URL(url=seo_metrics.url, domain=domain_name, path=path))
+                
+            orm_seo_metrics = session.query(SEOMetricsORM).filter_by(url=seo_metrics.url).first()
+            if orm_seo_metrics:
+                # Update existing
+                updated_data = self._to_orm(seo_metrics)
+                for column in inspect(SEOMetricsORM).columns:
+                    # Skip primary key and relationships
+                    if column.key == 'url' or column.key.endswith('_rel'):
+                        continue
+                    if hasattr(updated_data, column.key):
+                        setattr(orm_seo_metrics, column.key, getattr(updated_data, column.key))
+                logger.debug(f"Updated SEO metrics for {seo_metrics.url}")
+            else:
+                # Add new
+                orm_seo_metrics = self._to_orm(seo_metrics)
+                session.add(orm_seo_metrics)
+                logger.debug(f"Added SEO metrics for {seo_metrics.url}")
             session.commit()
         except Exception as e:
             session.rollback()
-            logger.error(f"Error saving SEO metrics for {seo_metrics.url}: {e}")
+            logger.error(f"Error saving SEO metrics for {seo_metrics.url}: {e}", exc_info=True)
         finally:
             session.close()
 
     def get_seo_metrics(self, url_str: str) -> Optional[SEOMetrics]:
+        """Retrieves SEO metrics for a URL."""
         session = self._get_session()
         try:
-            orm_seo_metrics = session.query(SEOMetricsORM).get(url_str)
-            if orm_seo_metrics:
-                return self._to_dataclass(orm_seo_metrics)
-            return None
+            orm_seo_metrics = session.query(SEOMetricsORM).filter_by(url=url_str).first()
+            return self._to_dataclass(orm_seo_metrics)
         except Exception as e:
-            logger.error(f"Error getting SEO metrics for {url_str}: {e}")
+            logger.error(f"Error retrieving SEO metrics for {url_str}: {e}", exc_info=True)
             return None
         finally:
             session.close()
 
-    # --- SERPResult Operations (New) ---
     def add_serp_results(self, serp_results: List[SERPResult]) -> None:
+        """Adds multiple SERP results to the database."""
+        if not serp_results:
+            return
+
         session = self._get_session()
         try:
-            logger.info(f"Attempting to add/update {len(serp_results)} SERP results to the database.")
+            orm_serp_results = []
             for result in serp_results:
-                # Check if SERP result already exists based on keyword and result_url
-                existing_orm_serp = session.query(SERPResultORM).filter_by(
-                    keyword=result.keyword,
-                    result_url=result.result_url
-                ).first()
-
-                if existing_orm_serp:
-                    # Update existing SERP result
-                    logger.debug(f"Updating existing SERP result: keyword='{result.keyword}', url='{result.result_url}'")
-                    existing_orm_serp.position = result.position
-                    existing_orm_serp.title_text = result.title_text
-                    existing_orm_serp.snippet_text = result.snippet_text
-                    existing_orm_serp.rich_features = result.rich_features
-                    existing_orm_serp.page_load_time = result.page_load_time
-                    existing_orm_serp.crawl_timestamp = result.crawl_timestamp
-                else:
-                    # Add new SERP result
-                    logger.debug(f"Adding new SERP result: keyword='{result.keyword}', url='{result.result_url}'")
-                    orm_serp = self._to_orm(result)
-                    if orm_serp is None:
-                        logger.error(f"Failed to convert SERPResult dataclass to ORM for {result.keyword} -> {result.result_url}")
-                        continue
-                    session.add(orm_serp)
+                try:
+                    orm_serp_results.append(self._to_orm(result))
+                except Exception as e:
+                    logger.error(f"Error converting SERP result to ORM: {e}", exc_info=True)
+            
+            session.add_all(orm_serp_results)
             session.commit()
-            logger.info(f"Successfully added/updated {len(serp_results)} SERP results.")
+            logger.info(f"Added {len(orm_serp_results)} SERP results to the database.")
+        except IntegrityError:
+            session.rollback()
+            logger.warning(f"Some SERP results already exist. Attempting individual adds for {len(serp_results)} results.")
+            for result in serp_results:
+                self.add_serp_result(result) # This will log duplicates as debug
         except Exception as e:
             session.rollback()
-            logger.error(f"Error adding/updating SERP results: {type(e).__name__}: {e}", exc_info=True)
-            raise
+            logger.error(f"Error adding multiple SERP results: {e}", exc_info=True)
+        finally:
+            session.close()
+
+    def add_serp_result(self, serp_result: SERPResult) -> None:
+        """Adds a single SERP result to the database."""
+        session = self._get_session()
+        try:
+            orm_serp_result = self._to_orm(serp_result)
+            session.add(orm_serp_result)
+            session.commit()
+            logger.debug(f"Added SERP result for keyword '{serp_result.keyword}' at position {serp_result.position}.")
+        except IntegrityError:
+            session.rollback()
+            logger.debug(f"SERP result for keyword '{serp_result.keyword}' and URL '{serp_result.result_url}' already exists. Skipping.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding SERP result for keyword '{serp_result.keyword}': {e}", exc_info=True)
         finally:
             session.close()
 
     def get_serp_results_for_keyword(self, keyword: str) -> List[SERPResult]:
+        """Retrieves SERP results for a specific keyword."""
         session = self._get_session()
         try:
-            orm_serp_results = session.query(SERPResultORM).filter_by(keyword=keyword).all()
-            return [self._to_dataclass(res) for res in orm_serp_results]
+            orm_results = session.query(SERPResultORM).filter_by(keyword=keyword).order_by(SERPResultORM.position).all()
+            return [self._to_dataclass(res) for res in orm_results]
         except Exception as e:
-            logger.error(f"Error getting SERP results for keyword '{keyword}': {e}")
+            logger.error(f"Error retrieving SERP results for keyword '{keyword}': {e}", exc_info=True)
             return []
         finally:
             session.close()
 
-    # --- KeywordSuggestion Operations (New) ---
     def add_keyword_suggestions(self, suggestions: List[KeywordSuggestion]) -> None:
+        """Adds multiple keyword suggestions to the database."""
+        if not suggestions:
+            return
+
         session = self._get_session()
         try:
-            logger.info(f"Attempting to add/update {len(suggestions)} keyword suggestions to the database.")
+            orm_suggestions = []
             for suggestion in suggestions:
-                # Check if suggestion already exists based on seed_keyword and suggested_keyword
-                existing_orm_suggestion = session.query(KeywordSuggestionORM).filter_by(
-                    seed_keyword=suggestion.seed_keyword,
-                    suggested_keyword=suggestion.suggested_keyword
-                ).first()
-
-                if existing_orm_suggestion:
-                    # Update existing suggestion
-                    logger.debug(f"Updating existing keyword suggestion: seed='{suggestion.seed_keyword}', suggested='{suggestion.suggested_keyword}'")
-                    existing_orm_suggestion.search_volume_monthly = suggestion.search_volume_monthly
-                    existing_orm_suggestion.cpc_estimate = suggestion.cpc_estimate
-                    existing_orm_suggestion.keyword_trend = suggestion.keyword_trend
-                    existing_orm_suggestion.competition_level = suggestion.competition_level
-                    existing_orm_suggestion.data_timestamp = suggestion.data_timestamp
-                else:
-                    # Add new suggestion
-                    logger.debug(f"Adding new keyword suggestion: seed='{suggestion.seed_keyword}', suggested='{suggestion.suggested_keyword}'")
-                    orm_suggestion = self._to_orm(suggestion)
-                    if orm_suggestion is None:
-                        logger.error(f"Failed to convert KeywordSuggestion dataclass to ORM for {suggestion.seed_keyword} -> {suggestion.suggested_keyword}")
-                        continue
-                    session.add(orm_suggestion)
+                try:
+                    orm_suggestions.append(self._to_orm(suggestion))
+                except Exception as e:
+                    logger.error(f"Error converting keyword suggestion to ORM: {e}", exc_info=True)
+            
+            session.add_all(orm_suggestions)
             session.commit()
-            logger.info(f"Successfully added/updated {len(suggestions)} keyword suggestions.")
+            logger.info(f"Added {len(orm_suggestions)} keyword suggestions to the database.")
+        except IntegrityError:
+            session.rollback()
+            logger.warning(f"Some keyword suggestions already exist. Attempting individual adds for {len(suggestions)} suggestions.")
+            for suggestion in suggestions:
+                self.add_keyword_suggestion(suggestion) # This will log duplicates as debug
         except Exception as e:
             session.rollback()
-            logger.error(f"Error adding/updating keyword suggestions: {type(e).__name__}: {e}", exc_info=True)
-            raise
+            logger.error(f"Error adding multiple keyword suggestions: {e}", exc_info=True)
+        finally:
+            session.close()
+
+    def add_keyword_suggestion(self, suggestion: KeywordSuggestion) -> None:
+        """Adds a single keyword suggestion to the database."""
+        session = self._get_session()
+        try:
+            orm_suggestion = self._to_orm(suggestion)
+            session.add(orm_suggestion)
+            session.commit()
+            logger.debug(f"Added keyword suggestion '{suggestion.suggested_keyword}' for seed '{suggestion.seed_keyword}'.")
+        except IntegrityError:
+            session.rollback()
+            logger.debug(f"Keyword suggestion '{suggestion.suggested_keyword}' for seed '{suggestion.seed_keyword}' already exists. Skipping.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding keyword suggestion '{suggestion.suggested_keyword}': {e}", exc_info=True)
         finally:
             session.close()
 
     def get_keyword_suggestions_for_seed(self, seed_keyword: str) -> List[KeywordSuggestion]:
+        """Retrieves keyword suggestions for a specific seed keyword."""
         session = self._get_session()
         try:
             orm_suggestions = session.query(KeywordSuggestionORM).filter_by(seed_keyword=seed_keyword).all()
             return [self._to_dataclass(sug) for sug in orm_suggestions]
         except Exception as e:
-            logger.error(f"Error getting keyword suggestions for seed '{seed_keyword}': {e}")
+            logger.error(f"Error retrieving keyword suggestions for seed '{seed_keyword}': {e}", exc_info=True)
             return []
         finally:
             session.close()
