@@ -32,8 +32,13 @@ class LinkExtractor:
                 continue
 
             anchor_text = a_tag.get_text(strip=True)
-            rel = a_tag.get('rel', [])
-            link_type = self._determine_link_type(rel)
+            
+            # Get all 'rel' attributes, split by space, and filter out empty strings
+            rel_attr_str = a_tag.get('rel')
+            rel_attributes = [r.strip() for r in rel_attr_str.split(' ')] if isinstance(rel_attr_str, str) else []
+            rel_attributes = [r for r in rel_attributes if r] # Remove empty strings
+            
+            link_type = self._determine_link_type(rel_attributes)
 
             links.append(
                 Backlink(
@@ -42,6 +47,7 @@ class LinkExtractor:
                     target_url=full_url,
                     anchor_text=anchor_text,
                     link_type=link_type,
+                    rel_attributes=rel_attributes, # Pass all rel attributes
                     context_text=self._get_context_text(a_tag)
                 )
             )
@@ -58,6 +64,7 @@ class LinkExtractor:
                         target_url=canonical_url,
                         anchor_text="canonical",
                         link_type=LinkType.CANONICAL,
+                        rel_attributes=['canonical'], # Canonical links typically have rel="canonical"
                         context_text=""
                     )
                 )
@@ -82,7 +89,7 @@ class LinkExtractor:
             return None
 
     def _determine_link_type(self, rel_attributes: List[str]) -> LinkType:
-        """Determines the link type based on 'rel' attributes."""
+        """Determines the primary link type based on 'rel' attributes."""
         if 'nofollow' in rel_attributes:
             return LinkType.NOFOLLOW
         if 'sponsored' in rel_attributes:

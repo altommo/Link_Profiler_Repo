@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 from bs4 import BeautifulSoup
 import logging
 from urllib.parse import urlparse, urljoin # Added import
+from datetime import datetime # Import datetime
 
 from Link_Profiler.core.models import SEOMetrics # Absolute import
 
@@ -33,7 +34,7 @@ class ContentParser:
             # Meta Description
             meta_description = soup.find('meta', attrs={'name': 'description'})
             if meta_description and meta_description.get('content'):
-                metrics.description_length = len(meta_description['content'].strip())
+                metrics.meta_description_length = len(meta_description['content'].strip()) # Corrected field name
 
             # Headings (H1, H2)
             metrics.h1_count = len(soup.find_all('h1'))
@@ -81,13 +82,11 @@ class ContentParser:
             viewport_meta = soup.find('meta', attrs={'name': 'viewport'})
             metrics.mobile_friendly = bool(viewport_meta and 'width=device-width' in viewport_meta.get('content', ''))
 
-            # SSL Enabled (this can't be determined from HTML content alone, needs HTTP response info)
-            # For now, we'll assume it's true if the URL scheme is https
-            metrics.ssl_enabled = url.startswith('https://')
+            # Performance & Best Practices scores (performance_score, accessibility_score)
+            # These cannot be determined from HTML content alone and would require external tools (e.g., Lighthouse).
+            # They will remain None unless populated by an external process.
 
-            # Page Size KB and Load Time MS are typically from HTTP response headers or network timing,
-            # not directly from HTML content. These would need to be passed in or calculated externally.
-            # For now, they remain at their default 0.0.
+            metrics.audit_timestamp = datetime.now() # Set audit timestamp
 
             metrics.calculate_seo_score() # Calculate the score based on extracted data
 
