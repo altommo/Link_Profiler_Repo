@@ -4,10 +4,15 @@ File: Link_Profiler/database/database.py
 """
 
 from typing import List, Dict, Optional, Any
-from Link_Profiler.core.models import Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, serialize_model, CrawlStatus, CrawlError # Import CrawlError
+from Link_Profiler.core.models import (
+    Backlink, LinkProfile, CrawlJob, Domain, URL, SEOMetrics, 
+    SERPResult, KeywordSuggestion, CrawlError,
+    serialize_model, CrawlStatus, LinkType, ContentType, SpamLevel # Import all necessary Enums and models
+)
 import json
 import os
 from urllib.parse import urlparse
+import uuid # Import uuid for generating IDs for new data types
 
 # --- SQLAlchemy Imports ---
 from sqlalchemy import create_engine, or_
@@ -15,6 +20,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import IntegrityError
 from Link_Profiler.database.models import (
     Base, DomainORM, URLORM, BacklinkORM, LinkProfileORM, CrawlJobORM, SEOMetricsORM,
+    SERPResultORM, KeywordSuggestionORM, # Import new ORM models
     LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum
 )
 import logging
@@ -100,7 +106,10 @@ class Database:
                 last_seen_date=orm_obj.last_seen_date,
                 authority_passed=orm_obj.authority_passed,
                 is_active=orm_obj.is_active,
-                spam_level=SpamLevelEnum(orm_obj.spam_level)
+                spam_level=SpamLevelEnum(orm_obj.spam_level),
+                http_status=orm_obj.http_status, # New field
+                crawl_timestamp=orm_obj.crawl_timestamp, # New field
+                source_domain_metrics=orm_obj.source_domain_metrics # New field
             )
         elif isinstance(orm_obj, LinkProfileORM):
             return LinkProfile(
@@ -143,23 +152,48 @@ class Database:
         elif isinstance(orm_obj, SEOMetricsORM):
             return SEOMetrics(
                 url=orm_obj.url,
+                http_status=orm_obj.http_status, # New field
+                response_time_ms=orm_obj.response_time_ms, # New field
+                page_size_bytes=orm_obj.page_size_bytes, # New field
                 title_length=orm_obj.title_length,
-                description_length=orm_obj.description_length,
+                meta_description_length=orm_obj.meta_description_length, # Renamed
                 h1_count=orm_obj.h1_count,
-                h2_count=orm_obj.h2_count,
+                h2_count=orm_obj.h2_count, # New field
                 internal_links=orm_obj.internal_links,
                 external_links=orm_obj.external_links,
                 images_count=orm_obj.images_count,
                 images_without_alt=orm_obj.images_without_alt,
-                page_size_kb=orm_obj.page_size_kb,
-                load_time_ms=orm_obj.load_time_ms,
                 has_canonical=orm_obj.has_canonical,
                 has_robots_meta=orm_obj.has_robots_meta,
                 has_schema_markup=orm_obj.has_schema_markup,
-                mobile_friendly=orm_obj.mobile_friendly,
-                ssl_enabled=orm_obj.ssl_enabled,
+                broken_links=orm_obj.broken_links, # New field
+                performance_score=orm_obj.performance_score, # New field
+                mobile_friendly=orm_obj.mobile_friendly, # New field
+                accessibility_score=orm_obj.accessibility_score, # New field
+                audit_timestamp=orm_obj.audit_timestamp, # New field
                 seo_score=orm_obj.seo_score,
                 issues=orm_obj.issues
+            )
+        elif isinstance(orm_obj, SERPResultORM): # New ORM to dataclass conversion
+            return SERPResult(
+                keyword=orm_obj.keyword,
+                position=orm_obj.position,
+                result_url=orm_obj.result_url,
+                title_text=orm_obj.title_text,
+                snippet_text=orm_obj.snippet_text,
+                rich_features=orm_obj.rich_features,
+                page_load_time=orm_obj.page_load_time,
+                crawl_timestamp=orm_obj.crawl_timestamp
+            )
+        elif isinstance(orm_obj, KeywordSuggestionORM): # New ORM to dataclass conversion
+            return KeywordSuggestion(
+                seed_keyword=orm_obj.seed_keyword,
+                suggested_keyword=orm_obj.suggested_keyword,
+                search_volume_monthly=orm_obj.search_volume_monthly,
+                cpc_estimate=orm_obj.cpc_estimate,
+                keyword_trend=orm_obj.keyword_trend,
+                competition_level=orm_obj.competition_level,
+                data_timestamp=orm_obj.data_timestamp
             )
         return None
 
@@ -215,7 +249,10 @@ class Database:
                 last_seen_date=dc_obj.last_seen_date,
                 authority_passed=dc_obj.authority_passed,
                 is_active=dc_obj.is_active,
-                spam_level=dc_obj.spam_level.value
+                spam_level=dc_obj.spam_level.value,
+                http_status=dc_obj.http_status, # New field
+                crawl_timestamp=dc_obj.crawl_timestamp, # New field
+                source_domain_metrics=dc_obj.source_domain_metrics # New field
             )
         elif isinstance(dc_obj, LinkProfile):
             return LinkProfileORM(
@@ -257,23 +294,50 @@ class Database:
         elif isinstance(dc_obj, SEOMetrics):
             return SEOMetricsORM(
                 url=dc_obj.url,
+                http_status=dc_obj.http_status, # New field
+                response_time_ms=dc_obj.response_time_ms, # New field
+                page_size_bytes=dc_obj.page_size_bytes, # New field
                 title_length=dc_obj.title_length,
-                description_length=dc_obj.description_length,
+                meta_description_length=dc_obj.meta_description_length, # Renamed
                 h1_count=dc_obj.h1_count,
-                h2_count=dc_obj.h2_count,
+                h2_count=dc_obj.h2_count, # New field
                 internal_links=dc_obj.internal_links,
                 external_links=dc_obj.external_links,
                 images_count=dc_obj.images_count,
                 images_without_alt=dc_obj.images_without_alt,
-                page_size_kb=dc_obj.page_size_kb,
-                load_time_ms=dc_obj.load_time_ms,
                 has_canonical=dc_obj.has_canonical,
                 has_robots_meta=dc_obj.has_robots_meta,
                 has_schema_markup=dc_obj.has_schema_markup,
-                mobile_friendly=dc_obj.mobile_friendly,
-                ssl_enabled=dc_obj.ssl_enabled,
+                broken_links=dc_obj.broken_links, # New field
+                performance_score=dc_obj.performance_score, # New field
+                mobile_friendly=dc_obj.mobile_friendly, # New field
+                accessibility_score=dc_obj.accessibility_score, # New field
+                audit_timestamp=dc_obj.audit_timestamp, # New field
                 seo_score=dc_obj.seo_score,
                 issues=dc_obj.issues
+            )
+        elif isinstance(dc_obj, SERPResult): # New dataclass to ORM conversion
+            return SERPResultORM(
+                id=str(uuid.uuid4()), # Generate UUID for primary key
+                keyword=dc_obj.keyword,
+                position=dc_obj.position,
+                result_url=dc_obj.result_url,
+                title_text=dc_obj.title_text,
+                snippet_text=dc_obj.snippet_text,
+                rich_features=dc_obj.rich_features,
+                page_load_time=dc_obj.page_load_time,
+                crawl_timestamp=dc_obj.crawl_timestamp
+            )
+        elif isinstance(dc_obj, KeywordSuggestion): # New dataclass to ORM conversion
+            return KeywordSuggestionORM(
+                id=str(uuid.uuid4()), # Generate UUID for primary key
+                seed_keyword=dc_obj.seed_keyword,
+                suggested_keyword=dc_obj.suggested_keyword,
+                search_volume_monthly=dc_obj.search_volume_monthly,
+                cpc_estimate=dc_obj.cpc_estimate,
+                keyword_trend=dc_obj.keyword_trend,
+                competition_level=dc_obj.competition_level,
+                data_timestamp=dc_obj.data_timestamp
             )
         return None
 
@@ -301,11 +365,15 @@ class Database:
                 existing_orm_backlink.anchor_text = backlink.anchor_text
                 existing_orm_backlink.link_type = backlink.link_type.value
                 existing_orm_backlink.context_text = backlink.context_text
+                existing_orm_backlink.position_on_page = backlink.position_on_page
                 existing_orm_backlink.is_image_link = backlink.is_image_link
                 existing_orm_backlink.alt_text = backlink.alt_text
                 existing_orm_backlink.authority_passed = backlink.authority_passed
                 existing_orm_backlink.is_active = backlink.is_active
                 existing_orm_backlink.spam_level = backlink.spam_level.value
+                existing_orm_backlink.http_status = backlink.http_status # New field
+                existing_orm_backlink.crawl_timestamp = backlink.crawl_timestamp # New field
+                existing_orm_backlink.source_domain_metrics = backlink.source_domain_metrics # New field
             else:
                 # Add new backlink
                 logger.debug(f"Adding new backlink: from {backlink.source_url} to {backlink.target_url}")
@@ -351,12 +419,15 @@ class Database:
                     existing_orm_backlink.anchor_text = backlink.anchor_text
                     existing_orm_backlink.link_type = backlink.link_type.value
                     existing_orm_backlink.context_text = backlink.context_text
+                    existing_orm_backlink.position_on_page = backlink.position_on_page
                     existing_orm_backlink.is_image_link = backlink.is_image_link
                     existing_orm_backlink.alt_text = backlink.alt_text
                     existing_orm_backlink.authority_passed = backlink.authority_passed
                     existing_orm_backlink.is_active = backlink.is_active
                     existing_orm_backlink.spam_level = backlink.spam_level.value
-                    # No need to add to session, it's already managed
+                    existing_orm_backlink.http_status = backlink.http_status # New field
+                    existing_orm_backlink.crawl_timestamp = backlink.crawl_timestamp # New field
+                    existing_orm_backlink.source_domain_metrics = backlink.source_domain_metrics # New field
                 else:
                     # Add new backlink
                     logger.debug(f"Adding new backlink: from {backlink.source_url} to {backlink.target_url}")
@@ -629,6 +700,103 @@ class Database:
             return None
         except Exception as e:
             logger.error(f"Error getting SEO metrics for {url_str}: {e}")
+            return None
+        finally:
+            session.close()
+
+    # --- SERPResult Operations (New) ---
+    def add_serp_results(self, serp_results: List[SERPResult]) -> None:
+        session = self._get_session()
+        try:
+            logger.info(f"Attempting to add/update {len(serp_results)} SERP results to the database.")
+            for result in serp_results:
+                # Check if SERP result already exists based on keyword and result_url
+                existing_orm_serp = session.query(SERPResultORM).filter_by(
+                    keyword=result.keyword,
+                    result_url=result.result_url
+                ).first()
+
+                if existing_orm_serp:
+                    # Update existing SERP result
+                    logger.debug(f"Updating existing SERP result: keyword='{result.keyword}', url='{result.result_url}'")
+                    existing_orm_serp.position = result.position
+                    existing_orm_serp.title_text = result.title_text
+                    existing_orm_serp.snippet_text = result.snippet_text
+                    existing_orm_serp.rich_features = result.rich_features
+                    existing_orm_serp.page_load_time = result.page_load_time
+                    existing_orm_serp.crawl_timestamp = result.crawl_timestamp
+                else:
+                    # Add new SERP result
+                    logger.debug(f"Adding new SERP result: keyword='{result.keyword}', url='{result.result_url}'")
+                    orm_serp = self._to_orm(result)
+                    if orm_serp is None:
+                        logger.error(f"Failed to convert SERPResult dataclass to ORM for {result.keyword} -> {result.result_url}")
+                        continue
+                    session.add(orm_serp)
+            session.commit()
+            logger.info(f"Successfully added/updated {len(serp_results)} SERP results.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding/updating SERP results: {type(e).__name__}: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    def get_serp_results_for_keyword(self, keyword: str) -> List[SERPResult]:
+        session = self._get_session()
+        try:
+            orm_serp_results = session.query(SERPResultORM).filter_by(keyword=keyword).all()
+            return [self._to_dataclass(res) for res in orm_serp_results]
+        except Exception as e:
+            logger.error(f"Error getting SERP results for keyword '{keyword}': {e}")
+            return []
+        finally:
+            session.close()
+
+    # --- KeywordSuggestion Operations (New) ---
+    def add_keyword_suggestions(self, suggestions: List[KeywordSuggestion]) -> None:
+        session = self._get_session()
+        try:
+            logger.info(f"Attempting to add/update {len(suggestions)} keyword suggestions to the database.")
+            for suggestion in suggestions:
+                # Check if suggestion already exists based on seed_keyword and suggested_keyword
+                existing_orm_suggestion = session.query(KeywordSuggestionORM).filter_by(
+                    seed_keyword=suggestion.seed_keyword,
+                    suggested_keyword=suggestion.suggested_keyword
+                ).first()
+
+                if existing_orm_suggestion:
+                    # Update existing suggestion
+                    logger.debug(f"Updating existing keyword suggestion: seed='{suggestion.seed_keyword}', suggested='{suggestion.suggested_keyword}'")
+                    existing_orm_suggestion.search_volume_monthly = suggestion.search_volume_monthly
+                    existing_orm_suggestion.cpc_estimate = suggestion.cpc_estimate
+                    existing_orm_suggestion.keyword_trend = suggestion.keyword_trend
+                    existing_orm_suggestion.competition_level = suggestion.competition_level
+                    existing_orm_suggestion.data_timestamp = suggestion.data_timestamp
+                else:
+                    # Add new suggestion
+                    logger.debug(f"Adding new keyword suggestion: seed='{suggestion.seed_keyword}', suggested='{suggestion.suggested_keyword}'")
+                    orm_suggestion = self._to_orm(suggestion)
+                    if orm_suggestion is None:
+                        logger.error(f"Failed to convert KeywordSuggestion dataclass to ORM for {suggestion.seed_keyword} -> {suggestion.suggested_keyword}")
+                        continue
+                    session.add(orm_suggestion)
+            session.commit()
+            logger.info(f"Successfully added/updated {len(suggestions)} keyword suggestions.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding/updating keyword suggestions: {type(e).__name__}: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    def get_keyword_suggestions_for_seed(self, seed_keyword: str) -> List[KeywordSuggestion]:
+        session = self._get_session()
+        try:
+            orm_suggestions = session.query(KeywordSuggestionORM).filter_by(seed_keyword=seed_keyword).all()
+            return [self._to_dataclass(sug) for sug in orm_suggestions]
+        except Exception as e:
+            logger.error(f"Error getting keyword suggestions for seed '{seed_keyword}': {e}")
             return []
         finally:
             session.close()
