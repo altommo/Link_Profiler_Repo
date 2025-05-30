@@ -5,18 +5,24 @@ File: Link_Profiler/services/crawl_service.py
 
 import asyncio
 import logging
+import os # Import os for WARC output directory
 from typing import List, Dict, Optional, Set
 from uuid import uuid4
 from datetime import datetime
 from urllib.parse import urlparse # Import urlparse
 import json # Import json
-import os # Import os for WARC output directory
 
-from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, Backlink, LinkProfile, create_link_profile_from_backlinks, serialize_model, SEOMetrics, LinkType, SpamLevel, CrawlError # Import CrawlError
+from Link_Profiler.core.models import ( # Changed to absolute import
+    URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
+    CrawlJob, ContentType, serialize_model, SEOMetrics, SpamLevel, CrawlError,
+    SERPResult, KeywordSuggestion # Import new models
+)
 from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult # Import CrawlResult
 from Link_Profiler.database.database import Database
 from Link_Profiler.services.domain_service import DomainService # Import DomainService
 from Link_Profiler.services.backlink_service import BacklinkService # Import BacklinkService
+from Link_Profiler.services.serp_service import SERPService # New: Import SERPService
+from Link_Profiler.services.keyword_service import KeywordService # New: Import KeywordService
 
 
 class CrawlService:
@@ -24,25 +30,40 @@ class CrawlService:
     Orchestrates web crawling jobs, manages their state,
     and persists results to the database.
     """
-    def __init__(self, database: Database, backlink_service: BacklinkService, domain_service: DomainService):
+    def __init__(
+        self, 
+        database: Database, 
+        backlink_service: BacklinkService, 
+        domain_service: DomainService,
+        serp_service: SERPService, # New: Injected SERPService
+        keyword_service: KeywordService # New: Injected KeywordService
+    ):
         self.db = database
         self.logger = logging.getLogger(__name__)
         self.active_crawlers: Dict[str, WebCrawler] = {} # Store active crawler instances by job ID
         self.domain_service = domain_service # Injected DomainService
         self.backlink_service = backlink_service # Injected BacklinkService
+        self.serp_service = serp_service # New: Injected SERPService
+        self.keyword_service = keyword_service # New: Injected KeywordService
 
-    async def create_and_start_backlink_crawl_job(
+    async def create_and_start_crawl_job(
         self, 
+        job_type: str, # 'backlink_discovery', 'serp_analysis', 'keyword_research'
         target_url: str, 
-        initial_seed_urls: List[str], 
+        initial_seed_urls: Optional[List[str]] = None, # Optional for non-crawl jobs
+        keyword: Optional[str] = None, # For SERP/Keyword jobs
+        num_results: Optional[int] = None, # For SERP/Keyword jobs
         config: Optional[CrawlConfig] = None
     ) -> CrawlJob:
         """
-        Creates a new backlink crawl job and starts it.
+        Creates a new crawl job of a specified type and starts it.
         
         Args:
-            target_url: The URL for which to find backlinks.
-            initial_seed_urls: A list of URLs to start crawling from to discover backlinks.
+            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research').
+            target_url: The primary URL relevant to the job (e.g., for backlink discovery).
+            initial_seed_urls: Optional list of URLs to start crawling from (for backlink discovery).
+            keyword: Optional keyword for SERP or keyword research jobs.
+            num_results: Optional number of results/suggestions to fetch for SERP/keyword jobs.
             config: Optional CrawlConfig object. If None, a default config is used.
         
         Returns:
@@ -54,25 +75,40 @@ class CrawlService:
 
         # For testing purposes, explicitly set respect_robots_txt to False
         # as quotes.toscrape.com's robots.txt disallows all crawling.
+        # This might need to be configurable or smarter in production.
         config.respect_robots_txt = False 
 
-        # Ensure target domain is in allowed domains if specified
-        parsed_target_domain = urlparse(target_url).netloc
-        if config.allowed_domains and parsed_target_domain not in config.allowed_domains:
-            config.allowed_domains.add(parsed_target_domain)
+        # Ensure target domain is in allowed domains if specified for crawl jobs
+        if job_type == 'backlink_discovery':
+            parsed_target_domain = urlparse(target_url).netloc
+            if config.allowed_domains and parsed_target_domain not in config.allowed_domains:
+                config.allowed_domains.add(parsed_target_domain)
 
         job = CrawlJob(
             id=job_id,
             target_url=target_url,
-            job_type='backlink_discovery',
+            job_type=job_type,
             status=CrawlStatus.PENDING,
             config=serialize_model(config) # Store config as dict for serialization
         )
         self.db.add_crawl_job(job)
-        self.logger.info(f"Created crawl job {job_id} for {target_url}")
+        self.logger.info(f"Created {job_type} job {job_id} for {target_url or keyword}")
 
-        # Start the crawl in a separate task
-        asyncio.create_task(self._run_backlink_crawl(job, initial_seed_urls, config))
+        # Dispatch to appropriate runner based on job_type
+        if job_type == 'backlink_discovery':
+            if not initial_seed_urls:
+                raise ValueError("initial_seed_urls must be provided for 'backlink_discovery' job type.")
+            asyncio.create_task(self._run_backlink_crawl(job, initial_seed_urls, config))
+        elif job_type == 'serp_analysis':
+            if not keyword:
+                raise ValueError("keyword must be provided for 'serp_analysis' job type.")
+            asyncio.create_task(self._run_serp_analysis_job(job, keyword, num_results))
+        elif job_type == 'keyword_research':
+            if not keyword:
+                raise ValueError("keyword must be provided for 'keyword_research' job type.")
+            asyncio.create_task(self._run_keyword_research_job(job, keyword, num_results))
+        else:
+            raise ValueError(f"Unknown job type: {job_type}")
         
         return job
 
@@ -83,7 +119,7 @@ class CrawlService:
         job.status = CrawlStatus.IN_PROGRESS
         job.started_date = datetime.now()
         self.db.update_crawl_job(job)
-        self.logger.info(f"Starting crawl job {job.id} for {job.target_url}")
+        self.logger.info(f"Starting backlink crawl job {job.id} for {job.target_url}")
 
         crawler = WebCrawler(config)
         self.active_crawlers[job.id] = crawler # Store active crawler instance
@@ -129,8 +165,6 @@ class CrawlService:
                     crawled_urls_set = set() # Keep track of URLs already processed to avoid redundant crawls
 
                     while not urls_to_crawl_queue.empty() and urls_crawled_count < config.max_pages:
-                        url, current_depth = await urls_to_crawl_queue.get()
-
                         # Check for pause/stop status at each iteration
                         current_job = self.db.get_crawl_job(job.id)
                         if current_job and current_job.status == CrawlStatus.PAUSED:
@@ -157,6 +191,8 @@ class CrawlService:
                             self.db.update_crawl_job(job)
                             return # Exit crawl loop
 
+                        url, current_depth = await urls_to_crawl_queue.get()
+
                         if url in crawled_urls_set:
                             continue
                         if current_depth >= config.max_depth:
@@ -165,7 +201,7 @@ class CrawlService:
                         
                         crawled_urls_set.add(url)
                         urls_crawled_count += 1
-                        job.urls_crawled = urls_crawled_count
+                        job.urls_crawled = urls_crawled
 
                         self.logger.info(f"Crawling: {url} (Depth: {current_depth}, Crawled: {urls_crawled_count}/{config.max_pages})")
 
@@ -235,6 +271,14 @@ class CrawlService:
                                 except Exception as seo_e:
                                     self.logger.error(f"Error saving SEO metrics for {crawl_result.url}: {seo_e}", exc_info=True)
                                     job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error saving SEO metrics: {str(seo_e)}", details=str(seo_e))
+
+                        # Add new URLs to crawl queue for further exploration
+                        for link in crawl_result.links_found:
+                            parsed_link_url = urlparse(link.target_url)
+                            if config.is_domain_allowed(parsed_link_url.netloc):
+                                if link.target_url not in crawled_urls_set and \
+                                   urls_crawled_count + urls_to_crawl_queue.qsize() < config.max_pages:
+                                    await urls_to_crawl_queue.put((link.target_url, current_depth + 1))
 
                         # Update job progress
                         job.progress_percentage = min(99.0, (urls_crawled_count / config.max_pages) * 100)
@@ -345,6 +389,88 @@ class CrawlService:
             if job.id in self.active_crawlers:
                 del self.active_crawlers[job.id]
 
+    async def _run_serp_analysis_job(self, job: CrawlJob, keyword: str, num_results: Optional[int]):
+        """
+        Internal method to execute a SERP analysis job.
+        """
+        job.status = CrawlStatus.IN_PROGRESS
+        job.started_date = datetime.now()
+        self.db.update_crawl_job(job)
+        self.logger.info(f"Starting SERP analysis job {job.id} for keyword: '{keyword}'")
+
+        try:
+            async with self.serp_service as ss:
+                serp_results = await ss.get_serp_data(keyword, num_results or 10)
+            
+            if serp_results:
+                self.logger.info(f"Found {len(serp_results)} SERP results for '{keyword}'.")
+                try:
+                    await self.db.add_serp_results(serp_results)
+                    self.logger.info(f"Successfully added {len(serp_results)} SERP results to the database.")
+                except Exception as db_e:
+                    self.logger.error(f"Error adding SERP results to database: {db_e}", exc_info=True)
+                    job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding SERP results: {str(db_e)}", details=str(db_e))
+                
+                job.results['serp_results'] = [serialize_model(res) for res in serp_results]
+                job.urls_discovered = len(serp_results) # Use urls_discovered for count of results
+                job.progress_percentage = 100.0
+                job.status = CrawlStatus.COMPLETED
+                self.logger.info(f"SERP analysis job {job.id} completed for '{keyword}'.")
+            else:
+                job.results['serp_results'] = []
+                job.progress_percentage = 100.0
+                job.status = CrawlStatus.COMPLETED
+                self.logger.info(f"No SERP results found for '{keyword}'. Job {job.id} completed.")
+
+        except Exception as e:
+            job.status = CrawlStatus.FAILED
+            job.add_error(url="N/A", error_type="SERPAnalysisError", message=f"SERP analysis failed: {str(e)}", details=str(e))
+            self.logger.error(f"SERP analysis job {job.id} failed: {e}", exc_info=True)
+        finally:
+            job.completed_date = datetime.now()
+            self.db.update_crawl_job(job)
+
+    async def _run_keyword_research_job(self, job: CrawlJob, seed_keyword: str, num_suggestions: Optional[int]):
+        """
+        Internal method to execute a keyword research job.
+        """
+        job.status = CrawlStatus.IN_PROGRESS
+        job.started_date = datetime.now()
+        self.db.update_crawl_job(job)
+        self.logger.info(f"Starting keyword research job {job.id} for seed: '{seed_keyword}'")
+
+        try:
+            async with self.keyword_service as ks:
+                suggestions = await ks.get_keyword_data(seed_keyword, num_suggestions or 10)
+            
+            if suggestions:
+                self.logger.info(f"Found {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
+                try:
+                    await self.db.add_keyword_suggestions(suggestions)
+                    self.logger.info(f"Successfully added {len(suggestions)} keyword suggestions to the database.")
+                except Exception as db_e:
+                    self.logger.error(f"Error adding keyword suggestions to database: {db_e}", exc_info=True)
+                    job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding keyword suggestions: {str(db_e)}", details=str(db_e))
+                
+                job.results['keyword_suggestions'] = [serialize_model(sug) for sug in suggestions]
+                job.urls_discovered = len(suggestions) # Use urls_discovered for count of results
+                job.progress_percentage = 100.0
+                job.status = CrawlStatus.COMPLETED
+                self.logger.info(f"Keyword research job {job.id} completed for '{seed_keyword}'.")
+            else:
+                job.results['keyword_suggestions'] = []
+                job.progress_percentage = 100.0
+                job.status = CrawlStatus.COMPLETED
+                self.logger.info(f"No keyword suggestions found for '{seed_keyword}'. Job {job.id} completed.")
+
+        except Exception as e:
+            job.status = CrawlStatus.FAILED
+            job.add_error(url="N/A", error_type="KeywordResearchError", message=f"Keyword research failed: {str(e)}", details=str(e))
+            self.logger.error(f"Keyword research job {job.id} failed: {e}", exc_info=True)
+        finally:
+            job.completed_date = datetime.now()
+            self.db.update_crawl_job(job)
+
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:
         """Retrieves the current status of a crawl job."""
         return self.db.get_crawl_job(job_id)
@@ -371,7 +497,7 @@ class CrawlService:
             job.status = CrawlStatus.IN_PROGRESS
             self.db.update_crawl_job(job)
             self.logger.info(f"Crawl job {job_id} resumed.")
-            # The _run_backlink_crawl loop will pick this up
+            # The _run_backlink_crawl loop (or other job runners) will pick this up
             return job
         else:
             raise ValueError(f"Crawl job {job_id} cannot be resumed from status {job.status.value}.")
