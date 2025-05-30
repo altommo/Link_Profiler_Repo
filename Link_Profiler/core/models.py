@@ -4,7 +4,7 @@ File: core/models.py
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set, Union
+from typing import List, Dict, Optional, Set, Union, Any # Added Any
 from datetime import datetime
 from enum import Enum
 from urllib.parse import urlparse
