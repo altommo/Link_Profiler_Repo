@@ -46,7 +46,8 @@ class DomainAnalyzerService:
         
         domain_obj = self.db.get_domain(domain_name)
         
-        # Ensure domain_service is used as a context manager for its API client
+        # Ensure domain_service is used as a context manager to ensure its internal
+        # aiohttp session is active for API calls.
         async with self.domain_service as ds: 
             if not domain_obj:
                 # If not found in DB, try to fetch fresh info (though this might be slow for many domains)
