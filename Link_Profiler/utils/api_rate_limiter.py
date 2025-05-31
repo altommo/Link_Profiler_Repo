@@ -8,6 +8,8 @@ import time
 import logging
 from functools import wraps
 from typing import Callable, Any, Dict, Optional
+import aiohttp # New: Import aiohttp
+import openai # New: Import openai
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.monitoring.prometheus_metrics import (
