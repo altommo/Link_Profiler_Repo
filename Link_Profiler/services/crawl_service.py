@@ -30,6 +30,7 @@ from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Import DomainAnalyzerService
 from Link_Profiler.services.ai_service import AIService # Import AIService
 from Link_Profiler.utils.content_validator import ContentValidator # New: Import ContentValidator
+from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 from Link_Profiler.monitoring.prometheus_metrics import (
     JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL,
     CRAWLED_URLS_TOTAL, BACKLINKS_FOUND_TOTAL, JOB_ERRORS_TOTAL
@@ -298,6 +299,62 @@ class CrawlService:
             if job.id in self.active_crawlers:
                 del self.active_crawlers[job.id]
 
+    async def _filter_and_score_backlinks(self, backlinks: List[Backlink], config: CrawlConfig) -> List[Backlink]:
+        """
+        Applies quality filtering and scoring to a list of backlinks based on configuration.
+        """
+        filtered_backlinks: List[Backlink] = []
+        
+        spam_filtering_enabled = config_loader.get("quality_assurance.spam_filtering", False)
+        data_quality_scoring_enabled = config_loader.get("quality_assurance.data_quality_scoring", False)
+        
+        if not spam_filtering_enabled and not data_quality_scoring_enabled:
+            self.logger.debug("Backlink quality assurance and spam filtering are disabled. Returning all backlinks.")
+            return backlinks
+
+        for backlink in backlinks:
+            is_valid = True
+            reasons_for_filtering = []
+
+            # Spam Filtering
+            if spam_filtering_enabled:
+                # Define spam thresholds (these can be configurable)
+                if backlink.spam_level == SpamLevel.CONFIRMED_SPAM:
+                    is_valid = False
+                    reasons_for_filtering.append(f"Confirmed spam ({backlink.spam_level.value})")
+                elif backlink.spam_level == SpamLevel.LIKELY_SPAM and backlink.source_domain_metrics.get("spam_score", 0) > 40: # Example threshold
+                    is_valid = False
+                    reasons_for_filtering.append(f"Likely spam ({backlink.spam_level.value}, score {backlink.source_domain_metrics.get('spam_score')})")
+                elif backlink.spam_level == SpamLevel.SUSPICIOUS and backlink.source_domain_metrics.get("spam_score", 0) > 70: # Higher threshold for suspicious
+                    is_valid = False
+                    reasons_for_filtering.append(f"Highly suspicious ({backlink.spam_level.value}, score {backlink.source_domain_metrics.get('spam_score')})")
+
+            # Data Quality Scoring (beyond just spam)
+            if data_quality_scoring_enabled and is_valid: # Only apply if not already filtered by spam
+                source_domain_authority = backlink.source_domain_metrics.get("authority_score", 0.0)
+                source_domain_trust = backlink.source_domain_metrics.get("trust_score", 0.0)
+                
+                # Example: Filter out links from very low authority domains
+                if source_domain_authority < 5.0: # Very low authority threshold
+                    is_valid = False
+                    reasons_for_filtering.append(f"Very low source domain authority ({source_domain_authority:.1f})")
+                
+                # Example: Penalize or filter based on anchor text relevance (requires AI/NLP)
+                # For now, a placeholder:
+                # if not self.ai_service.is_anchor_text_relevant(backlink.anchor_text, backlink.target_url):
+                #     is_valid = False
+                #     reasons_for_filtering.append("Irrelevant anchor text")
+
+            if is_valid:
+                filtered_backlinks.append(backlink)
+            else:
+                self.logger.info(f"Filtered out backlink {backlink.source_url} -> {backlink.target_url}. Reasons: {', '.join(reasons_for_filtering)}")
+                # Optionally, add a CrawlError to the job for filtered links
+                # job.add_error(url=backlink.source_url, error_type="BacklinkFiltered", message=f"Backlink filtered: {', '.join(reasons_for_filtering)}")
+
+        self.logger.info(f"Filtered {len(backlinks) - len(filtered_backlinks)} backlinks. {len(filtered_backlinks)} remaining after quality checks.")
+        return filtered_backlinks
+
     async def _run_backlink_crawl(self, job: CrawlJob, initial_seed_urls: List[str], config: CrawlConfig):
         """
         Internal method to execute the backlink crawl.
@@ -326,21 +383,24 @@ class CrawlService:
                     if not await self._is_duplicate_backlink(bl.source_url, bl.target_url):
                         deduplicated_api_backlinks.append(bl)
                 
-                if deduplicated_api_backlinks:
-                    discovered_backlinks.extend(deduplicated_api_backlinks)
+                # New: Filter and score API backlinks
+                filtered_api_backlinks = await self._filter_and_score_backlinks(deduplicated_api_backlinks, config)
+
+                if filtered_api_backlinks:
+                    discovered_backlinks.extend(filtered_api_backlinks)
                     job.links_found = len(discovered_backlinks)
                     try:
-                        self.db.add_backlinks(deduplicated_api_backlinks)
+                        self.db.add_backlinks(filtered_api_backlinks)
                         if self.clickhouse_loader: # Conditionally insert to ClickHouse
-                            await self.clickhouse_loader.bulk_insert_backlinks(deduplicated_api_backlinks)
-                        BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(deduplicated_api_backlinks))
-                        self.logger.info(f"Successfully added {len(deduplicated_api_backlinks)} new API backlinks to the database.")
+                            await self.clickhouse_loader.bulk_insert_backlinks(filtered_api_backlinks)
+                        BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(filtered_api_backlinks))
+                        self.logger.info(f"Successfully added {len(filtered_api_backlinks)} new API backlinks to the database after filtering.")
                     except Exception as db_e:
                         self.logger.error(f"Error adding API backlinks to database: {db_e}", exc_info=True)
                         job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding API backlinks: {str(db_e)}", details=str(db_e))
                         JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
                 else:
-                    self.logger.info(f"All {len(api_backlinks)} API backlinks for {job.target_url} were duplicates.")
+                    self.logger.info(f"All {len(api_backlinks)} API backlinks for {job.target_url} were either duplicates or filtered out.")
             else:
                 self.logger.info(f"No backlinks found from API for {job.target_url}. Proceeding with web crawl.")
 
@@ -420,20 +480,23 @@ class CrawlService:
                                     if not await self._is_duplicate_backlink(bl.source_url, bl.target_url):
                                         deduplicated_crawled_backlinks.append(bl)
 
-                                if deduplicated_crawled_backlinks:
-                                    discovered_backlinks.extend(deduplicated_crawled_backlinks)
+                                # New: Filter and score crawled backlinks
+                                filtered_crawled_backlinks = await self._filter_and_score_backlinks(deduplicated_crawled_backlinks, config)
+
+                                if filtered_crawled_backlinks:
+                                    discovered_backlinks.extend(filtered_crawled_backlinks)
                                     job.links_found = len(discovered_backlinks)
                                     try:
-                                        self.db.add_backlinks(deduplicated_crawled_backlinks) 
+                                        self.db.add_backlinks(filtered_crawled_backlinks) 
                                         if self.clickhouse_loader: # Conditionally insert to ClickHouse
-                                            await self.clickhouse_loader.bulk_insert_backlinks(deduplicated_crawled_backlinks)
-                                        BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(deduplicated_api_backlinks))
+                                            await self.clickhouse_loader.bulk_insert_backlinks(filtered_crawled_backlinks)
+                                        BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(filtered_crawled_backlinks))
                                     except Exception as db_e:
                                         self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
                                         job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error adding crawled backlinks: {str(db_e)}", details=str(db_e))
                                         JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
                                 else:
-                                    self.logger.info(f"All {len(crawl_result.links_found)} crawled backlinks from {crawl_result.url} were duplicates.")
+                                    self.logger.info(f"All {len(crawl_result.links_found)} crawled backlinks from {crawl_result.url} were either duplicates or filtered out.")
                             
                             self.logger.debug(f"CrawlResult.seo_metrics for {crawl_result.url}: {crawl_result.seo_metrics}")
                             if crawl_result.seo_metrics:

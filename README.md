@@ -9,21 +9,24 @@ A comprehensive, open-source link analysis and expired domain discovery system i
 - **Intelligent Rate Limiting**: Respects robots.txt and implements smart delays.
 - **Distributed Processing**: Leverages a Redis-based job queue with multiple satellite crawlers for horizontal scalability.
 - **Robust Error Handling**: Comprehensive retry mechanisms, timeout handling, and a dead-letter queue for failed jobs.
+- **Anti-Bot Detection**: User-agent rotation, request header randomization, human-like delays, and Playwright stealth mode.
 - **Content Type Support**: HTML, PDF, and image link extraction.
+- **Proxy Management**: Rotates and manages a pool of proxies, temporarily blacklisting failed ones.
 - **Crawl Job Management**: Ability to pause, resume, and stop active crawl jobs.
 
 ### 🔍 **Link Analysis & Profiling**
 - **Comprehensive Backlink Discovery**: Find all links pointing to target domains, either by crawling or via external APIs.
 - **Authority Calculation**: Domain and page authority scoring algorithms (now more sophisticated, leveraging linking domain metrics).
-- **Spam Detection**: AI-powered spam link identification (currently basic).
+- **Spam Detection**: AI-powered spam link identification and configurable filtering based on spam level and source domain quality.
 - **Anchor Text Analysis**: Detailed anchor text distribution and patterns.
 - **Link Type Classification**: dofollow, nofollow, sponsored, UGC, redirect, canonical detection.
-- **SEO Metrics Extraction**: Extracts and stores on-page SEO data (e.g., title length, heading counts, internal/external links).
+- **SEO Metrics Extraction**: Extracts and stores on-page SEO data (e.g., title length, heading counts, internal/external links, structured data, social meta).
+- **Content Validation**: Detects bot-detection indicators, checks content completeness, and flags scraping artifacts.
 - **Backlink API Integration**: Can fetch existing backlink data from external APIs like Google Search Console (for verified properties) and OpenLinkProfiler.org (free, with limits), or a placeholder for paid APIs.
 
 ### 💎 **Expired Domain Discovery & Analysis**
 - **Domain Availability Checking**: Real-time domain registration status (now supports real API integration via AbstractAPI's free tier).
-- **Value Assessment**: Multi-factor domain scoring system (currently simulated/basic).
+- **Value Assessment**: Multi-factor domain scoring system, enhanced with AI-driven insights.
 - **WHOIS Integration**: Domain age, history, and registration data (now supports real API integration via AbstractAPI's free tier).
 - **Batch Processing**: Submit lists of domains for analysis to the distributed queue.
 - **Custom Scoring Models**: Configurable domain evaluation criteria.
@@ -36,7 +39,7 @@ A comprehensive, open-source link analysis and expired domain discovery system i
 - **Keyword Research**: Fetches keyword suggestions and trend data, with optional integration for real search volume and CPC metrics.
 - **SERP Analysis**: Extracts data from Search Engine Results Pages for given keywords, with enhanced rich feature detection.
 - **Full SEO Audit**: A higher-level job type that orchestrates multiple audit tasks (e.g., technical audit, link health audit) for a given set of URLs.
-- **Export Capabilities**: JSON (via API).
+- **Export Capabilities**: JSON (via API) and CSV for various data types.
 - **Historical Tracking**: Domain and link profile changes over time (basic persistence).
 
 ### 🚀 **RESTful API**
@@ -54,7 +57,7 @@ link_profiler/
 ├── core/                   # Core data models and schemas
 │   └── models.py          # Domain, URL, Backlink, LinkProfile models
 ├── crawlers/              # Web crawling engines
-│   ├── web_crawler.py     # Main crawler with rate limiting
+│   ├── web_crawler.py     # Main crawler with rate limiting, proxy, anti-detection
 │   ├── link_extractor.py  # Extracts links from HTML
 │   ├── content_parser.py  # Extracts SEO metrics from content
 │   ├── robots_parser.py   # Handles robots.txt fetching and parsing
@@ -62,14 +65,15 @@ link_profiler/
 │   ├── keyword_scraper.py # Keyword suggestion and trends scraping
 │   └── technical_auditor.py # Lighthouse integration for technical audits
 ├── services/              # Business logic layer
-│   ├── crawl_service.py           # Crawling orchestration
+│   ├── crawl_service.py           # Crawling orchestration, backlink filtering
 │   ├── domain_service.py          # Domain information retrieval
 │   ├── backlink_service.py        # Backlink API integration
 │   ├── domain_analyzer_service.py # Domain value analysis
 │   ├── expired_domain_finder_service.py # Expired domain discovery
 │   ├── serp_service.py            # SERP data service
 │   ├── keyword_service.py         # Keyword research service
-│   └── link_health_service.py     # Link health auditing
+│   ├── link_health_service.py     # Link health auditing
+│   └── ai_service.py              # AI integration for content/domain analysis
 ├── database/              # Data persistence layer
 │   ├── database.py        # SQLAlchemy ORM for PostgreSQL
 │   ├── models.py          # SQLAlchemy ORM models
@@ -85,6 +89,12 @@ link_profiler/
 │   └── satellite_crawler.py # Lightweight worker for executing jobs
 ├── scripts/               # Utility scripts (e.g., local startup)
 ├── config/                # Configuration files
+├── utils/                 # General utilities (logging, user agents, proxies, content validation)
+│   ├── logging_config.py
+│   ├── user_agent_manager.py
+│   ├── proxy_manager.py
+│   ├── content_validator.py
+│   └── data_exporter.py
 └── setup.py              # Project setup and dependencies
 ```
 
@@ -93,34 +103,37 @@ link_profiler/
 #### **Core Models** (`core/models.py`)
 - **Domain**: Authority scores, trust metrics, spam detection.
 - **URL**: Status tracking, metadata, crawl information.
-- **Backlink**: Source/target mapping, anchor text, link types.
+- **Backlink**: Source/target mapping, anchor text, link types, enriched with source domain metrics.
 - **LinkProfile**: Aggregated metrics and analysis results.
-- **CrawlJob**: Job status, progress tracking, error handling, dead-letter queue integration.
-- **SEOMetrics**: Detailed on-page SEO, performance, and accessibility metrics.
+- **CrawlJob**: Job status, progress tracking, error handling, dead-letter queue integration, scheduling.
+- **SEOMetrics**: Detailed on-page SEO, performance, accessibility, structured data, social meta, and content validation issues.
 - **SERPResult**: Structured data for search engine results.
 - **KeywordSuggestion**: Structured data for keyword research.
 
 #### **Web Crawler** (`crawlers/web_crawler.py`)
 - Async HTTP client with connection pooling.
 - Intelligent robots.txt parsing and compliance.
-- Rate limiting with per-domain tracking.
+- Adaptive rate limiting with per-domain tracking.
 - Content extraction and link discovery.
 - Error handling and retry logic.
+- Integrates `UserAgentManager` for dynamic headers and `ProxyManager` for IP rotation.
+- Uses `ContentValidator` for post-crawl content quality checks.
 
 #### **Specialised Crawlers/Auditors**
-- **SERPCrawler**: Uses Playwright to drive a headless browser for accurate SERP data extraction, with refined rich feature detection.
+- **SERPCrawler**: Uses Playwright to drive a headless browser for accurate SERP data extraction, with refined rich feature detection and anti-detection measures.
 - **KeywordScraper**: Scrapes public keyword suggestion APIs (Google Autocomplete, Bing Suggest) and integrates with Pytrends for trend data.
 - **TechnicalAuditor**: Wraps Google Lighthouse CLI to perform comprehensive technical SEO audits (performance, accessibility, best practices).
 
 #### **Business Services**
-- **CrawlService**: Orchestrates all types of crawling jobs, manages their state, and persists results.
+- **CrawlService**: Orchestrates all types of crawling jobs, manages their state, persists results, and applies backlink quality filtering.
 - **DomainService**: Handles WHOIS lookups and availability checks (supports simulated, AbstractAPI, and real API clients).
 - **BacklinkService**: Integrates with external backlink data providers (simulated, OpenLinkProfiler, GSC, or paid APIs).
-- **DomainAnalyzerService**: Evaluates domain value and potential.
+- **DomainAnalyzerService**: Evaluates domain value and potential, leveraging AI insights.
 - **ExpiredDomainFinderService**: Discovers valuable expired domains.
 - **LinkHealthService**: Audits outgoing links for brokenness (4xx/5xx errors).
 - **SERPService**: Provides an interface for fetching SERP data, prioritising the Playwright crawler or falling back to API clients.
 - **KeywordService**: Provides an interface for fetching keyword research data, prioritising the scraper or falling back to API clients, with optional integration for real search volume and CPC metrics.
+- **AIService**: Integrates with OpenRouter for AI-powered content scoring, content gap analysis, semantic keyword suggestions, technical SEO analysis, competitor analysis, and domain value analysis.
 
 #### **Data Persistence** (`database/`)
 - **PostgreSQL Database**: Used for structured storage of all crawl data, link profiles, and domain information.
@@ -130,7 +143,7 @@ link_profiler/
 
 #### **Distributed Queue System** (`queue_system/`)
 - **Redis**: Acts as the central message broker for job queues, results, and heartbeats.
-- **JobCoordinator**: The central brain that manages job submission, tracks job status (from DB), and monitors satellite health.
+- **JobCoordinator**: The central brain that manages job submission, tracks job status (from DB), monitors satellite health, and processes scheduled jobs.
 - **SatelliteCrawler**: Lightweight, independent worker processes that consume jobs from Redis, execute crawls/audits, and push results back.
 
 #### **Monitoring** (`monitoring/`)
@@ -145,7 +158,7 @@ link_profiler/
 - 4GB+ RAM recommended for large crawls
 - Stable internet connection
 - **Docker and Docker Compose**: Recommended for easy setup of PostgreSQL, Redis, and the distributed components.
-- **Node.js and npm**: Required for Lighthouse CLI (installed within Dockerfile.coordinator).
+- **Node.js and npm**: Required for Lighthouse CLI (installed within Dockerfile.coordinator and Dockerfile.satellite).
 - **Playwright Browsers**: Chromium, Firefox, WebKit (installed within Dockerfile.coordinator and Dockerfile.satellite).
 
 ### **Quick Installation (using Docker Compose)**
@@ -381,7 +394,7 @@ Example environment variable: `LP_REDIS_URL=redis://my-redis-host:6379` would ov
     "max_pages": 1000,           # Maximum pages to crawl
     "delay_seconds": 1.0,        # Delay between requests to the same domain in seconds
     "timeout_seconds": 30,       # Timeout for HTTP requests in seconds
-    "user_agent": "LinkProfiler/1.0", # User-Agent string for the crawler
+    "user_agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)", # User-Agent string for the crawler
     "respect_robots_txt": true,  # Whether to respect robots.txt rules (can be overridden by LP_CRAWLER_RESPECT_ROBOTS_TXT)
     "follow_redirects": true,    # Whether to follow HTTP redirects
     "extract_images": true,      # Whether to extract image links
@@ -391,7 +404,13 @@ Example environment variable: `LP_REDIS_URL=redis://my-redis-host:6379` would ov
     "blocked_domains": [],       # List of domains explicitly blocked from crawling.
     "custom_headers": {},        # Custom HTTP headers to send with requests.
     "max_retries": 3,            # Maximum number of retries for failed URL fetches.
-    "retry_delay_seconds": 5.0   # Delay between retries in seconds.
+    "retry_delay_seconds": 5.0,  # Delay between retries in seconds.
+    "user_agent_rotation": false, # Whether to rotate user agents from a pool.
+    "request_header_randomization": false, # Whether to randomize other request headers (Accept, Accept-Language, etc.).
+    "human_like_delays": false,  # Whether to add small random delays to mimic human browsing behavior.
+    "stealth_mode": true,        # Whether to enable Playwright stealth mode for browser-based crawling.
+    "use_proxies": false,        # Whether to use proxies for crawling.
+    "proxy_list": []             # List of proxy URLs (e.g., 'http://user:pass@ip:port').
 }
 ```
 
@@ -435,28 +454,83 @@ Example environment variable: `LP_REDIS_URL=redis://my-redis-host:6379` would ov
 -   **500**: Internal server error (check logs for details).
 -   **503**: Service unavailable (server overloaded).
 
-## Contributing
+## 🏁 Roadmap & Future Enhancements
 
-Contributions are welcome! Please feel free to open issues or submit pull requests.
+The project has a solid foundation with core crawling, link analysis, and domain assessment capabilities. Future development will focus on enhancing these features, improving scalability, and integrating with real-world data sources.
 
-## License
+### **Completed (from previous roadmap)**
+- **Comprehensive Error Reporting**: `CrawlJob`'s `error_log` now captures structured error details, and a retry mechanism for failed URLs is implemented.
+- **Distributed Crawling Architecture**: Implemented using Redis queues, JobCoordinator, and SatelliteCrawlers.
+- **Real-time Monitoring & Alerts**: Prometheus metrics and a basic monitoring dashboard are in place.
+- **Technical SEO Audits**: Integrated with Google Lighthouse.
+- **SERP Analysis**: Implemented with Playwright and API clients.
+- **Keyword Research**: Implemented with a scraper and API clients.
+- **Full SEO Audit**: Orchestrates technical and link health audits.
+- **AI Integration**: For content scoring, domain value analysis, etc.
+- **Proxy Management**: Implemented rotation and blacklisting.
+- **Content Validation**: Implemented checks for bot detection and content completeness.
+- **Export Capabilities**: CSV export for various data types.
 
-This project is licensed under the MIT License.
+### **Immediate Next Steps (High Priority)**
 
-## Support & Community
+1.  **User Interface / Dashboard Enhancements**:
+    *   Develop a more interactive web-based UI to visualise crawl progress, link profiles, and domain analysis results.
+    *   Allow direct submission of jobs and configuration changes from the UI.
+2.  **Competitor Backlink Analysis**:
+    *   Add API endpoints and logic to perform link intersect analysis (find common backlinks between domains) and unique backlink discovery.
 
-### Getting Help
-1.  **Documentation**: Check this README and API docs first.
-2.  **Issues**: Create GitHub issues for bugs and feature requests.
-3.  **Discussions**: Use GitHub Discussions for questions and ideas.
-4.  **Code Review**: Submit pull requests for improvements.
+### **Mid-Term Enhancements**
 
-### Best Practices
--   Start with small test crawls before large operations.
--   Monitor system resources during intensive operations.
--   Respect website terms of service and robots.txt.
--   Use appropriate delays to avoid overwhelming target servers.
--   Keep backups of important crawl data.
+1.  **Advanced Machine Learning for Link Quality**:
+    *   Develop more sophisticated ML models to predict link quality, spam likelihood, and domain value based on a wider array of features and historical data.
+2.  **Advanced Reporting & Export**:
+    *   Generate professional PDF reports, Excel spreadsheets, and other custom export formats for analysis results.
+3.  **Authentication & User Management**:
+    *   Add API key management and user authentication for secure access to the system.
+4.  **Scalability Optimizations**:
+    *   Further optimize database queries and data handling for extremely large datasets.
+    *   Explore advanced load balancing and auto-scaling strategies for Kubernetes deployments.
+
+## 🤝 Contributing
+
+We welcome contributions! Please feel free to open issues or submit pull requests.
+
+### **Development**
+- Additional link analysis algorithms
+- New domain scoring models  
+- Performance optimizations
+- Bug fixes and stability improvements
+
+### **Documentation**
+- API usage examples
+- Tutorial content
+- Architecture documentation
+- Troubleshooting guides
+
+### **Testing**
+- Unit test coverage
+- Integration tests
+- Performance benchmarking
+- Edge case testing
+
+## 📄 License
+
+This project is open source and available under the MIT License. 
+
+## 🆘 Support & Community
+
+### **Getting Help**
+1.  **Documentation**: Check this README and API docs first
+2.  **Issues**: Create GitHub issues for bugs and feature requests
+3.  **Discussions**: Use GitHub Discussions for questions and ideas
+4.  **Code Review**: Submit pull requests for improvements
+
+### **Best Practices**
+- Start with small test crawls before large operations
+- Monitor system resources during intensive operations
+- Respect website terms of service and robots.txt
+- Use appropriate delays to avoid overwhelming target servers
+- Keep backups of important crawl data
 
 ---
 
