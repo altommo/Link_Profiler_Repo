@@ -54,6 +54,7 @@ from Link_Profiler.monitoring.prometheus_metrics import (
 from Link_Profiler.api.queue_endpoints import add_queue_endpoints, submit_crawl_to_queue, QueueCrawlRequest # Import the function to add queue endpoints and submit_crawl_to_queue
 from Link_Profiler.config.config_loader import ConfigLoader # Import the ConfigLoader class
 from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config # New: Import logging setup
+from Link_Profiler.utils.data_exporter import export_to_csv # New: Import data_exporter
 
 # Initialize and load config once using the absolute path
 config_loader = ConfigLoader()
@@ -167,7 +168,7 @@ technical_auditor_instance = TechnicalAuditor(
 ai_service_instance = AIService()
 
 # Initialize DomainAnalyzerService (depends on DomainService)
-domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
+domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance, ai_service_instance)
 
 # Initialize CrawlService (will be used by SatelliteCrawler, not directly by API endpoints for job creation)
 # This instance is primarily for the lifespan management of its internal services.
