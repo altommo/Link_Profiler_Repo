@@ -16,14 +16,16 @@ import sys
 import os
 
 # Add project root to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from Link_Profiler.database.database import Database # Import Database
-from Link_Profiler.core.models import CrawlJob, CrawlStatus # Import CrawlJob model and CrawlStatus
+from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain # Import CrawlJob model and CrawlStatus, and new models
 from Link_Profiler.config.config_loader import config_loader # Import config_loader
 
 app = FastAPI(title="Link Profiler Monitor")
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "templates")) # Corrected and robust path to templates
 
 class MonitoringDashboard:
     def __init__(self, redis_url: str = "redis://localhost:6379"):
@@ -31,6 +33,7 @@ class MonitoringDashboard:
         self.redis = redis.Redis(connection_pool=self.redis_pool)
         self.db = Database() # Initialize database connection for job history
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600) # Default to 1 hour
+        self.logger = logging.getLogger(__name__)
 
     async def get_queue_metrics(self) -> Dict:
         """Get comprehensive queue metrics"""
@@ -56,7 +59,7 @@ class MonitoringDashboard:
                     hb['last_seen'] = datetime.fromtimestamp(timestamp)
                     satellites.append(hb)
                 except json.JSONDecodeError:
-                    logging.warning(f"Failed to decode heartbeat data: {heartbeat_data}")
+                    self.logger.warning(f"Failed to decode heartbeat data: {heartbeat_data}")
                     continue
             
             return {
@@ -68,7 +71,7 @@ class MonitoringDashboard:
             }
             
         except Exception as e:
-            logging.error(f"Error getting queue metrics: {e}", exc_info=True)
+            self.logger.error(f"Error getting queue metrics: {e}", exc_info=True)
             return {"error": str(e), "timestamp": datetime.now()}
     
     async def get_job_history(self, limit: int = 50) -> List[Dict]:
@@ -97,7 +100,7 @@ class MonitoringDashboard:
                 })
             return history_data
         except Exception as e:
-            logging.error(f"Error getting job history: {e}", exc_info=True)
+            self.logger.error(f"Error getting job history: {e}", exc_info=True)
             return []
     
     async def get_performance_stats(self) -> Dict:
@@ -158,12 +161,55 @@ class MonitoringDashboard:
                 "avg_job_duration": round(avg_job_duration, 2),
                 "success_rate": round(success_rate, 1),
                 "peak_satellites": active_satellites, # Using current active as a proxy for peak for now
-                "current_load": round(current_load, 2)
+                "current_load": round(current_load, 2),
+                "performance_window_seconds": self.performance_window_seconds # Pass window size for display
             }
             
         except Exception as e:
-            logging.error(f"Error getting performance stats: {e}", exc_info=True)
+            self.logger.error(f"Error getting performance stats: {e}", exc_info=True)
             return {"error": str(e)}
+
+    async def get_data_summaries(self) -> Dict:
+        """
+        Get summary statistics for various data types stored in the database.
+        """
+        try:
+            # Total Link Profiles
+            all_link_profiles = self.db.get_all_link_profiles()
+            total_link_profiles = len(all_link_profiles)
+            avg_link_profile_authority = sum(lp.authority_score for lp in all_link_profiles) / total_link_profiles if total_link_profiles > 0 else 0.0
+
+            # Total Domains Analyzed & Valuable Expired Domains
+            all_domains = self.db.get_all_domains()
+            total_domains_analyzed = len(all_domains)
+            # Assuming 'is_valuable' might be a property or derived from spam_score/authority_score
+            valuable_expired_domains = len([d for d in all_domains if d.spam_score < 0.2 and d.authority_score > 30]) # Example heuristic
+
+            # Competitive Keyword Analyses
+            competitive_keyword_analyses = self.db.get_count_of_competitive_keyword_analyses()
+            
+            # Total Backlinks Stored
+            total_backlinks_stored = len(self.db.get_all_backlinks())
+
+            return {
+                "total_link_profiles": total_link_profiles,
+                "avg_link_profile_authority": avg_link_profile_authority,
+                "total_domains_analyzed": total_domains_analyzed,
+                "valuable_expired_domains": valuable_expired_domains,
+                "competitive_keyword_analyses": competitive_keyword_analyses,
+                "total_backlinks_stored": total_backlinks_stored
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting data summaries: {e}", exc_info=True)
+            return {
+                "total_link_profiles": "N/A",
+                "avg_link_profile_authority": "N/A",
+                "total_domains_analyzed": "N/A",
+                "valuable_expired_domains": "N/A",
+                "competitive_keyword_analyses": "N/A",
+                "total_backlinks_stored": "N/A"
+            }
+
 
 # Global dashboard instance
 dashboard = MonitoringDashboard()
@@ -176,12 +222,14 @@ async def monitoring_home(request: Request):
     queue_metrics = await dashboard.get_queue_metrics()
     job_history = await dashboard.get_job_history(config_loader.get("monitoring.max_job_history", 50))
     performance_stats = await dashboard.get_performance_stats()
+    data_summaries = await dashboard.get_data_summaries() # New: Fetch data summaries
     
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "queue_metrics": queue_metrics,
         "job_history": job_history,
         "performance_stats": performance_stats,
+        "data_summaries": data_summaries, # Pass data summaries to template
         "refresh_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
@@ -190,10 +238,12 @@ async def get_metrics_api():
     """API endpoint for metrics (for external monitoring)"""
     queue_metrics = await dashboard.get_queue_metrics()
     performance_stats = await dashboard.get_performance_stats()
+    data_summaries = await dashboard.get_data_summaries() # New: Fetch data summaries
     
     return {
         **queue_metrics,
-        **performance_stats
+        **performance_stats,
+        **data_summaries # Include data summaries in API metrics
     }
 
 @app.get("/api/satellites")

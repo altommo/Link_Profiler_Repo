@@ -353,6 +353,18 @@ class Database:
         finally:
             session.close()
 
+    def get_all_link_profiles(self) -> List[LinkProfile]:
+        """Retrieves all link profiles from the database."""
+        session = self._get_session()
+        try:
+            orm_profiles = session.query(LinkProfileORM).all()
+            return [self._to_dataclass(lp) for lp in orm_profiles]
+        except Exception as e:
+            logger.error(f"Error retrieving all link profiles: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
     def add_crawl_job(self, job: CrawlJob) -> None:
         """Adds a new crawl job to the database."""
         session = self._get_session()
@@ -466,6 +478,18 @@ class Database:
         except Exception as e:
             logger.error(f"Error retrieving domain {name}: {e}", exc_info=True)
             return None
+        finally:
+            session.close()
+
+    def get_all_domains(self) -> List[Domain]:
+        """Retrieves all domains from the database."""
+        session = self._get_session()
+        try:
+            orm_domains = session.query(DomainORM).all()
+            return [self._to_dataclass(d) for d in orm_domains]
+        except Exception as e:
+            logger.error(f"Error retrieving all domains: {e}", exc_info=True)
+            return []
         finally:
             session.close()
 
@@ -731,6 +755,21 @@ class Database:
         except Exception as e:
             logger.error(f"Error retrieving ranked keywords for domains {domains}: {e}", exc_info=True)
             return {domain: set() for domain in domains} # Return empty sets on error
+        finally:
+            session.close()
+
+    def get_count_of_competitive_keyword_analyses(self) -> int:
+        """
+        Retrieves the count of competitive keyword analysis jobs that have been completed.
+        This is a placeholder and assumes 'competitive_keyword_analysis' is a job_type.
+        """
+        session = self._get_session()
+        try:
+            count = session.query(CrawlJobORM).filter_by(job_type='competitive_keyword_analysis', status='completed').count()
+            return count
+        except Exception as e:
+            logger.error(f"Error getting count of competitive keyword analyses: {e}", exc_info=True)
+            return 0
         finally:
             session.close()
 
