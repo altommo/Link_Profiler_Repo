@@ -4,7 +4,7 @@ File: core/models.py
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set, Union, Any # Added Any
+from typing import List, Dict, Optional, Set, Union, Any
 from datetime import datetime
 from enum import Enum
 from urllib.parse import urlparse
@@ -35,8 +35,8 @@ class CrawlStatus(Enum):
     """Status of crawling operations"""
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
-    PAUSED = "paused" # Added PAUSED status
-    STOPPED = "stopped" # Added STOPPED status
+    PAUSED = "paused"
+    STOPPED = "stopped"
     COMPLETED = "completed"
     FAILED = "failed"
     TIMEOUT = "timeout"
@@ -217,6 +217,37 @@ class Backlink:
         data.pop('source_domain', None)
         data.pop('target_domain', None)
 
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+
+@dataclass
+class CrawlResult:
+    """Result of a single page crawl"""
+    url: str
+    status_code: int
+    content: str = ""
+    headers: Dict[str, str] = field(default_factory=dict)
+    links_found: List[Backlink] = field(default_factory=list)
+    redirect_url: Optional[str] = None
+    error_message: Optional[str] = None
+    crawl_time_ms: int = 0
+    content_type: str = "text/html"
+    seo_metrics: Optional['SEOMetrics'] = None # Use forward reference as SEOMetrics is defined later
+    crawl_timestamp: Optional[datetime] = None
+    validation_issues: List[str] = field(default_factory=list)
+    anomaly_flags: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'CrawlResult':
+        if 'crawl_timestamp' in data and isinstance(data['crawl_timestamp'], str):
+            data['crawl_timestamp'] = datetime.fromisoformat(data['crawl_timestamp'])
+        if 'links_found' in data and isinstance(data['links_found'], list):
+            data['links_found'] = [Backlink.from_dict(bl_data) for bl_data in data['links_found']]
+        if 'seo_metrics' in data and isinstance(data['seo_metrics'], dict):
+            data['seo_metrics'] = SEOMetrics.from_dict(data['seo_metrics'])
+        
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered_data)

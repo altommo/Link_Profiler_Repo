@@ -20,7 +20,7 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
-    CrawlJob, ContentType, serialize_model, SEOMetrics
+    CrawlJob, ContentType, serialize_model, SEOMetrics, CrawlResult # Import CrawlResult
 )
 from Link_Profiler.database.database import Database
 from .link_extractor import LinkExtractor
@@ -124,24 +124,6 @@ class AdaptiveRateLimiter:
             await asyncio.sleep(wait_time)
         
         self.last_request_time[domain] = time.time()
-
-
-@dataclass
-class CrawlResult:
-    """Result of a single page crawl"""
-    url: str
-    status_code: int
-    content: str = ""
-    headers: Dict[str, str] = field(default_factory=dict)
-    links_found: List[Backlink] = field(default_factory=list)
-    redirect_url: Optional[str] = None
-    error_message: Optional[str] = None
-    crawl_time_ms: int = 0
-    content_type: str = "text/html"
-    seo_metrics: Optional[SEOMetrics] = None
-    crawl_timestamp: Optional[datetime] = None
-    validation_issues: List[str] = field(default_factory=list)
-    anomaly_flags: List[str] = field(default_factory=list)
 
 
 class WebCrawler:
