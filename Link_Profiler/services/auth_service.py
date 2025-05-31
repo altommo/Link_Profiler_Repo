@@ -5,7 +5,7 @@ File: Link_Profiler/services/auth_service.py
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict, Any # Added Dict, Any
 import uuid
 
 from passlib.context import CryptContext # For password hashing
