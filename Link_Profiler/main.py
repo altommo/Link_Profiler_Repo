@@ -65,7 +65,8 @@ db = Database()
 # Initialize Redis connection pool and client
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
 redis_pool = redis.ConnectionPool.from_url(redis_url)
-redis_client = redis.Redis(connection_pool=redis_pool)
+redis_client: Optional[redis.Redis] = redis.Redis(connection_pool=redis_pool) # Make redis_client optional
+
 
 # Initialize ClickHouse Loader conditionally
 clickhouse_loader_instance: Optional[ClickHouseLoader] = None
@@ -152,7 +153,7 @@ crawl_service = CrawlService(
     keyword_service=keyword_service_instance,
     link_health_service=link_health_service_instance,
     clickhouse_loader=clickhouse_loader_instance, # Pass the potentially None instance
-    redis_client=redis_client,
+    redis_client=redis_client, # Pass the potentially None instance
     technical_auditor=technical_auditor_instance
 ) 
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
@@ -195,11 +196,16 @@ async def lifespan(app: FastAPI):
             entered_contexts.append(await cm.__aenter__())
         
         logger.info("Application startup: Pinging Redis.")
-        try:
-            await redis_client.ping()
-            logger.info("Redis connection successful.")
-        except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
+        global redis_client # Declare intent to modify global variable
+        if redis_client: # Only try to ping if client was initialized
+            try:
+                await redis_client.ping()
+                logger.info("Redis connection successful.")
+            except Exception as e:
+                logger.error(f"Failed to connect to Redis: {e}")
+                redis_client = None # Set to None if connection fails
+        else:
+            logger.warning("Redis client not initialized. Skipping Redis ping.")
         
         yield # This is the single yield point for the lifespan
 
@@ -210,8 +216,9 @@ async def lifespan(app: FastAPI):
             # Pass None, None, None for exc_type, exc_val, exc_tb as we're handling exceptions outside
             await cm.__aexit__(None, None, None)
         
-        logger.info("Application shutdown: Closing Redis connection pool.")
-        await redis_pool.disconnect()
+        if redis_pool: # Only try to disconnect if pool was created
+            logger.info("Application shutdown: Closing Redis connection pool.")
+            await redis_pool.disconnect()
 
 
 app = FastAPI(

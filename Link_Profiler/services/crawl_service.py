@@ -47,7 +47,7 @@ class CrawlService:
         keyword_service: KeywordService,
         link_health_service: LinkHealthService,
         clickhouse_loader: Optional[ClickHouseLoader], # Made optional
-        redis_client: redis.Redis,
+        redis_client: Optional[redis.Redis], # Made optional
         technical_auditor: TechnicalAuditor
     ):
         self.db = database
@@ -59,7 +59,7 @@ class CrawlService:
         self.keyword_service = keyword_service
         self.link_health_service = link_health_service
         self.clickhouse_loader = clickhouse_loader # Store the loader instance
-        self.redis = redis_client
+        self.redis = redis_client # Store the Redis client instance (can be None)
         self.technical_auditor = technical_auditor
         self.deduplication_set_key = "processed_backlinks_dedup"
 
@@ -69,14 +69,22 @@ class CrawlService:
         using a Redis set for deduplication.
         Returns True if it's a duplicate (already in set), False otherwise.
         """
-        backlink_id = f"{source_url}|{target_url}"
-        is_new = await self.redis.sadd(self.deduplication_set_key, backlink_id)
+        if not self.redis:
+            self.logger.warning("Redis client not available for deduplication. Skipping backlink deduplication.")
+            return False # Treat as not a duplicate if deduplication is disabled
         
-        if is_new == 0:
-            self.logger.debug(f"Duplicate backlink detected: {source_url} -> {target_url}")
-            return True
-        else:
-            return False
+        try:
+            backlink_id = f"{source_url}|{target_url}"
+            is_new = await self.redis.sadd(self.deduplication_set_key, backlink_id)
+            
+            if is_new == 0:
+                self.logger.debug(f"Duplicate backlink detected: {source_url} -> {target_url}")
+                return True
+            else:
+                return False
+        except Exception as e:
+            self.logger.error(f"Error during Redis deduplication for {source_url} -> {target_url}: {e}. Skipping deduplication for this link.", exc_info=True)
+            return False # If Redis operation fails, treat as not a duplicate to allow processing
 
     async def create_and_start_crawl_job(
         self, 
