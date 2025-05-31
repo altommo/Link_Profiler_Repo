@@ -13,6 +13,8 @@ from urllib.parse import urlparse
 import json
 import redis.asyncio as redis
 
+from playwright.async_api import Browser # New: Import Playwright Browser type
+
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
     CrawlJob, ContentType, serialize_model, SEOMetrics, SpamLevel, CrawlError,
@@ -27,11 +29,11 @@ from Link_Profiler.services.backlink_service import BacklinkService
 from Link_Profiler.services.serp_service import SERPService
 from Link_Profiler.services.keyword_service import KeywordService
 from Link_Profiler.services.link_health_service import LinkHealthService
-from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Import DomainAnalyzerService
-from Link_Profiler.services.ai_service import AIService # Import AIService
-from Link_Profiler.utils.content_validator import ContentValidator # New: Import ContentValidator
-from Link_Profiler.utils.anomaly_detector import anomaly_detector # New: Import AnomalyDetector
-from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
+from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
+from Link_Profiler.services.ai_service import AIService
+from Link_Profiler.utils.content_validator import ContentValidator
+from Link_Profiler.utils.anomaly_detector import anomaly_detector
+from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.monitoring.prometheus_metrics import (
     JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL,
     CRAWLED_URLS_TOTAL, BACKLINKS_FOUND_TOTAL, JOB_ERRORS_TOTAL
@@ -51,11 +53,12 @@ class CrawlService:
         serp_service: SERPService,
         keyword_service: KeywordService,
         link_health_service: LinkHealthService,
-        clickhouse_loader: Optional[ClickHouseLoader], # Made optional
-        redis_client: Optional[redis.Redis], # Made optional
+        clickhouse_loader: Optional[ClickHouseLoader],
+        redis_client: Optional[redis.Redis],
         technical_auditor: TechnicalAuditor,
-        domain_analyzer_service: DomainAnalyzerService, # Add DomainAnalyzerService
-        ai_service: AIService # Add AIService
+        domain_analyzer_service: DomainAnalyzerService,
+        ai_service: AIService,
+        playwright_browser: Optional[Browser] = None # New: Accept playwright_browser
     ):
         self.db = database
         self.logger = logging.getLogger(__name__)
@@ -65,14 +68,15 @@ class CrawlService:
         self.serp_service = serp_service
         self.keyword_service = keyword_service
         self.link_health_service = link_health_service
-        self.clickhouse_loader = clickhouse_loader # Store the loader instance
-        self.redis = redis_client # Store the Redis client instance (can be None)
+        self.clickhouse_loader = clickhouse_loader
+        self.redis = redis_client
         self.technical_auditor = technical_auditor
-        self.domain_analyzer_service = domain_analyzer_service # Store DomainAnalyzerService
-        self.ai_service = ai_service # Store AIService
-        self.content_validator = ContentValidator() # New: Initialize ContentValidator
+        self.domain_analyzer_service = domain_analyzer_service
+        self.ai_service = ai_service
+        self.content_validator = ContentValidator()
         self.deduplication_set_key = "processed_backlinks_dedup"
         self.dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
+        self.playwright_browser = playwright_browser # New: Store playwright_browser
 
     async def _is_duplicate_backlink(self, source_url: str, target_url: str) -> bool:
         """
@@ -82,7 +86,7 @@ class CrawlService:
         """
         if not self.redis:
             self.logger.warning("Redis client not available for deduplication. Skipping backlink deduplication.")
-            return False # Treat as not a duplicate if deduplication is disabled
+            return False
         
         try:
             backlink_id = f"{source_url}|{target_url}"
@@ -95,7 +99,7 @@ class CrawlService:
                 return False
         except Exception as e:
             self.logger.error(f"Error during Redis deduplication for {source_url} -> {target_url}: {e}. Skipping deduplication for this link.", exc_info=True)
-            return False # If Redis operation fails, treat as not a duplicate to allow processing
+            return False
 
     async def _send_to_dead_letter_queue(self, job: CrawlJob, error_message: str):
         """Sends a failed job's details to a Redis dead-letter queue."""
@@ -122,9 +126,9 @@ class CrawlService:
         num_results: Optional[int] = None,
         source_urls_to_audit: Optional[List[str]] = None,
         urls_to_audit_tech: Optional[List[str]] = None,
-        domain_names_to_analyze: Optional[List[str]] = None, # New parameter
-        min_value_score: Optional[float] = None, # New parameter
-        limit: Optional[int] = None, # New parameter
+        domain_names_to_analyze: Optional[List[str]] = None,
+        min_value_score: Optional[float] = None,
+        limit: Optional[int] = None,
         config: Optional[CrawlConfig] = None
     ) -> CrawlJob:
         """
@@ -150,11 +154,9 @@ class CrawlService:
         if config is None:
             config = CrawlConfig()
 
-        # Make respect_robots_txt configurable via environment variable
         respect_robots_txt_env = os.getenv("RESPECT_ROBOTS_TXT", "true").lower()
         config.respect_robots_txt = respect_robots_txt_env == "true"
 
-        # Ensure target domain is in allowed domains if specified for crawl jobs
         if job_type == 'backlink_discovery' and target_url:
             parsed_target_domain = urlparse(target_url).netloc
             if config.allowed_domains and parsed_target_domain not in config.allowed_domains:
@@ -169,9 +171,8 @@ class CrawlService:
         )
         self.db.add_crawl_job(job)
         self.logger.info(f"Created {job_type} job {job_id} for {job.target_url}")
-        JOBS_PENDING.labels(job_type=job_type).inc() # Increment pending jobs metric
+        JOBS_PENDING.labels(job_type=job_type).inc()
 
-        # Dispatch to appropriate runner based on job_type
         if job_type == 'backlink_discovery':
             if not initial_seed_urls or not target_url:
                 raise ValueError("initial_seed_urls and target_url must be provided for 'backlink_discovery' job type.")
@@ -179,7 +180,7 @@ class CrawlService:
         elif job_type == 'serp_analysis':
             if not keyword:
                 raise ValueError("keyword must be provided for 'serp_analysis' job type.")
-            asyncio.create_task(self._run_serp_analysis_job(job, keyword, num_results))
+            asyncio.create_task(self._run_serp_analysis_job(job, keyword, num_results, config))
         elif job_type == 'keyword_research':
             if not keyword:
                 raise ValueError("keyword must be provided for 'keyword_research' job type.")
@@ -192,12 +193,12 @@ class CrawlService:
             if not urls_to_audit_tech:
                 raise ValueError("urls_to_audit_tech must be provided for 'technical_audit' job type.")
             asyncio.create_task(self._run_technical_audit_job(job, urls_to_audit_tech, config))
-        elif job_type == 'domain_analysis': # New job type dispatch
+        elif job_type == 'domain_analysis':
             if not domain_names_to_analyze:
                 raise ValueError("domain_names_to_analyze must be provided for 'domain_analysis' job type.")
             asyncio.create_task(self._run_domain_analysis_job(job, domain_names_to_analyze, min_value_score, limit))
-        elif job_type == 'full_seo_audit': # New job type dispatch
-            if not urls_to_audit_tech: # Re-using urls_to_audit_tech for full SEO audit target URLs
+        elif job_type == 'full_seo_audit':
+            if not urls_to_audit_tech:
                 raise ValueError("urls_to_audit_full_seo must be provided for 'full_seo_audit' job type.")
             asyncio.create_task(self._run_full_seo_audit_job(job, urls_to_audit_tech, config))
         else:
@@ -213,18 +214,16 @@ class CrawlService:
         num_results: Optional[int] = None,
         source_urls_to_audit: Optional[List[str]] = None,
         urls_to_audit_tech: Optional[List[str]] = None,
-        domain_names_to_analyze: Optional[List[str]] = None, # New parameter
-        min_value_score: Optional[float] = None, # New parameter
-        limit: Optional[int] = None # New parameter
+        domain_names_to_analyze: Optional[List[str]] = None,
+        min_value_score: Optional[float] = None,
+        limit: Optional[int] = None
     ):
         """
         Executes a pre-defined CrawlJob object. This method is intended to be called
         by the JobCoordinator or SatelliteCrawler after a job is dequeued.
         """
-        # Deserialize config from job.config (which is a dict)
         config = CrawlConfig.from_dict(job.config)
 
-        # Update job status and metrics
         JOBS_PENDING.labels(job_type=job.job_type).dec()
         JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
 
@@ -234,50 +233,44 @@ class CrawlService:
         self.logger.info(f"Executing {job.job_type} job {job.id} for {job.target_url}")
 
         try:
-            # Reset anomaly detector history for a new job
             if config.anomaly_detection_enabled:
                 anomaly_detector.reset_history()
 
             if job.job_type == 'backlink_discovery':
-                # initial_seed_urls for backlink_discovery comes from job.config
                 initial_seed_urls_from_config = job.config.get("initial_seed_urls", [])
                 if not initial_seed_urls_from_config or not job.target_url:
                     raise ValueError("initial_seed_urls and target_url must be provided for 'backlink_discovery' job type.")
                 await self._run_backlink_crawl(job, initial_seed_urls_from_config, config)
             elif job.job_type == 'serp_analysis':
-                # keyword and num_results for serp_analysis come from job.config
                 keyword_from_config = job.config.get("keyword")
                 num_results_from_config = job.config.get("num_results")
                 if not keyword_from_config:
                     raise ValueError("keyword must be provided for 'serp_analysis' job type.")
-                await self._run_serp_analysis_job(job, keyword_from_config, num_results_from_config, config) # Pass config
+                await self._run_serp_analysis_job(job, keyword_from_config, num_results_from_config, config)
             elif job.job_type == 'keyword_research':
-                # seed_keyword and num_suggestions for keyword_research come from job.config
                 seed_keyword_from_config = job.config.get("seed_keyword")
                 num_suggestions_from_config = job.config.get("num_suggestions")
                 if not seed_keyword_from_config:
                     raise ValueError("seed_keyword must be provided for 'keyword_research' job type.")
                 await self._run_keyword_research_job(job, seed_keyword_from_config, num_suggestions_from_config)
             elif job.job_type == 'link_health_audit':
-                # source_urls_to_audit for link_health_audit comes from job.config
                 source_urls_to_audit_from_config = job.config.get("source_urls_to_audit", [])
                 if not source_urls_to_audit_from_config:
                     raise ValueError("source_urls_to_audit must be provided for 'link_health_audit' job type.")
                 await self._run_link_health_audit_job(job, source_urls_to_audit_from_config)
             elif job.job_type == 'technical_audit':
-                # urls_to_audit_tech for technical_audit comes from job.config
                 urls_to_audit_tech_from_config = job.config.get("urls_to_audit_tech", [])
                 if not urls_to_audit_tech_from_config:
                     raise ValueError("urls_to_audit_tech must be provided for 'technical_audit' job type.")
                 await self._run_technical_audit_job(job, urls_to_audit_tech_from_config, config)
-            elif job.job_type == 'domain_analysis': # New job type dispatch
+            elif job.job_type == 'domain_analysis':
                 domain_names_to_analyze_from_config = job.config.get("domain_names_to_analyze", [])
                 min_value_score_from_config = job.config.get("min_value_score")
                 limit_from_config = job.config.get("limit")
                 if not domain_names_to_analyze_from_config:
                     raise ValueError("domain_names_to_analyze must be provided for 'domain_analysis' job type.")
                 await self._run_domain_analysis_job(job, domain_names_to_analyze_from_config, min_value_score_from_config, limit_from_config)
-            elif job.job_type == 'full_seo_audit': # New job type dispatch
+            elif job.job_type == 'full_seo_audit':
                 urls_to_audit_full_seo = job.config.get("urls_to_audit_full_seo", [])
                 if not urls_to_audit_full_seo:
                     raise ValueError("urls_to_audit_full_seo must be provided for 'full_seo_audit' job type.")
@@ -321,41 +314,29 @@ class CrawlService:
             is_valid = True
             reasons_for_filtering = []
 
-            # Spam Filtering
             if spam_filtering_enabled:
-                # Define spam thresholds (these can be configurable)
                 if backlink.spam_level == SpamLevel.CONFIRMED_SPAM:
                     is_valid = False
                     reasons_for_filtering.append(f"Confirmed spam ({backlink.spam_level.value})")
-                elif backlink.spam_level == SpamLevel.LIKELY_SPAM and backlink.source_domain_metrics.get("spam_score", 0) > 40: # Example threshold
+                elif backlink.spam_level == SpamLevel.LIKELY_SPAM and backlink.source_domain_metrics.get("spam_score", 0) > 40:
                     is_valid = False
                     reasons_for_filtering.append(f"Likely spam ({backlink.spam_level.value}, score {backlink.source_domain_metrics.get('spam_score')})")
-                elif backlink.spam_level == SpamLevel.SUSPICIOUS and backlink.source_domain_metrics.get("spam_score", 0) > 70: # Higher threshold for suspicious
+                elif backlink.spam_level == SpamLevel.SUSPICIOUS and backlink.source_domain_metrics.get("spam_score", 0) > 70:
                     is_valid = False
                     reasons_for_filtering.append(f"Highly suspicious ({backlink.spam_level.value}, score {backlink.source_domain_metrics.get('spam_score')})")
 
-            # Data Quality Scoring (beyond just spam)
-            if data_quality_scoring_enabled and is_valid: # Only apply if not already filtered by spam
+            if data_quality_scoring_enabled and is_valid:
                 source_domain_authority = backlink.source_domain_metrics.get("authority_score", 0.0)
                 source_domain_trust = backlink.source_domain_metrics.get("trust_score", 0.0)
                 
-                # Example: Filter out links from very low authority domains
-                if source_domain_authority < 5.0: # Very low authority threshold
+                if source_domain_authority < 5.0:
                     is_valid = False
                     reasons_for_filtering.append(f"Very low source domain authority ({source_domain_authority:.1f})")
                 
-                # Example: Penalize or filter based on anchor text relevance (requires AI/NLP)
-                # For now, a placeholder:
-                # if not self.ai_service.is_anchor_text_relevant(backlink.anchor_text, backlink.target_url):
-                #     is_valid = False
-                #     reasons_for_filtering.append("Irrelevant anchor text")
-
             if is_valid:
                 filtered_backlinks.append(backlink)
             else:
                 self.logger.info(f"Filtered out backlink {backlink.source_url} -> {backlink.target_url}. Reasons: {', '.join(reasons_for_filtering)}")
-                # Optionally, add a CrawlError to the job for filtered links
-                # job.add_error(url=backlink.source_url, error_type="BacklinkFiltered", message=f"Backlink filtered: {', '.join(reasons_for_filtering)}")
 
         self.logger.info(f"Filtered {len(backlinks) - len(filtered_backlinks)} backlinks. {len(filtered_backlinks)} remaining after quality checks.")
         return filtered_backlinks
@@ -366,8 +347,8 @@ class CrawlService:
         """
         self.logger.info(f"Starting backlink crawl logic for job {job.id} for {job.target_url}")
 
-        # Pass db and job_id to WebCrawler for job control
-        crawler = WebCrawler(config, self.db, job.id)
+        # Pass playwright_browser to WebCrawler
+        crawler = WebCrawler(config, self.db, job.id, self.ai_service, playwright_browser=self.playwright_browser)
         self.active_crawlers[job.id] = crawler
 
         discovered_backlinks: List[Backlink] = []
@@ -388,7 +369,6 @@ class CrawlService:
                     if not await self._is_duplicate_backlink(bl.source_url, bl.target_url):
                         deduplicated_api_backlinks.append(bl)
                 
-                # New: Filter and score API backlinks
                 filtered_api_backlinks = await self._filter_and_score_backlinks(deduplicated_api_backlinks, config)
 
                 if filtered_api_backlinks:
@@ -396,7 +376,7 @@ class CrawlService:
                     job.links_found = len(discovered_backlinks)
                     try:
                         self.db.add_backlinks(filtered_api_backlinks)
-                        if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                        if self.clickhouse_loader:
                             await self.clickhouse_loader.bulk_insert_backlinks(filtered_api_backlinks)
                         BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(filtered_api_backlinks))
                         self.logger.info(f"Successfully added {len(filtered_api_backlinks)} new API backlinks to the database after filtering.")
@@ -418,8 +398,6 @@ class CrawlService:
                     crawled_urls_set = set()
 
                     while not urls_to_crawl_queue.empty() and urls_crawled_count < config.max_pages:
-                        # The WebCrawler's internal loop now handles pause/stop checks
-                        # No need to duplicate here.
                         
                         url, current_depth = await urls_to_crawl_queue.get()
 
@@ -432,7 +410,7 @@ class CrawlService:
                         crawled_urls_set.add(url)
                         urls_crawled_count += 1
                         job.urls_crawled = urls_crawled_count
-                        CRAWLED_URLS_TOTAL.labels(job_type=job.job_type).inc() # Increment crawled URLs metric
+                        CRAWLED_URLS_TOTAL.labels(job_type=job.job_type).inc()
 
                         self.logger.info(f"Crawling: {url} (Depth: {current_depth}, Crawled: {urls_crawled_count}/{config.max_pages})")
 
@@ -481,10 +459,9 @@ class CrawlService:
                                 job.add_error(url=crawl_result.url, error_type="FileWriteError", message=f"Error writing debug data: {str(e)}", details=str(e))
                                 JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="FileWriteError").inc()
 
-                            # Aggregate anomalies from crawl result to job
                             if crawl_result.anomaly_flags:
                                 job.anomalies_detected.extend(crawl_result.anomaly_flags)
-                                job.anomalies_detected = list(set(job.anomalies_detected)) # Deduplicate anomalies
+                                job.anomalies_detected = list(set(job.anomalies_detected))
 
                             if crawl_result.links_found:
                                 self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url} via crawl.")
@@ -494,7 +471,6 @@ class CrawlService:
                                     if not await self._is_duplicate_backlink(bl.source_url, bl.target_url):
                                         deduplicated_crawled_backlinks.append(bl)
 
-                                # New: Filter and score crawled backlinks
                                 filtered_crawled_backlinks = await self._filter_and_score_backlinks(deduplicated_crawled_backlinks, config)
 
                                 if filtered_crawled_backlinks:
@@ -502,7 +478,7 @@ class CrawlService:
                                     job.links_found = len(discovered_backlinks)
                                     try:
                                         self.db.add_backlinks(filtered_crawled_backlinks) 
-                                        if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                                        if self.clickhouse_loader:
                                             await self.clickhouse_loader.bulk_insert_backlinks(filtered_crawled_backlinks)
                                         BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(filtered_crawled_backlinks))
                                     except Exception as db_e:
@@ -514,13 +490,12 @@ class CrawlService:
                             
                             self.logger.debug(f"CrawlResult.seo_metrics for {crawl_result.url}: {crawl_result.seo_metrics}")
                             if crawl_result.seo_metrics:
-                                # Add validation issues to SEO metrics before saving
                                 if crawl_result.validation_issues:
                                     crawl_result.seo_metrics.validation_issues.extend(crawl_result.validation_issues)
-                                    crawl_result.seo_metrics.calculate_seo_score() # Recalculate score with new issues
+                                    crawl_result.seo_metrics.calculate_seo_score()
                                 try:
                                     self.db.save_seo_metrics(crawl_result.seo_metrics)
-                                    if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                                    if self.clickhouse_loader:
                                         await self.clickhouse_loader.bulk_insert_seo_metrics([crawl_result.seo_metrics])
                                     self.logger.info(f"Saved SEO metrics for {crawl_result.url}.")
                                 except Exception as seo_e:
@@ -548,7 +523,7 @@ class CrawlService:
                     job.results['target_domain_info'] = serialize_model(target_domain_obj)
                     self.logger.info(f"Saved domain info for {target_domain_name}.")
                 else:
-                    self.logger.warning(f"Could not retrieve domain info for target domain: {target_domain_name}.") # Improved logging
+                    self.logger.warning(f"Could not retrieve domain info for target domain: {target_domain_name}.")
                     job.add_error(url=target_domain_name, error_type="DomainInfoError", message=f"Could not retrieve domain info for target domain.", details="Domain info API returned None.")
                     JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DomainInfoError").inc()
 
@@ -569,7 +544,7 @@ class CrawlService:
                             self.db.save_domain(referring_domain_obj)
                             self.logger.info(f"Saved domain info for referring domain: {referring_domain_obj.name}.")
                         else:
-                            self.logger.warning(f"Could not retrieve domain info for referring domain: {referring_domain_obj.name if referring_domain_obj else 'N/A'}.") # Improved logging
+                            self.logger.warning(f"Could not retrieve domain info for referring domain: {referring_domain_obj.name if referring_domain_obj else 'N/A'}.")
 
             if discovered_backlinks:
                 self.logger.info("Enriching discovered backlinks with source domain metrics and updating in DB.")
@@ -589,7 +564,6 @@ class CrawlService:
                     else:
                         self.logger.warning(f"Could not find domain info for source domain {backlink.source_domain} to enrich backlink {backlink.id}.")
 
-                # Calculate LinkProfile scores based on enriched backlinks
                 total_authority_score_sum = 0.0
                 total_trust_score_sum = 0.0
                 total_spam_score_sum = 0.0
@@ -645,11 +619,8 @@ class CrawlService:
             else:
                 self.logger.info(f"No backlinks found for {job.target_url}.")
 
-            # New: Alerting for anomalies at the end of the job
             if job.anomalies_detected:
                 self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
-                # In a real system, this would trigger an email, Slack notification, PagerDuty alert, etc.
-                # For now, we just log a critical message.
 
     async def _run_serp_analysis_job(self, job: CrawlJob, keyword: str, num_results: Optional[int], config: CrawlConfig):
         """
@@ -664,7 +635,7 @@ class CrawlService:
             self.logger.info(f"Found {len(serp_results)} SERP results for '{keyword}'.")
             try:
                 await self.db.add_serp_results(serp_results)
-                if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                if self.clickhouse_loader:
                     await self.clickhouse_loader.bulk_insert_serp_results(serp_results)
                 self.logger.info(f"Successfully added {len(serp_results)} SERP results to the database.")
             except Exception as db_e:
@@ -681,9 +652,7 @@ class CrawlService:
             job.progress_percentage = 100.0
             self.logger.info(f"No SERP results found for '{keyword}'. Job {job.id} completed.")
 
-        # New: Alerting for anomalies at the end of the job
         if config.anomaly_detection_enabled:
-            # Check for anomalies related to the overall SERP fetch (e.g., no results found when expected)
             if not serp_results:
                 job.anomalies_detected.append("No SERP Results Found")
             
@@ -703,7 +672,7 @@ class CrawlService:
             self.logger.info(f"Found {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
             try:
                 await self.db.add_keyword_suggestions(suggestions)
-                if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                if self.clickhouse_loader:
                     await self.clickhouse_loader.bulk_insert_keyword_suggestions(suggestions)
                 self.logger.info(f"Successfully added {len(suggestions)} keyword suggestions to the database.")
             except Exception as db_e:
@@ -720,7 +689,6 @@ class CrawlService:
             job.progress_percentage = 100.0
             self.logger.info(f"No keyword suggestions found for '{seed_keyword}'. Job {job.id} completed.")
 
-        # New: Alerting for anomalies at the end of the job
         if job.config.get("anomaly_detection_enabled", False):
             if not suggestions:
                 job.anomalies_detected.append("No Keyword Suggestions Found")
@@ -743,9 +711,8 @@ class CrawlService:
         job.progress_percentage = 100.0
         self.logger.info(f"Link health audit job {job.id} completed. Found {job.links_found} broken links.")
 
-        # New: Alerting for anomalies at the end of the job
         if job.config.get("anomaly_detection_enabled", False):
-            if job.links_found > 0: # If any broken links were found
+            if job.links_found > 0:
                 job.anomalies_detected.append(f"Broken Links Detected ({job.links_found})")
             
             if job.anomalies_detected:
@@ -758,39 +725,36 @@ class CrawlService:
         self.logger.info(f"Starting technical audit logic for job {job.id} for {len(urls_to_audit)} URLs.")
 
         audited_urls_count = 0
-        processed_seo_metrics: List[SEOMetrics] = [] # Collect SEO metrics for bulk insert
+        processed_seo_metrics: List[SEOMetrics] = []
         for url in urls_to_audit:
-            # Check job status before processing each URL
             current_job = self.db.get_crawl_job(job.id)
             if current_job:
                 if current_job.status == CrawlStatus.PAUSED:
                     self.logger.info(f"Technical audit for job {job.id} paused. Waiting to resume...")
                     while True:
-                        await asyncio.sleep(5) # Check every 5 seconds
+                        await asyncio.sleep(5)
                         rechecked_job = self.db.get_crawl_job(job.id)
                         if rechecked_job and rechecked_job.status == CrawlStatus.IN_PROGRESS:
                             self.logger.info(f"Technical audit for job {job.id} resumed.")
                             break
                         elif rechecked_job and rechecked_job.status == CrawlStatus.STOPPED:
                             self.logger.info(f"Technical audit for job {job.id} stopped during pause.")
-                            job.status = CrawlStatus.STOPPED # Mark job as stopped
-                            return # Exit the method
+                            job.status = CrawlStatus.STOPPED
+                            return
                 elif current_job.status == CrawlStatus.STOPPED:
                     self.logger.info(f"Technical audit for job {job.id} stopped.")
-                    job.status = CrawlStatus.STOPPED # Mark job as stopped
-                    return # Exit the method
+                    job.status = CrawlStatus.STOPPED
+                    return
 
             try:
                 lighthouse_metrics = await self.technical_auditor.run_lighthouse_audit(url, config)
                 
                 if lighthouse_metrics:
-                    # If content was crawled, get it to pass to AI for content scoring
                     crawled_url_obj = self.db.get_url(url)
                     html_content = crawled_url_obj.content if crawled_url_obj and crawled_url_obj.content_type == ContentType.HTML else ""
 
-                    # AI Content Optimization
                     if self.ai_service.enabled:
-                        ai_content_analysis = await self.ai_service.score_content(html_content, job.target_url) # Use job.target_url as keyword
+                        ai_content_analysis = await self.ai_service.score_content(html_content, job.target_url)
                         if ai_content_analysis:
                             lighthouse_metrics.ai_content_score = ai_content_analysis.get("seo_score")
                             lighthouse_metrics.ai_readability_score = ai_content_analysis.get("readability_score")
@@ -800,7 +764,6 @@ class CrawlService:
 
                     existing_seo_metrics = self.db.get_seo_metrics(url)
                     if existing_seo_metrics:
-                        # Update existing metrics with Lighthouse and AI data
                         existing_seo_metrics.performance_score = lighthouse_metrics.performance_score
                         existing_seo_metrics.accessibility_score = lighthouse_metrics.accessibility_score
                         existing_seo_metrics.audit_timestamp = lighthouse_metrics.audit_timestamp
@@ -810,12 +773,11 @@ class CrawlService:
                         existing_seo_metrics.ai_suggestions.extend(lighthouse_metrics.ai_suggestions)
                         existing_seo_metrics.calculate_seo_score()
                         self.db.save_seo_metrics(existing_seo_metrics)
-                        processed_seo_metrics.append(existing_seo_metrics) # Add to list
+                        processed_seo_metrics.append(existing_seo_metrics)
                         self.logger.info(f"Updated SEO metrics for {url} with Lighthouse and AI scores.")
                     else:
-                        # Save new metrics including Lighthouse and AI data
                         self.db.save_seo_metrics(lighthouse_metrics)
-                        processed_seo_metrics.append(lighthouse_metrics) # Add to list
+                        processed_seo_metrics.append(lighthouse_metrics)
                         self.logger.info(f"Saved new SEO metrics for {url} from Lighthouse and AI.")
                     
                     audited_urls_count += 1
@@ -844,11 +806,9 @@ class CrawlService:
                 job.add_error(url="N/A", error_type="ClickHouseError", message=f"ClickHouse bulk insert failed: {str(e)}", details=str(e))
                 JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="ClickHouseError").inc()
 
-        # New: Alerting for anomalies at the end of the job
         if job.config.get("anomaly_detection_enabled", False):
-            # Example: If a significant portion of audits failed
             failed_audits_count = len(urls_to_audit) - audited_urls_count
-            if failed_audits_count / len(urls_to_audit) > 0.2: # More than 20% failed
+            if failed_audits_count / len(urls_to_audit) > 0.2:
                 job.anomalies_detected.append(f"High Technical Audit Failure Rate ({failed_audits_count}/{len(urls_to_audit)})")
             
             if job.anomalies_detected:
@@ -863,32 +823,30 @@ class CrawlService:
         analyzed_domains_count = 0
         valuable_domains_found = []
         
-        # Use the domain_analyzer_service to perform the analysis
         for domain_name in domain_names:
-            # Check job status before processing each domain
             current_job = self.db.get_crawl_job(job.id)
             if current_job:
                 if current_job.status == CrawlStatus.PAUSED:
                     self.logger.info(f"Domain analysis for job {job.id} paused. Waiting to resume...")
                     while True:
-                        await asyncio.sleep(5) # Check every 5 seconds
+                        await asyncio.sleep(5)
                         rechecked_job = self.db.get_crawl_job(job.id)
                         if rechecked_job and rechecked_job.status == CrawlStatus.IN_PROGRESS:
                             self.logger.info(f"Domain analysis for job {job.id} resumed.")
                             break
                         elif rechecked_job and rechecked_job.status == CrawlStatus.STOPPED:
                             self.logger.info(f"Domain analysis for job {job.id} stopped during pause.")
-                            job.status = CrawlStatus.STOPPED # Mark job as stopped
-                            return # Exit the method
+                            job.status = CrawlStatus.STOPPED
+                            return
                 elif current_job.status == CrawlStatus.STOPPED:
                     self.logger.info(f"Domain analysis for job {job.id} stopped.")
-                    job.status = CrawlStatus.STOPPED # Mark job as stopped
-                    return # Exit the method
+                    job.status = CrawlStatus.STOPPED
+                    return
 
             try:
                 analysis_result = await self.domain_analyzer_service.analyze_domain_for_expiration_value(
                     domain_name,
-                    min_authority_score=job.config.get("min_authority_score", 20.0), # Use config values if present
+                    min_authority_score=job.config.get("min_authority_score", 20.0),
                     min_dofollow_backlinks=job.config.get("min_dofollow_backlinks", 5),
                     min_age_days=job.config.get("min_age_days", 365),
                     max_spam_score=job.config.get("max_spam_score", 30.0)
@@ -912,15 +870,14 @@ class CrawlService:
                 job.add_error(url=domain_name, error_type="DomainAnalysisError", message=f"Domain analysis failed for {domain_name}: {str(e)}", details=str(e))
                 JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DomainAnalysisError").inc()
             
-            job.urls_crawled = analyzed_domains_count # Re-use urls_crawled for domains analyzed
+            job.urls_crawled = analyzed_domains_count
             job.progress_percentage = min(99.0, (analyzed_domains_count / len(domain_names)) * 100)
             self.db.update_crawl_job(job)
 
         job.results['valuable_domains_found'] = [serialize_model(d) for d in valuable_domains_found]
-        job.links_found = len(valuable_domains_found) # Re-use links_found for valuable domains count
+        job.links_found = len(valuable_domains_found)
         self.logger.info(f"Domain analysis job {job.id} completed. Analyzed {analyzed_domains_count} domains, found {len(valuable_domains_found)} valuable.")
 
-        # New: Alerting for anomalies at the end of the job
         if job.config.get("anomaly_detection_enabled", False):
             if len(valuable_domains_found) == 0 and len(domain_names) > 0:
                 job.anomalies_detected.append("No Valuable Domains Found")
@@ -941,26 +898,23 @@ class CrawlService:
         job_results = {}
         job_errors = []
 
-        # Step 1: Run Technical Audit
         self.logger.info(f"Running technical audit part of full SEO audit for job {job.id}.")
         try:
-            # The _run_technical_audit_job already handles saving SEO metrics and AI enrichment
             await self._run_technical_audit_job(job, urls_to_audit, config)
-            job_results['technical_audit'] = job.results.get('technical_audit', 'Completed') # Placeholder for actual results
+            job_results['technical_audit'] = job.results.get('technical_audit', 'Completed')
             completed_sub_audits += 1
         except Exception as e:
             error_msg = f"Technical audit sub-job failed: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
             job_errors.append(CrawlError(url="N/A", error_type="FullSEOAduit_TechnicalAuditError", message=error_msg))
         
-        job.progress_percentage = min(99.0, (completed_sub_audits / 2) * 100) # Assuming 2 main sub-audits
+        job.progress_percentage = min(99.0, (completed_sub_audits / 2) * 100)
         self.db.update_crawl_job(job)
 
-        # Step 2: Run Link Health Audit
         self.logger.info(f"Running link health audit part of full SEO audit for job {job.id}.")
         try:
-            await self._run_link_health_audit_job(job, urls_to_audit) # Re-using urls_to_audit as source_urls
-            job_results['link_health_audit'] = job.results.get('broken_links_audit', 'Completed') # Placeholder for actual results
+            await self._run_link_health_audit_job(job, urls_to_audit)
+            job_results['link_health_audit'] = job.results.get('broken_links_audit', 'Completed')
             completed_sub_audits += 1
         except Exception as e:
             error_msg = f"Link health audit sub-job failed: {str(e)}"
@@ -970,7 +924,6 @@ class CrawlService:
         job.progress_percentage = min(99.0, (completed_sub_audits / 2) * 100)
         self.db.update_crawl_job(job)
 
-        # Aggregate results and errors
         job.results['full_seo_audit_summary'] = {
             "status": "Completed with errors" if job_errors else "Completed successfully",
             "sub_audits_completed": completed_sub_audits,
@@ -982,7 +935,6 @@ class CrawlService:
         
         self.logger.info(f"Full SEO audit job {job.id} completed. Sub-audits: {completed_sub_audits}/2.")
 
-        # New: Alerting for anomalies at the end of the job
         if job.config.get("anomaly_detection_enabled", False):
             if job.anomalies_detected:
                 self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
@@ -1001,7 +953,6 @@ class CrawlService:
             job.status = CrawlStatus.PAUSED
             self.db.update_crawl_job(job)
             self.logger.info(f"Crawl job {job.id} paused.")
-            # Metrics update handled in _run_backlink_crawl loop
             return job
         else:
             raise ValueError(f"Crawl job {job_id} cannot be paused from status {job.status.value}.")
@@ -1015,7 +966,6 @@ class CrawlService:
             job.status = CrawlStatus.IN_PROGRESS
             self.db.update_crawl_job(job)
             self.logger.info(f"Crawl job {job.id} resumed.")
-            # Metrics update handled in _run_backlink_crawl loop
             return job
         else:
             raise ValueError(f"Crawl job {job_id} cannot be resumed from status {job.status.value}.")
@@ -1030,7 +980,6 @@ class CrawlService:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
             self.logger.info(f"Crawl job {job.id} stopped.")
-            # Metrics update handled in _run_backlink_crawl loop
             return job
         else:
             raise ValueError(f"Crawl job {job_id} cannot be stopped from status {job.status.value}.")
@@ -1042,5 +991,3 @@ class CrawlService:
     def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
         """Retrieves all raw backlinks for a given URL."""
         return self.db.get_backlinks_for_target(target_url)
-
-    # Removed outdated TODOs
