@@ -15,6 +15,7 @@ from Link_Profiler.queue_system.job_coordinator import JobCoordinator # Moved ou
 from Link_Profiler.core.models import CrawlConfig, CrawlJob, CrawlStatus, serialize_model
 from Link_Profiler.database.database import Database # Import Database
 from Link_Profiler.services.alert_service import AlertService # New: Import AlertService
+from Link_Profiler.utils.connection_manager import ConnectionManager # New: Import ConnectionManager
 
 try:
     # This flag indicates if the queue system's core components are available
@@ -31,14 +32,14 @@ logger = logging.getLogger(__name__)
 # Global coordinator instance
 coordinator: Optional[JobCoordinator] = None
 
-async def get_coordinator(db_instance: Database, alert_service_instance: Optional[AlertService] = None) -> JobCoordinator:
+async def get_coordinator(db_instance: Database, alert_service_instance: Optional[AlertService] = None, connection_manager_instance: Optional[ConnectionManager] = None) -> JobCoordinator:
     """Get or create job coordinator instance"""
     global coordinator
     if not QUEUE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Queue system not available")
     
     if coordinator is None:
-        coordinator = JobCoordinator(database=db_instance, alert_service=alert_service_instance) # Pass the database and alert_service instance
+        coordinator = JobCoordinator(database=db_instance, alert_service=alert_service_instance, connection_manager=connection_manager_instance) # Pass the database, alert_service, and connection_manager instance
         await coordinator.__aenter__()
         
         # Start background tasks
@@ -81,7 +82,8 @@ async def submit_crawl_to_queue(request: QueueCrawlRequest):
     """Submit a crawl job to the distributed queue system"""
     try:
         # The db and alert_service instances are passed to get_coordinator in add_queue_endpoints
-        coord = await get_coordinator(None, None) # Pass None here, as it's initialized in startup
+        # Pass None for db_instance, alert_service_instance, and connection_manager_instance here, as they are initialized in startup
+        coord = await get_coordinator(None, None, None) 
         
         # Convert config dict to CrawlConfig if provided
         crawl_config_obj = CrawlConfig.from_dict(request.config if request.config else {})
@@ -125,7 +127,8 @@ async def get_queue_job_status(job_id: str):
     """Get the current status of a queued crawl job"""
     try:
         # The db and alert_service instances are passed to get_coordinator in add_queue_endpoints
-        coord = await get_coordinator(None, None) # Pass None here, as it's initialized in startup
+        # Pass None for db_instance, alert_service_instance, and connection_manager_instance here, as they are initialized in startup
+        coord = await get_coordinator(None, None, None) 
         job = await coord.get_job_status(job_id)
         
         if not job:
@@ -152,7 +155,8 @@ async def get_queue_stats():
     """Get current queue and crawler statistics"""
     try:
         # The db and alert_service instances are passed to get_coordinator in add_queue_endpoints
-        coord = await get_coordinator(None, None) # Pass None here, as it's initialized in startup
+        # Pass None for db_instance, alert_service_instance, and connection_manager_instance here, as they are initialized in startup
+        coord = await get_coordinator(None, None, None) 
         stats = await coord.get_queue_stats()
         
         # Format satellite crawler info
@@ -180,7 +184,8 @@ async def get_crawler_health():
     """Get detailed health information for all satellite crawlers"""
     try:
         # The db and alert_service instances are passed to get_coordinator in add_queue_endpoints
-        coord = await get_coordinator(None, None) # Pass None here, as it's initialized in startup
+        # Pass None for db_instance, alert_service_instance, and connection_manager_instance here, as they are initialized in startup
+        coord = await get_coordinator(None, None, None) 
         
         health_info = []
         for crawler_id, last_seen in coord.satellite_crawlers.items():
@@ -205,7 +210,7 @@ async def get_crawler_health():
         raise HTTPException(status_code=500, detail=f"Failed to get crawler health: {e}")
 
 # Function to add queue endpoints to an existing FastAPI app
-def add_queue_endpoints(app, db_instance: Database, alert_service_instance: Optional[AlertService] = None): # Accept db_instance and alert_service_instance
+def add_queue_endpoints(app, db_instance: Database, alert_service_instance: Optional[AlertService] = None, connection_manager_instance: Optional[ConnectionManager] = None): # Accept db_instance, alert_service_instance, and connection_manager_instance
     """Add queue endpoints to an existing FastAPI app"""
     
     @app.post("/queue/submit_crawl", response_model=Dict[str, str])
@@ -263,7 +268,7 @@ def add_queue_endpoints(app, db_instance: Database, alert_service_instance: Opti
         if QUEUE_AVAILABLE:
             logger.info("Initializing job coordinator...")
             try:
-                await get_coordinator(db_instance, alert_service_instance) # Pass db_instance and alert_service_instance here
+                await get_coordinator(db_instance, alert_service_instance, connection_manager_instance) # Pass db_instance, alert_service_instance, and connection_manager_instance here
                 logger.info("Job coordinator initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize job coordinator: {e}", exc_info=True)
