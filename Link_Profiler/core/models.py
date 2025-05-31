@@ -476,7 +476,7 @@ class CrawlConfig:
 
         # Filter out any keys not in the dataclass constructor
         # This prevents errors if the dict contains extra serialization metadata
-        valid_keys = {f.name for f f in cls.__dataclass_fields__.values()}
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
 
         return cls(**filtered_data)
