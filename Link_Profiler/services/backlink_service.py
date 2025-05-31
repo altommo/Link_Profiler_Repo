@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import random
 import aiohttp
 import uuid # Import uuid module
+import json # Import json for caching
 
 # Google API imports for GSC
 from google.oauth2.credentials import Credentials
@@ -16,6 +17,7 @@ from googleapiclient.discovery import build
 
 from Link_Profiler.core.models import Backlink, LinkType, SpamLevel, Domain # Assuming Domain model might be needed for context
 from Link_Profiler.config.config_loader import config_loader # Import config_loader
+from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +170,7 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
             await self._session.close()
             self._session = None
 
+    @api_rate_limited(service="backlink_api", api_client_type="real_api", endpoint="get_backlinks")
     async def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
         """
         Fetches backlinks for a given target URL from a real API.
@@ -255,6 +258,7 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
             await self._session.close()
             self._session = None
 
+    @api_rate_limited(service="backlink_api", api_client_type="openlinkprofiler_api", endpoint="get_backlinks")
     async def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
         """
         Fetches backlinks for a given target URL from OpenLinkProfiler.org.
@@ -406,6 +410,7 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
         self.logger.info("Exiting GSCBacklinkAPIClient context.")
         pass
 
+    @api_rate_limited(service="backlink_api", api_client_type="gsc_api", endpoint="search")
     async def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
         """
         Fetches backlinks for a given target URL from Google Search Console.
@@ -471,8 +476,11 @@ class BacklinkService:
     """
     Service for retrieving backlink information, either from a crawler or an API.
     """
-    def __init__(self, api_client: Optional[BaseBacklinkAPIClient] = None):
+    def __init__(self, api_client: Optional[BaseBacklinkAPIClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
         self.logger = logging.getLogger(__name__)
+        self.redis_client = redis_client
+        self.cache_ttl = cache_ttl
+        self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
         
         # Determine which API client to use based on config_loader priority
         if config_loader.get("backlink_api.gsc_api.enabled"):
@@ -504,8 +512,37 @@ class BacklinkService:
         self.logger.debug("Exiting BacklinkService context.")
         await self.api_client.__aexit__(exc_type, exc_val, exc_tb) # Exit the client's context
 
+    async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
+        if self.api_cache_enabled and self.redis_client:
+            try:
+                cached_data = await self.redis_client.get(cache_key)
+                if cached_data:
+                    self.logger.debug(f"Cache hit for {cache_key}")
+                    return json.loads(cached_data)
+            except Exception as e:
+                self.logger.error(f"Error retrieving from cache for {cache_key}: {e}", exc_info=True)
+        return None
+
+    async def _set_cached_response(self, cache_key: str, data: Any):
+        if self.api_cache_enabled and self.redis_client:
+            try:
+                await self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(data))
+                self.logger.debug(f"Cached {cache_key} with TTL {self.cache_ttl}")
+            except Exception as e:
+                self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
+
     async def get_backlinks_from_api(self, target_url: str) -> List[Backlink]:
         """
         Fetches backlinks for a target URL using the configured API client.
+        Uses caching.
         """
-        return await self.api_client.get_backlinks_for_url(target_url)
+        cache_key = f"backlinks:{target_url}"
+        cached_result = await self._get_cached_response(cache_key)
+        if cached_result is not None:
+            # Convert cached list of dicts back to list of Backlink objects
+            return [Backlink.from_dict(bl_data) for bl_data in cached_result]
+
+        result = await self.api_client.get_backlinks_for_url(target_url)
+        if result: # Only cache if result is not empty
+            await self._set_cached_response(cache_key, [bl.to_dict() for bl in result]) # Cache as list of dicts
+        return result

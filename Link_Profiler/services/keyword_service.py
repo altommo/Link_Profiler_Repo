@@ -10,10 +10,13 @@ from datetime import datetime, timedelta
 import random
 import aiohttp
 import os
+import json # Import json for caching
+import redis.asyncio as redis # Import redis for caching
 
 from Link_Profiler.core.models import KeywordSuggestion # Absolute import
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper # New import
 from Link_Profiler.config.config_loader import config_loader # Import config_loader
+from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +131,7 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
             await self._session.close()
             self._session = None
 
+    @api_rate_limited(service="keyword_api", api_client_type="real_api", endpoint="suggestions")
     async def get_keyword_suggestions(self, seed_keyword: str, num_suggestions: int = 10) -> List[KeywordSuggestion]:
         """
         Fetches keyword suggestions for a given seed keyword from a real API.
@@ -206,6 +210,7 @@ class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
             await self._session.close()
             self._session = None
 
+    @api_rate_limited(service="keyword_api", api_client_type="metrics_api", endpoint="get_metrics")
     async def get_keyword_metrics(self, keyword: str) -> Dict[str, Any]:
         """
         Simulates fetching detailed metrics for a single keyword.
@@ -258,8 +263,11 @@ class KeywordService:
     """
     Service for fetching Keyword Research data.
     """
-    def __init__(self, api_client: Optional[BaseKeywordAPIClient] = None, keyword_scraper: Optional[KeywordScraper] = None):
+    def __init__(self, api_client: Optional[BaseKeywordAPIClient] = None, keyword_scraper: Optional[KeywordScraper] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
         self.logger = logging.getLogger(__name__)
+        self.redis_client = redis_client
+        self.cache_ttl = cache_ttl
+        self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
         
         # Determine which API client to use based on config_loader priority
         if config_loader.get("keyword_api.real_api.enabled"):
@@ -305,11 +313,36 @@ class KeywordService:
         if self.metrics_api_client: # Exit metrics client's context
             await self.metrics_api_client.__aexit__(exc_type, exc_val, exc_tb)
 
+    async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
+        if self.api_cache_enabled and self.redis_client:
+            try:
+                cached_data = await self.redis_client.get(cache_key)
+                if cached_data:
+                    self.logger.debug(f"Cache hit for {cache_key}")
+                    return json.loads(cached_data)
+            except Exception as e:
+                self.logger.error(f"Error retrieving from cache for {cache_key}: {e}", exc_info=True)
+        return None
+
+    async def _set_cached_response(self, cache_key: str, data: Any):
+        if self.api_cache_enabled and self.redis_client:
+            try:
+                await self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(data))
+                self.logger.debug(f"Cached {cache_key} with TTL {self.cache_ttl}")
+            except Exception as e:
+                self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
+
     async def get_keyword_data(self, seed_keyword: str, num_suggestions: int = 10) -> List[KeywordSuggestion]:
         """
         Fetches keyword suggestions for a given seed keyword and enriches them with metrics.
         Prioritizes the local KeywordScraper if available, otherwise uses the API client.
+        Uses caching.
         """
+        cache_key = f"keyword_suggestions:{seed_keyword}:{num_suggestions}"
+        cached_result = await self._get_cached_response(cache_key)
+        if cached_result is not None:
+            return [KeywordSuggestion.from_dict(ks_data) for ks_data in cached_result]
+
         suggestions: List[KeywordSuggestion] = []
         
         if self.keyword_scraper and config_loader.get("keyword_scraper.enabled"):
@@ -324,7 +357,15 @@ class KeywordService:
         if self.metrics_api_client and config_loader.get("keyword_api.metrics_api.enabled"):
             self.logger.info(f"Enriching keyword suggestions with metrics using RealKeywordMetricsAPIClient.")
             for suggestion in suggestions:
-                metrics = await self.metrics_api_client.get_keyword_metrics(suggestion.suggested_keyword)
+                metrics_cache_key = f"keyword_metrics:{suggestion.suggested_keyword}"
+                cached_metrics = await self._get_cached_response(metrics_cache_key)
+                if cached_metrics:
+                    metrics = cached_metrics
+                else:
+                    metrics = await self.metrics_api_client.get_keyword_metrics(suggestion.suggested_keyword)
+                    if metrics:
+                        await self._set_cached_response(metrics_cache_key, metrics)
+
                 if metrics:
                     suggestion.search_volume_monthly = metrics.get("search_volume_monthly", suggestion.search_volume_monthly)
                     suggestion.cpc_estimate = metrics.get("cpc_estimate", suggestion.cpc_estimate)
@@ -340,4 +381,6 @@ class KeywordService:
                 if suggestion.competition_level is None:
                     suggestion.competition_level = random.choice(["Low", "Medium", "High"])
 
+        if suggestions:
+            await self._set_cached_response(cache_key, [s.to_dict() for s in suggestions]) # Cache as list of dicts
         return suggestions

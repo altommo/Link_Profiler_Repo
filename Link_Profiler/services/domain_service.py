@@ -11,9 +11,13 @@ import random
 from datetime import datetime # Import datetime for parsing WHOIS dates
 import aiohttp # Import aiohttp
 import os # Import os to read environment variables
+import json # Import json for caching
 
 from Link_Profiler.core.models import Domain # Changed to absolute import
 from Link_Profiler.config.config_loader import config_loader # Import config_loader
+from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
+
+logger = logging.getLogger(__name__)
 
 # --- Placeholder for a future Domain API Client ---
 class BaseDomainAPIClient:
@@ -183,6 +187,7 @@ class RealDomainAPIClient(BaseDomainAPIClient):
             await self._session.close()
             self._session = None
 
+    @api_rate_limited(service="domain_api", api_client_type="real_api", endpoint="availability")
     async def get_domain_availability(self, domain_name: str) -> bool:
         """
         Simulates checking domain availability via a real API.
@@ -217,6 +222,7 @@ class RealDomainAPIClient(BaseDomainAPIClient):
             if close_session_after_use and not session_to_use.closed:
                 await session_to_use.close()
 
+    @api_rate_limited(service="domain_api", api_client_type="real_api", endpoint="whois")
     async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
         """
         Simulates fetching WHOIS data via a real API.
@@ -278,6 +284,7 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
             await self._session.close()
             self._session = None
 
+    @api_rate_limited(service="domain_api", api_client_type="abstract_api", endpoint="availability")
     async def get_domain_availability(self, domain_name: str) -> bool:
         """
         Checks domain availability using AbstractAPI.
@@ -311,6 +318,7 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
             if close_session_after_use and not session_to_use.closed:
                 await session_to_use.close()
 
+    @api_rate_limited(service="domain_api", api_client_type="abstract_api", endpoint="whois")
     async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
         """
         Fetches WHOIS data using AbstractAPI.
@@ -361,8 +369,11 @@ class DomainService:
     Service for querying domain-related information, such as availability and WHOIS data.
     Uses a DomainAPIClient to perform actual lookups.
     """
-    def __init__(self, api_client: Optional[BaseDomainAPIClient] = None):
+    def __init__(self, api_client: Optional[BaseDomainAPIClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
         self.logger = logging.getLogger(__name__)
+        self.redis_client = redis_client
+        self.cache_ttl = cache_ttl
+        self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
         
         # Determine which API client to use based on config_loader priority
         if config_loader.get("domain_api.abstract_api.enabled"):
@@ -396,22 +407,59 @@ class DomainService:
         self.logger.debug("Exiting DomainService context.")
         await self.api_client.__aexit__(exc_type, exc_val, exc_tb) # Exit the client's context
 
+    async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
+        if self.api_cache_enabled and self.redis_client:
+            try:
+                cached_data = await self.redis_client.get(cache_key)
+                if cached_data:
+                    self.logger.debug(f"Cache hit for {cache_key}")
+                    return json.loads(cached_data)
+            except Exception as e:
+                self.logger.error(f"Error retrieving from cache for {cache_key}: {e}", exc_info=True)
+        return None
+
+    async def _set_cached_response(self, cache_key: str, data: Any):
+        if self.api_cache_enabled and self.redis_client:
+            try:
+                await self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(data))
+                self.logger.debug(f"Cached {cache_key} with TTL {self.cache_ttl}")
+            except Exception as e:
+                self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
+
     async def check_domain_availability(self, domain_name: str) -> bool:
         """
         Checks if a domain name is available for registration using the API client.
+        Uses caching.
         """
-        return await self.api_client.get_domain_availability(domain_name)
+        cache_key = f"domain_availability:{domain_name}"
+        cached_result = await self._get_cached_response(cache_key)
+        if cached_result is not None:
+            return cached_result
+
+        result = await self.api_client.get_domain_availability(domain_name)
+        await self._set_cached_response(cache_key, result)
+        return result
 
     async def get_whois_info(self, domain_name: str) -> Optional[Dict[str, Any]]:
         """
         Fetches WHOIS information for a domain using the API client.
+        Uses caching.
         """
-        return await self.api_client.get_whois_data(domain_name)
+        cache_key = f"domain_whois:{domain_name}"
+        cached_result = await self._get_cached_response(cache_key)
+        if cached_result is not None:
+            return cached_result
+
+        result = await self.api_client.get_whois_data(domain_name)
+        if result: # Only cache if result is not None
+            await self._set_cached_response(cache_key, result)
+        return result
 
     async def get_domain_info(self, domain_name: str) -> Optional[Domain]:
         """
         Combines WHOIS info and availability check into a Domain model.
         Assigns consistent simulated scores if no real API is used.
+        Uses caching for underlying API calls.
         """
         whois_data = await self.get_whois_info(domain_name)
         if not whois_data:

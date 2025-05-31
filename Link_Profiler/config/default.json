@@ -111,5 +111,9 @@
   "api_cache": {
     "enabled": true,
     "ttl": 3600
+  },
+  "api_rate_limiter": {
+    "enabled": true,
+    "requests_per_second": 1.0
   }
 }

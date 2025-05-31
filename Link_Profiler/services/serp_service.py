@@ -9,10 +9,13 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import random
 import aiohttp
+import json # Import json for caching
+import redis.asyncio as redis # Import redis for caching
 
 from Link_Profiler.core.models import SERPResult # Absolute import
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler # New import
 from Link_Profiler.config.config_loader import config_loader # Import config_loader
+from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +135,7 @@ class RealSERPAPIClient(BaseSERPAPIClient):
             await self._session.close()
             self._session = None
 
+    @api_rate_limited(service="serp_api", api_client_type="real_api", endpoint="search")
     async def get_serp_results(self, keyword: str, num_results: int = 10) -> List[SERPResult]:
         """
         Fetches SERP results for a given keyword from a real API.
@@ -193,8 +197,11 @@ class SERPService:
     """
     Service for fetching Search Engine Results Page (SERP) data.
     """
-    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None):
+    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
         self.logger = logging.getLogger(__name__)
+        self.redis_client = redis_client
+        self.cache_ttl = cache_ttl
+        self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
         
         # Determine which API client to use based on config_loader priority
         if config_loader.get("serp_api.real_api.enabled"):
@@ -226,16 +233,44 @@ class SERPService:
         if self.serp_crawler: # Also exit the SERPCrawler's context if it exists
             await self.serp_crawler.__aexit__(exc_type, exc_val, exc_tb)
 
+    async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
+        if self.api_cache_enabled and self.redis_client:
+            try:
+                cached_data = await self.redis_client.get(cache_key)
+                if cached_data:
+                    self.logger.debug(f"Cache hit for {cache_key}")
+                    return json.loads(cached_data)
+            except Exception as e:
+                self.logger.error(f"Error retrieving from cache for {cache_key}: {e}", exc_info=True)
+        return None
+
+    async def _set_cached_response(self, cache_key: str, data: Any):
+        if self.api_cache_enabled and self.redis_client:
+            try:
+                await self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(data))
+                self.logger.debug(f"Cached {cache_key} with TTL {self.cache_ttl}")
+            except Exception as e:
+                self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
+
     async def get_serp_data(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
         """
         Fetches SERP data for a given keyword.
         Prioritizes the local SERPCrawler if available, otherwise uses the API client.
+        Uses caching.
         """
+        cache_key = f"serp_data:{keyword}:{num_results}:{search_engine}"
+        cached_result = await self._get_cached_response(cache_key)
+        if cached_result is not None:
+            return [SERPResult.from_dict(sr_data) for sr_data in cached_result]
+
+        serp_results: List[SERPResult] = []
         if self.serp_crawler and config_loader.get("serp_crawler.playwright.enabled"):
             self.logger.info(f"Using SERPCrawler to fetch SERP data for '{keyword}' from {search_engine}.")
-            return await self.serp_crawler.get_serp_data(keyword, num_results, search_engine)
+            serp_results = await self.serp_crawler.get_serp_data(keyword, num_results, search_engine)
         else:
             self.logger.info(f"Using SERP API client to fetch SERP data for '{keyword}'.")
-            # The API client's get_serp_results method does not take 'search_engine' as an argument.
-            # It's assumed the API client is configured for a specific search engine or handles it internally.
-            return await self.api_client.get_serp_results(keyword, num_results)
+            serp_results = await self.api_client.get_serp_results(keyword, num_results)
+        
+        if serp_results:
+            await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results]) # Cache as list of dicts
+        return serp_results
