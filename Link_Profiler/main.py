@@ -32,6 +32,8 @@ from contextlib import asynccontextmanager
 import redis.asyncio as redis
 import json # Added import for json
 
+from playwright.async_api import async_playwright, Browser # New: Import Playwright Browser
+
 from Link_Profiler.services.crawl_service import CrawlService
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient
 from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient
@@ -172,6 +174,9 @@ ai_service_instance = AIService()
 # Initialize DomainAnalyzerService (depends on DomainService)
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance, ai_service_instance)
 
+# Global Playwright Browser instance for WebCrawler (if enabled)
+playwright_browser_instance: Optional[Browser] = None
+
 # Initialize CrawlService (will be used by SatelliteCrawler, not directly by API endpoints for job creation)
 # This instance is primarily for the lifespan management of its internal services.
 crawl_service_for_lifespan = CrawlService(
@@ -185,7 +190,8 @@ crawl_service_for_lifespan = CrawlService(
     redis_client=redis_client, # Pass the potentially None instance
     technical_auditor=technical_auditor_instance,
     domain_analyzer_service=domain_analyzer_service, # Pass the domain_analyzer_service
-    ai_service=ai_service_instance # New: Pass AI Service
+    ai_service=ai_service_instance, # New: Pass AI Service
+    playwright_browser=playwright_browser_instance # Pass the global Playwright browser instance
 ) 
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service) # Corrected class name
 
@@ -219,6 +225,29 @@ async def lifespan(app: FastAPI):
     if keyword_scraper_instance:
         context_managers.append(keyword_scraper_instance)
 
+    # New: Conditionally launch global Playwright browser for WebCrawler
+    global playwright_browser_instance
+    if config_loader.get("browser_crawler.enabled", False):
+        browser_type = config_loader.get("browser_crawler.browser_type", "chromium")
+        headless = config_loader.get("browser_crawler.headless", True)
+        logger.info(f"Application startup: Launching global Playwright browser ({browser_type}, headless={headless})...")
+        playwright_instance = await async_playwright().start()
+        if browser_type == "chromium":
+            playwright_browser_instance = await playwright_instance.chromium.launch(headless=headless)
+        elif browser_type == "firefox":
+            playwright_browser_instance = await playwright_instance.firefox.launch(headless=headless)
+        elif browser_type == "webkit":
+            playwright_browser_instance = await playwright_instance.webkit.launch(headless=headless)
+        else:
+            raise ValueError(f"Unsupported browser type for global browser crawler: {browser_type}")
+        
+        # Pass this instance to crawl_service_for_lifespan
+        crawl_service_for_lifespan.playwright_browser = playwright_browser_instance
+        logger.info("Global Playwright browser launched and assigned to CrawlService.")
+    else:
+        logger.info("Global Playwright browser for WebCrawler is disabled by configuration.")
+
+
     # Manually manage the context managers to ensure proper nesting and single yield
     # This pattern ensures all __aenter__ are called before yield, and __aexit__ in reverse order.
     entered_contexts = []
@@ -249,6 +278,14 @@ async def lifespan(app: FastAPI):
             # Pass None, None, None for exc_type, exc_val, exc_tb as we're handling exceptions outside
             await cm.__aexit__(None, None, None)
         
+        # New: Close global Playwright browser if it was launched
+        if playwright_browser_instance:
+            logger.info("Application shutdown: Closing global Playwright browser.")
+            await playwright_browser_instance.close()
+            # Also stop the playwright_instance itself
+            if 'playwright_instance' in locals() and playwright_instance:
+                await playwright_instance.stop()
+
         if redis_pool: # Only try to disconnect if pool was created
             logger.info("Application shutdown: Closing Redis connection pool.")
             await redis_pool.disconnect()
@@ -303,9 +340,14 @@ class CrawlConfigRequest(BaseModel):
     stealth_mode: bool = Field(True, description="Whether to enable Playwright stealth mode for browser-based crawling.")
     browser_fingerprint_randomization: bool = Field(False, description="Whether to randomize browser fingerprint properties (e.g., device scale, mobile, touch, screen dimensions, timezone, locale, color scheme) for Playwright.")
     ml_rate_optimization: bool = Field(False, description="Whether to enable machine learning-based rate optimization for adaptive delays.")
+    captcha_solving_enabled: bool = Field(False, description="Whether to enable CAPTCHA solving for browser-based crawls.")
+    anomaly_detection_enabled: bool = Field(False, description="Whether to enable real-time anomaly detection.")
     use_proxies: bool = Field(False, description="Whether to use proxies for crawling.")
     proxy_list: Optional[List[Dict[str, str]]] = Field(None, description="List of proxy configurations (e.g., [{'url': 'http://user:pass@ip:port', 'region': 'us-east'}]).")
     proxy_region: Optional[str] = Field(None, description="Desired proxy region for this crawl job. If not specified, any available proxy will be used.")
+    render_javascript: bool = Field(False, description="Whether to use a headless browser to render JavaScript content for crawling.")
+    browser_type: Optional[str] = Field("chromium", description="Browser type for headless rendering (chromium, firefox, webkit). Only applicable if render_javascript is true.")
+    headless_browser: bool = Field(True, description="Whether the browser should run in headless mode. Only applicable if render_javascript is true.")
 
 
 class StartCrawlRequest(BaseModel):

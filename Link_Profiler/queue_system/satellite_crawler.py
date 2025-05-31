@@ -12,6 +12,8 @@ import socket
 import sys
 import os
 
+from playwright.async_api import async_playwright, Browser # New: Import Playwright Browser
+
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -54,7 +56,7 @@ class SatelliteCrawler:
         # Queue names (must match coordinator)
         self.job_queue = "crawl_jobs"
         self.result_queue = "crawl_results" 
-        self.heartbeat_queue_sorted = "crawler_heartbeats_sorted" # Changed to sorted set
+        self.heartbeat_queue_sorted = "crawler_heartbeats_sorted" # Sorted set for heartbeats
         
         # Crawler state
         self.is_running = False
@@ -105,8 +107,8 @@ class SatelliteCrawler:
         )
         ai_service_instance = AIService() # New: Initialize AIService for satellite
 
-        # Initialize DomainAnalyzerService (depends on DomainService)
-        domain_analyzer_service = DomainAnalyzerService(self.db, domain_service_instance, ai_service_instance)
+        # Playwright browser instance for WebCrawler (if enabled)
+        self.playwright_browser: Optional[Browser] = None
 
         # Initialize CrawlService instance that will execute jobs
         self.crawl_service = CrawlService(
@@ -120,7 +122,8 @@ class SatelliteCrawler:
             redis_client=self.redis, # Pass the satellite's redis client for deduplication
             technical_auditor=technical_auditor_instance,
             domain_analyzer_service=domain_analyzer_service, # Pass domain_analyzer_service
-            ai_service=ai_service_instance # New: Pass AI Service
+            ai_service=ai_service_instance, # New: Pass AI Service
+            playwright_browser=self.playwright_browser # Pass the Playwright browser instance
         )
 
         # List of context managers to enter/exit during satellite lifespan
@@ -187,6 +190,28 @@ class SatelliteCrawler:
         for cm in self._context_managers:
             logger.info(f"Satellite startup: Entering {cm.__class__.__name__} context.")
             self._entered_contexts.append(await cm.__aenter__())
+        
+        # New: Conditionally launch Playwright browser for WebCrawler
+        if config_loader.get("browser_crawler.enabled", False):
+            browser_type = config_loader.get("browser_crawler.browser_type", "chromium")
+            headless = config_loader.get("browser_crawler.headless", True)
+            logger.info(f"Satellite startup: Launching Playwright browser for WebCrawler ({browser_type}, headless={headless})...")
+            self.playwright_instance = await async_playwright().start()
+            if browser_type == "chromium":
+                self.playwright_browser = await self.playwright_instance.chromium.launch(headless=headless)
+            elif browser_type == "firefox":
+                self.playwright_browser = await self.playwright_instance.firefox.launch(headless=headless)
+            elif browser_type == "webkit":
+                self.playwright_browser = await self.playwright_instance.webkit.launch(headless=headless)
+            else:
+                raise ValueError(f"Unsupported browser type for WebCrawler: {browser_type}")
+            
+            # Pass this instance to crawl_service
+            self.crawl_service.playwright_browser = self.playwright_browser
+            logger.info("Playwright browser launched and assigned to CrawlService in satellite.")
+        else:
+            logger.info("Playwright browser for WebCrawler is disabled by configuration in satellite.")
+
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -194,6 +219,14 @@ class SatelliteCrawler:
         for cm in reversed(self._entered_contexts):
             logger.info(f"Satellite shutdown: Exiting {cm.__class__.__name__} context.")
             await cm.__aexit__(exc_type, exc_val, exc_tb)
+        
+        # New: Close Playwright browser if it was launched
+        if self.playwright_browser:
+            logger.info("Satellite shutdown: Closing Playwright browser.")
+            await self.playwright_browser.close()
+            if hasattr(self, 'playwright_instance') and self.playwright_instance:
+                await self.playwright_instance.stop()
+
         await self.redis.close()
     
     async def start(self):
@@ -428,6 +461,16 @@ class SatelliteCrawler:
             health_status["status"] = "unhealthy"
             health_status["dependencies"]["crawl_service_clients"] = {"status": "failed_check", "error": str(e)}
             logger.error(f"Satellite health check: CrawlService internal clients check failed: {e}")
+
+        # Check Playwright browser status if enabled
+        if config_loader.get("browser_crawler.enabled", False):
+            if self.playwright_browser and not self.playwright_browser.is_closed():
+                health_status["dependencies"]["playwright_browser"] = {"status": "running"}
+            else:
+                health_status["status"] = "unhealthy"
+                health_status["dependencies"]["playwright_browser"] = {"status": "not_running", "message": "Playwright browser is not active."}
+        else:
+            health_status["dependencies"]["playwright_browser"] = {"status": "disabled", "message": "Browser crawler is disabled."}
 
         return health_status
 

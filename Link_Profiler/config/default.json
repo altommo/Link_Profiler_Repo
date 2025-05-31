@@ -15,7 +15,8 @@
     "extract_images": true,
     "extract_pdfs": false,
     "max_file_size_mb": 10,
-    "user_agent_rotation": false
+    "user_agent_rotation": false,
+    "render_javascript": false
   },
   "anti_detection": {
     "stealth_mode": true,
@@ -52,6 +53,11 @@
     "crawl_rate_drop_threshold": 0.5,
     "history_window_size": 100,
     "unexpected_status_codes": [403, 407, 429, 500, 502, 503, 504]
+  },
+  "browser_crawler": {
+    "enabled": false,
+    "headless": true,
+    "browser_type": "chromium"
   },
   "quality_assurance": {
     "content_validation": false,

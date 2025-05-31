@@ -399,6 +399,11 @@ class CrawlConfig:
     proxy_list: List[Dict[str, str]] = field(default_factory=list) # New: List of proxy dictionaries (e.g., {'url': 'http://user:pass@ip:port', 'region': 'us-east'})
     proxy_region: Optional[str] = None # New: Desired proxy region for this crawl job
 
+    # New fields for headless browser crawling (for SPA content)
+    render_javascript: bool = False # New: Whether to use a headless browser to render JavaScript content
+    browser_type: Optional[str] = "chromium" # New: Browser type for headless rendering (chromium, firefox, webkit)
+    headless_browser: bool = True # New: Whether the browser should run in headless mode (True by default)
+
     # New fields for domain analysis jobs
     domain_names_to_analyze: List[str] = field(default_factory=list)
     min_value_score: float = 50.0

@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 import random
 from collections import deque
 
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page # New: Import Playwright types
+
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
     CrawlJob, ContentType, serialize_model, SEOMetrics
@@ -29,7 +31,7 @@ from Link_Profiler.utils.proxy_manager import proxy_manager
 from Link_Profiler.utils.content_validator import ContentValidator
 from Link_Profiler.utils.anomaly_detector import anomaly_detector
 from Link_Profiler.config.config_loader import config_loader
-from Link_Profiler.services.ai_service import AIService # Import AIService
+from Link_Profiler.services.ai_service import AIService
 
 
 class CrawlerError(Exception):
@@ -121,7 +123,7 @@ class AdaptiveRateLimiter:
             self.logger.debug(f"Waiting {wait_time:.2f}s for {domain} to respect rate limit.")
             await asyncio.sleep(wait_time)
         
-        self.last_request_time[domain] = time.time()
+    self.last_request_time[domain] = time.time()
 
 
 @dataclass
@@ -145,11 +147,12 @@ class CrawlResult:
 class WebCrawler:
     """Main web crawler class"""
     
-    def __init__(self, config: CrawlConfig, db: Database, job_id: str, ai_service: AIService):
+    def __init__(self, config: CrawlConfig, db: Database, job_id: str, ai_service: AIService, playwright_browser: Optional[Browser] = None): # Added playwright_browser
         self.config = config
         self.db = db
         self.job_id = job_id
         self.ai_service = ai_service
+        self.playwright_browser = playwright_browser # Store the shared Playwright Browser instance
         
         self.rate_limiter = AdaptiveRateLimiter(
             initial_delay_seconds=self.config.delay_seconds,
@@ -229,7 +232,8 @@ class WebCrawler:
             )
         
         if self.config.respect_robots_txt:
-            can_crawl = await self.robots_parser.can_fetch(url, self.session.headers.get('User-Agent', self.config.user_agent))
+            user_agent_for_robots = self.session.headers.get('User-Agent', self.config.user_agent)
+            can_crawl = await self.robots_parser.can_fetch(url, user_agent_for_robots)
             if not can_crawl:
                 return CrawlResult(
                     url=url,
@@ -251,109 +255,177 @@ class WebCrawler:
             else:
                 self.logger.warning(f"No available proxies for {url}. Proceeding without proxy.")
 
+        content = ""
+        links = []
+        seo_metrics = None
+        validation_issues = []
+        anomaly_flags = []
+        status_code = 0
+        error_message = None
+        redirect_url = None
+        response_headers = {}
+
         try:
-            async with self.session.get(url, allow_redirects=self.config.follow_redirects, proxy=current_proxy) as response:
-                crawl_time_ms = int((time.time() - start_time) * 1000)
+            if self.config.render_javascript and self.playwright_browser:
+                self.logger.info(f"Using Playwright to render JavaScript for: {url}")
+                context_options = {
+                    "user_agent": self.session.headers.get("User-Agent"),
+                    "extra_http_headers": self.session.headers,
+                    "viewport": {"width": random.randint(1200, 1600), "height": random.randint(800, 1200)}
+                }
+                if self.config.browser_fingerprint_randomization:
+                    context_options.update({
+                        "device_scale_factor": random.choice([1.0, 1.25, 1.5]),
+                        "is_mobile": random.choice([True, False]),
+                        "has_touch": random.choice([True, False]),
+                        "screen": {
+                            "width": random.randint(1366, 1920),
+                            "height": random.randint(768, 1080)
+                        },
+                        "timezone_id": random.choice([
+                            "America/New_York", "Europe/London", "Asia/Tokyo",
+                            "America/Los_Angeles", "Europe/Berlin", "Asia/Shanghai"
+                        ]),
+                        "locale": random.choice(["en-US", "en-GB", "fr-FR", "de-DE", "ja-JP"]),
+                        "color_scheme": random.choice(["light", "dark"]),
+                    })
+
+                # Use a new context for each page to isolate sessions
+                browser_context = await self.playwright_browser.new_context(**context_options)
+                if current_proxy:
+                    await browser_context.set_proxy({"server": current_proxy})
                 
-                content_type = response.headers.get('content-type', '').lower()
+                page = await browser_context.new_page()
                 
-                content = ""
-                links = []
-                seo_metrics = None
-                validation_issues = []
-                anomaly_flags = []
-                
-                if 'text/html' in content_type:
+                try:
+                    # Apply stealth if configured
+                    if config_loader.get("anti_detection.stealth_mode", True):
+                        from playwright_stealth import stealth_async
+                        await stealth_async(page)
+
+                    response = await page.goto(url, wait_until="networkidle", timeout=self.config.timeout_seconds * 1000)
+                    
+                    status_code = response.status if response else 0
+                    content = await page.content()
+                    response_headers = await response.all_headers() if response else {}
+                    redirect_url = page.url if page.url != url else None
+
+                    # Close page and context immediately after use
+                    await page.close()
+                    await browser_context.close()
+
+                except Exception as e:
+                    error_message = f"Playwright rendering error: {e}"
+                    status_code = 500 # Indicate internal error
+                    self.logger.error(f"Playwright failed to crawl {url}: {e}", exc_info=True)
+                    if current_proxy:
+                        proxy_manager.mark_proxy_bad(current_proxy, reason=f"playwright_error: {e}")
+                    # Ensure page and context are closed even on error
+                    await page.close()
+                    await browser_context.close()
+                    raise # Re-raise to be caught by outer try-except
+
+            else: # Use aiohttp for direct HTTP requests
+                async with self.session.get(url, allow_redirects=self.config.follow_redirects, proxy=current_proxy) as response:
+                    status_code = response.status
                     content = await response.text()
-                    links = await self._extract_links_from_html(url, content)
-                    
-                    for link in links:
-                        link.http_status = response.status
-                        link.crawl_timestamp = current_crawl_timestamp
+                    response_headers = dict(response.headers)
+                    redirect_url = str(response.url) if str(response.url) != url else None
 
-                    seo_metrics = await self.content_parser.parse_seo_metrics(url, content)
-                    
-                    if seo_metrics:
-                        seo_metrics.http_status = response.status
-                        seo_metrics.response_time_ms = crawl_time_ms
-                        content_length_header = response.headers.get('Content-Length')
-                        if content_length_header:
-                            try:
-                                seo_metrics.page_size_bytes = int(content_length_header)
-                            except ValueError:
-                                self.logger.warning(f"Invalid Content-Length header for {url}: {content_length_header}")
-                                seo_metrics.page_size_bytes = len(content.encode('utf-8'))
-                        else:
-                            seo_metrics.page_size_bytes = len(content.encode('utf-8'))
-
-                    if config_loader.get("quality_assurance.content_validation", False):
-                        validation_issues = self.content_validator.validate_crawl_result(url, content, response.status)
-                        if seo_metrics:
-                            seo_metrics.validation_issues = validation_issues
-                        if validation_issues:
-                            self.logger.warning(f"Content validation issues for {url}: {validation_issues}")
-                            if "CAPTCHA detected" in validation_issues or "Cloudflare 'Attention Required' page" in validation_issues:
-                                if self.config.captcha_solving_enabled:
-                                    self.logger.info(f"CAPTCHA detected on {url}. Attempting to solve via external service (simulated).")
-                                    return CrawlResult(
-                                        url=url,
-                                        status_code=response.status,
-                                        error_message="CAPTCHA_DETECTED_AND_SOLVING_ATTEMPTED",
-                                        crawl_time_ms=crawl_time_ms,
-                                        crawl_timestamp=current_crawl_timestamp,
-                                        validation_issues=validation_issues
-                                    )
-                                else:
-                                    self.logger.warning(f"CAPTCHA detected on {url}, but captcha_solving is disabled. Marking as blocked.")
-                                    return CrawlResult(
-                                        url=url,
-                                        status_code=response.status,
-                                        error_message="CAPTCHA_DETECTED_AND_SOLVING_DISABLED",
-                                        crawl_time_ms=crawl_time_ms,
-                                        crawl_timestamp=current_crawl_timestamp,
-                                        validation_issues=validation_issues
-                                    )
-                    
-                    if self.config.anomaly_detection_enabled:
-                        current_crawl_result = CrawlResult(
-                            url=url,
-                            status_code=response.status,
-                            content=content,
-                            links_found=links,
-                            crawl_time_ms=crawl_time_ms,
-                            content_type=content_type,
-                            validation_issues=validation_issues
-                        )
-                        anomaly_flags = anomaly_detector.detect_anomalies_for_crawl_result(current_crawl_result)
-                        if anomaly_flags:
-                            self.logger.warning(f"Anomalies detected for {url}: {anomaly_flags}")
-
-                    if config_loader.get("ai.content_classification_enabled", False) and self.ai_service.enabled:
-                        classification = await self.ai_service.classify_content(content, url)
-                        if seo_metrics:
-                            seo_metrics.ai_content_classification = classification
-                            self.logger.debug(f"AI content classification for {url}: {classification}")
-
-
-                elif 'application/pdf' in content_type and self.config.extract_pdfs:
-                    content = await response.read()
-                    links = []
+            crawl_time_ms = int((time.time() - start_time) * 1000)
+            content_type = response_headers.get('content-type', '').lower()
+            
+            # Process content and extract links/metrics
+            if 'text/html' in content_type:
+                links = await self._extract_links_from_html(url, content)
                 
-                self.logger.debug(f"SEO metrics for {url}: {seo_metrics}")
-                return CrawlResult(
-                    url=url,
-                    status_code=response.status,
-                    content=content,
-                    headers=dict(response.headers),
-                    links_found=links,
-                    redirect_url=str(response.url) if str(response.url) != url else None,
-                    crawl_time_ms=crawl_time_ms,
-                    content_type=content_type,
-                    seo_metrics=seo_metrics,
-                    crawl_timestamp=current_crawl_timestamp,
-                    validation_issues=validation_issues,
-                    anomaly_flags=anomaly_flags
-                )
+                for link in links:
+                    link.http_status = status_code
+                    link.crawl_timestamp = current_crawl_timestamp
+
+                seo_metrics = await self.content_parser.parse_seo_metrics(url, content)
+                
+                if seo_metrics:
+                    seo_metrics.http_status = status_code
+                    seo_metrics.response_time_ms = crawl_time_ms
+                    content_length_header = response_headers.get('Content-Length')
+                    if content_length_header:
+                        try:
+                            seo_metrics.page_size_bytes = int(content_length_header)
+                        except ValueError:
+                            self.logger.warning(f"Invalid Content-Length header for {url}: {content_length_header}")
+                            seo_metrics.page_size_bytes = len(content.encode('utf-8'))
+                    else:
+                        seo_metrics.page_size_bytes = len(content.encode('utf-8'))
+
+                if config_loader.get("quality_assurance.content_validation", False):
+                    validation_issues = self.content_validator.validate_crawl_result(url, content, status_code)
+                    if seo_metrics:
+                        seo_metrics.validation_issues = validation_issues
+                    if validation_issues:
+                        self.logger.warning(f"Content validation issues for {url}: {validation_issues}")
+                        if "CAPTCHA detected" in validation_issues or "Cloudflare 'Attention Required' page" in validation_issues:
+                            if self.config.captcha_solving_enabled:
+                                self.logger.info(f"CAPTCHA detected on {url}. Attempting to solve via external service (simulated).")
+                                return CrawlResult(
+                                    url=url,
+                                    status_code=status_code,
+                                    error_message="CAPTCHA_DETECTED_AND_SOLVING_ATTEMPTED",
+                                    crawl_time_ms=crawl_time_ms,
+                                    crawl_timestamp=current_crawl_timestamp,
+                                    validation_issues=validation_issues
+                                )
+                            else:
+                                self.logger.warning(f"CAPTCHA detected on {url}, but captcha_solving is disabled. Marking as blocked.")
+                                return CrawlResult(
+                                    url=url,
+                                    status_code=status_code,
+                                    error_message="CAPTCHA_DETECTED_AND_SOLVING_DISABLED",
+                                    crawl_time_ms=crawl_time_ms,
+                                    crawl_timestamp=current_crawl_timestamp,
+                                    validation_issues=validation_issues
+                                )
+                
+                if self.config.anomaly_detection_enabled:
+                    current_crawl_result = CrawlResult(
+                        url=url,
+                        status_code=status_code,
+                        content=content,
+                        links_found=links,
+                        crawl_time_ms=crawl_time_ms,
+                        content_type=content_type,
+                        validation_issues=validation_issues
+                    )
+                    anomaly_flags = anomaly_detector.detect_anomalies_for_crawl_result(current_crawl_result)
+                    if anomaly_flags:
+                        self.logger.warning(f"Anomalies detected for {url}: {anomaly_flags}")
+
+                if config_loader.get("ai.content_classification_enabled", False) and self.ai_service.enabled:
+                    classification = await self.ai_service.classify_content(content, url)
+                    if seo_metrics:
+                        seo_metrics.ai_content_classification = classification
+                        self.logger.debug(f"AI content classification for {url}: {classification}")
+
+
+            elif 'application/pdf' in content_type and self.config.extract_pdfs:
+                content = await response.read()
+                links = []
+            
+            self.logger.debug(f"SEO metrics for {url}: {seo_metrics}")
+            return CrawlResult(
+                url=url,
+                status_code=status_code,
+                content=content,
+                headers=response_headers,
+                links_found=links,
+                redirect_url=redirect_url,
+                crawl_time_ms=crawl_time_ms,
+                content_type=content_type,
+                seo_metrics=seo_metrics,
+                crawl_timestamp=current_crawl_timestamp,
+                validation_issues=validation_issues,
+                anomaly_flags=anomaly_flags
+            )
                 
         except asyncio.TimeoutError:
             if current_proxy:
