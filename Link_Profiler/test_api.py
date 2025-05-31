@@ -96,6 +96,40 @@ async def test_get_backlinks(target_url: str):
         response.raise_for_status()
         assert isinstance(response.json(), list)
 
+async def test_export_all_backlinks_csv():
+    print(f"\n--- Testing /export/backlinks.csv ---")
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{BASE_URL}/export/backlinks.csv")
+        print(f"Status Code: {response.status_code}")
+        response.raise_for_status()
+        assert response.headers["content-type"] == "text/csv"
+        assert "attachment; filename=all_backlinks.csv" in response.headers["content-disposition"]
+        print(f"CSV content (first 200 chars):\n{response.text[:200]}...")
+        assert len(response.text) > 0 # Ensure some content is returned
+
+async def test_export_all_link_profiles_csv():
+    print(f"\n--- Testing /export/link_profiles.csv ---")
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{BASE_URL}/export/link_profiles.csv")
+        print(f"Status Code: {response.status_code}")
+        response.raise_for_status()
+        assert response.headers["content-type"] == "text/csv"
+        assert "attachment; filename=all_link_profiles.csv" in response.headers["content-disposition"]
+        print(f"CSV content (first 200 chars):\n{response.text[:200]}...")
+        assert len(response.text) > 0 # Ensure some content is returned
+
+async def test_export_all_crawl_jobs_csv():
+    print(f"\n--- Testing /export/crawl_jobs.csv ---")
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{BASE_URL}/export/crawl_jobs.csv")
+        print(f"Status Code: {response.status_code}")
+        response.raise_for_status()
+        assert response.headers["content-type"] == "text/csv"
+        assert "attachment; filename=all_crawl_jobs.csv" in response.headers["content-disposition"]
+        print(f"CSV content (first 200 chars):\n{response.text[:200]}...")
+        assert len(response.text) > 0 # Ensure some content is returned
+
+
 async def test_find_expired_domains(domains: List[str]):
     print(f"\n--- Testing /domain/find_expired_domains ---")
     payload = {
@@ -292,6 +326,11 @@ async def main():
         # and inspecting the 'valuable_domains_found' field.
     else:
         print(f"Domain analysis job did not complete successfully.")
+
+    # Test Export Endpoints
+    await test_export_all_backlinks_csv()
+    await test_export_all_link_profiles_csv()
+    await test_export_all_crawl_jobs_csv()
 
 
 if __name__ == "__main__":

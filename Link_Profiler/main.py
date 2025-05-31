@@ -804,6 +804,92 @@ async def debug_get_all_backlinks():
     logger.info(f"DEBUG endpoint: Retrieved {len(backlinks)} backlinks from DB.")
     return [BacklinkResponse.from_backlink(bl) for bl in backlinks]
 
+@app.get("/export/backlinks.csv", response_class=Response)
+async def export_all_backlinks_csv():
+    """
+    Exports all backlinks from the database to a CSV file.
+    """
+    logger.info("Received request to export all backlinks to CSV.")
+    backlinks = db.get_all_backlinks()
+    
+    if not backlinks:
+        raise HTTPException(status_code=404, detail="No backlinks found to export.")
+    
+    # Convert list of Backlink objects to list of dictionaries
+    backlink_dicts = [serialize_model(bl) for bl in backlinks]
+    
+    # Define fieldnames explicitly to ensure order and include all relevant fields
+    fieldnames = [
+        "id", "source_url", "target_url", "source_domain", "target_domain",
+        "anchor_text", "link_type", "rel_attributes", "context_text",
+        "position_on_page", "is_image_link", "alt_text", "discovered_date",
+        "last_seen_date", "authority_passed", "is_active", "spam_level",
+        "http_status", "crawl_timestamp", "source_domain_metrics"
+    ]
+    
+    csv_output = await export_to_csv(backlink_dicts, fieldnames=fieldnames)
+    
+    headers = {
+        "Content-Disposition": "attachment; filename=all_backlinks.csv",
+        "Content-Type": "text/csv"
+    }
+    return Response(content=csv_output.getvalue(), headers=headers, media_type="text/csv")
+
+@app.get("/export/link_profiles.csv", response_class=Response)
+async def export_all_link_profiles_csv():
+    """
+    Exports all link profiles from the database to a CSV file.
+    """
+    logger.info("Received request to export all link profiles to CSV.")
+    link_profiles = db.get_all_link_profiles() # Assuming a get_all_link_profiles method exists
+    
+    if not link_profiles:
+        raise HTTPException(status_code=404, detail="No link profiles found to export.")
+    
+    link_profile_dicts = [serialize_model(lp) for lp in link_profiles]
+    
+    fieldnames = [
+        "target_url", "target_domain", "total_backlinks", "unique_domains",
+        "dofollow_links", "nofollow_links", "authority_score", "trust_score",
+        "spam_score", "anchor_text_distribution", "referring_domains",
+        "analysis_date"
+    ]
+    
+    csv_output = await export_to_csv(link_profile_dicts, fieldnames=fieldnames)
+    
+    headers = {
+        "Content-Disposition": "attachment; filename=all_link_profiles.csv",
+        "Content-Type": "text/csv"
+    }
+    return Response(content=csv_output.getvalue(), headers=headers, media_type="text/csv")
+
+@app.get("/export/crawl_jobs.csv", response_class=Response)
+async def export_all_crawl_jobs_csv():
+    """
+    Exports all crawl jobs from the database to a CSV file.
+    """
+    logger.info("Received request to export all crawl jobs to CSV.")
+    crawl_jobs = db.get_all_crawl_jobs()
+    
+    if not crawl_jobs:
+        raise HTTPException(status_code=404, detail="No crawl jobs found to export.")
+    
+    crawl_job_dicts = [serialize_model(job) for job in crawl_jobs]
+    
+    fieldnames = [
+        "id", "target_url", "job_type", "status", "priority", "created_date",
+        "started_date", "completed_date", "progress_percentage", "urls_discovered",
+        "urls_crawled", "links_found", "errors_count", "config", "results", "error_log"
+    ]
+    
+    csv_output = await export_to_csv(crawl_job_dicts, fieldnames=fieldnames)
+    
+    headers = {
+        "Content-Disposition": "attachment; filename=all_crawl_jobs.csv",
+        "Content-Type": "text/csv"
+    }
+    return Response(content=csv_output.getvalue(), headers=headers, media_type="text/csv")
+
 
 @app.get("/domain/availability/{domain_name}", response_model=Dict[str, Union[str, bool]])
 async def check_domain_availability(domain_name: str):
