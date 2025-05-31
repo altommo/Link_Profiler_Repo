@@ -453,6 +453,14 @@ class SEOMetrics:
     seo_score: float = 0.0
     issues: List[str] = field(default_factory=list)
     
+    # New fields for content quality and completeness
+    structured_data_types: List[str] = field(default_factory=list) # e.g., ["Article", "FAQPage"]
+    og_title: Optional[str] = None
+    og_description: Optional[str] = None
+    twitter_title: Optional[str] = None
+    twitter_description: Optional[str] = None
+    validation_issues: List[str] = field(default_factory=list) # Issues found by ContentValidator
+
     # AI-generated insights
     ai_content_score: Optional[float] = None # AI-driven content quality score (0-100)
     ai_suggestions: List[str] = field(default_factory=list) # AI-generated improvement suggestions
@@ -508,6 +516,10 @@ class SEOMetrics:
             score += (self.ai_content_score - 50) * 0.1 # Adjust based on AI score, e.g., +5 for 100, -5 for 0
         if self.ai_readability_score is not None:
             score += (self.ai_readability_score - 50) * 0.05 # Smaller adjustment for readability
+
+        # Penalize for validation issues
+        if self.validation_issues:
+            score -= len(self.validation_issues) * 2 # Small penalty per validation issue
 
         self.seo_score = max(0.0, score)
         return self.seo_score

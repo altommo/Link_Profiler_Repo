@@ -25,6 +25,7 @@ from .content_parser import ContentParser
 from .robots_parser import RobotsParser
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.utils.proxy_manager import proxy_manager # New: Import ProxyManager
+from Link_Profiler.utils.content_validator import ContentValidator # New: Import ContentValidator
 from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
 
@@ -98,6 +99,7 @@ class CrawlResult:
     content_type: str = "text/html"
     seo_metrics: Optional[SEOMetrics] = None # Added for SEO metrics
     crawl_timestamp: Optional[datetime] = None # New: UTC timestamp when the page was crawled
+    validation_issues: List[str] = field(default_factory=list) # New: Issues found by ContentValidator
 
 
 class WebCrawler:
@@ -111,6 +113,7 @@ class WebCrawler:
         self.robots_parser = RobotsParser() # Initialise, but session managed by __aenter__
         self.link_extractor = LinkExtractor()
         self.content_parser = ContentParser() 
+        self.content_validator = ContentValidator() # New: Initialize ContentValidator
         self.session: Optional[aiohttp.ClientSession] = None
         self.crawled_urls: Set[str] = set()
         self.failed_urls: Set[str] = set()
@@ -222,6 +225,7 @@ class WebCrawler:
                 content = ""
                 links = []
                 seo_metrics = None # Initialize seo_metrics
+                validation_issues = [] # Initialize validation issues
                 
                 if 'text/html' in content_type:
                     content = await response.text()
@@ -249,6 +253,14 @@ class WebCrawler:
                         else:
                             seo_metrics.page_size_bytes = len(content.encode('utf-8')) # Fallback to content length
 
+                    # New: Perform content validation if enabled
+                    if config_loader.get("quality_assurance.content_validation", False):
+                        validation_issues = self.content_validator.validate_crawl_result(url, content, response.status)
+                        if seo_metrics:
+                            seo_metrics.validation_issues = validation_issues # Store in SEO metrics
+                        if validation_issues:
+                            self.logger.warning(f"Content validation issues for {url}: {validation_issues}")
+
                 elif 'application/pdf' in content_type and self.config.extract_pdfs:
                     content = await response.read() # Read as bytes for PDF
                     links = []  # PDF link extraction would go here
@@ -265,7 +277,8 @@ class WebCrawler:
                     crawl_time_ms=crawl_time_ms,
                     content_type=content_type,
                     seo_metrics=seo_metrics, # Pass SEO metrics in CrawlResult
-                    crawl_timestamp=current_crawl_timestamp # Pass the crawl timestamp
+                    crawl_timestamp=current_crawl_timestamp, # Pass the crawl timestamp
+                    validation_issues=validation_issues # Pass validation issues
                 )
                 
         except asyncio.TimeoutError:

@@ -208,6 +208,13 @@ class SEOMetricsORM(Base):
     # Existing fields
     seo_score = Column(Float, default=0.0)
     issues = Column(ARRAY(String), default=[]) # Store as array of strings
+    # New fields for content quality and completeness
+    structured_data_types = Column(ARRAY(String), default=[])
+    og_title = Column(String, nullable=True)
+    og_description = Column(Text, nullable=True)
+    twitter_title = Column(String, nullable=True)
+    twitter_description = Column(Text, nullable=True)
+    validation_issues = Column(ARRAY(String), default=[]) # Issues found by ContentValidator
 
     # Relationships
     url_rel = relationship("URLORM", back_populates="seo_metrics")

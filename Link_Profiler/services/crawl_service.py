@@ -29,6 +29,7 @@ from Link_Profiler.services.keyword_service import KeywordService
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Import DomainAnalyzerService
 from Link_Profiler.services.ai_service import AIService # Import AIService
+from Link_Profiler.utils.content_validator import ContentValidator # New: Import ContentValidator
 from Link_Profiler.monitoring.prometheus_metrics import (
     JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL,
     CRAWLED_URLS_TOTAL, BACKLINKS_FOUND_TOTAL, JOB_ERRORS_TOTAL
@@ -67,6 +68,7 @@ class CrawlService:
         self.technical_auditor = technical_auditor
         self.domain_analyzer_service = domain_analyzer_service # Store DomainAnalyzerService
         self.ai_service = ai_service # Store AIService
+        self.content_validator = ContentValidator() # New: Initialize ContentValidator
         self.deduplication_set_key = "processed_backlinks_dedup"
         self.dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
 
@@ -194,7 +196,7 @@ class CrawlService:
             asyncio.create_task(self._run_domain_analysis_job(job, domain_names_to_analyze, min_value_score, limit))
         elif job_type == 'full_seo_audit': # New job type dispatch
             if not urls_to_audit_tech: # Re-using urls_to_audit_tech for full SEO audit target URLs
-                raise ValueError("urls_to_audit_tech must be provided for 'full_seo_audit' job type.")
+                raise ValueError("urls_to_audit_full_seo must be provided for 'full_seo_audit' job type.")
             asyncio.create_task(self._run_full_seo_audit_job(job, urls_to_audit_tech, config))
         else:
             raise ValueError(f"Unknown job type: {job_type}")
@@ -435,6 +437,10 @@ class CrawlService:
                             
                             self.logger.debug(f"CrawlResult.seo_metrics for {crawl_result.url}: {crawl_result.seo_metrics}")
                             if crawl_result.seo_metrics:
+                                # Add validation issues to SEO metrics before saving
+                                if crawl_result.validation_issues:
+                                    crawl_result.seo_metrics.validation_issues.extend(crawl_result.validation_issues)
+                                    crawl_result.seo_metrics.calculate_seo_score() # Recalculate score with new issues
                                 try:
                                     self.db.save_seo_metrics(crawl_result.seo_metrics)
                                     if self.clickhouse_loader: # Conditionally insert to ClickHouse

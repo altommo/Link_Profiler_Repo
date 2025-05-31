@@ -3,7 +3,7 @@ Content Parser - Extracts SEO-related metrics and information from page content.
 File: Link_Profiler/crawlers/content_parser.py
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from bs4 import BeautifulSoup
 import logging
 from urllib.parse import urlparse, urljoin # Added import
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class ContentParser:
     """
-    Parses HTML content to extract SEO-related metrics and other useful information.
+    Parses HTML content to extract various SEO-related metrics and other useful information.
     """
     async def parse_seo_metrics(self, url: str, html_content: str) -> SEOMetrics:
         """
@@ -76,6 +76,37 @@ class ContentParser:
             # Schema Markup (basic check for script tags with type="application/ld+json")
             schema_script = soup.find('script', type='application/ld+json')
             metrics.has_schema_markup = bool(schema_script)
+            
+            # Extract structured data types
+            structured_data_types = set()
+            for script_tag in soup.find_all('script', type='application/ld+json'):
+                try:
+                    json_ld = json.loads(script_tag.string)
+                    if isinstance(json_ld, dict) and '@type' in json_ld:
+                        sd_type = json_ld['@type']
+                        if isinstance(sd_type, list):
+                            structured_data_types.update(sd_type)
+                        else:
+                            structured_data_types.add(sd_type)
+                    elif isinstance(json_ld, list): # Handle array of structured data
+                        for item in json_ld:
+                            if isinstance(item, dict) and '@type' in item:
+                                sd_type = item['@type']
+                                if isinstance(sd_type, list):
+                                    structured_data_types.update(sd_type)
+                                else:
+                                    structured_data_types.add(sd_type)
+                except json.JSONDecodeError:
+                    logger.warning(f"Invalid JSON-LD found on {url}")
+            metrics.structured_data_types = sorted(list(structured_data_types))
+
+            # Open Graph Meta Tags
+            metrics.og_title = self._get_meta_content(soup, 'property', 'og:title')
+            metrics.og_description = self._get_meta_content(soup, 'property', 'og:description')
+
+            # Twitter Card Meta Tags
+            metrics.twitter_title = self._get_meta_content(soup, 'name', 'twitter:title')
+            metrics.twitter_description = self._get_meta_content(soup, 'name', 'twitter:description')
 
             # Mobile Friendly (very basic check, real check requires Lighthouse/similar)
             # Look for viewport meta tag
@@ -96,7 +127,8 @@ class ContentParser:
         
         return metrics
 
-    # You could add other parsing methods here, e.g.,
-    # async def parse_content_for_keywords(self, html_content: str) -> Dict[str, int]:
-    #     """Extracts keyword frequency."""
-    #     pass
+    def _get_meta_content(self, soup: BeautifulSoup, attr_name: str, attr_value: str) -> Optional[str]:
+        """Helper to extract content from meta tags."""
+        tag = soup.find('meta', attrs={attr_name: attr_value})
+        return tag.get('content').strip() if tag and tag.get('content') else None
+
