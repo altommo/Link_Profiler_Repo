@@ -12,6 +12,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 import json
 import redis.asyncio as redis
+import random # New: Import random
 
 from playwright.async_api import Browser
 
@@ -130,7 +131,7 @@ class CrawlService:
         min_value_score: Optional[float] = None,
         limit: Optional[int] = None,
         web3_content_identifier: Optional[str] = None,
-        social_media_query: Optional[str] = None, # New: for social_media_crawl
+        social_media_query: Optional[str] = None,
         config: Optional[CrawlConfig] = None
     ) -> CrawlJob:
         """
@@ -170,7 +171,7 @@ class CrawlService:
             id=job_id,
             target_url=target_url or keyword or (urls_to_audit_tech[0] if urls_to_audit_tech else None) or \
                        (domain_names_to_analyze[0] if domain_names_to_analyze else None) or \
-                       web3_content_identifier or social_media_query or "N/A", # New: Add social_media_query
+                       web3_content_identifier or social_media_query or "N/A",
             job_type=job_type,
             status=CrawlStatus.PENDING,
             config=serialize_model(config)
@@ -211,7 +212,7 @@ class CrawlService:
             if not web3_content_identifier:
                 raise ValueError("web3_content_identifier must be provided for 'web3_crawl' job type.")
             asyncio.create_task(self._run_web3_crawl_job(job, web3_content_identifier, config))
-        elif job_type == 'social_media_crawl': # New: Social media crawl job type
+        elif job_type == 'social_media_crawl':
             if not social_media_query:
                 raise ValueError("social_media_query must be provided for 'social_media_crawl' job type.")
             asyncio.create_task(self._run_social_media_crawl_job(job, social_media_query, config))
@@ -232,7 +233,7 @@ class CrawlService:
         min_value_score: Optional[float] = None,
         limit: Optional[int] = None,
         web3_content_identifier: Optional[str] = None,
-        social_media_query: Optional[str] = None # New: for social_media_crawl
+        social_media_query: Optional[str] = None
     ):
         """
         Executes a pre-defined CrawlJob object. This method is intended to be called
@@ -296,7 +297,7 @@ class CrawlService:
                 if not web3_content_identifier_from_config:
                     raise ValueError("web3_content_identifier must be provided for 'web3_crawl' job type.")
                 await self._run_web3_crawl_job(job, web3_content_identifier_from_config, config)
-            elif job.job_type == 'social_media_crawl': # New: Social media crawl job type
+            elif job.job_type == 'social_media_crawl':
                 social_media_query_from_config = job.config.get("social_media_query")
                 if not social_media_query_from_config:
                     raise ValueError("social_media_query must be provided for 'social_media_crawl' job type.")
@@ -508,7 +509,7 @@ class CrawlService:
                                             await self.clickhouse_loader.bulk_insert_backlinks(filtered_crawled_backlinks)
                                         BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(filtered_crawled_backlinks))
                                     except Exception as db_e:
-                                        self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
+                                        self.logger.error(f"Error adding crawled backlinks to database: {db_e}", exc_info=True)
                                         job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error adding crawled backlinks: {str(db_e)}", details=str(db_e))
                                         JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
                                 else:
