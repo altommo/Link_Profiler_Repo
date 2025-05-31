@@ -686,13 +686,12 @@ class AlertChannel(Enum):
 @dataclass
 class AlertRule:
     """Defines a rule for triggering alerts based on job or metric conditions."""
-    name: str # Moved to be a non-default argument first
+    name: str
+    trigger_type: str # e.g., "job_status_change", "metric_threshold", "anomaly_detected"
     id: Optional[str] = None # UUID for the rule
     description: Optional[str] = None
     is_active: bool = True
     
-    # Trigger conditions
-    trigger_type: str # e.g., "job_status_change", "metric_threshold", "anomaly_detected"
     job_type_filter: Optional[str] = None # Apply rule only to specific job types (e.g., "backlink_discovery")
     target_url_pattern: Optional[str] = None # Regex pattern for target URLs
     
