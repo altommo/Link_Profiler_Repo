@@ -6,7 +6,7 @@ File: Link_Profiler/crawlers/web_crawler.py
 import asyncio
 import aiohttp
 import time
-from typing import List, Dict, Set, Optional, AsyncGenerator, Tuple
+from typing import List, Dict, Set, Optional, AsyncGenerator, Tuple, Union # Added Union
 from urllib.parse import urljoin, urlparse, urlencode
 from urllib.robotparser import RobotFileParser
 import logging
@@ -17,7 +17,7 @@ import random
 from collections import deque
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
-from bs4 import BeautifulSoup # New: Import BeautifulSoup for image src extraction
+from bs4 import BeautifulSoup
 
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
@@ -31,7 +31,7 @@ from Link_Profiler.utils.user_agent_manager import user_agent_manager
 from Link_Profiler.utils.proxy_manager import proxy_manager
 from Link_Profiler.utils.content_validator import ContentValidator
 from Link_Profiler.utils.anomaly_detector import anomaly_detector
-from Link_Profiler.utils.ocr_processor import ocr_processor # New: Import OCRProcessor
+from Link_Profiler.utils.ocr_processor import ocr_processor
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.services.ai_service import AIService
 
@@ -367,7 +367,7 @@ class WebCrawler:
                     seo_metrics.http_status = status_code
                     seo_metrics.response_time_ms = crawl_time_ms
                     seo_metrics.page_size_bytes = len(content)
-                    seo_metrics.calculate_seo_score() # Recalculate score with OCR text
+                    seo_metrics.calculate_seo_score()
                     links = [] # No links from image content itself
 
                 elif 'application/pdf' in content_type and self.config.extract_pdfs:
@@ -376,7 +376,9 @@ class WebCrawler:
                 
                 # Common validation and anomaly detection for all content types
                 if config_loader.get("quality_assurance.content_validation", False):
-                    validation_issues = self.content_validator.validate_crawl_result(url, content_str if isinstance(content, str) else content.decode('utf-8', errors='ignore'), status_code)
+                    # Ensure content is string for content_validator
+                    content_for_validation = content.decode('utf-8', errors='ignore') if isinstance(content, bytes) else content
+                    validation_issues = self.content_validator.validate_crawl_result(url, content_for_validation, status_code)
                     if seo_metrics:
                         seo_metrics.validation_issues = validation_issues
                     if validation_issues:
@@ -407,7 +409,7 @@ class WebCrawler:
                     current_crawl_result = CrawlResult(
                         url=url,
                         status_code=status_code,
-                        content=content_str if isinstance(content, str) else content.decode('utf-8', errors='ignore'),
+                        content=content_for_validation if 'content_for_validation' in locals() else (content.decode('utf-8', errors='ignore') if isinstance(content, bytes) else content),
                         links_found=links,
                         crawl_time_ms=crawl_time_ms,
                         content_type=content_type,
@@ -418,7 +420,7 @@ class WebCrawler:
                         self.logger.warning(f"Anomalies detected for {url}: {anomaly_flags}")
 
                 if config_loader.get("ai.content_classification_enabled", False) and self.ai_service.enabled:
-                    classification = await self.ai_service.classify_content(content_str if isinstance(content, str) else content.decode('utf-8', errors='ignore'), url)
+                    classification = await self.ai_service.classify_content(content_for_validation if 'content_for_validation' in locals() else (content.decode('utf-8', errors='ignore') if isinstance(content, bytes) else content), url)
                     if seo_metrics:
                         seo_metrics.ai_content_classification = classification
                         self.logger.debug(f"AI content classification for {url}: {classification}")
@@ -445,7 +447,7 @@ class WebCrawler:
             return CrawlResult(
                 url=url,
                 status_code=408,
-                content="", # No content on timeout
+                content=b"", # No content on timeout
                 error_message="Request timeout",
                 crawl_time_ms=int((time.time() - start_time) * 1000),
                 crawl_timestamp=current_crawl_timestamp,
@@ -457,7 +459,7 @@ class WebCrawler:
             return CrawlResult(
                 url=url,
                 status_code=502,
-                content="", # No content on proxy error
+                content=b"", # No content on proxy error
                 error_message=f"Proxy connection error: {str(e)}",
                 crawl_time_ms=int((time.time() - start_time) * 1000),
                 crawl_timestamp=current_crawl_timestamp,
@@ -469,7 +471,7 @@ class WebCrawler:
             return CrawlResult(
                 url=url,
                 status_code=e.status,
-                content="", # No content on HTTP error
+                content=b"", # No content on HTTP error
                 error_message=f"HTTP error: {e.message}",
                 crawl_time_ms=int((time.time() - start_time) * 1000),
                 crawl_timestamp=current_crawl_timestamp,
@@ -481,7 +483,7 @@ class WebCrawler:
             return CrawlResult(
                 url=url,
                 status_code=0,
-                content="", # No content on network error
+                content=b"", # No content on network error
                 error_message=f"Network or client error: {str(e)}",
                 crawl_time_ms=int((time.time() - start_time) * 1000),
                 crawl_timestamp=current_crawl_timestamp,
@@ -493,7 +495,7 @@ class WebCrawler:
             return CrawlResult(
                 url=url,
                 status_code=500,
-                content="", # No content on unexpected error
+                content=b"", # No content on unexpected error
                 error_message=f"Unexpected error during crawl: {str(e)}",
                 crawl_time_ms=int((time.time() - start_time) * 1000),
                 crawl_timestamp=current_crawl_timestamp,
