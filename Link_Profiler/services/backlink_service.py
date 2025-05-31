@@ -8,6 +8,7 @@ import random
 import aiohttp
 import uuid # Import uuid module
 import json # Import json for caching
+import redis.asyncio as redis # Import redis for type hinting
 
 # Google API imports for GSC
 from google.oauth2.credentials import Credentials
@@ -218,7 +219,7 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
                         target_url=target_url,
                         anchor_text="Real API Link 2",
                         link_type=LinkType.NOFOLLOW,
-                        context_text="Context from real API source 2",
+                        context_text="You can login here.",
                         discovered_date=datetime.now() - timedelta(days=60),
                         spam_level=SpamLevel.SUSPICIOUS
                     )

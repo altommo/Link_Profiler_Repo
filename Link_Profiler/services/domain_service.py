@@ -12,6 +12,7 @@ from datetime import datetime # Import datetime for parsing WHOIS dates
 import aiohttp # Import aiohttp
 import os # Import os to read environment variables
 import json # Import json for caching
+import redis.asyncio as redis # Import redis for type hinting
 
 from Link_Profiler.core.models import Domain # Changed to absolute import
 from Link_Profiler.config.config_loader import config_loader # Import config_loader
