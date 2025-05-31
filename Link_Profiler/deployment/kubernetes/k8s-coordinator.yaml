@@ -36,12 +36,16 @@ spec:
             port: 8000
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 8000
           initialDelaySeconds: 5
           periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
 
 ---
 apiVersion: v1
@@ -55,4 +59,6 @@ spec:
   ports:
   - port: 80
     targetPort: 8000
-  type: LoadBalancer
+  type: LoadBalancer````
+
+Link_Profiler\deployment\kubernetes\k8s-satellites.yaml

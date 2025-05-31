@@ -185,7 +185,7 @@ crawl_service_for_lifespan = CrawlService(
     domain_analyzer_service=domain_analyzer_service, # Pass the domain_analyzer_service
     ai_service=ai_service_instance # New: Pass AI Service
 ) 
-expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service)
+expired_domain_finder_service = ExpiredDomainService(db, domain_service_instance, domain_analyzer_service)
 
 
 @asynccontextmanager
@@ -1036,9 +1036,122 @@ async def get_keyword_suggestions(seed_keyword: str):
 @app.get("/health")
 async def health_check():
     """
-    Basic health check endpoint.
+    Performs a comprehensive health check of the API and its dependencies.
     """
-    return {"status": "ok", "message": "Link Profiler API is running"}
+    health_status = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "dependencies": {}
+    }
+
+    # Check Redis connectivity
+    try:
+        if redis_client:
+            await redis_client.ping()
+            health_status["dependencies"]["redis"] = {"status": "connected"}
+        else:
+            health_status["dependencies"]["redis"] = {"status": "disabled", "message": "Redis client not initialized."}
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["dependencies"]["redis"] = {"status": "disconnected", "error": str(e)}
+        logger.error(f"Health check: Redis connection failed: {e}")
+
+    # Check PostgreSQL connectivity
+    try:
+        db.ping() # Assuming Database class has a ping method
+        health_status["dependencies"]["postgresql"] = {"status": "connected"}
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["dependencies"]["postgresql"] = {"status": "disconnected", "error": str(e)}
+        logger.error(f"Health check: PostgreSQL connection failed: {e}")
+
+    # Check external API services (Domain, Backlink, SERP, Keyword, AI)
+    # This checks if their clients are initialized and if they can enter their contexts.
+    # A full ping to external APIs might be too slow for a health check,
+    # so we check if the service instances are ready to operate.
+    
+    # Domain Service
+    try:
+        async with domain_service_instance as ds:
+            # Attempt a lightweight operation or just check if client is active
+            if ds.api_client:
+                health_status["dependencies"]["domain_service"] = {"status": "ready", "client": ds.api_client.__class__.__name__}
+            else:
+                health_status["dependencies"]["domain_service"] = {"status": "not_ready", "message": "API client not initialized."}
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["dependencies"]["domain_service"] = {"status": "failed_init", "error": str(e)}
+        logger.error(f"Health check: Domain Service failed: {e}")
+
+    # Backlink Service
+    try:
+        async with backlink_service_instance as bs:
+            if bs.api_client:
+                health_status["dependencies"]["backlink_service"] = {"status": "ready", "client": bs.api_client.__class__.__name__}
+            else:
+                health_status["dependencies"]["backlink_service"] = {"status": "not_ready", "message": "API client not initialized."}
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["dependencies"]["backlink_service"] = {"status": "failed_init", "error": str(e)}
+        logger.error(f"Health check: Backlink Service failed: {e}")
+
+    # SERP Service
+    try:
+        async with serp_service_instance as ss:
+            if ss.api_client or ss.serp_crawler:
+                health_status["dependencies"]["serp_service"] = {"status": "ready", "client": ss.api_client.__class__.__name__}
+            else:
+                health_status["dependencies"]["serp_service"] = {"status": "not_ready", "message": "No client or crawler initialized."}
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["dependencies"]["serp_service"] = {"status": "failed_init", "error": str(e)}
+        logger.error(f"Health check: SERP Service failed: {e}")
+
+    # Keyword Service
+    try:
+        async with keyword_service_instance as ks:
+            if ks.api_client or ks.keyword_scraper:
+                health_status["dependencies"]["keyword_service"] = {"status": "ready", "client": ks.api_client.__class__.__name__}
+            else:
+                health_status["dependencies"]["keyword_service"] = {"status": "not_ready", "message": "No client or scraper initialized."}
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["dependencies"]["keyword_service"] = {"status": "failed_init", "error": str(e)}
+        logger.error(f"Health check: Keyword Service failed: {e}")
+
+    # AI Service
+    try:
+        async with ai_service_instance as ais:
+            if ais.enabled:
+                health_status["dependencies"]["ai_service"] = {"status": "enabled", "client": ais.openrouter_client.__class__.__name__}
+            else:
+                health_status["dependencies"]["ai_service"] = {"status": "disabled", "message": "AI service is disabled by config or missing API key."}
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["dependencies"]["ai_service"] = {"status": "failed_init", "error": str(e)}
+        logger.error(f"Health check: AI Service failed: {e}")
+
+    # ClickHouse Loader
+    try:
+        if clickhouse_loader_instance:
+            # Ping ClickHouse if enabled
+            await clickhouse_loader_instance.__aenter__() # Temporarily enter context to ping
+            if clickhouse_loader_instance.client:
+                health_status["dependencies"]["clickhouse_loader"] = {"status": "connected"}
+            else:
+                health_status["dependencies"]["clickhouse_loader"] = {"status": "disconnected", "message": "Client not active after init."}
+            await clickhouse_loader_instance.__aexit__(None, None, None) # Exit context
+        else:
+            health_status["dependencies"]["clickhouse_loader"] = {"status": "disabled", "message": "ClickHouse integration is disabled."}
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["dependencies"]["clickhouse_loader"] = {"status": "failed_init", "error": str(e)}
+        logger.error(f"Health check: ClickHouse Loader failed: {e}")
+
+
+    status_code = 200 if health_status["status"] == "healthy" else 503
+    return Response(content=json.dumps(health_status, indent=2), media_type="application/json", status_code=status_code)
+
 
 @app.get("/metrics", response_class=Response)
 async def prometheus_metrics():

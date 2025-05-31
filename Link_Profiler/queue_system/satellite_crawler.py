@@ -105,7 +105,7 @@ class SatelliteCrawler:
         ai_service_instance = AIService() # New: Initialize AIService for satellite
 
         # Initialize DomainAnalyzerService (depends on DomainService)
-        domain_analyzer_service = DomainAnalyzerService(self.db, domain_service_instance)
+        domain_analyzer_service = DomainAnalyzerService(self.db, domain_service_instance, ai_service_instance)
 
         # Initialize CrawlService instance that will execute jobs
         self.crawl_service = CrawlService(
@@ -378,6 +378,58 @@ class SatelliteCrawler:
         except Exception as e:
             logger.error(f"Error sending final heartbeat: {e}")
 
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Performs a comprehensive health check of the satellite and its dependencies.
+        """
+        health_status = {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "crawler_id": self.crawler_id,
+            "region": self.region,
+            "current_job_id": self.current_job_id,
+            "dependencies": {}
+        }
+
+        # Check Redis connectivity
+        try:
+            await self.redis.ping()
+            health_status["dependencies"]["redis"] = {"status": "connected"}
+        except Exception as e:
+            health_status["status"] = "unhealthy"
+            health_status["dependencies"]["redis"] = {"status": "disconnected", "error": str(e)}
+            logger.error(f"Satellite health check: Redis connection failed: {e}")
+
+        # Check PostgreSQL connectivity
+        try:
+            self.db.ping() # Assuming Database class has a ping method
+            health_status["dependencies"]["postgresql"] = {"status": "connected"}
+        except Exception as e:
+            health_status["status"] = "unhealthy"
+            health_status["dependencies"]["postgresql"] = {"status": "disconnected", "error": str(e)}
+            logger.error(f"Satellite health check: PostgreSQL connection failed: {e}")
+
+        # Check if CrawlService's internal clients are active (Domain, Backlink, etc.)
+        # This is a high-level check, not a deep ping to external APIs
+        try:
+            # Check if the main services within crawl_service are initialized
+            if self.crawl_service.domain_service.api_client and \
+               self.crawl_service.backlink_service.api_client and \
+               self.crawl_service.serp_service.api_client and \
+               self.crawl_service.keyword_service.api_client and \
+               self.crawl_service.technical_auditor and \
+               self.crawl_service.ai_service:
+                health_status["dependencies"]["crawl_service_clients"] = {"status": "initialized"}
+            else:
+                health_status["status"] = "unhealthy"
+                health_status["dependencies"]["crawl_service_clients"] = {"status": "not_initialized", "message": "One or more internal clients not ready."}
+        except Exception as e:
+            health_status["status"] = "unhealthy"
+            health_status["dependencies"]["crawl_service_clients"] = {"status": "failed_check", "error": str(e)}
+            logger.error(f"Satellite health check: CrawlService internal clients check failed: {e}")
+
+        return health_status
+
 
 # CLI interface for easy deployment
 async def main():
@@ -389,6 +441,11 @@ async def main():
     parser.add_argument("--region", default="default", help="Crawler region/zone")
     parser.add_argument("--log-level", default="INFO", help="Logging level")
     
+    # Add a subparser for the health check command
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    run_parser = subparsers.add_parser("run", help="Run the satellite crawler (default command)")
+    health_parser = subparsers.add_parser("health", help="Perform a health check of the satellite")
+
     args = parser.parse_args()
     
     # Configure logging
@@ -397,13 +454,21 @@ async def main():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # Start satellite crawler
-    async with SatelliteCrawler(
+    crawler = SatelliteCrawler(
         redis_url=args.redis_url,
         crawler_id=args.crawler_id,
         region=args.region
-    ) as crawler:
-        await crawler.start()
+    )
+
+    if args.command == "health":
+        health_report = await crawler.health_check()
+        print(json.dumps(health_report, indent=2))
+        if health_report["status"] == "unhealthy":
+            sys.exit(1)
+        sys.exit(0)
+    else: # Default command is 'run'
+        async with crawler as c:
+            await c.start()
 
 if __name__ == "__main__":
     asyncio.run(main())
