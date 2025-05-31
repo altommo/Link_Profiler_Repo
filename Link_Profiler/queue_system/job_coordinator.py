@@ -15,8 +15,8 @@ import aiohttp # New: Import aiohttp for webhooks
 from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, serialize_model, CrawlError
 from Link_Profiler.database.database import Database
 from Link_Profiler.config.config_loader import config_loader
-from Link_Profiler.services.alert_service import AlertService # New: Import AlertService
-from Link_Profiler.main import ConnectionManager # New: Import ConnectionManager
+from Link_Profiler.services.alert_service import AlertService
+from Link_Profiler.utils.connection_manager import ConnectionManager # Corrected import
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ class JobCoordinator:
         job_message = serialize_model(job)
 
         if job.scheduled_at:
-            # If scheduled_at is in the past, treat as immediate
+            # If job.scheduled_at is in the past, treat as immediate
             if job.scheduled_at <= datetime.now():
                 logger.info(f"Scheduled job {job.id} is due now. Adding to immediate queue.")
                 await self.redis.zadd(self.job_queue, {json.dumps(job_message): job.priority})

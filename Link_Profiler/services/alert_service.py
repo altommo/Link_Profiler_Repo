@@ -12,7 +12,7 @@ import aiohttp # For sending webhooks (even if just logging for now)
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import AlertRule, CrawlJob, SEOMetrics, AlertSeverity, AlertChannel, serialize_model, CrawlStatus
-from Link_Profiler.main import ConnectionManager # New: Import ConnectionManager
+from Link_Profiler.utils.connection_manager import ConnectionManager # Corrected import
 
 logger = logging.getLogger(__name__)
 

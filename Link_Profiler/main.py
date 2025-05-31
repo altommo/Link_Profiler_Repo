@@ -22,7 +22,7 @@ else:
 # --- End Robust Project Root Discovery ---
 
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect # New: Import WebSocket and WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
 import logging
@@ -30,22 +30,22 @@ from urllib.parse import urlparse
 from datetime import datetime
 from contextlib import asynccontextmanager
 import redis.asyncio as redis
-import json # Added import for json
-import uuid # New: Import uuid for alert rules
-import asyncio # New: Import asyncio
+import json
+import uuid
+import asyncio
 
-from playwright.async_api import async_playwright, Browser # New: Import Playwright Browser
+from playwright.async_api import async_playwright, Browser
 
 from Link_Profiler.services.crawl_service import CrawlService
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient
 from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
-from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService # Corrected import
+from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService
 from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient
 from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient
 from Link_Profiler.services.link_health_service import LinkHealthService
-from Link_Profiler.services.ai_service import AIService # New: Import AIService
-from Link_Profiler.services.alert_service import AlertService # New: Import AlertService
+from Link_Profiler.services.ai_service import AIService
+from Link_Profiler.services.alert_service import AlertService
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
@@ -56,12 +56,13 @@ from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
-from Link_Profiler.api.queue_endpoints import add_queue_endpoints, submit_crawl_to_queue, QueueCrawlRequest # Import the function to add queue endpoints and submit_crawl_to_queue
-from Link_Profiler.config.config_loader import ConfigLoader # Import the ConfigLoader class
-from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config # New: Import logging setup
-from Link_Profiler.utils.data_exporter import export_to_csv # New: Import data_exporter
-from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import user_agent_manager
-from Link_Profiler.utils.proxy_manager import proxy_manager # New: Import proxy_manager
+from Link_Profiler.api.queue_endpoints import add_queue_endpoints, submit_crawl_to_queue, QueueCrawlRequest
+from Link_Profiler.config.config_loader import ConfigLoader
+from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config
+from Link_Profiler.utils.data_exporter import export_to_csv
+from Link_Profiler.utils.user_agent_manager import user_agent_manager
+from Link_Profiler.utils.proxy_manager import proxy_manager
+from Link_Profiler.utils.connection_manager import ConnectionManager, connection_manager # New: Import ConnectionManager and its instance
 
 # Initialize and load config once using the absolute path
 config_loader = ConfigLoader()
@@ -175,7 +176,7 @@ technical_auditor_instance = TechnicalAuditor(
 ai_service_instance = AIService()
 
 # New: Initialize Alert Service
-alert_service_instance = AlertService(db) # Will pass connection_manager later
+alert_service_instance = AlertService(db, connection_manager) # Pass connection_manager here
 
 # Initialize DomainAnalyzerService (depends on DomainService)
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance, ai_service_instance)
@@ -201,46 +202,6 @@ crawl_service_for_lifespan = CrawlService(
 ) 
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service) # Corrected class name
 
-# New: WebSocket Connection Manager
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-        self.logger = logging.getLogger(__name__ + ".ConnectionManager")
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        self.logger.info(f"WebSocket connected: {websocket.client.host}:{websocket.client.port}. Total active connections: {len(self.active_connections)}")
-
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-        self.logger.info(f"WebSocket disconnected: {websocket.client.host}:{websocket.client.port}. Total active connections: {len(self.active_connections)}")
-
-    async def send_personal_message(self, message: str, websocket: WebSocket):
-        await websocket.send_text(message)
-
-    async def broadcast(self, message: Dict[str, Any]):
-        """Broadcasts a JSON message to all active WebSocket connections."""
-        message_str = json.dumps(message)
-        disconnected_websockets = []
-        for connection in self.active_connections:
-            try:
-                await connection.send_text(message_str)
-            except WebSocketDisconnect:
-                disconnected_websockets.append(connection)
-                self.logger.warning(f"WebSocket disconnected during broadcast: {connection.client.host}:{connection.client.port}")
-            except Exception as e:
-                self.logger.error(f"Error sending message to WebSocket {connection.client.host}:{connection.client.port}: {e}", exc_info=True)
-                disconnected_websockets.append(connection)
-        
-        for ws in disconnected_websockets:
-            if ws in self.active_connections: # Ensure it's still in the list before removing
-                self.active_connections.remove(ws)
-        self.logger.debug(f"Broadcasted message to {len(self.active_connections)} active connections. Message type: {message.get('type')}")
-
-# Global instance of ConnectionManager
-connection_manager = ConnectionManager()
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -248,10 +209,6 @@ async def lifespan(app: FastAPI):
     Context manager for managing the lifespan of the FastAPI application.
     Ensures resources like aiohttp sessions are properly opened and closed.
     """
-    # Pass connection_manager to AlertService
-    alert_service_instance.connection_manager = connection_manager
-    logger.info("ConnectionManager passed to AlertService.")
-
     context_managers = [
         domain_service_instance,
         backlink_service_instance,
@@ -1632,4 +1589,4 @@ async def reprocess_dead_letters():
 
 
 # Add queue-related endpoints to the main app
-add_queue_endpoints(app, db, alert_service_instance, connection_manager) # Pass the db, alert_service_instance, and connection_manager
+add_queue_endpoints(app, db, alert_service_instance, connection_manager)
