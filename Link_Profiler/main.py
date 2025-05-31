@@ -36,7 +36,7 @@ from Link_Profiler.services.crawl_service import CrawlService
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient
 from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
-from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService
+from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService # Corrected import
 from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient
 from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient
 from Link_Profiler.services.link_health_service import LinkHealthService
@@ -185,7 +185,7 @@ crawl_service_for_lifespan = CrawlService(
     domain_analyzer_service=domain_analyzer_service, # Pass the domain_analyzer_service
     ai_service=ai_service_instance # New: Pass AI Service
 ) 
-expired_domain_finder_service = ExpiredDomainService(db, domain_service_instance, domain_analyzer_service)
+expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service) # Corrected class name
 
 
 @asynccontextmanager
@@ -1066,9 +1066,7 @@ async def health_check():
         logger.error(f"Health check: PostgreSQL connection failed: {e}")
 
     # Check external API services (Domain, Backlink, SERP, Keyword, AI)
-    # This checks if their clients are initialized and if they can enter their contexts.
-    # A full ping to external APIs might be too slow for a health check,
-    # so we check if the service instances are ready to operate.
+    # This is a high-level check, not a deep ping to external APIs
     
     # Domain Service
     try:
