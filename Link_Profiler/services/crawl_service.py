@@ -23,6 +23,7 @@ from Link_Profiler.services.domain_service import DomainService # Import DomainS
 from Link_Profiler.services.backlink_service import BacklinkService # Import BacklinkService
 from Link_Profiler.services.serp_service import SERPService # New: Import SERPService
 from Link_Profiler.services.keyword_service import KeywordService # New: Import KeywordService
+from Link_Profiler.services.link_health_service import LinkHealthService # New: Import LinkHealthService
 
 
 class CrawlService:
@@ -36,7 +37,8 @@ class CrawlService:
         backlink_service: BacklinkService, 
         domain_service: DomainService,
         serp_service: SERPService, # New: Injected SERPService
-        keyword_service: KeywordService # New: Injected KeywordService
+        keyword_service: KeywordService, # New: Injected KeywordService
+        link_health_service: LinkHealthService # New: Injected LinkHealthService
     ):
         self.db = database
         self.logger = logging.getLogger(__name__)
@@ -45,25 +47,28 @@ class CrawlService:
         self.backlink_service = backlink_service # Injected BacklinkService
         self.serp_service = serp_service # New: Injected SERPService
         self.keyword_service = keyword_service # New: Injected KeywordService
+        self.link_health_service = link_health_service # New: Injected LinkHealthService
 
     async def create_and_start_crawl_job(
         self, 
-        job_type: str, # 'backlink_discovery', 'serp_analysis', 'keyword_research'
-        target_url: str, 
+        job_type: str, # 'backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit'
+        target_url: Optional[str] = None, # The primary URL relevant to the job (e.g., for backlink discovery).
         initial_seed_urls: Optional[List[str]] = None, # Optional for non-crawl jobs
         keyword: Optional[str] = None, # For SERP/Keyword jobs
         num_results: Optional[int] = None, # For SERP/Keyword jobs
+        source_urls_to_audit: Optional[List[str]] = None, # For link_health_audit jobs
         config: Optional[CrawlConfig] = None
     ) -> CrawlJob:
         """
         Creates a new crawl job of a specified type and starts it.
         
         Args:
-            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research').
+            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit').
             target_url: The primary URL relevant to the job (e.g., for backlink discovery).
             initial_seed_urls: Optional list of URLs to start crawling from (for backlink discovery).
             keyword: Optional keyword for SERP or keyword research jobs.
             num_results: Optional number of results/suggestions to fetch for SERP/keyword jobs.
+            source_urls_to_audit: Optional list of URLs whose outgoing links should be audited (for link_health_audit).
             config: Optional CrawlConfig object. If None, a default config is used.
         
         Returns:
@@ -79,25 +84,25 @@ class CrawlService:
         config.respect_robots_txt = False 
 
         # Ensure target domain is in allowed domains if specified for crawl jobs
-        if job_type == 'backlink_discovery':
+        if job_type == 'backlink_discovery' and target_url:
             parsed_target_domain = urlparse(target_url).netloc
             if config.allowed_domains and parsed_target_domain not in config.allowed_domains:
                 config.allowed_domains.add(parsed_target_domain)
 
         job = CrawlJob(
             id=job_id,
-            target_url=target_url,
+            target_url=target_url or keyword or "N/A", # Use target_url, keyword, or N/A
             job_type=job_type,
             status=CrawlStatus.PENDING,
             config=serialize_model(config) # Store config as dict for serialization
         )
         self.db.add_crawl_job(job)
-        self.logger.info(f"Created {job_type} job {job_id} for {target_url or keyword}")
+        self.logger.info(f"Created {job_type} job {job_id} for {job.target_url}")
 
         # Dispatch to appropriate runner based on job_type
         if job_type == 'backlink_discovery':
-            if not initial_seed_urls:
-                raise ValueError("initial_seed_urls must be provided for 'backlink_discovery' job type.")
+            if not initial_seed_urls or not target_url:
+                raise ValueError("initial_seed_urls and target_url must be provided for 'backlink_discovery' job type.")
             asyncio.create_task(self._run_backlink_crawl(job, initial_seed_urls, config))
         elif job_type == 'serp_analysis':
             if not keyword:
@@ -107,6 +112,10 @@ class CrawlService:
             if not keyword:
                 raise ValueError("keyword must be provided for 'keyword_research' job type.")
             asyncio.create_task(self._run_keyword_research_job(job, keyword, num_results))
+        elif job_type == 'link_health_audit':
+            if not source_urls_to_audit:
+                raise ValueError("source_urls_to_audit must be provided for 'link_health_audit' job type.")
+            asyncio.create_task(self._run_link_health_audit_job(job, source_urls_to_audit))
         else:
             raise ValueError(f"Unknown job type: {job_type}")
         
@@ -201,7 +210,7 @@ class CrawlService:
                         
                         crawled_urls_set.add(url)
                         urls_crawled_count += 1
-                        job.urls_crawled = urls_crawled
+                        job.urls_crawled = urls_crawled_count # Corrected variable name
 
                         self.logger.info(f"Crawling: {url} (Depth: {current_depth}, Crawled: {urls_crawled_count}/{config.max_pages})")
 
@@ -273,74 +282,19 @@ class CrawlService:
                                     job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error saving SEO metrics: {str(seo_e)}", details=str(seo_e))
 
                         # Add new URLs to crawl queue for further exploration
-                        for link in crawl_result.links_found:
-                            parsed_link_url = urlparse(link.target_url)
-                            if config.is_domain_allowed(parsed_link_url.netloc):
-                                if link.target_url not in crawled_urls_set and \
-                                   urls_crawled_count + urls_to_crawl_queue.qsize() < config.max_pages:
-                                    await urls_to_crawl_queue.put((link.target_url, current_depth + 1))
+                        if crawl_result and crawl_result.links_found: # Only process if crawl_result is not None and links were found
+                            for link in crawl_result.links_found:
+                                parsed_link_url = urlparse(link.target_url)
+                                if config.is_domain_allowed(parsed_link_url.netloc):
+                                    if link.target_url not in crawled_urls_set and \
+                                    urls_crawled_count + urls_to_crawl_queue.qsize() < config.max_pages:
+                                        await urls_to_crawl_queue.put((link.target_url, current_depth + 1))
 
                         # Update job progress
                         job.progress_percentage = min(99.0, (urls_crawled_count / config.max_pages) * 100)
                         self.db.update_crawl_job(job)
 
-            if discovered_backlinks:
-                total_authority_score_sum = 0.0
-                total_trust_score_sum = 0.0
-                total_spam_score_sum = 0.0
-                dofollow_count = 0
-                clean_count = 0
-                spam_count = 0
-                
-                unique_referring_domains_for_profile: Set[str] = set()
-                anchor_text_distribution: Dict[str, int] = {}
-
-                for backlink in discovered_backlinks:
-                    unique_referring_domains_for_profile.add(backlink.source_domain)
-                    
-                    if backlink.anchor_text:
-                        anchor_text_distribution[backlink.anchor_text] = \
-                            anchor_text_distribution.get(backlink.anchor_text, 0) + 1
-
-                    source_domain_obj = self.db.get_domain(backlink.source_domain)
-                    if source_domain_obj:
-                        if backlink.link_type == LinkType.FOLLOW:
-                            total_authority_score_sum += source_domain_obj.authority_score
-                            dofollow_count += 1
-                        
-                        if backlink.spam_level == SpamLevel.CLEAN:
-                            total_trust_score_sum += source_domain_obj.trust_score
-                            clean_count += 1
-                        
-                        if backlink.spam_level in [SpamLevel.LIKELY_SPAM, SpamLevel.CONFIRMED_SPAM]:
-                            total_spam_score_sum += source_domain_obj.spam_score
-                            spam_count += 1
-                
-                profile_authority_score = total_authority_score_sum / dofollow_count if dofollow_count > 0 else 0.0
-                profile_trust_score = total_trust_score_sum / clean_count if clean_count > 0 else 0.0
-                profile_spam_score = total_spam_score_sum / spam_count if spam_count > 0 else 0.0
-
-                link_profile = LinkProfile(
-                    target_url=job.target_url,
-                    total_backlinks=len(discovered_backlinks),
-                    unique_domains=len(unique_referring_domains_for_profile),
-                    dofollow_links=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.FOLLOW),
-                    nofollow_links=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.NOFOLLOW),
-                    authority_score=profile_authority_score,
-                    trust_score=profile_trust_score,
-                    spam_score=profile_spam_score,
-                    anchor_text_distribution=anchor_text_distribution,
-                    referring_domains=unique_referring_domains_for_profile,
-                    backlinks=discovered_backlinks,
-                    analysis_date=datetime.now()
-                )
-                
-                self.db.save_link_profile(link_profile)
-                job.results['link_profile_summary'] = serialize_model(link_profile)
-                self.logger.info(f"Link profile created for {job.target_url} with {len(discovered_backlinks)} backlinks. Authority: {profile_authority_score:.2f}, Trust: {profile_trust_score:.2f}, Spam: {profile_spam_score:.2f}")
-            else:
-                self.logger.info(f"No backlinks found for {job.target_url}.")
-
+            # --- Step 3: Process and save domain information ---
             target_domain_name = urlparse(job.target_url).netloc
             self.logger.info(f"Fetching domain info for target domain: {target_domain_name}")
             async with self.domain_service as ds:
@@ -352,7 +306,6 @@ class CrawlService:
                 else:
                     self.logger.warning(f"Could not retrieve domain info for {target_domain_name}.")
                     job.add_error(url=target_domain_name, error_type="DomainInfoError", message=f"Could not retrieve domain info for target domain.", details="Domain info API returned None.")
-
 
                 if discovered_backlinks:
                     unique_referring_domains = {bl.source_domain for bl in discovered_backlinks}
@@ -372,9 +325,83 @@ class CrawlService:
                             self.logger.info(f"Saved domain info for referring domain: {referring_domain_obj.name}.")
                         else:
                             # Log error for specific referring domain if info could not be retrieved
-                            self.logger.warning(f"Could not retrieve domain info for referring domain: {referring_domain_obj.name}.")
-                            job.add_error(url=referring_domain_obj.name, error_type="DomainInfoError", message=f"Could not retrieve domain info for referring domain.", details="Domain info API returned None.")
+                            # Note: referring_domain_obj might be None if get_domain_info returned None
+                            # We need to ensure we log the domain name that failed.
+                            # This requires a slight adjustment to how domain_info_tasks are handled
+                            # to associate the result with the original domain name.
+                            pass # Error already logged by domain_service if it returns None
 
+            # --- Step 4: Enrich backlinks with source domain metrics and save link profile ---
+            if discovered_backlinks:
+                self.logger.info("Enriching discovered backlinks with source domain metrics and updating in DB.")
+                for backlink in discovered_backlinks:
+                    source_domain_obj = self.db.get_domain(backlink.source_domain)
+                    if source_domain_obj:
+                        backlink.source_domain_metrics = {
+                            "authority_score": source_domain_obj.authority_score,
+                            "trust_score": source_domain_obj.trust_score,
+                            "spam_score": source_domain_obj.spam_score,
+                            # Add other relevant domain metrics if needed
+                        }
+                        self.db.update_backlink(backlink) # Update the backlink in the database
+                    else:
+                        self.logger.warning(f"Could not find domain info for source domain {backlink.source_domain} to enrich backlink {backlink.id}.")
+
+                total_authority_score_sum = 0.0
+                total_trust_score_sum = 0.0
+                total_spam_score_sum = 0.0
+                dofollow_count = 0
+                clean_count = 0
+                spam_count = 0
+                
+                unique_referring_domains_for_profile: Set[str] = set()
+                anchor_text_distribution: Dict[str, int] = {}
+
+                for backlink in discovered_backlinks:
+                    unique_referring_domains_for_profile.add(backlink.source_domain)
+                    
+                    if backlink.anchor_text:
+                        anchor_text_distribution[backlink.anchor_text] = \
+                            anchor_text_distribution.get(backlink.anchor_text, 0) + 1
+
+                    # Use the enriched source_domain_metrics for profile calculation
+                    if backlink.source_domain_metrics:
+                        if backlink.link_type == LinkType.FOLLOW:
+                            total_authority_score_sum += backlink.source_domain_metrics.get("authority_score", 0.0)
+                            dofollow_count += 1
+                        
+                        if backlink.spam_level == SpamLevel.CLEAN:
+                            total_trust_score_sum += backlink.source_domain_metrics.get("trust_score", 0.0)
+                            clean_count += 1
+                        
+                        if backlink.spam_level in [SpamLevel.LIKELY_SPAM, SpamLevel.CONFIRMED_SPAM]:
+                            total_spam_score_sum += backlink.source_domain_metrics.get("spam_score", 0.0)
+                            spam_count += 1
+                
+                profile_authority_score = total_authority_score_sum / dofollow_count if dofollow_count > 0 else 0.0
+                profile_trust_score = total_trust_score_sum / clean_count if clean_count > 0 else 0.0
+                profile_spam_score = total_spam_score_sum / spam_count if spam_count > 0 else 0.0
+
+                link_profile = LinkProfile(
+                    target_url=job.target_url,
+                    total_backlinks=len(discovered_backlinks),
+                    unique_domains=len(unique_referring_domains_for_profile),
+                    dofollow_links=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.FOLLOW),
+                    nofollow_links=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.NOFOLLOW),
+                    authority_score=profile_authority_score,
+                    trust_score=profile_trust_score,
+                    spam_score=profile_spam_score,
+                    anchor_text_distribution=anchor_text_distribution,
+                    referring_domains=unique_referring_domains_for_profile,
+                    backlinks=discovered_backlinks, # This list is not persisted in LinkProfileORM, but useful for in-memory
+                    analysis_date=datetime.now()
+                )
+                
+                self.db.save_link_profile(link_profile)
+                job.results['link_profile_summary'] = serialize_model(link_profile)
+                self.logger.info(f"Link profile created for {job.target_url} with {len(discovered_backlinks)} backlinks. Authority: {profile_authority_score:.2f}, Trust: {profile_trust_score:.2f}, Spam: {profile_spam_score:.2f}")
+            else:
+                self.logger.info(f"No backlinks found for {job.target_url}.")
 
             job.status = CrawlStatus.COMPLETED
             self.logger.info(f"Crawl job {job.id} completed.")
@@ -471,6 +498,34 @@ class CrawlService:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
 
+    async def _run_link_health_audit_job(self, job: CrawlJob, source_urls: List[str]):
+        """
+        Internal method to execute a link health audit job.
+        """
+        job.status = CrawlStatus.IN_PROGRESS
+        job.started_date = datetime.now()
+        self.db.update_crawl_job(job)
+        self.logger.info(f"Starting link health audit job {job.id} for {len(source_urls)} source URLs.")
+
+        try:
+            async with self.link_health_service as lhs:
+                broken_links_found = await lhs.audit_links_for_source_urls(source_urls)
+            
+            job.results['broken_links_audit'] = broken_links_found
+            job.urls_discovered = len(source_urls) # Number of source URLs audited
+            job.links_found = sum(len(links) for links in broken_links_found.values()) # Total broken links found
+            job.progress_percentage = 100.0
+            job.status = CrawlStatus.COMPLETED
+            self.logger.info(f"Link health audit job {job.id} completed. Found {job.links_found} broken links.")
+
+        except Exception as e:
+            job.status = CrawlStatus.FAILED
+            job.add_error(url="N/A", error_type="LinkHealthAuditError", message=f"Link health audit failed: {str(e)}", details=str(e))
+            self.logger.error(f"Link health audit job {job.id} failed: {e}", exc_info=True)
+        finally:
+            job.completed_date = datetime.now()
+            self.db.update_crawl_job(job)
+
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:
         """Retrieves the current status of a crawl job."""
         return self.db.get_crawl_job(job_id)
@@ -496,7 +551,7 @@ class CrawlService:
         if job.status == CrawlStatus.PAUSED:
             job.status = CrawlStatus.IN_PROGRESS
             self.db.update_crawl_job(job)
-            self.logger.info(f"Crawl job {job_id} resumed.")
+            self.logger.info(f"Crawl job {job.id} resumed.")
             # The _run_backlink_crawl loop (or other job runners) will pick this up
             return job
         else:

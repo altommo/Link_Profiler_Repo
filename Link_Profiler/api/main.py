@@ -44,6 +44,7 @@ from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
 from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService # Changed to absolute import
 from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient # New: Import SERPService components
 from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient # New: Import KeywordService components
+from Link_Profiler.services.link_health_service import LinkHealthService # New: Import LinkHealthService
 from Link_Profiler.database.database import Database # Changed to absolute import
 from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion # Import new core models
 
@@ -101,9 +102,19 @@ if os.getenv("USE_REAL_KEYWORD_API", "false").lower() == "true":
 else:
     keyword_service_instance = KeywordService(api_client=SimulatedKeywordAPIClient())
 
+# New: Initialize LinkHealthService
+link_health_service_instance = LinkHealthService(db)
+
 
 # Initialize other services that depend on domain_service and backlink_service
-crawl_service = CrawlService(db, backlink_service=backlink_service_instance, domain_service=domain_service_instance) # Pass domain_service_instance
+crawl_service = CrawlService(
+    db, 
+    backlink_service=backlink_service_instance, 
+    domain_service=domain_service_instance,
+    serp_service=serp_service_instance,
+    keyword_service=keyword_service_instance,
+    link_health_service=link_health_service_instance # Inject LinkHealthService
+) 
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service)
 
@@ -122,8 +133,11 @@ async def lifespan(app: FastAPI):
             async with serp_service_instance as ss: # New
                 logger.info("Application startup: Entering KeywordService context.") # New
                 async with keyword_service_instance as ks: # New
-                    # Yield control to the application
-                    yield
+                    logger.info("Application startup: Entering LinkHealthService context.") # New
+                    async with link_health_service_instance as lhs: # New
+                        # Yield control to the application
+                        yield
+                    logger.info("Application shutdown: Exiting LinkHealthService context.") # New
                 logger.info("Application shutdown: Exiting KeywordService context.") # New
             logger.info("Application shutdown: Exiting SERPService context.") # New
         logger.info("Application shutdown: Exiting BacklinkService context.")
@@ -162,6 +176,9 @@ class StartCrawlRequest(BaseModel):
     target_url: str = Field(..., description="The URL for which to find backlinks (e.g., 'https://example.com').")
     initial_seed_urls: List[str] = Field(..., description="A list of URLs to start crawling from to discover backlinks.")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration.")
+
+class LinkHealthAuditRequest(BaseModel): # New Pydantic model for link health audit
+    source_urls: List[str] = Field(..., description="A list of source URLs whose outgoing links should be audited for brokenness.")
 
 class CrawlErrorResponse(BaseModel):
     timestamp: datetime
@@ -262,6 +279,7 @@ class BacklinkResponse(BaseModel):
     target_domain: str
     anchor_text: str
     link_type: LinkType 
+    rel_attributes: List[str] = Field(default_factory=list) # Added rel_attributes
     context_text: str
     is_image_link: bool
     alt_text: Optional[str]
@@ -422,7 +440,8 @@ async def start_backlink_discovery(
             raise HTTPException(status_code=400, detail=f"Invalid initial_seed_url: {url}. Must be a full URL.")
 
     try:
-        job = await crawl_service.create_and_start_backlink_crawl_job(
+        job = await crawl_service.create_and_start_crawl_job(
+            job_type='backlink_discovery',
             target_url=request.target_url,
             initial_seed_urls=request.initial_seed_urls,
             config=crawl_config
@@ -431,6 +450,35 @@ async def start_backlink_discovery(
     except Exception as e:
         logger.error(f"Error starting crawl job: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start crawl job: {e}")
+
+@app.post("/audit/link_health", response_model=CrawlJobResponse, status_code=202)
+async def start_link_health_audit(
+    request: LinkHealthAuditRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Starts a new link health audit job for a list of source URLs.
+    The audit runs in the background.
+    """
+    logger.info(f"Received request to start link health audit for {len(request.source_urls)} URLs.")
+
+    if not request.source_urls:
+        raise HTTPException(status_code=400, detail="At least one source URL must be provided for link health audit.")
+    
+    for url in request.source_urls:
+        if not urlparse(url).scheme or not urlparse(url).netloc:
+            raise HTTPException(status_code=400, detail=f"Invalid source_url: {url}. Must be a full URL (e.g., https://example.com).")
+
+    try:
+        job = await crawl_service.create_and_start_crawl_job(
+            job_type='link_health_audit',
+            source_urls_to_audit=request.source_urls
+        )
+        return CrawlJobResponse.from_crawl_job(job)
+    except Exception as e:
+        logger.error(f"Error starting link health audit job: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to start link health audit job: {e}")
+
 
 @app.get("/crawl/status/{job_id}", response_model=CrawlJobResponse)
 async def get_crawl_status(job_id: str):
@@ -616,12 +664,13 @@ async def search_serp(request: SERPSearchRequest):
     """
     logger.info(f"Received request to search SERP for keyword: {request.keyword}")
     try:
-        serp_results = await serp_service_instance.get_serp_data(request.keyword, request.num_results)
-        # Persist SERP results to database
-        if serp_results:
-            await db.add_serp_results(serp_results)
-            logger.info(f"Persisted {len(serp_results)} SERP results for '{request.keyword}'.")
-        return [SERPResultResponse.from_serp_result(res) for res in serp_results]
+        job = await crawl_service.create_and_start_crawl_job(
+            job_type='serp_analysis',
+            keyword=request.keyword,
+            num_results=request.num_results
+        )
+        # Return the job status immediately, results will be populated asynchronously
+        return CrawlJobResponse.from_crawl_job(job)
     except Exception as e:
         logger.error(f"Error fetching SERP results for '{request.keyword}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to fetch SERP results: {e}")
@@ -651,12 +700,13 @@ async def suggest_keywords(request: KeywordSuggestRequest):
     """
     logger.info(f"Received request to get keyword suggestions for seed: {request.seed_keyword}")
     try:
-        suggestions = await keyword_service_instance.get_keyword_data(request.seed_keyword, request.num_suggestions)
-        # Persist keyword suggestions to database
-        if suggestions:
-            await db.add_keyword_suggestions(suggestions)
-            logger.info(f"Persisted {len(suggestions)} keyword suggestions for '{request.seed_keyword}'.")
-        return [KeywordSuggestionResponse.from_keyword_suggestion(sug) for sug in suggestions]
+        job = await crawl_service.create_and_start_crawl_job(
+            job_type='keyword_research',
+            keyword=request.seed_keyword,
+            num_results=request.num_suggestions
+        )
+        # Return the job status immediately, results will be populated asynchronously
+        return CrawlJobResponse.from_crawl_job(job)
     except Exception as e:
         logger.error(f"Error fetching keyword suggestions for '{request.seed_keyword}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to fetch keyword suggestions: {e}")
