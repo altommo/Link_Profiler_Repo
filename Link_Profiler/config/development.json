@@ -21,5 +21,32 @@
     "dashboard_refresh": 10,
     "max_job_history": 50,
     "performance_window": 1800
+  },
+  "logging": {
+    "level": "DEBUG",
+    "config": {
+      "handlers": {
+        "console": {
+          "level": "DEBUG"
+        },
+        "file": {
+          "level": "DEBUG"
+        }
+      },
+      "loggers": {
+        "Link_Profiler": {
+          "level": "DEBUG"
+        },
+        "sqlalchemy": {
+          "level": "INFO"
+        },
+        "redis": {
+          "level": "INFO"
+        },
+        "playwright": {
+          "level": "INFO"
+        }
+      }
+    }
   }
 }

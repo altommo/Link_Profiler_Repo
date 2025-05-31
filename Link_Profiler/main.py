@@ -21,10 +21,6 @@ else:
 
 # --- End Robust Project Root Discovery ---
 
-# --- Debugging Print Statements ---
-print("SYS.PATH (after discovery):", sys.path[:5])
-# --- End Debugging Print Statements ---
-
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from pydantic import BaseModel, Field
@@ -57,14 +53,17 @@ from Link_Profiler.monitoring.prometheus_metrics import (
 )
 from Link_Profiler.api.queue_endpoints import add_queue_endpoints, submit_crawl_to_queue, QueueCrawlRequest # Import the function to add queue endpoints and submit_crawl_to_queue
 from Link_Profiler.config.config_loader import ConfigLoader # Import the ConfigLoader class
-
-# Configure logging
-logging.basicConfig(level=logging.INFO) 
-logger = logging.getLogger(__name__)
+from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config # New: Import logging setup
 
 # Initialize and load config once using the absolute path
 config_loader = ConfigLoader()
 config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
+
+# Setup logging using the loaded configuration
+logging_config = config_loader.get("logging.config", get_default_logging_config(config_loader.get("logging.level", "INFO")))
+setup_logging(logging_config)
+
+logger = logging.getLogger(__name__) # Get logger after configuration
 
 # Retrieve configurations using the config_loader
 REDIS_URL = config_loader.get("redis.url")
@@ -139,7 +138,9 @@ if config_loader.get("serp_crawler.playwright.enabled"):
     )
 serp_service_instance = SERPService(
     api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key")) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(),
-    serp_crawler=serp_crawler_instance
+    serp_crawler=serp_crawler_instance,
+    redis_client=redis_client, # Pass redis_client for caching
+    cache_ttl=API_CACHE_TTL # Pass cache_ttl
 )
 
 # New: Initialize KeywordService and KeywordScraper
@@ -149,7 +150,9 @@ if config_loader.get("keyword_scraper.enabled"):
     keyword_scraper_instance = KeywordScraper()
 keyword_service_instance = KeywordService(
     api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key")) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(),
-    keyword_scraper=keyword_scraper_instance
+    keyword_scraper=keyword_scraper_instance,
+    redis_client=redis_client, # Pass redis_client for caching
+    cache_ttl=API_CACHE_TTL # Pass cache_ttl
 )
 
 # New: Initialize LinkHealthService

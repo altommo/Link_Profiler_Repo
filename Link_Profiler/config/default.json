@@ -34,7 +34,80 @@
     "port": 8000
   },
   "logging": {
-    "level": "INFO"
+    "level": "INFO",
+    "config": {
+      "version": 1,
+      "disable_existing_loggers": false,
+      "formatters": {
+        "standard": {
+          "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        },
+        "detailed": {
+          "format": "%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s"
+        }
+      },
+      "handlers": {
+        "console": {
+          "class": "logging.StreamHandler",
+          "formatter": "standard",
+          "level": "INFO"
+        },
+        "file": {
+          "class": "logging.handlers.RotatingFileHandler",
+          "formatter": "detailed",
+          "filename": "link_profiler.log",
+          "maxBytes": 10485760,
+          "backupCount": 5,
+          "level": "INFO"
+        }
+      },
+      "loggers": {
+        "Link_Profiler": {
+          "handlers": ["console", "file"],
+          "level": "INFO",
+          "propagate": false
+        },
+        "uvicorn": {
+          "handlers": ["console"],
+          "level": "INFO",
+          "propagate": false
+        },
+        "uvicorn.access": {
+          "handlers": ["console"],
+          "level": "INFO",
+          "propagate": false
+        },
+        "sqlalchemy": {
+          "handlers": ["console"],
+          "level": "WARNING",
+          "propagate": false
+        },
+        "redis": {
+          "handlers": ["console"],
+          "level": "WARNING",
+          "propagate": false
+        },
+        "playwright": {
+          "handlers": ["console"],
+          "level": "WARNING",
+          "propagate": false
+        },
+        "pytrends": {
+          "handlers": ["console"],
+          "level": "WARNING",
+          "propagate": false
+        },
+        "googleapiclient": {
+          "handlers": ["console"],
+          "level": "WARNING",
+          "propagate": false
+        }
+      },
+      "root": {
+        "handlers": ["console"],
+        "level": "WARNING"
+      }
+    }
   },
   "domain_api": {
     "abstract_api": {
