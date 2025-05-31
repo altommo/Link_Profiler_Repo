@@ -33,8 +33,9 @@ A comprehensive, open-source link analysis and expired domain discovery system i
 - **Domain Metrics**: Authority, trust, and spam scores.
 - **Technical SEO Audits**: Integrates with Google Lighthouse for performance, accessibility, and best practices scores.
 - **Link Health Auditing**: Checks for broken outgoing links on specified pages.
-- **Keyword Research**: Fetches keyword suggestions and trend data.
-- **SERP Analysis**: Extracts data from Search Engine Results Pages for given keywords.
+- **Keyword Research**: Fetches keyword suggestions and trend data, with optional integration for real search volume and CPC metrics.
+- **SERP Analysis**: Extracts data from Search Engine Results Pages for given keywords, with enhanced rich feature detection.
+- **Full SEO Audit**: A higher-level job type that orchestrates multiple audit tasks (e.g., technical audit, link health audit) for a given set of URLs.
 - **Export Capabilities**: JSON (via API).
 - **Historical Tracking**: Domain and link profile changes over time (basic persistence).
 
@@ -107,7 +108,7 @@ link_profiler/
 - Error handling and retry logic.
 
 #### **Specialised Crawlers/Auditors**
-- **SERPCrawler**: Uses Playwright to drive a headless browser for accurate SERP data extraction.
+- **SERPCrawler**: Uses Playwright to drive a headless browser for accurate SERP data extraction, with refined rich feature detection.
 - **KeywordScraper**: Scrapes public keyword suggestion APIs (Google Autocomplete, Bing Suggest) and integrates with Pytrends for trend data.
 - **TechnicalAuditor**: Wraps Google Lighthouse CLI to perform comprehensive technical SEO audits (performance, accessibility, best practices).
 
@@ -119,7 +120,7 @@ link_profiler/
 - **ExpiredDomainFinderService**: Discovers valuable expired domains.
 - **LinkHealthService**: Audits outgoing links for brokenness (4xx/5xx errors).
 - **SERPService**: Provides an interface for fetching SERP data, prioritising the Playwright crawler or falling back to API clients.
-- **KeywordService**: Provides an interface for fetching keyword research data, prioritising the scraper or falling back to API clients.
+- **KeywordService**: Provides an interface for fetching keyword research data, prioritising the scraper or falling back to API clients, with optional integration for real search volume and CPC metrics.
 
 #### **Data Persistence** (`database/`)
 - **PostgreSQL Database**: Used for structured storage of all crawl data, link profiles, and domain information.
@@ -337,6 +338,21 @@ POST /domain/find_expired_domains
     "potential_domains": ["domain1.com", "domain2.com"],
     "min_value_score": 50.0,
     "limit": 100
+}
+```
+
+#### 🚀 Full SEO Audit
+```bash
+# Submit a full SEO audit job to the queue
+POST /audit/full_seo_audit
+{
+    "urls_to_audit": [
+        "https://www.example.com/page1",
+        "https://www.example.com/page2"
+    ],
+    "config": {
+        "user_agent": "FullSEOAduitBot/1.0"
+    }
 }
 ```
 
