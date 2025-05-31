@@ -386,6 +386,7 @@ class CrawlConfig:
     stealth_mode: bool = True # New: Enable Playwright stealth mode (default True for Playwright)
     browser_fingerprint_randomization: bool = False # New: Randomize browser fingerprint properties
     ml_rate_optimization: bool = False # New: Enable machine learning-based rate optimization
+    captcha_solving_enabled: bool = False # New: Enable CAPTCHA solving for browser-based crawls
 
     # New fields for proxy management
     use_proxies: bool = False # New: Whether to use proxies for crawling
