@@ -884,3 +884,39 @@ async def prometheus_metrics():
     Exposes Prometheus metrics.
     """
     return Response(content=get_metrics_text(), media_type="text/plain; version=0.0.4; charset=utf-8")
+
+@app.get("/debug/dead_letters")
+async def get_dead_letters():
+    """
+    DEBUG endpoint: Retrieves messages from the Redis dead-letter queue.
+    """
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis is not available, dead-letter queue cannot be accessed.")
+    
+    dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
+    try:
+        # Fetch all items from the dead-letter queue without removing them
+        messages = await redis_client.lrange(dead_letter_queue_name, 0, -1)
+        decoded_messages = [json.loads(msg.decode('utf-8')) for msg in messages]
+        logger.info(f"Retrieved {len(decoded_messages)} messages from dead-letter queue.")
+        return {"dead_letter_messages": decoded_messages}
+    except Exception as e:
+        logger.error(f"Error retrieving dead-letter messages: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve dead-letter messages: {e}")
+
+@app.post("/debug/clear_dead_letters")
+async def clear_dead_letters():
+    """
+    DEBUG endpoint: Clears all messages from the Redis dead-letter queue.
+    """
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis is not available, dead-letter queue cannot be cleared.")
+    
+    dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
+    try:
+        count = await redis_client.delete(dead_letter_queue_name)
+        logger.info(f"Cleared {count} messages from dead-letter queue.")
+        return {"status": "success", "message": f"Cleared {count} messages from dead-letter queue."}
+    except Exception as e:
+        logger.error(f"Error clearing dead-letter messages: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to clear dead-letter messages: {e}")

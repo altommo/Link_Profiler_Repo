@@ -62,6 +62,7 @@ class CrawlService:
         self.redis = redis_client # Store the Redis client instance (can be None)
         self.technical_auditor = technical_auditor
         self.deduplication_set_key = "processed_backlinks_dedup"
+        self.dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
 
     async def _is_duplicate_backlink(self, source_url: str, target_url: str) -> bool:
         """
@@ -85,6 +86,22 @@ class CrawlService:
         except Exception as e:
             self.logger.error(f"Error during Redis deduplication for {source_url} -> {target_url}: {e}. Skipping deduplication for this link.", exc_info=True)
             return False # If Redis operation fails, treat as not a duplicate to allow processing
+
+    async def _send_to_dead_letter_queue(self, job: CrawlJob, error_message: str):
+        """Sends a failed job's details to a Redis dead-letter queue."""
+        if not self.redis:
+            self.logger.error(f"Redis client not available. Cannot send job {job.id} to dead-letter queue.")
+            return
+        
+        try:
+            job_data = serialize_model(job)
+            job_data['dead_letter_reason'] = error_message
+            job_data['dead_letter_timestamp'] = datetime.now().isoformat()
+            
+            await self.redis.rpush(self.dead_letter_queue_name, json.dumps(job_data))
+            self.logger.warning(f"Job {job.id} sent to dead-letter queue. Reason: {error_message}")
+        except Exception as e:
+            self.logger.error(f"Failed to send job {job.id} to dead-letter queue: {e}", exc_info=True)
 
     async def create_and_start_crawl_job(
         self, 
@@ -475,6 +492,7 @@ class CrawlService:
             JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
             JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
             JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="CrawlJobError").inc()
+            await self._send_to_dead_letter_queue(job, f"Crawl job failed: {str(e)}")
         finally:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
@@ -530,6 +548,7 @@ class CrawlService:
             JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
             JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
             JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="SERPAnalysisError").inc()
+            await self._send_to_dead_letter_queue(job, f"SERP analysis failed: {str(e)}")
         finally:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
@@ -583,6 +602,7 @@ class CrawlService:
             JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
             JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
             JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="KeywordResearchError").inc()
+            await self._send_to_dead_letter_queue(job, f"Keyword research failed: {str(e)}")
         finally:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
@@ -620,6 +640,7 @@ class CrawlService:
             JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
             JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
             JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="LinkHealthAuditError").inc()
+            await self._send_to_dead_letter_queue(job, f"Link health audit failed: {str(e)}")
         finally:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
@@ -687,6 +708,9 @@ class CrawlService:
             self.db.update_crawl_job(job)
             JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
             JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
+            if job.status == CrawlStatus.FAILED: # Check if job failed in the try block
+                await self._send_to_dead_letter_queue(job, f"Technical audit failed: {str(e)}")
+
 
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:
         """Retrieves the current status of a crawl job."""
@@ -733,7 +757,7 @@ class CrawlService:
             # Metrics update handled in _run_backlink_crawl loop
             return job
         else:
-            raise ValueError(f"Crawl job {job.id} cannot be stopped from status {job.status.value}.")
+            raise ValueError(f"Crawl job {job_id} cannot be stopped from status {job.status.value}.")
 
     def get_link_profile_for_url(self, target_url: str) -> Optional[LinkProfile]:
         """Retrieves the link profile for a given URL."""
