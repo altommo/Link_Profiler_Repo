@@ -27,7 +27,7 @@ from Link_Profiler.services.backlink_service import BacklinkService
 from Link_Profiler.services.serp_service import SERPService
 from Link_Profiler.services.keyword_service import KeywordService
 from Link_Profiler.services.link_health_service import LinkHealthService
-from Link_Profiler.monitoring.prometheus_metrics import ( # New: Import Prometheus metrics
+from Link_Profiler.monitoring.prometheus_metrics import (
     JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL,
     CRAWLED_URLS_TOTAL, BACKLINKS_FOUND_TOTAL, JOB_ERRORS_TOTAL
 )
@@ -607,7 +607,7 @@ class CrawlService:
 
         except Exception as e:
             job.status = CrawlStatus.FAILED
-            job.add_error(url="N/A", error_type="LinkHealthAuditError", message=f"Link health audit failed: {str(e)}", details=str(e)}")
+            job.add_error(url="N/A", error_type="LinkHealthAuditError", message=f"Link health audit failed: {str(e)}", details=str(e))
             self.logger.error(f"Link health audit job {job.id} failed: {e}", exc_info=True)
             JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
             JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
@@ -690,7 +690,7 @@ class CrawlService:
         if job.status == CrawlStatus.IN_PROGRESS:
             job.status = CrawlStatus.PAUSED
             self.db.update_crawl_job(job)
-            self.logger.info(f"Crawl job {job_id} paused.")
+            self.logger.info(f"Crawl job {job.id} paused.")
             # Metrics update handled in _run_backlink_crawl loop
             return job
         else:
