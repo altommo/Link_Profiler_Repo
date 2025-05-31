@@ -1,10 +1,8 @@
-# Link Profiler
+# 🔗 Link Profiler System
 
-## Overview
+A comprehensive, open-source link analysis and expired domain discovery system inspired by tools like Open Link Profiler and Moz. Built with modern Python async architecture for high-performance web crawling and backlink analysis.
 
-The Link Profiler is a comprehensive web intelligence system designed to gather, analyse, and manage various types of SEO-related data, including backlink profiles, Search Engine Results Page (SERP) data, keyword research insights, and technical SEO audit metrics. Built with a modular and asynchronous Python architecture (FastAPI, SQLAlchemy, aiohttp), it aims to provide a robust foundation for understanding and leveraging web data for SEO and digital marketing strategies, particularly for tasks like expired domain recovery.
-
-## Key Features
+## ✨ Features
 
 ### 1. Backlink Data Collection
 Our system efficiently discovers and stores detailed backlink information. Each backlink record includes:
@@ -41,7 +39,7 @@ Our system performs page-level technical SEO audits, providing insights into web
     *   **`broken_links`**: A list of internal/external links on the page returning 4xx/5xx status codes. This is handled by a dedicated **Link Health Auditor** for efficient, batched checks.
     *   Other checks: `internal_links`, `external_links`, `images_count`, `images_without_alt`, `has_canonical`, `has_robots_meta`, `has_schema_markup`, `mobile_friendly` (basic check).
 *   **`audit_timestamp`**: The UTC timestamp of when the audit was executed.
-*   *(Note: `performance_score` and `accessibility_score` are currently placeholders, awaiting integration with tools like Lighthouse.)*
+*   *(Note: `performance_score` and `accessibility_score` are now populated by Lighthouse integration.)*
 
 ### 4. Keyword Research Data
 We gather comprehensive data for keyword suggestions:
@@ -55,21 +53,116 @@ We gather comprehensive data for keyword suggestions:
 
 ## Architecture Highlights
 
-*   **Modular Design**: Clear separation of concerns with dedicated services (Crawl, Domain, Backlink, SERP, Keyword, Link Health) and crawlers (WebCrawler, LinkExtractor, ContentParser).
+*   **Modular Design**: Clear separation of concerns with dedicated services (Crawl, Domain, Backlink, SERP, Keyword, Link Health) and crawlers (WebCrawler, LinkExtractor, ContentParser, SERPCrawler, KeywordScraper, TechnicalAuditor).
 *   **Asynchronous Operations**: Leverages `asyncio` and `aiohttp` for high-concurrency web requests, ensuring efficient I/O-bound operations.
 *   **FastAPI**: Provides a modern, fast (high-performance) web framework for building robust APIs with automatic interactive documentation (Swagger UI).
 *   **SQLAlchemy + PostgreSQL**: For robust and scalable data persistence, with ORM models mapping directly to our rich data structures.
-*   **Redis (Planned)**: For distributed job queuing and caching (currently simulated or handled by local queues in some services).
+*   **Redis**: Used for distributed job queuing, caching (deduplication), and a dead-letter queue for failed jobs.
 *   **Background Jobs**: Crawling and auditing tasks run as background jobs, allowing the API to remain responsive.
 
-## Getting Started
+## 🏗️ Architecture Overview
 
-### Prerequisites
+### **Modular Design**
+```
+link_profiler/
+├── core/                   # Core data models and schemas
+│   └── models.py          # Domain, URL, Backlink, LinkProfile models
+├── crawlers/              # Web crawling engines
+│   ├── web_crawler.py     # Main crawler with rate limiting
+│   ├── link_extractor.py  # Extracts links from HTML
+│   ├── content_parser.py  # Extracts SEO metrics from content
+│   ├── robots_parser.py   # Handles robots.txt fetching and parsing
+│   ├── serp_crawler.py    # Playwright-based SERP data extraction
+│   ├── keyword_scraper.py # Keyword suggestion and trends scraping
+│   └── technical_auditor.py # Lighthouse integration for technical audits
+├── services/              # Business logic layer
+│   ├── crawl_service.py           # Crawling orchestration
+│   ├── domain_service.py          # Domain information retrieval
+│   ├── backlink_service.py        # Backlink API integration
+│   ├── domain_analyzer_service.py # Domain value analysis
+│   ├── expired_domain_finder_service.py # Expired domain discovery
+│   ├── serp_service.py            # SERP data service
+│   ├── keyword_service.py         # Keyword research service
+│   └── link_health_service.py     # Link health auditing
+├── database/              # Data persistence layer
+│   ├── database.py        # SQLAlchemy ORM for PostgreSQL
+│   ├── models.py          # SQLAlchemy ORM models
+│   └── clickhouse_loader.py # Bulk loading into ClickHouse
+├── api/                   # REST API endpoints
+│   ├── main.py            # Main FastAPI application and routes
+│   └── queue_endpoints.py # Queue system specific endpoints (integrated into main.py)
+├── monitoring/            # Monitoring tools and dashboard
+│   ├── dashboard.py       # Web-based monitoring dashboard
+│   └── prometheus_metrics.py # Prometheus metrics definitions
+├── queue_system/          # Distributed job queue components
+│   ├── job_coordinator.py # Central job distribution logic
+│   └── satellite_crawler.py # Lightweight worker for executing jobs
+├── scripts/               # Utility scripts (e.g., local startup)
+├── config/                # Configuration files
+└── setup.py              # Project setup and dependencies
+```
 
-*   Python 3.8+
-*   Docker and Docker Compose (recommended for PostgreSQL and Redis setup)
+### **Key Components**
 
-### Setup
+#### **Core Models** (`core/models.py`)
+- **Domain**: Authority scores, trust metrics, spam detection
+- **URL**: Status tracking, metadata, crawl information  
+- **Backlink**: Source/target mapping, anchor text, link types
+- **LinkProfile**: Aggregated metrics and analysis results
+- **CrawlJob**: Job status, progress tracking, error handling, dead-letter queue integration.
+- **SEOMetrics**: Detailed on-page SEO, performance, and accessibility metrics.
+- **SERPResult**: Structured data for search engine results.
+- **KeywordSuggestion**: Structured data for keyword research.
+
+#### **Web Crawler** (`crawlers/web_crawler.py`)
+- Async HTTP client with connection pooling
+- Intelligent robots.txt parsing and compliance
+- Rate limiting with per-domain tracking
+- Content extraction and link discovery
+- Error handling and retry logic
+
+#### **Specialised Crawlers/Auditors**
+- **SERPCrawler**: Uses Playwright to drive a headless browser for accurate SERP data extraction.
+- **KeywordScraper**: Scrapes public keyword suggestion APIs (Google Autocomplete, Bing Suggest) and integrates with Pytrends for trend data.
+- **TechnicalAuditor**: Wraps Google Lighthouse CLI to perform comprehensive technical SEO audits (performance, accessibility, best practices).
+
+#### **Business Services**
+- **CrawlService**: Orchestrates all types of crawling jobs, manages their state, and persists results.
+- **DomainService**: Handles WHOIS lookups and availability checks (supports simulated, AbstractAPI, and real API clients).
+- **BacklinkService**: Integrates with external backlink data providers (simulated, OpenLinkProfiler, GSC, or paid APIs).
+- **DomainAnalyzerService**: Evaluates domain value and potential.
+- **ExpiredDomainFinderService**: Discovers valuable expired domains.
+- **LinkHealthService**: Audits outgoing links for brokenness (4xx/5xx errors).
+- **SERPService**: Provides an interface for fetching SERP data, prioritising the Playwright crawler or falling back to API clients.
+- **KeywordService**: Provides an interface for fetching keyword research data, prioritising the scraper or falling back to API clients.
+
+#### **Data Persistence** (`database/`)
+- **PostgreSQL Database**: Used for structured storage of all crawl data, link profiles, and domain information.
+- **SQLAlchemy ORM**: Provides an object-relational mapping layer for Python objects to database tables.
+- **Upsert Logic**: Ensures data integrity by updating existing records or inserting new ones, preventing duplicate key errors.
+- **ClickHouseLoader**: Handles bulk loading of analytical data into ClickHouse for high-performance querying (optional integration).
+
+#### **Distributed Queue System** (`queue_system/`)
+- **Redis**: Acts as the central message broker for job queues, results, and heartbeats.
+- **JobCoordinator**: The central brain that manages job submission, tracks job status, and monitors satellite health.
+- **SatelliteCrawler**: Lightweight, independent worker processes that consume jobs from Redis, execute crawls/audits, and push results back.
+
+#### **Monitoring** (`monitoring/`)
+- **Prometheus Metrics**: Exports detailed metrics for API requests, job status, crawler performance, and resource usage, allowing integration with Prometheus and Grafana.
+- **Monitoring Dashboard**: A simple web interface to visualise queue status, active satellites, and recent job history.
+
+## 🛠 Installation & Setup
+
+### **Prerequisites**
+- Python 3.8+ 
+- pip (Python package manager)
+- 4GB+ RAM recommended for large crawls
+- Stable internet connection
+- **Docker and Docker Compose**: Recommended for easy setup of PostgreSQL, Redis, and the distributed components.
+- **Node.js and npm**: Required for Lighthouse CLI (installed within Dockerfile.coordinator).
+- **Playwright Browsers**: Chromium, Firefox, WebKit (installed within Dockerfile.coordinator and Dockerfile.satellite).
+
+### **Quick Installation (using Docker Compose)**
 
 1.  **Clone the repository:**
     ```bash
@@ -77,14 +170,15 @@ We gather comprehensive data for keyword suggestions:
     cd Link_Profiler
     ```
 
-2.  **Install Python dependencies:**
+2.  **Build and start Docker services:**
+    Navigate to the `Link_Profiler/deployment/docker` directory.
     ```bash
-    pip install -e .
+    docker-compose up -d --build
     ```
+    This command will:
+    *   Build Docker images for `coordinator`, `monitor`, and `satellite` services.
+    *   Start PostgreSQL, Redis, the API coordinator, the monitoring dashboard, and three satellite crawlers.
 
-3.  **Set up Docker services (PostgreSQL, Redis, Coordinator, etc.):**
-    Navigate to the `Link_Profiler/deployment/docker` directory and use the provided `docker-compose.yml`.
-    
     **Important:** If you plan to use real API clients (e.g., for Domain, Backlink, SERP, Keyword data), you will need to uncomment and set the corresponding environment variables in the `coordinator` service section of `Link_Profiler/deployment/docker/docker-compose.yml`. For example:
     ```yaml
         coordinator:
@@ -98,12 +192,6 @@ We gather comprehensive data for keyword suggestions:
             # ... etc.
     ```
     For `USE_GSC_API=true`, ensure your `credentials.json` and `token.json` files are in the project root (`Link_Profiler/`) as described in the "Google Search Console API Setup" section below.
-
-    Run Docker Compose:
-    ```bash
-    docker-compose up -d
-    ```
-    This will start PostgreSQL, Redis, the API coordinator, and satellite crawlers.
 
 ### Google Search Console API Setup (for `GSCBacklinkAPIClient`)
 
@@ -138,6 +226,7 @@ To use the `GSCBacklinkAPIClient`, you need to set up credentials with Google. T
 Once the Docker services are running, the API will be available at: `http://localhost:8000`
 -   **API Documentation**: `http://localhost:8000/docs`
 -   **Interactive API**: `http://localhost:8000/redoc`
+-   **Monitoring Dashboard**: `http://localhost:8001`
 
 ### Core API Endpoints
 
@@ -161,6 +250,15 @@ POST /crawl/start_backlink_discovery
 # Check job status
 GET /crawl/status/{job_id}
 
+# Pause a crawl job
+POST /crawl/pause/{job_id}
+
+# Resume a crawl job
+POST /crawl/resume/{job_id}
+
+# Stop a crawl job
+POST /crawl/stop/{job_id}
+
 # Get link profile results
 GET /link_profile/https://example.com
 
@@ -177,6 +275,21 @@ POST /audit/link_health
         "https://www.example.com/page1",
         "https://www.example.com/page2"
     ]
+}
+```
+
+#### ⚙️ Technical Audit
+```bash
+# Start a technical audit job for specific URLs using Lighthouse
+POST /audit/technical_audit
+{
+    "urls_to_audit": [
+        "https://www.example.com/page1",
+        "https://www.example.com/page2"
+    ],
+    "config": {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
 }
 ```
 
@@ -227,6 +340,18 @@ POST /domain/find_expired_domains
     "min_value_score": 50.0,
     "limit": 100
 }
+```
+
+#### 📊 Monitoring & Debugging
+```bash
+# Get Prometheus metrics
+GET /metrics
+
+# Get messages from the dead-letter queue
+GET /debug/dead_letters
+
+# Clear the dead-letter queue
+POST /debug/clear_dead_letters
 ```
 
 ### Configuration Options
