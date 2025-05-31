@@ -4,61 +4,46 @@ A comprehensive, open-source link analysis and expired domain discovery system i
 
 ## ✨ Features
 
-### 1. Backlink Data Collection
-Our system efficiently discovers and stores detailed backlink information. Each backlink record includes:
-*   **`source_url`**: The full URL of the page containing the link.
-*   **`target_url`**: The linked-to URL (normalised canonical form).
-*   **`anchor_text`**: The text within the `<a>` tag.
-*   **`rel_attributes`**: A list of any `rel` values (e.g., `nofollow`, `ugc`, `sponsored`).
-*   **`http_status`**: The HTTP response code encountered when fetching the `source_url`.
-*   **`crawl_timestamp`**: The UTC timestamp when the `source_url` page was crawled.
-*   **`source_domain_metrics`**: Optional enrichment with domain-level data (e.g., estimated domain authority, trust, spam scores) for the source domain.
+### 🕷️ **Advanced Web Crawling**
+- **Asynchronous Architecture**: Built with FastAPI and aiohttp for maximum performance.
+- **Intelligent Rate Limiting**: Respects robots.txt and implements smart delays.
+- **Distributed Processing**: Leverages a Redis-based job queue with multiple satellite crawlers for horizontal scalability.
+- **Robust Error Handling**: Comprehensive retry mechanisms, timeout handling, and a dead-letter queue for failed jobs.
+- **Content Type Support**: HTML, PDF, and image link extraction.
+- **Crawl Job Management**: Ability to pause, resume, and stop active crawl jobs.
 
-### 2. SERP Data Acquisition
-We capture critical data from Search Engine Results Pages (SERPs) for specified keywords:
-*   **`keyword`**: The search term used.
-*   **`position`**: The numerical rank in the search results.
-*   **`result_url`**: The URL of each result item.
-*   **`title_text`**: The page title as displayed in the SERP.
-*   **`snippet_text`**: The meta description or snippet text displayed.
-*   **`rich_features`**: Flags or details for featured snippets, local packs, images, videos, ads, etc.
-*   **`page_load_time`**: Time to fully render the SERP page (optional, from API).
-*   **`crawl_timestamp`**: The UTC timestamp of when the search was performed.
+### 🔍 **Link Analysis & Profiling**
+- **Comprehensive Backlink Discovery**: Find all links pointing to target domains, either by crawling or via external APIs.
+- **Authority Calculation**: Domain and page authority scoring algorithms (now more sophisticated, leveraging linking domain metrics).
+- **Spam Detection**: AI-powered spam link identification (currently basic).
+- **Anchor Text Analysis**: Detailed anchor text distribution and patterns.
+- **Link Type Classification**: dofollow, nofollow, sponsored, UGC, redirect, canonical detection.
+- **SEO Metrics Extraction**: Extracts and stores on-page SEO data (e.g., title length, heading counts, internal/external links).
+- **Backlink API Integration**: Can fetch existing backlink data from external APIs like Google Search Console (for verified properties) and OpenLinkProfiler.org (free, with limits), or a placeholder for paid APIs.
 
-### 3. Technical Audit Data
-Our system performs page-level technical SEO audits, providing insights into website health and optimisation:
-*   **Page-level Metrics**:
-    *   **`url`**: The page URL.
-    *   **`http_status`**: The HTTP response code.
-    *   **`response_time_ms`**: Time to first byte and full load.
-    *   **`page_size_bytes`**: Total HTML size.
-*   **SEO Checks**:
-    *   **`title_length`**: Character count of the `<title>` tag.
-    *   **`meta_description_length`**: Character count of the `<meta name="description">` tag.
-    *   **`h1_count`**: Number of `<h1>` tags found.
-    *   **`broken_links`**: A list of internal/external links on the page returning 4xx/5xx status codes. This is handled by a dedicated **Link Health Auditor** for efficient, batched checks.
-    *   Other checks: `internal_links`, `external_links`, `images_count`, `images_without_alt`, `has_canonical`, `has_robots_meta`, `has_schema_markup`, `mobile_friendly` (basic check).
-*   **`audit_timestamp`**: The UTC timestamp of when the audit was executed.
-*   *(Note: `performance_score` and `accessibility_score` are now populated by Lighthouse integration.)*
+### 💎 **Expired Domain Discovery & Analysis**
+- **Domain Availability Checking**: Real-time domain registration status (now supports real API integration via AbstractAPI's free tier).
+- **Value Assessment**: Multi-factor domain scoring system (currently simulated/basic).
+- **WHOIS Integration**: Domain age, history, and registration data (now supports real API integration via AbstractAPI's free tier).
+- **Batch Processing**: Submit lists of domains for analysis to the distributed queue.
+- **Custom Scoring Models**: Configurable domain evaluation criteria.
 
-### 4. Keyword Research Data
-We gather comprehensive data for keyword suggestions:
-*   **`seed_keyword`**: The initial term used.
-*   **`suggested_keyword`**: Each auto-complete or related suggestion returned.
-*   **`search_volume_monthly`**: Estimated monthly search volume.
-*   **`cpc_estimate`**: Cost-per-click estimate (if available).
-*   **`keyword_trend`**: Monthly interest values (e.g., from Google Trends).
-*   **`competition_level`**: Inferred or scraped competition level (Low/Medium/High).
-*   **`data_timestamp`**: The UTC timestamp when this data was gathered.
+### 📊 **Professional Reporting & Auditing**
+- **Link Profile Generation**: Complete backlink analysis reports.
+- **Domain Metrics**: Authority, trust, and spam scores.
+- **Technical SEO Audits**: Integrates with Google Lighthouse for performance, accessibility, and best practices scores.
+- **Link Health Auditing**: Checks for broken outgoing links on specified pages.
+- **Keyword Research**: Fetches keyword suggestions and trend data.
+- **SERP Analysis**: Extracts data from Search Engine Results Pages for given keywords.
+- **Export Capabilities**: JSON (via API).
+- **Historical Tracking**: Domain and link profile changes over time (basic persistence).
 
-## Architecture Highlights
-
-*   **Modular Design**: Clear separation of concerns with dedicated services (Crawl, Domain, Backlink, SERP, Keyword, Link Health) and crawlers (WebCrawler, LinkExtractor, ContentParser, SERPCrawler, KeywordScraper, TechnicalAuditor).
-*   **Asynchronous Operations**: Leverages `asyncio` and `aiohttp` for high-concurrency web requests, ensuring efficient I/O-bound operations.
-*   **FastAPI**: Provides a modern, fast (high-performance) web framework for building robust APIs with automatic interactive documentation (Swagger UI).
-*   **SQLAlchemy + PostgreSQL**: For robust and scalable data persistence, with ORM models mapping directly to our rich data structures.
-*   **Redis**: Used for distributed job queuing, caching (deduplication), and a dead-letter queue for failed jobs.
-*   **Background Jobs**: Crawling and auditing tasks run as background jobs, allowing the API to remain responsive.
+### 🚀 **RESTful API**
+- **Complete API Coverage**: All features accessible via REST endpoints.
+- **Asynchronous Job Submission**: API endpoints submit jobs to a distributed queue, allowing for non-blocking operations.
+- **Real-time Job Tracking**: Monitor crawling progress and status via API.
+- **Scalable Architecture**: Designed for high-volume processing with distributed workers.
+- **Developer Friendly**: Comprehensive OpenAPI documentation.
 
 ## 🏗️ Architecture Overview
 
@@ -105,21 +90,21 @@ link_profiler/
 ### **Key Components**
 
 #### **Core Models** (`core/models.py`)
-- **Domain**: Authority scores, trust metrics, spam detection
-- **URL**: Status tracking, metadata, crawl information  
-- **Backlink**: Source/target mapping, anchor text, link types
-- **LinkProfile**: Aggregated metrics and analysis results
+- **Domain**: Authority scores, trust metrics, spam detection.
+- **URL**: Status tracking, metadata, crawl information.
+- **Backlink**: Source/target mapping, anchor text, link types.
+- **LinkProfile**: Aggregated metrics and analysis results.
 - **CrawlJob**: Job status, progress tracking, error handling, dead-letter queue integration.
 - **SEOMetrics**: Detailed on-page SEO, performance, and accessibility metrics.
 - **SERPResult**: Structured data for search engine results.
 - **KeywordSuggestion**: Structured data for keyword research.
 
 #### **Web Crawler** (`crawlers/web_crawler.py`)
-- Async HTTP client with connection pooling
-- Intelligent robots.txt parsing and compliance
-- Rate limiting with per-domain tracking
-- Content extraction and link discovery
-- Error handling and retry logic
+- Async HTTP client with connection pooling.
+- Intelligent robots.txt parsing and compliance.
+- Rate limiting with per-domain tracking.
+- Content extraction and link discovery.
+- Error handling and retry logic.
 
 #### **Specialised Crawlers/Auditors**
 - **SERPCrawler**: Uses Playwright to drive a headless browser for accurate SERP data extraction.
@@ -144,12 +129,12 @@ link_profiler/
 
 #### **Distributed Queue System** (`queue_system/`)
 - **Redis**: Acts as the central message broker for job queues, results, and heartbeats.
-- **JobCoordinator**: The central brain that manages job submission, tracks job status, and monitors satellite health.
+- **JobCoordinator**: The central brain that manages job submission, tracks job status (from DB), and monitors satellite health.
 - **SatelliteCrawler**: Lightweight, independent worker processes that consume jobs from Redis, execute crawls/audits, and push results back.
 
 #### **Monitoring** (`monitoring/`)
 - **Prometheus Metrics**: Exports detailed metrics for API requests, job status, crawler performance, and resource usage, allowing integration with Prometheus and Grafana.
-- **Monitoring Dashboard**: A simple web interface to visualise queue status, active satellites, and recent job history.
+- **Monitoring Dashboard**: A simple web interface to visualise queue status, active satellites, and recent job history (now fetches real data from DB and Redis).
 
 ## 🛠 Installation & Setup
 
@@ -185,13 +170,14 @@ link_profiler/
           # ... other configurations ...
           environment:
             # ... existing environment variables ...
-            # - USE_REAL_DOMAIN_API=true
-            # - REAL_DOMAIN_API_KEY=your_real_domain_api_key
-            # - USE_REAL_SERP_API=true
-            # - REAL_SERP_API_KEY=your_real_serp_api_key
+            # - LP_DOMAIN_API_ABSTRACT_API_ENABLED=true
+            # - LP_DOMAIN_API_ABSTRACT_API_API_KEY=your_abstract_api_key_here
+            # - LP_SERP_API_REAL_API_ENABLED=true
+            # - LP_SERP_API_REAL_API_KEY=your_real_serp_api_key
             # ... etc.
     ```
-    For `USE_GSC_API=true`, ensure your `credentials.json` and `token.json` files are in the project root (`Link_Profiler/`) as described in the "Google Search Console API Setup" section below.
+    Note the `LP_` prefix for environment variables, as configured in `Link_Profiler/config/config_loader.py`.
+    For `LP_BACKLINK_API_GSC_API_ENABLED=true`, ensure your `credentials.json` and `token.json` files are in the project root (`Link_Profiler/`) as described in the "Google Search Console API Setup" section below.
 
 ### Google Search Console API Setup (for `GSCBacklinkAPIClient`)
 
@@ -216,7 +202,7 @@ To use the `GSCBacklinkAPIClient`, you need to set up credentials with Google. T
 
 4.  **Generate `token.json` (First-time Authentication)**:
     *   The `GSCBacklinkAPIClient` will attempt an interactive authentication flow the first time it runs if `token.json` is not found or is invalid.
-    *   When you start the API server with `USE_GSC_API="true"` (either via `uvicorn` directly or in `docker-compose.yml`), it will attempt to open a browser window.
+    *   When you start the API server with `LP_BACKLINK_API_GSC_API_ENABLED="true"` (either via `uvicorn` directly or in `docker-compose.yml`), it will attempt to open a browser window.
     *   Follow the prompts in your browser to authenticate with your Google account and grant the necessary permissions.
     *   After successful authentication, a `token.json` file will be created in your project's root directory. This file stores your access and refresh tokens. **Keep this file secure and do not share it.**
     *   **Important**: This interactive step is not suitable for a headless server environment. For production deployments, you would typically generate `token.json` once on a local machine and then transfer it securely to your server.
@@ -232,7 +218,7 @@ Once the Docker services are running, the API will be available at: `http://loca
 
 #### 🔍 Backlink Discovery
 ```bash
-# Start a backlink discovery job
+# Submit a backlink discovery job to the queue
 POST /crawl/start_backlink_discovery
 {
     "target_url": "https://example.com",
@@ -247,8 +233,11 @@ POST /crawl/start_backlink_discovery
     }
 }
 
-# Check job status
+# Check job status (from database)
 GET /crawl/status/{job_id}
+
+# Get all jobs (from database)
+GET /crawl/all_jobs
 
 # Pause a crawl job
 POST /crawl/pause/{job_id}
@@ -259,16 +248,16 @@ POST /crawl/resume/{job_id}
 # Stop a crawl job
 POST /crawl/stop/{job_id}
 
-# Get link profile results
+# Get link profile results (from database)
 GET /link_profile/https://example.com
 
-# Get raw backlinks
+# Get raw backlinks (from database)
 GET /backlinks/https://example.com
 ```
 
 #### 🔗 Link Health Audit
 ```bash
-# Start a link health audit job for specific source URLs
+# Submit a link health audit job to the queue
 POST /audit/link_health
 {
     "source_urls": [
@@ -280,7 +269,7 @@ POST /audit/link_health
 
 #### ⚙️ Technical Audit
 ```bash
-# Start a technical audit job for specific URLs using Lighthouse
+# Submit a technical audit job to the queue
 POST /audit/technical_audit
 {
     "urls_to_audit": [
@@ -295,27 +284,28 @@ POST /audit/technical_audit
 
 #### 📈 SERP Data
 ```bash
-# Fetch SERP data for a keyword
+# Submit a SERP search job to the queue
 POST /serp/search
 {
     "keyword": "best SEO tools",
-    "num_results": 20
+    "num_results": 20,
+    "search_engine": "google"
 }
 
-# Get stored SERP results
+# Get stored SERP results (from database)
 GET /serp/results/{keyword}
 ```
 
 #### 💡 Keyword Research
 ```bash
-# Fetch keyword suggestions for a seed keyword
+# Submit a keyword suggestion job to the queue
 POST /keyword/suggest
 {
     "seed_keyword": "content marketing",
     "num_suggestions": 15
 }
 
-# Get stored keyword suggestions
+# Get stored keyword suggestions (from database)
 GET /keyword/suggestions/{seed_keyword}
 ```
 
@@ -333,7 +323,15 @@ GET /domain/info/example.com
 # Analyze domain value
 GET /domain/analyze/example.com
 
-# Find expired domains
+# Submit a batch domain analysis job to the queue
+POST /domain/analyze_batch
+{
+    "domain_names": ["domain1.com", "domain2.com"],
+    "min_value_score": 50.0,
+    "limit": 100
+}
+
+# Find expired domains (direct, non-queued operation)
 POST /domain/find_expired_domains
 {
     "potential_domains": ["domain1.com", "domain2.com"],
@@ -347,31 +345,37 @@ POST /domain/find_expired_domains
 # Get Prometheus metrics
 GET /metrics
 
-# Get messages from the dead-letter queue
+# Get messages from the Redis dead-letter queue
 GET /debug/dead_letters
 
-# Clear the dead-letter queue
+# Clear the Redis dead-letter queue
 POST /debug/clear_dead_letters
 ```
 
 ### Configuration Options
 
-#### Crawl Configuration
+Configuration is loaded from `Link_Profiler/config/default.json`, overridden by `Link_Profiler/config/{ENVIRONMENT}.json` (e.g., `development.json`), and finally by environment variables prefixed with `LP_`.
+
+Example environment variable: `LP_REDIS_URL=redis://my-redis-host:6379` would override `redis.url` in the JSON config.
+
+#### Crawl Configuration (from `Link_Profiler/core/models.py` and JSON config)
 ```python
 {
     "max_depth": 3,              # Crawling depth from seed URLs
     "max_pages": 1000,           # Maximum pages to crawl
-    "delay_seconds": 1.0,        # Request delay
-    "timeout_seconds": 30,       # Request timeout
-    "user_agent": "LinkProfiler/1.0",
-    "respect_robots_txt": true,  # Honor robots.txt
-    "follow_redirects": true,    # Follow HTTP redirects
-    "extract_images": true,      # Extract image links
-    "extract_pdfs": false,       # Extract PDF documents
-    "max_file_size_mb": 10,      # Max download size
-    "allowed_domains": [],       # Whitelist domains
-    "blocked_domains": [],       # Blacklist domains
-    "custom_headers": {}         # Custom HTTP headers
+    "delay_seconds": 1.0,        # Delay between requests to the same domain in seconds
+    "timeout_seconds": 30,       # Timeout for HTTP requests in seconds
+    "user_agent": "LinkProfiler/1.0", # User-Agent string for the crawler
+    "respect_robots_txt": true,  # Whether to respect robots.txt rules (can be overridden by LP_CRAWLER_RESPECT_ROBOTS_TXT)
+    "follow_redirects": true,    # Whether to follow HTTP redirects
+    "extract_images": true,      # Whether to extract image links
+    "extract_pdfs": false,       # Whether to extract links from PDF documents
+    "max_file_size_mb": 10,      # Maximum file size to download in MB
+    "allowed_domains": [],       # List of domains explicitly allowed to crawl. If empty, all domains are allowed unless blocked.
+    "blocked_domains": [],       # List of domains explicitly blocked from crawling.
+    "custom_headers": {},        # Custom HTTP headers to send with requests.
+    "max_retries": 3,            # Maximum number of retries for failed URL fetches.
+    "retry_delay_seconds": 5.0   # Delay between retries in seconds.
 }
 ```
 
