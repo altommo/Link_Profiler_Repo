@@ -7,11 +7,37 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     libpq-dev \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libxkbcommon0 \
+    libdrm-dev \
+    libgbm-dev \
+    libasound2 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
+    libfontconfig1 \
+    libjpeg-dev \
+    libpng-dev \
+    zlib1g-dev \
+    # Dependencies for Node.js and npm
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js and npm (required for Lighthouse CLI)
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
 COPY Link_Profiler/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright browsers (Chromium)
+# This command installs the browser binaries and their system dependencies
+RUN playwright install --with-deps chromium
+
+# Install Lighthouse CLI globally
+RUN npm install -g lighthouse
 
 # Copy application code
 COPY Link_Profiler/ ./Link_Profiler/
@@ -22,5 +48,5 @@ ENV PYTHONPATH=/app
 # Expose API port
 EXPOSE 8000
 
-# Start command
-CMD ["uvicorn", "Link_Profiler.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start command - Pointing to the new main.py location
+CMD ["uvicorn", "Link_Profiler.main:app", "--host", "0.0.0.0", "--port", "8000"]
