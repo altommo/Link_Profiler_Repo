@@ -1,6 +1,5 @@
 """
 Monitoring Package - Dashboard and monitoring tools
 """
-from .dashboard import MonitoringDashboard
-
-__all__ = ['MonitoringDashboard']
+# This file makes 'monitoring' a Python package.
+# Removed explicit imports as they are not strictly necessary for package definition.

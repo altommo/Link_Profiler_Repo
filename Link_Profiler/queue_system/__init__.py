@@ -1,7 +1,5 @@
 """
 Queue System Package - Distributed crawling infrastructure
 """
-from .job_coordinator import JobCoordinator
-from .satellite_crawler import SatelliteCrawler
-
-__all__ = ['JobCoordinator', 'SatelliteCrawler']
+# This file makes 'queue_system' a Python package.
+# Removed explicit imports as they are not strictly necessary for package definition.
