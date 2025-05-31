@@ -1,4 +1,7 @@
 {
+  "redis": {
+    "url": "redis://localhost:6379"
+  },
   "database": {
     "url": "postgresql://postgres:postgres@localhost:5432/link_profiler_db"
   },
