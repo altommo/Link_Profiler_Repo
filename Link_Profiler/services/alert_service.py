@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional, Union
 import aiohttp # For sending webhooks (even if just logging for now)
 
 from Link_Profiler.database.database import Database
-from Link_Profiler.core.models import AlertRule, CrawlJob, SEOMetrics, AlertSeverity, AlertChannel, serialize_model
+from Link_Profiler.core.models import AlertRule, CrawlJob, SEOMetrics, AlertSeverity, AlertChannel, serialize_model, CrawlStatus # Import CrawlStatus
 
 logger = logging.getLogger(__name__)
 
