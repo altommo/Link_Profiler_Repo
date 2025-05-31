@@ -11,8 +11,9 @@ clickhouse-driver
 playwright
 playwright-stealth
 pytrends
-prometheus_client # New: For Prometheus metrics
-openai # New: For OpenRouter integration
+prometheus_client
+openai
+croniter # Added croniter
 
 # Queue System Dependencies
 redis>=4.5.0

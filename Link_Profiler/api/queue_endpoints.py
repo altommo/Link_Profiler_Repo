@@ -11,14 +11,19 @@ import logging
 from uuid import uuid4
 
 # Import the queue coordinator and core models
+from Link_Profiler.queue_system.job_coordinator import JobCoordinator # Moved outside try-except
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, CrawlStatus, serialize_model
+from Link_Profiler.database.database import Database # Import Database
+
 try:
-    from Link_Profiler.queue_system.job_coordinator import JobCoordinator
-    from Link_Profiler.core.models import CrawlConfig, CrawlJob, CrawlStatus, serialize_model
-    from Link_Profiler.database.database import Database # Import Database
+    # This flag indicates if the queue system's core components are available
+    # (e.g., if croniter is installed, which is a dependency for JobCoordinator)
+    import croniter # Check for croniter explicitly if it's a core dependency for queue functionality
     QUEUE_AVAILABLE = True
 except ImportError as e:
-    logging.warning(f"Queue system not available: {e}")
+    logging.warning(f"Queue system not fully available: {e}. Scheduling features may be limited.")
     QUEUE_AVAILABLE = False
+
 
 logger = logging.getLogger(__name__)
 
