@@ -20,6 +20,7 @@ from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the r
 from Link_Profiler.monitoring.prometheus_metrics import ( # Import Prometheus metrics
     API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL
 )
+from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,13 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         """Async context manager entry for client session."""
         self.logger.debug("Entering SimulatedDomainAPIClient context.")
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+            
+            self._session = aiohttp.ClientSession(headers=headers)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -79,7 +86,14 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         close_session_after_use = False
         if session_to_use is None or session_to_use.closed:
             self.logger.warning("SimulatedDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            session_to_use = aiohttp.ClientSession()
+            
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            session_to_use = aiohttp.ClientSession(headers=headers)
             close_session_after_use = True
 
         try:
@@ -114,7 +128,14 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         close_session_after_use = False
         if session_to_use is None or session_to_use.closed:
             self.logger.warning("SimulatedDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            session_to_use = aiohttp.ClientSession()
+            
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            session_to_use = aiohttp.ClientSession(headers=headers)
             close_session_after_use = True
         else:
             close_session_after_use = False
@@ -181,7 +202,13 @@ class RealDomainAPIClient(BaseDomainAPIClient):
         """Async context manager entry for client session."""
         self.logger.info("Entering RealDomainAPIClient context.")
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self.api_key}"})
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+            
+            self._session = aiohttp.ClientSession(headers=headers)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -205,7 +232,14 @@ class RealDomainAPIClient(BaseDomainAPIClient):
         close_session_after_use = False
         if session_to_use is None or session_to_use.closed:
             self.logger.warning("RealDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            session_to_use = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self.api_key}"})
+            
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            session_to_use = aiohttp.ClientSession(headers=headers)
             close_session_after_use = True
         else:
             close_session_after_use = False
@@ -240,7 +274,14 @@ class RealDomainAPIClient(BaseDomainAPIClient):
         close_session_after_use = False
         if session_to_use is None or session_to_use.closed:
             self.logger.warning("RealDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            session_to_use = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self.api_key}"})
+            
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            session_to_use = aiohttp.ClientSession(headers=headers)
             close_session_after_use = True
         else:
             close_session_after_use = False
@@ -278,7 +319,13 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
         """Async context manager entry for client session."""
         self.logger.info("Entering AbstractDomainAPIClient context.")
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            self._session = aiohttp.ClientSession(headers=headers)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -301,7 +348,14 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
         close_session_after_use = False
         if session_to_use is None or session_to_use.closed:
             self.logger.warning("AbstractDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            session_to_use = aiohttp.ClientSession()
+            
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            session_to_use = aiohttp.ClientSession(headers=headers)
             close_session_after_use = True
         else:
             close_session_after_use = False
@@ -335,7 +389,14 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
         close_session_after_use = False
         if session_to_use is None or session_to_use.closed:
             self.logger.warning("AbstractDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            session_to_use = aiohttp.ClientSession()
+            
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            session_to_use = aiohttp.ClientSession(headers=headers)
             close_session_after_use = True
         else:
             close_session_after_use = False

@@ -9,6 +9,10 @@ from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 import logging
 from typing import Dict, Optional
+import random # New: Import random for human-like delays
+
+from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
+from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +29,14 @@ class RobotsParser:
     async def __aenter__(self):
         """Async context manager entry for client session."""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+            # If neither is enabled, aiohttp uses its default user agent.
+
+            self._session = aiohttp.ClientSession(headers=headers)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -53,10 +64,21 @@ class RobotsParser:
             if session_to_use is None:
                 # This case should ideally not happen if used within WebCrawler's context
                 logger.warning(f"RobotsParser session not active for {domain}. Creating temporary session.")
-                session_to_use = aiohttp.ClientSession() # Create a temporary session if not active
+                
+                headers = {}
+                if config_loader.get("anti_detection.request_header_randomization", False):
+                    headers.update(user_agent_manager.get_random_headers())
+                elif config_loader.get("crawler.user_agent_rotation", False):
+                    headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+                session_to_use = aiohttp.ClientSession(headers=headers) # Create a temporary session if not active
 
             parser = RobotFileParser()
             parser.set_url(robots_txt_url)
+
+            # Add human-like delays if configured
+            if config_loader.get("anti_detection.human_like_delays", False):
+                await asyncio.sleep(random.uniform(0.1, 0.5))
 
             try:
                 async with session_to_use.get(robots_txt_url, timeout=10) as response:

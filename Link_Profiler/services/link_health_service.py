@@ -8,9 +8,12 @@ import logging
 from typing import List, Dict, Optional, Tuple
 import aiohttp
 from urllib.parse import urlparse
+import random # New: Import random for human-like delays
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import SEOMetrics, Backlink, CrawlConfig, CrawlError
+from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
+from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +47,19 @@ class LinkHealthService:
             # Use a connector with a higher limit for concurrent checks
             connector = aiohttp.TCPConnector(limit=50, limit_per_host=10, ttl_dns_cache=300, use_dns_cache=True)
             timeout = aiohttp.ClientTimeout(total=self.default_crawl_config.timeout_seconds)
+            
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+            else:
+                headers['User-Agent'] = self.default_crawl_config.user_agent
+
             self._session = aiohttp.ClientSession(
                 connector=connector,
                 timeout=timeout,
-                headers={'User-Agent': self.default_crawl_config.user_agent}
+                headers=headers
             )
         return self
 
@@ -65,6 +77,10 @@ class LinkHealthService:
         """
         if self._session is None:
             raise RuntimeError("aiohttp session not initialized. Use LinkHealthService within an async context.")
+
+        # Add human-like delays if configured
+        if config_loader.get("anti_detection.human_like_delays", False):
+            await asyncio.sleep(random.uniform(0.1, 0.5))
 
         try:
             # Use HEAD request for efficiency, fall back to GET if HEAD is not allowed

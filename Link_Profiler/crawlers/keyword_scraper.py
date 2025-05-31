@@ -15,6 +15,8 @@ from pytrends.request import TrendReq # For Google Trends
 from pytrends.exceptions import ResponseError as PytrendsResponseError
 
 from Link_Profiler.core.models import KeywordSuggestion # Absolute import
+from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
+from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +34,16 @@ class KeywordScraper:
         """Initialises aiohttp session and Pytrends client."""
         self.logger.info("Entering KeywordScraper context.")
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            })
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+            else:
+                # Default user agent if no rotation/randomization is enabled
+                headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+
+            self._session = aiohttp.ClientSession(headers=headers)
         
         # Pytrends is synchronous, so we'll run its methods in a thread pool
         self.pytrends_client = TrendReq(hl='en-US', tz=360) # tz=360 for GMT+6, adjust as needed
@@ -58,6 +67,10 @@ class KeywordScraper:
         
         url = f"https://suggestqueries.google.com/complete/search?client=firefox&q={urlencode({'q': query})}"
         try:
+            # Add human-like delays if configured
+            if config_loader.get("anti_detection.human_like_delays", False):
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+
             async with self._session.get(url, timeout=5) as response:
                 response.raise_for_status()
                 data = await response.json()
@@ -77,6 +90,10 @@ class KeywordScraper:
         
         url = f"https://api.bing.com/qsonhs.aspx?q={urlencode({'q': query})}"
         try:
+            # Add human-like delays if configured
+            if config_loader.get("anti_detection.human_like_delays", False):
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+
             async with self._session.get(url, timeout=5) as response:
                 response.raise_for_status()
                 data = await response.json()
@@ -130,7 +147,11 @@ class KeywordScraper:
                 for kw in chunk:
                     trends_data[kw] = []
             
-            await asyncio.sleep(random.uniform(1, 3)) # Be respectful to Google Trends rate limits
+            # Add human-like delays if configured
+            if config_loader.get("anti_detection.human_like_delays", False):
+                await asyncio.sleep(random.uniform(1, 3)) # Be respectful to Google Trends rate limits
+            else:
+                await asyncio.sleep(random.uniform(0.5, 1.0)) # Default delay
 
         return trends_data
 

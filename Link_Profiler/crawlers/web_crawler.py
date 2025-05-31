@@ -13,6 +13,7 @@ import logging
 from dataclasses import dataclass, field # Import field
 import re
 from datetime import datetime, timedelta
+import random # Import random for human-like delays
 
 from Link_Profiler.core.models import ( # Changed to absolute import
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
@@ -22,6 +23,8 @@ from Link_Profiler.database.database import Database # Import Database for job s
 from .link_extractor import LinkExtractor
 from .content_parser import ContentParser
 from .robots_parser import RobotsParser
+from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
+from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
 
 class CrawlerError(Exception):
@@ -29,22 +32,52 @@ class CrawlerError(Exception):
     pass
 
 
-class RateLimiter:
-    """Rate limiter to respect website policies"""
+class AdaptiveRateLimiter:
+    """
+    Adaptive rate limiter to respect website policies and react to server responses.
+    Adjusts delay based on HTTP status codes and response times.
+    """
     
-    def __init__(self, requests_per_second: float = 1.0):
-        self.requests_per_second = requests_per_second
-        self.min_interval = 1.0 / requests_per_second
-        self.last_request_time = {}
-    
-    async def wait_if_needed(self, domain: str) -> None:
-        """Wait if needed to respect rate limits"""
+    def __init__(self, initial_delay_seconds: float = 1.0):
+        self.domain_delays: Dict[str, float] = {} # Stores current delay for each domain
+        self.initial_delay = initial_delay_seconds
+        self.last_request_time: Dict[str, float] = {} # Track last request time per domain
+        self.logger = logging.getLogger(__name__ + ".AdaptiveRateLimiter")
+
+    async def wait_if_needed(self, domain: str, last_crawl_result: Optional['CrawlResult'] = None) -> None:
+        """
+        Wait if needed to respect rate limits, adapting based on last crawl result.
+        """
+        current_delay = self.domain_delays.get(domain, self.initial_delay)
+
+        if last_crawl_result:
+            # Adapt delay based on last response
+            if last_crawl_result.status_code == 429:  # Too Many Requests
+                current_delay *= 2.0 # Double the delay
+                self.logger.warning(f"Adaptive Rate Limiter: Doubling delay for {domain} due to 429. New delay: {current_delay:.2f}s")
+            elif 500 <= last_crawl_result.status_code < 600:  # Server errors
+                current_delay *= 1.5 # Increase delay by 50%
+                self.logger.warning(f"Adaptive Rate Limiter: Increasing delay for {domain} due to {last_crawl_result.status_code}. New delay: {current_delay:.2f}s")
+            elif last_crawl_result.crawl_time_ms > 5000:  # Slow responses (over 5 seconds)
+                current_delay *= 1.2 # Increase delay by 20%
+                self.logger.info(f"Adaptive Rate Limiter: Increasing delay for {domain} due to slow response ({last_crawl_result.crawl_time_ms}ms). New delay: {current_delay:.2f}s")
+            else:
+                # Gradually decrease delay if responses are consistently good and fast
+                current_delay = max(self.initial_delay, current_delay * 0.9) # Decrease by 10%, but not below initial
+                self.logger.debug(f"Adaptive Rate Limiter: Decreasing delay for {domain} due to good response. New delay: {current_delay:.2f}s")
+            
+            # Ensure delay doesn't go below a reasonable minimum or above a maximum
+            current_delay = max(0.1, min(current_delay, 60.0)) # Min 0.1s, Max 60s
+
+        self.domain_delays[domain] = current_delay
+
         now = time.time()
         last_time = self.last_request_time.get(domain, 0)
         time_since_last = now - last_time
         
-        if time_since_last < self.min_interval:
-            wait_time = self.min_interval - time_since_last
+        if time_since_last < current_delay:
+            wait_time = current_delay - time_since_last
+            self.logger.debug(f"Waiting {wait_time:.2f}s for {domain} to respect rate limit.")
             await asyncio.sleep(wait_time)
         
         self.last_request_time[domain] = time.time()
@@ -73,7 +106,7 @@ class WebCrawler:
         self.config = config
         self.db = db # Database instance to check job status
         self.job_id = job_id # ID of the current crawl job
-        self.rate_limiter = RateLimiter(1.0 / config.delay_seconds)
+        self.rate_limiter = AdaptiveRateLimiter(self.config.delay_seconds) # Use AdaptiveRateLimiter
         self.robots_parser = RobotsParser() # Initialise, but session managed by __aenter__
         self.link_extractor = LinkExtractor()
         self.content_parser = ContentParser() 
@@ -96,13 +129,20 @@ class WebCrawler:
             connect=10
         )
         
+        # Determine headers based on config
+        headers = self.config.custom_headers.copy() if self.config.custom_headers else {}
+        if config_loader.get("anti_detection.request_header_randomization", False):
+            random_headers = user_agent_manager.get_random_headers()
+            headers.update(random_headers) # Overwrite default user-agent if present
+        elif self.config.user_agent_rotation: # Fallback to just user-agent rotation if header randomization is off
+            headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+        else: # Use user_agent from config if no rotation/randomization
+            headers['User-Agent'] = self.config.user_agent
+
         self.session = aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
-            headers={
-                'User-Agent': self.config.user_agent,
-                **self.config.custom_headers
-            }
+            headers=headers
         )
         # Enter robots_parser's context to manage its aiohttp session
         await self.robots_parser.__aenter__()
@@ -115,7 +155,7 @@ class WebCrawler:
         # Exit robots_parser's context
         await self.robots_parser.__aexit__(exc_type, exc_val, exc_tb)
     
-    async def crawl_url(self, url: str) -> CrawlResult:
+    async def crawl_url(self, url: str, last_crawl_result: Optional[CrawlResult] = None) -> CrawlResult:
         """Crawl a single URL and extract links"""
         start_time = time.time()
         current_crawl_timestamp = datetime.now() # Capture timestamp at the start of the crawl attempt
@@ -133,7 +173,7 @@ class WebCrawler:
         
         # Check robots.txt if enabled
         if self.config.respect_robots_txt:
-            can_crawl = await self.robots_parser.can_fetch(url, self.config.user_agent)
+            can_crawl = await self.robots_parser.can_fetch(url, self.session.headers.get('User-Agent', self.config.user_agent))
             if not can_crawl:
                 # This means robots.txt explicitly disallowed it
                 return CrawlResult(
@@ -143,9 +183,13 @@ class WebCrawler:
                     crawl_timestamp=current_crawl_timestamp
                 )
         
-        # Rate limiting
-        await self.rate_limiter.wait_if_needed(domain)
+        # Rate limiting (adaptive)
+        await self.rate_limiter.wait_if_needed(domain, last_crawl_result)
         
+        # Add human-like delays if configured
+        if config_loader.get("anti_detection.human_like_delays", False):
+            await asyncio.sleep(random.uniform(0.1, 0.5)) # Small random delay before request
+
         try:
             async with self.session.get(url, allow_redirects=self.config.follow_redirects) as response:
                 crawl_time_ms = int((time.time() - start_time) * 1000)
@@ -254,6 +298,8 @@ class WebCrawler:
         self.failed_urls.clear()
         crawled_count = 0
         
+        last_crawl_result: Optional[CrawlResult] = None # Track last result for adaptive rate limiting
+
         while not urls_to_visit.empty() and crawled_count < self.config.max_pages:
             # Periodically check job status from DB
             current_job = self.db.get_crawl_job(self.job_id)
@@ -269,9 +315,6 @@ class WebCrawler:
                         elif rechecked_job and rechecked_job.status == CrawlStatus.STOPPED:
                             self.logger.info(f"Crawler for job {self.job_id} stopped during pause.")
                             return # Exit the generator
-                elif current_job.status == CrawlStatus.STOPPED:
-                    self.logger.info(f"Crawler for job {self.job_id} stopped.")
-                    return # Exit the generator
 
             url, current_depth = await urls_to_visit.get()
             
@@ -287,8 +330,9 @@ class WebCrawler:
             
             self.logger.info(f"Crawling: {url} (Depth: {current_depth}, Crawled: {crawled_count}/{self.config.max_pages})")
             
-            result = await self.crawl_url(url)
-            
+            result = await self.crawl_url(url, last_crawl_result) # Pass last_crawl_result
+            last_crawl_result = result # Update last_crawl_result
+
             if result.error_message:
                 self.logger.warning(f"Failed to crawl {url}: {result.error_message}")
                 self.failed_urls.add(url)

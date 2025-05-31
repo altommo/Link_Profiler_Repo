@@ -8,11 +8,14 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from urllib.parse import urlparse, urlencode
+import random # New: Import random for human-like delays
 
 from playwright.async_api import async_playwright, Page, BrowserContext, Browser
 from playwright_stealth import stealth_async
 
 from Link_Profiler.core.models import SERPResult # Absolute import
+from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
+from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,20 @@ class SERPCrawler:
         self.logger.info(f"Launching Playwright browser ({self.browser_type}, headless={self.headless})...")
         self.playwright_instance = await async_playwright().start()
         
+        # Determine headers based on config
+        headers = {}
+        if config_loader.get("anti_detection.request_header_randomization", False):
+            headers.update(user_agent_manager.get_random_headers())
+        elif config_loader.get("crawler.user_agent_rotation", False):
+            headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+        # If neither is enabled, Playwright uses its default user agent.
+
+        context_options = {
+            "user_agent": headers.pop("User-Agent", None), # Remove from headers if set
+            "extra_http_headers": headers if headers else None,
+            "viewport": {"width": random.randint(1200, 1600), "height": random.randint(800, 1200)} # Random viewport
+        }
+
         if self.browser_type == "chromium":
             self.browser = await self.playwright_instance.chromium.launch(headless=self.headless)
         elif self.browser_type == "firefox":
@@ -42,7 +59,7 @@ class SERPCrawler:
         else:
             raise ValueError(f"Unsupported browser type: {self.browser_type}")
         
-        self.context = await self.browser.new_context()
+        self.context = await self.browser.new_context(**context_options)
         self.logger.info("Playwright browser launched and context created.")
         return self
 
@@ -63,14 +80,27 @@ class SERPCrawler:
         if search_engine.lower() == "google":
             search_url = f"https://www.google.com/search?q={urlencode({'q': keyword})}"
             await page.goto(search_url, wait_until="domcontentloaded")
-            # Apply stealth to avoid bot detection
-            await stealth_async(page)
+            
+            if config_loader.get("anti_detection.stealth_mode", True):
+                await stealth_async(page)
+            
+            # Add human-like delays
+            if config_loader.get("anti_detection.human_like_delays", False):
+                await asyncio.sleep(random.uniform(1.0, 3.0)) # Wait for initial page load
+            
             # Wait for results to load, adjust selector as needed
             await page.wait_for_selector("#search #rso > div", timeout=10000) # Main results container
         elif search_engine.lower() == "bing":
             search_url = f"https://www.bing.com/search?q={urlencode({'q': keyword})}"
             await page.goto(search_url, wait_until="domcontentloaded")
-            await stealth_async(page)
+            
+            if config_loader.get("anti_detection.stealth_mode", True):
+                await stealth_async(page)
+
+            # Add human-like delays
+            if config_loader.get("anti_detection.human_like_delays", False):
+                await asyncio.sleep(random.uniform(1.0, 3.0)) # Wait for initial page load
+
             await page.wait_for_selector("#b_results > li.b_algo", timeout=10000) # Main results container
         else:
             raise ValueError(f"Unsupported search engine: {search_engine}")

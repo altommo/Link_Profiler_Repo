@@ -16,6 +16,7 @@ from Link_Profiler.core.models import SERPResult # Absolute import
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler # New import
 from Link_Profiler.config.config_loader import config_loader # Import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
+from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,13 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
         """Async context manager entry for client session."""
         self.logger.debug("Entering SimulatedSERPAPIClient context.")
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            self._session = aiohttp.ClientSession(headers=headers)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -68,7 +75,14 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
         close_session_after_use = False
         if session_to_use is None or session_to_use.closed:
             self.logger.warning("SimulatedSERPAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            session_to_use = aiohttp.ClientSession()
+            
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            session_to_use = aiohttp.ClientSession(headers=headers)
             close_session_after_use = True
 
         try:
@@ -125,7 +139,13 @@ class RealSERPAPIClient(BaseSERPAPIClient):
         """Async context manager entry for client session."""
         self.logger.info("Entering RealSERPAPIClient context.")
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self.api_key}"})
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            self._session = aiohttp.ClientSession(headers=headers)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -153,7 +173,14 @@ class RealSERPAPIClient(BaseSERPAPIClient):
         close_session_after_use = False
         if session_to_use is None or session_to_use.closed:
             self.logger.warning("RealSERPAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            session_to_use = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self.api_key}"})
+            
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            session_to_use = aiohttp.ClientSession(headers=headers)
             close_session_after_use = True
         else:
             close_session_after_use = False

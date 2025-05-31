@@ -295,6 +295,10 @@ class CrawlConfigRequest(BaseModel):
     custom_headers: Optional[Dict[str, str]] = Field(None, description="Custom HTTP headers to send with requests.")
     max_retries: int = Field(3, description="Maximum number of retries for failed URL fetches.")
     retry_delay_seconds: float = Field(5.0, description="Delay between retries in seconds.")
+    user_agent_rotation: bool = Field(False, description="Whether to rotate user agents from a pool.")
+    request_header_randomization: bool = Field(False, description="Whether to randomize other request headers (Accept, Accept-Language, etc.).")
+    human_like_delays: bool = Field(False, description="Whether to add small random delays to mimic human browsing behavior.")
+    stealth_mode: bool = Field(True, description="Whether to enable Playwright stealth mode for browser-based crawling.")
 
 
 class StartCrawlRequest(BaseModel):
