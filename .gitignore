@@ -1,2 +1,9 @@
 .aider*
 venv/
+data/
+*.csv
+token.json
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
