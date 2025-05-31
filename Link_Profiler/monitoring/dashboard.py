@@ -19,7 +19,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Link_Profiler.database.database import Database # Import Database
-from Link_Profiler.core.models import CrawlJob # Import CrawlJob model
+from Link_Profiler.core.models import CrawlJob, CrawlStatus # Import CrawlJob model and CrawlStatus
+from Link_Profiler.config.config_loader import config_loader # Import config_loader
 
 app = FastAPI(title="Link Profiler Monitor")
 templates = Jinja2Templates(directory="templates")
@@ -29,6 +30,7 @@ class MonitoringDashboard:
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
         self.db = Database() # Initialize database connection for job history
+        self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600) # Default to 1 hour
 
     async def get_queue_metrics(self) -> Dict:
         """Get comprehensive queue metrics"""
@@ -99,21 +101,57 @@ class MonitoringDashboard:
             return []
     
     async def get_performance_stats(self) -> Dict:
-        """Get system performance statistics"""
+        """
+        Get system performance statistics based on historical job data.
+        Calculates jobs per hour, average job duration, and success rate.
+        """
         try:
             # Get Redis memory usage
             info = await self.redis.info("memory")
             memory_usage = info.get("used_memory_human", "Unknown")
             
-            # TODO: Implement actual throughput and success rate calculation based on historical job data
-            # For now, keep mock data for these specific metrics
+            # Calculate throughput and success rate based on real data
+            cutoff_time = datetime.now() - timedelta(seconds=self.performance_window_seconds)
+            
+            all_jobs = self.db.get_all_crawl_jobs() # Fetch all jobs
+            
+            recent_completed_jobs = [
+                job for job in all_jobs 
+                if job.is_completed and job.completed_date and job.completed_date >= cutoff_time
+            ]
+            
+            total_jobs_in_window = len(recent_completed_jobs)
+            successful_jobs_in_window = len([job for job in recent_completed_jobs if job.status == CrawlStatus.COMPLETED])
+            failed_jobs_in_window = total_jobs_in_window - successful_jobs_in_window
+
+            jobs_per_hour = 0.0
+            avg_job_duration = 0.0
+            success_rate = 0.0
+
+            if total_jobs_in_window > 0:
+                # Convert window to hours for jobs_per_hour calculation
+                window_hours = self.performance_window_seconds / 3600
+                jobs_per_hour = total_jobs_in_window / window_hours
+                
+                # Calculate average duration for successful jobs
+                successful_durations = [job.duration_seconds for job in recent_completed_jobs if job.status == CrawlStatus.COMPLETED and job.duration_seconds is not None]
+                if successful_durations:
+                    avg_job_duration = sum(successful_durations) / len(successful_durations)
+                
+                success_rate = (successful_jobs_in_window / total_jobs_in_window) * 100
+            
+            # For peak satellites and current load, we still rely on heartbeats or external monitoring
+            # as this data is not directly in the DB job records.
+            queue_metrics = await self.get_queue_metrics()
+            active_satellites = queue_metrics.get("active_satellites", 0)
+            
             return {
                 "memory_usage": memory_usage,
-                "jobs_per_hour": 450,  # Mock data
-                "avg_job_duration": 285,  # seconds (Mock data)
-                "success_rate": 95.2,  # percentage (Mock data)
-                "peak_satellites": 8, # (Mock data)
-                "current_load": 0.75  # 0-1 scale (Mock data)
+                "jobs_per_hour": round(jobs_per_hour, 2),
+                "avg_job_duration": round(avg_job_duration, 2),
+                "success_rate": round(success_rate, 1),
+                "peak_satellites": active_satellites, # Using current active as a proxy for peak for now
+                "current_load": 0.75 # This would require more complex load calculation
             }
             
         except Exception as e:
@@ -129,7 +167,7 @@ async def monitoring_home(request: Request):
     
     # Get all metrics
     queue_metrics = await dashboard.get_queue_metrics()
-    job_history = await dashboard.get_job_history(20)
+    job_history = await dashboard.get_job_history(config_loader.get("monitoring.max_job_history", 50))
     performance_stats = await dashboard.get_performance_stats()
     
     return templates.TemplateResponse("dashboard.html", {
