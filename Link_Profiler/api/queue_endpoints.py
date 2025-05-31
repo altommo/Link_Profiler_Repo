@@ -8,11 +8,13 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 from datetime import datetime
 import logging
+from uuid import uuid4
 
-# Import the queue coordinator
+# Import the queue coordinator and core models
 try:
     from Link_Profiler.queue_system.job_coordinator import JobCoordinator
-    from Link_Profiler.core.models import CrawlConfig
+    from Link_Profiler.core.models import CrawlConfig, CrawlJob, CrawlStatus, serialize_model
+    from Link_Profiler.database.database import Database # Import Database
     QUEUE_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"Queue system not available: {e}")
@@ -21,16 +23,16 @@ except ImportError as e:
 logger = logging.getLogger(__name__)
 
 # Global coordinator instance
-coordinator = None
+coordinator: Optional[JobCoordinator] = None
 
-async def get_coordinator():
+async def get_coordinator(db_instance: Database) -> JobCoordinator:
     """Get or create job coordinator instance"""
     global coordinator
     if not QUEUE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Queue system not available")
     
     if coordinator is None:
-        coordinator = JobCoordinator()
+        coordinator = JobCoordinator(database=db_instance) # Pass the database instance
         await coordinator.__aenter__()
         
         # Start background tasks
@@ -67,19 +69,37 @@ class JobStatusResponse(BaseModel):
 async def submit_crawl_to_queue(request: QueueCrawlRequest):
     """Submit a crawl job to the distributed queue system"""
     try:
-        coord = await get_coordinator()
+        # The db instance is passed to get_coordinator in add_queue_endpoints
+        coord = await get_coordinator(None) # Pass None here, as it's initialized in startup
         
         # Convert config dict to CrawlConfig if provided
-        config = None
-        if request.config:
-            config = CrawlConfig.from_dict(request.config)
+        crawl_config_obj = CrawlConfig.from_dict(request.config if request.config else {})
         
-        job_id = await coord.submit_crawl_job(
+        # Create a CrawlJob object
+        job_id = str(uuid4())
+        job_type = request.config.get("job_type", "backlink_discovery") # Default to backlink_discovery
+        
+        job = CrawlJob(
+            id=job_id,
             target_url=request.target_url,
-            initial_seed_urls=request.initial_seed_urls,
-            config=config,
-            priority=request.priority
+            job_type=job_type,
+            status=CrawlStatus.PENDING,
+            priority=request.priority,
+            config=serialize_model(crawl_config_obj), # Store serialized config
+            # Pass initial_seed_urls, keyword, etc. within the config dict for the satellite to use
+            # The satellite will deserialize this config and pass it to CrawlService.execute_predefined_job
+            # For backlink_discovery, initial_seed_urls is directly from request
+            # For other job types, specific parameters are passed in request.config
+            # e.g., {"keyword": "...", "num_results": "...", "job_type": "serp_analysis"}
+            # The satellite's _execute_crawl_job will extract these from job.config
         )
+        
+        # Add initial_seed_urls to job.config for backlink_discovery jobs
+        if job_type == "backlink_discovery":
+            job.config["initial_seed_urls"] = request.initial_seed_urls
+        
+        # Submit the CrawlJob object to the coordinator
+        await coord.submit_crawl_job(job)
         
         return {"job_id": job_id, "status": "submitted", "message": "Job queued for processing"}
         
@@ -90,7 +110,8 @@ async def submit_crawl_to_queue(request: QueueCrawlRequest):
 async def get_queue_job_status(job_id: str):
     """Get the current status of a queued crawl job"""
     try:
-        coord = await get_coordinator()
+        # The db instance is passed to get_coordinator in add_queue_endpoints
+        coord = await get_coordinator(None) # Pass None here, as it's initialized in startup
         job = await coord.get_job_status(job_id)
         
         if not job:
@@ -116,7 +137,8 @@ async def get_queue_job_status(job_id: str):
 async def get_queue_stats():
     """Get current queue and crawler statistics"""
     try:
-        coord = await get_coordinator()
+        # The db instance is passed to get_coordinator in add_queue_endpoints
+        coord = await get_coordinator(None) # Pass None here, as it's initialized in startup
         stats = await coord.get_queue_stats()
         
         # Format satellite crawler info
@@ -125,7 +147,7 @@ async def get_queue_stats():
             satellite_info.append({
                 "crawler_id": crawler_id,
                 "last_seen": last_seen.isoformat(),
-                "status": "online"
+                "status": "healthy" if (datetime.now() - last_seen).total_seconds() < 60 else "stale"
             })
         
         return QueueStatsResponse(
@@ -143,7 +165,8 @@ async def get_queue_stats():
 async def get_crawler_health():
     """Get detailed health information for all satellite crawlers"""
     try:
-        coord = await get_coordinator()
+        # The db instance is passed to get_coordinator in add_queue_endpoints
+        coord = await get_coordinator(None) # Pass None here, as it's initialized in startup
         
         health_info = []
         for crawler_id, last_seen in coord.satellite_crawlers.items():
@@ -168,7 +191,7 @@ async def get_crawler_health():
         raise HTTPException(status_code=500, detail=f"Failed to get crawler health: {e}")
 
 # Function to add queue endpoints to an existing FastAPI app
-def add_queue_endpoints(app):
+def add_queue_endpoints(app, db_instance: Database): # Accept db_instance
     """Add queue endpoints to an existing FastAPI app"""
     
     @app.post("/queue/submit_crawl", response_model=Dict[str, str])
@@ -195,8 +218,8 @@ def add_queue_endpoints(app):
     async def submit_sample_job_endpoint():
         """Submit a sample crawl job for testing the queue system"""
         sample_request = QueueCrawlRequest(
-            target_url="https://example.com",
-            initial_seed_urls=["https://competitor1.com", "https://competitor2.com"],
+            target_url="https://example.com/sample",
+            initial_seed_urls=["https://example.com/sample/page1"],
             priority=7
         )
         return await submit_crawl_to_queue(sample_request)
@@ -207,8 +230,11 @@ def add_queue_endpoints(app):
         """Initialize the job coordinator on startup"""
         if QUEUE_AVAILABLE:
             logger.info("Initializing job coordinator...")
-            await get_coordinator()
-            logger.info("Job coordinator initialized successfully")
+            try:
+                await get_coordinator(db_instance) # Pass db_instance here
+                logger.info("Job coordinator initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize job coordinator: {e}", exc_info=True)
 
     @app.on_event("shutdown")
     async def shutdown_queue_coordinator():

@@ -901,4 +901,4 @@ async def clear_dead_letters():
         raise HTTPException(status_code=500, detail=f"Failed to clear dead-letter messages: {e}")
 
 # Add queue-related endpoints to the main app
-add_queue_endpoints(app)
+add_queue_endpoints(app, db) # Pass the db instance to add_queue_endpoints
