@@ -31,6 +31,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 import redis.asyncio as redis
 import json # Added import for json
+import uuid # New: Import uuid for alert rules
 
 from playwright.async_api import async_playwright, Browser # New: Import Playwright Browser
 
@@ -48,7 +49,7 @@ from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel
 from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
@@ -626,6 +627,80 @@ class LinkIntersectResponse(BaseModel):
     def from_link_intersect_result(cls, result: LinkIntersectResult):
         return cls(**serialize_model(result))
 
+class CompetitiveKeywordAnalysisRequest(BaseModel):
+    primary_domain: str = Field(..., description="The primary domain for which to perform keyword analysis.")
+    competitor_domains: List[str] = Field(..., description="A list of competitor domains to compare against.")
+
+class CompetitiveKeywordAnalysisResponse(BaseModel):
+    primary_domain: str
+    competitor_domains: List[str]
+    common_keywords: List[str]
+    keyword_gaps: Dict[str, List[str]]
+    primary_unique_keywords: List[str]
+
+    @classmethod
+    def from_competitive_keyword_analysis_result(cls, result: CompetitiveKeywordAnalysisResult):
+        return cls(**serialize_model(result))
+
+# New: Pydantic models for AlertRule management
+class AlertRuleCreateRequest(BaseModel):
+    name: str = Field(..., description="A unique name for the alert rule.")
+    description: Optional[str] = Field(None, description="A brief description of the alert rule.")
+    is_active: bool = Field(True, description="Whether the alert rule is active.")
+    
+    trigger_type: str = Field(..., description="Type of event that triggers the alert (e.g., 'job_status_change', 'metric_threshold', 'anomaly_detected').")
+    job_type_filter: Optional[str] = Field(None, description="Optional: Apply rule only to specific job types (e.g., 'backlink_discovery').")
+    target_url_pattern: Optional[str] = Field(None, description="Optional: Regex pattern for target URLs to apply the rule to.")
+    
+    metric_name: Optional[str] = Field(None, description="Optional: Name of the metric to monitor (for 'metric_threshold' trigger_type, e.g., 'seo_score', 'broken_links_count').")
+    threshold_value: Optional[Union[int, float]] = Field(None, description="Optional: Threshold value for the metric.")
+    comparison_operator: Optional[str] = Field(None, description="Optional: Comparison operator for the metric threshold (e.g., '>', '<', '>=', '<=', '==').")
+    
+    anomaly_type_filter: Optional[str] = Field(None, description="Optional: Filter for specific anomaly types (for 'anomaly_detected' trigger_type, e.g., 'captcha_spike').")
+    
+    severity: AlertSeverity = Field(AlertSeverity.WARNING, description="Severity level of the alert.")
+    notification_channels: List[AlertChannel] = Field([AlertChannel.DASHBOARD], description="List of channels to send notifications to.")
+    notification_recipients: List[str] = Field([], description="List of recipients (e.g., email addresses, Slack channel IDs).")
+
+class AlertRuleResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str]
+    is_active: bool
+    trigger_type: str
+    job_type_filter: Optional[str]
+    target_url_pattern: Optional[str]
+    metric_name: Optional[str]
+    threshold_value: Optional[Union[int, float]]
+    comparison_operator: Optional[str]
+    anomaly_type_filter: Optional[str]
+    severity: AlertSeverity
+    notification_channels: List[AlertChannel]
+    notification_recipients: List[str]
+    created_at: datetime
+    last_triggered_at: Optional[datetime]
+
+    @classmethod
+    def from_alert_rule(cls, rule: AlertRule):
+        rule_dict = serialize_model(rule)
+        # Ensure enums are converted to their values for Pydantic
+        rule_dict['severity'] = rule.severity.value
+        rule_dict['notification_channels'] = [c.value for c in rule.notification_channels]
+        
+        if isinstance(rule_dict.get('created_at'), str):
+            try:
+                rule_dict['created_at'] = datetime.fromisoformat(rule_dict['created_at'])
+            except ValueError:
+                 logger.warning(f"Could not parse created_at string: {rule_dict.get('created_at')}")
+                 rule_dict['created_at'] = None
+        if isinstance(rule_dict.get('last_triggered_at'), str):
+            try:
+                rule_dict['last_triggered_at'] = datetime.fromisoformat(rule_dict['last_triggered_at'])
+            except ValueError:
+                 logger.warning(f"Could not parse last_triggered_at string: {rule_dict.get('last_triggered_at')}")
+                 rule_dict['last_triggered_at'] = None
+        return cls(**rule_dict)
+
 
 # --- API Endpoints ---
 
@@ -1173,6 +1248,96 @@ async def get_link_intersect_analysis(request: LinkIntersectRequest):
     )
     
     return LinkIntersectResponse.from_link_intersect_result(result)
+
+@app.post("/competitor/keyword_analysis", response_model=CompetitiveKeywordAnalysisResponse)
+async def get_competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRequest):
+    """
+    Performs a competitive keyword analysis to identify common keywords and keyword gaps.
+    Compares keywords that the primary domain and competitor domains rank for.
+    """
+    if not request.primary_domain or not request.competitor_domains:
+        raise HTTPException(status_code=400, detail="Primary domain and at least one competitor domain are required.")
+    
+    logger.info(f"Received request for competitive keyword analysis: Primary={request.primary_domain}, Competitors={request.competitor_domains}")
+    
+    result = await keyword_service_instance.perform_competitive_keyword_analysis(
+        primary_domain=request.primary_domain,
+        competitor_domains=request.competitor_domains
+    )
+    
+    return CompetitiveKeywordAnalysisResponse.from_competitive_keyword_analysis_result(result)
+
+# New: Alert Rule Endpoints
+@app.post("/alerts/rules", response_model=AlertRuleResponse, status_code=201)
+async def create_alert_rule(request: AlertRuleCreateRequest):
+    """
+    Creates a new alert rule.
+    """
+    rule_id = str(uuid.uuid4())
+    new_rule = AlertRule(id=rule_id, **request.dict())
+    try:
+        db.save_alert_rule(new_rule)
+        logger.info(f"Created new alert rule: {new_rule.name} (ID: {new_rule.id})")
+        return AlertRuleResponse.from_alert_rule(new_rule)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) # Conflict if name already exists
+    except Exception as e:
+        logger.error(f"Error creating alert rule: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to create alert rule: {e}")
+
+@app.get("/alerts/rules/{rule_id}", response_model=AlertRuleResponse)
+async def get_alert_rule(rule_id: str):
+    """
+    Retrieves a specific alert rule by its ID.
+    """
+    rule = db.get_alert_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Alert rule not found.")
+    return AlertRuleResponse.from_alert_rule(rule)
+
+@app.get("/alerts/rules", response_model=List[AlertRuleResponse])
+async def list_alert_rules(active_only: bool = False):
+    """
+    Lists all alert rules, optionally filtering for active ones.
+    """
+    rules = db.get_all_alert_rules(active_only=active_only)
+    return [AlertRuleResponse.from_alert_rule(rule) for rule in rules]
+
+@app.put("/alerts/rules/{rule_id}", response_model=AlertRuleResponse)
+async def update_alert_rule(rule_id: str, request: AlertRuleCreateRequest):
+    """
+    Updates an existing alert rule.
+    """
+    existing_rule = db.get_alert_rule(rule_id)
+    if not existing_rule:
+        raise HTTPException(status_code=404, detail="Alert rule not found.")
+    
+    updated_rule = AlertRule(id=rule_id, **request.dict())
+    try:
+        db.save_alert_rule(updated_rule) # save_alert_rule handles update if ID exists
+        logger.info(f"Updated alert rule: {updated_rule.name} (ID: {updated_rule.id})")
+        return AlertRuleResponse.from_alert_rule(updated_rule)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating alert rule {rule_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update alert rule: {e}")
+
+@app.delete("/alerts/rules/{rule_id}", status_code=204)
+async def delete_alert_rule(rule_id: str):
+    """
+    Deletes an alert rule by its ID.
+    """
+    try:
+        deleted = db.delete_alert_rule(rule_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Alert rule not found.")
+        logger.info(f"Deleted alert rule ID: {rule_id}")
+        return Response(status_code=204)
+    except Exception as e:
+        logger.error(f"Error deleting alert rule {rule_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete alert rule: {e}")
+
 
 @app.get("/health")
 async def health_check():

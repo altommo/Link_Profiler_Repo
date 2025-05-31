@@ -171,7 +171,7 @@ class Backlink:
     authority_passed: float = 0.0
     is_active: bool = True
     spam_level: SpamLevel = SpamLevel.CLEAN
-    # New fields for Backlink Data (from Scrapy spiders)
+    # New fields for Backlink Data
     http_status: Optional[int] = None # HTTP response code when fetching source_url
     crawl_timestamp: Optional[datetime] = None # UTC timestamp when the page was crawled
     source_domain_metrics: Dict[str, Any] = field(default_factory=dict) # domain-level data such as estimated domain authority or PageRank
@@ -323,6 +323,16 @@ class LinkIntersectResult:
     primary_domain: str
     competitor_domains: List[str]
     common_linking_domains: List[str] = field(default_factory=list)
+
+
+@dataclass
+class CompetitiveKeywordAnalysisResult:
+    """Result of a competitive keyword analysis."""
+    primary_domain: str
+    competitor_domains: List[str]
+    common_keywords: List[str] = field(default_factory=list)
+    keyword_gaps: Dict[str, List[str]] = field(default_factory=dict) # competitor_domain -> keywords they rank for, but primary doesn't
+    primary_unique_keywords: List[str] = field(default_factory=list) # keywords primary ranks for, but competitors don't
 
 
 @dataclass
@@ -654,6 +664,66 @@ class KeywordSuggestion:
     def from_dict(cls, data: Dict) -> 'KeywordSuggestion':
         if 'data_timestamp' in data and isinstance(data['data_timestamp'], str):
             data['data_timestamp'] = datetime.fromisoformat(data['data_timestamp'])
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+
+# New: Alerting Models
+class AlertSeverity(Enum):
+    """Severity levels for alerts."""
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+class AlertChannel(Enum):
+    """Supported notification channels for alerts."""
+    WEBHOOK = "webhook"
+    EMAIL = "email"
+    SLACK = "slack"
+    DASHBOARD = "dashboard" # For in-app notifications
+
+@dataclass
+class AlertRule:
+    """Defines a rule for triggering alerts based on job or metric conditions."""
+    id: Optional[str] = None # UUID for the rule
+    name: str
+    description: Optional[str] = None
+    is_active: bool = True
+    
+    # Trigger conditions
+    trigger_type: str # e.g., "job_status_change", "metric_threshold", "anomaly_detected"
+    job_type_filter: Optional[str] = None # Apply rule only to specific job types (e.g., "backlink_discovery")
+    target_url_pattern: Optional[str] = None # Regex pattern for target URLs
+    
+    # Metric-based conditions (for "metric_threshold" trigger_type)
+    metric_name: Optional[str] = None # e.g., "seo_score", "broken_links_count", "crawl_errors_rate"
+    threshold_value: Optional[Union[int, float]] = None
+    comparison_operator: Optional[str] = None # e.g., ">", "<", ">=", "<=", "=="
+    
+    # Anomaly-based conditions (for "anomaly_detected" trigger_type)
+    anomaly_type_filter: Optional[str] = None # e.g., "captcha_spike", "crawl_rate_drop", "content_quality_drop"
+    
+    # Notification settings
+    severity: AlertSeverity = AlertSeverity.WARNING
+    notification_channels: List[AlertChannel] = field(default_factory=lambda: [AlertChannel.DASHBOARD])
+    notification_recipients: List[str] = field(default_factory=list) # e.g., email addresses, Slack channel IDs, webhook URLs (if not global)
+    
+    created_at: datetime = field(default_factory=datetime.now)
+    last_triggered_at: Optional[datetime] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'AlertRule':
+        """Create an AlertRule instance from a dictionary."""
+        if 'severity' in data and isinstance(data['severity'], str):
+            data['severity'] = AlertSeverity(data['severity'])
+        if 'notification_channels' in data and isinstance(data['notification_channels'], list):
+            data['notification_channels'] = [AlertChannel(c) for c in data['notification_channels']]
+        if 'created_at' in data and isinstance(data['created_at'], str):
+            data['created_at'] = datetime.fromisoformat(data['created_at'])
+        if 'last_triggered_at' in data and isinstance(data['last_triggered_at'], str):
+            data['last_triggered_at'] = datetime.fromisoformat(data['last_triggered_at'])
+        
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered_data)

@@ -15,12 +15,14 @@ from urllib.parse import urlparse # Added import for urlparse
 
 from Link_Profiler.database.models import ( # Changed to absolute import
     Base, DomainORM, URLORM, BacklinkORM, LinkProfileORM, CrawlJobORM,
-    SEOMetricsORM, SERPResultORM, KeywordSuggestionORM,
-    LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum # Import enums from models
+    SEOMetricsORM, SERPResultORM, KeywordSuggestionORM, AlertRuleORM, # New: Import AlertRuleORM
+    LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum,
+    AlertSeverityEnum, AlertChannelEnum # New: Import Alerting Enums
 )
 from Link_Profiler.core.models import ( # Changed to absolute import
     Domain, URL, Backlink, LinkProfile, CrawlJob, SEOMetrics,
-    SERPResult, KeywordSuggestion, serialize_model, CrawlError # Import CrawlError
+    SERPResult, KeywordSuggestion, AlertRule, # New: Import AlertRule
+    serialize_model, CrawlError # Import CrawlError
 )
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,12 @@ class Database:
             return SERPResult(**data)
         elif isinstance(orm_obj, KeywordSuggestionORM):
             return KeywordSuggestion(**data)
+        elif isinstance(orm_obj, AlertRuleORM): # New: Handle AlertRuleORM
+            if 'severity' in data and isinstance(data['severity'], str):
+                data['severity'] = AlertSeverityEnum(data['severity'])
+            if 'notification_channels' in data and isinstance(data['notification_channels'], list):
+                data['notification_channels'] = [AlertChannelEnum(c) for c in data['notification_channels']]
+            return AlertRule(**data)
         return orm_obj
 
     def _to_orm(self, dc_obj: Any):
@@ -196,6 +204,11 @@ class Database:
             return SERPResultORM(**data)
         elif isinstance(dc_obj, KeywordSuggestion):
             return KeywordSuggestionORM(**data)
+        elif isinstance(dc_obj, AlertRule): # New: Handle AlertRule
+            # Convert enums to their string values
+            data['severity'] = dc_obj.severity.value
+            data['notification_channels'] = [c.value for c in dc_obj.notification_channels]
+            return AlertRuleORM(**data)
         return dc_obj
 
     def add_backlink(self, backlink: Backlink) -> None:
@@ -689,5 +702,111 @@ class Database:
         except Exception as e:
             logger.error(f"Error retrieving source domains for target domains {target_domains}: {e}", exc_info=True)
             return {domain: set() for domain in target_domains} # Return empty sets on error
+        finally:
+            session.close()
+
+    def get_keywords_ranked_for_domains(self, domains: List[str]) -> Dict[str, Set[str]]:
+        """
+        Retrieves all unique keywords that each of the specified domains rank for (from SERP results).
+        Returns a dictionary where keys are domains and values are sets of unique keywords.
+        """
+        session = self._get_session()
+        try:
+            # Get all SERP results for URLs belonging to the target domains
+            all_serp_results = session.query(SERPResultORM).all() # This could be slow for huge tables
+            
+            ranked_keywords_map: Dict[str, Set[str]] = {domain: set() for domain in domains}
+            
+            for result in all_serp_results:
+                try:
+                    result_domain = urlparse(result.result_url).netloc.lower()
+                    if result_domain in domains:
+                        ranked_keywords_map[result_domain].add(result.keyword)
+                except Exception as e:
+                    logger.warning(f"Could not parse domain from SERP result URL '{result.result_url}': {e}")
+                    continue
+            
+            logger.info(f"Retrieved ranked keywords for {len(domains)} domains.")
+            return ranked_keywords_map
+        except Exception as e:
+            logger.error(f"Error retrieving ranked keywords for domains {domains}: {e}", exc_info=True)
+            return {domain: set() for domain in domains} # Return empty sets on error
+        finally:
+            session.close()
+
+    # New: Alert Rule methods
+    def save_alert_rule(self, rule: AlertRule) -> None:
+        """Saves or updates an alert rule."""
+        session = self._get_session()
+        try:
+            orm_rule = session.query(AlertRuleORM).filter_by(id=rule.id).first()
+            if orm_rule:
+                # Update existing
+                updated_data = self._to_orm(rule)
+                for column in inspect(AlertRuleORM).columns:
+                    if hasattr(updated_data, column.key):
+                        setattr(orm_rule, column.key, getattr(updated_data, column.key))
+                logger.debug(f"Updated alert rule: {rule.name}")
+            else:
+                # Add new
+                orm_rule = self._to_orm(rule)
+                session.add(orm_rule)
+                logger.debug(f"Added alert rule: {rule.name}")
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            logger.warning(f"Alert rule with name '{rule.name}' already exists. Skipping add.")
+            raise ValueError(f"Alert rule with name '{rule.name}' already exists.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error saving alert rule {rule.name}: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    def get_alert_rule(self, rule_id: str) -> Optional[AlertRule]:
+        """Retrieves an alert rule by its ID."""
+        session = self._get_session()
+        try:
+            orm_rule = session.query(AlertRuleORM).filter_by(id=rule_id).first()
+            return self._to_dataclass(orm_rule)
+        except Exception as e:
+            logger.error(f"Error retrieving alert rule {rule_id}: {e}", exc_info=True)
+            return None
+        finally:
+            session.close()
+
+    def get_all_alert_rules(self, active_only: bool = False) -> List[AlertRule]:
+        """Retrieves all alert rules, optionally filtering for active ones."""
+        session = self._get_session()
+        try:
+            query = session.query(AlertRuleORM)
+            if active_only:
+                query = query.filter_by(is_active=True)
+            orm_rules = query.all()
+            return [self._to_dataclass(rule) for rule in orm_rules]
+        except Exception as e:
+            logger.error(f"Error retrieving all alert rules: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
+    def delete_alert_rule(self, rule_id: str) -> bool:
+        """Deletes an alert rule by its ID."""
+        session = self._get_session()
+        try:
+            orm_rule = session.query(AlertRuleORM).filter_by(id=rule_id).first()
+            if orm_rule:
+                session.delete(orm_rule)
+                session.commit()
+                logger.info(f"Deleted alert rule {rule_id}.")
+                return True
+            else:
+                logger.warning(f"Alert rule {rule_id} not found for deletion.")
+                return False
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error deleting alert rule {rule_id}: {e}", exc_info=True)
+            raise
         finally:
             session.close()
