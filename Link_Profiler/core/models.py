@@ -686,8 +686,8 @@ class AlertChannel(Enum):
 @dataclass
 class AlertRule:
     """Defines a rule for triggering alerts based on job or metric conditions."""
+    name: str # Moved to be a non-default argument first
     id: Optional[str] = None # UUID for the rule
-    name: str
     description: Optional[str] = None
     is_active: bool = True
     
