@@ -8,19 +8,10 @@ import sys
 import time
 
 # --- Robust Project Root Discovery ---
-# This method searches upwards from the current file's directory
-# until it finds the directory that contains 'setup.py'.
-# This directory is considered the project root and is added to sys.path.
-current_file_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = None
-
-# Traverse up to find the directory containing setup.py
-path_to_check = current_file_dir
-for _ in range(5): # Limit search to 5 levels up to prevent infinite loops
-    if os.path.exists(os.path.join(path_to_check, 'setup.py')):
-        project_root = path_to_check
-        break
-    path_to_check = os.path.dirname(path_to_check)
+# Assuming this file is at Link_Profiler/Link_Profiler/main.py
+# The project root (containing setup.py) is one level up from the 'Link_Profiler' package directory.
+# So, it's os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if project_root and project_root not in sys.path:
     sys.path.insert(0, project_root)
