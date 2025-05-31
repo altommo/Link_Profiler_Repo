@@ -50,6 +50,29 @@ class SERPCrawler:
             "viewport": {"width": random.randint(1200, 1600), "height": random.randint(800, 1200)} # Random viewport
         }
 
+        # New: Browser fingerprint randomization
+        if config_loader.get("anti_detection.browser_fingerprint_randomization", False):
+            # These options help randomize the browser's perceived environment
+            context_options.update({
+                "device_scale_factor": random.choice([1.0, 1.25, 1.5]),
+                "is_mobile": random.choice([True, False]),
+                "has_touch": random.choice([True, False]),
+                "screen": {
+                    "width": random.randint(1366, 1920),
+                    "height": random.randint(768, 1080)
+                },
+                "timezone_id": random.choice([
+                    "America/New_York", "Europe/London", "Asia/Tokyo",
+                    "America/Los_Angeles", "Europe/Berlin", "Asia/Shanghai"
+                ]),
+                "locale": random.choice(["en-US", "en-GB", "fr-FR", "de-DE", "ja-JP"]),
+                "color_scheme": random.choice(["light", "dark"]),
+                # These are not direct context options but can be influenced by user agent and other settings
+                # "cpu_cores": random.randint(2, 8), # Not directly supported by new_context
+                # "device_memory": random.randint(4, 16), # Not directly supported by new_context
+            })
+            self.logger.info("Browser fingerprint randomization enabled for Playwright.")
+
         if self.browser_type == "chromium":
             self.browser = await self.playwright_instance.chromium.launch(headless=self.headless)
         elif self.browser_type == "firefox":

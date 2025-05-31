@@ -17,7 +17,8 @@
     "stealth_mode": true,
     "fingerprint_randomization": false,
     "human_like_delays": true,
-    "request_header_randomization": true
+    "request_header_randomization": true,
+    "browser_fingerprint_randomization": true
   },
   "proxy_management": {
     "enabled": true,

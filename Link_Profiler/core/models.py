@@ -384,7 +384,8 @@ class CrawlConfig:
     request_header_randomization: bool = False # New: Randomize other request headers
     human_like_delays: bool = False # New: Add small random delays to mimic human behavior
     stealth_mode: bool = True # New: Enable Playwright stealth mode (default True for Playwright)
-    
+    browser_fingerprint_randomization: bool = False # New: Randomize browser fingerprint properties
+
     # New fields for proxy management
     use_proxies: bool = False # New: Whether to use proxies for crawling
     proxy_list: List[Dict[str, str]] = field(default_factory=list) # New: List of proxy dictionaries (e.g., {'url': 'http://user:pass@ip:port', 'region': 'us-east'})
