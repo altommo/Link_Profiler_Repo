@@ -7,6 +7,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from clickhouse_driver import Client
 from datetime import datetime
+import json # Added import for json
 
 from Link_Profiler.core.models import Backlink, SEOMetrics, SERPResult, KeywordSuggestion, serialize_model
 
