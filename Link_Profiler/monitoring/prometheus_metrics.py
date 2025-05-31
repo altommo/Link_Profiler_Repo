@@ -143,6 +143,13 @@ API_RATE_LIMITER_THROTTLES_TOTAL = Counter(
     ['service', 'api_client_type', 'endpoint']
 )
 
+# Counter for API call retries
+EXTERNAL_API_CALL_RETRIES_TOTAL = Counter(
+    'link_profiler_external_api_call_retries_total',
+    'Total number of retries for external API calls',
+    ['service', 'api_client_type', 'endpoint']
+)
+
 # --- API Cache Metrics ---
 API_CACHE_HITS_TOTAL = Counter(
     'link_profiler_api_cache_hits_total',
