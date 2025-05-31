@@ -1,157 +1,111 @@
-# 🔗 Link Profiler System
+# Link Profiler
 
-A comprehensive, open-source link analysis and expired domain discovery system inspired by tools like Open Link Profiler and Moz. Built with modern Python async architecture for high-performance web crawling and backlink analysis.
+## Overview
 
-## ✨ Features
+The Link Profiler is a comprehensive web intelligence system designed to gather, analyse, and manage various types of SEO-related data, including backlink profiles, Search Engine Results Page (SERP) data, keyword research insights, and technical SEO audit metrics. Built with a modular and asynchronous Python architecture (FastAPI, SQLAlchemy, aiohttp), it aims to provide a robust foundation for understanding and leveraging web data for SEO and digital marketing strategies, particularly for tasks like expired domain recovery.
 
-### 🕷️ **Advanced Web Crawling**
-- **Asynchronous Architecture**: Built with FastAPI and aiohttp for maximum performance
-- **Intelligent Rate Limiting**: Respects robots.txt and implements smart delays
-- **Multi-threaded Processing**: Concurrent crawling with configurable limits
-- **Robust Error Handling**: Comprehensive retry mechanisms and timeout handling
-- **Content Type Support**: HTML, PDF, and image link extraction
+## Key Features
 
-### 🔍 **Link Analysis & Profiling**
-- **Comprehensive Backlink Discovery**: Find all links pointing to target domains, either by crawling or via external APIs.
-- **Authority Calculation**: Domain and page authority scoring algorithms (now more sophisticated, leveraging linking domain metrics).
-- **Spam Detection**: AI-powered spam link identification (currently basic).
-- **Anchor Text Analysis**: Detailed anchor text distribution and patterns.
-- **Link Type Classification**: dofollow, nofollow, sponsored, UGC, redirect, canonical detection.
-- **SEO Metrics Extraction**: Extracts and stores on-page SEO data (e.g., title length, heading counts, internal/external links).
-- **Backlink API Integration**: Can fetch existing backlink data from external APIs like Google Search Console (for verified properties) and OpenLinkProfiler.org (free, with limits), or a placeholder for paid APIs.
+### 1. Backlink Data Collection
+Our system efficiently discovers and stores detailed backlink information. Each backlink record includes:
+*   **`source_url`**: The full URL of the page containing the link.
+*   **`target_url`**: The linked-to URL (normalised canonical form).
+*   **`anchor_text`**: The text within the `<a>` tag.
+*   **`rel_attributes`**: A list of any `rel` values (e.g., `nofollow`, `ugc`, `sponsored`).
+*   **`http_status`**: The HTTP response code encountered when fetching the `source_url`.
+*   **`crawl_timestamp`**: The UTC timestamp when the `source_url` page was crawled.
+*   **`source_domain_metrics`**: Optional enrichment with domain-level data (e.g., estimated domain authority, trust, spam scores) for the source domain.
 
-### 💎 **Expired Domain Discovery**
-- **Domain Availability Checking**: Real-time domain registration status (now supports real API integration).
-- **Value Assessment**: Multi-factor domain scoring system (currently simulated/basic).
-- **WHOIS Integration**: Domain age, history, and registration data (now supports real API integration).
-- **Batch Processing**: Analyze thousands of domains efficiently.
-- **Custom Scoring Models**: Configurable domain evaluation criteria.
+### 2. SERP Data Acquisition
+We capture critical data from Search Engine Results Pages (SERPs) for specified keywords:
+*   **`keyword`**: The search term used.
+*   **`position`**: The numerical rank in the search results.
+*   **`result_url`**: The URL of each result item.
+*   **`title_text`**: The page title as displayed in the SERP.
+*   **`snippet_text`**: The meta description or snippet text displayed.
+*   **`rich_features`**: Flags or details for featured snippets, local packs, images, videos, ads, etc.
+*   **`page_load_time`**: Time to fully render the SERP page (optional, from API).
+*   **`crawl_timestamp`**: The UTC timestamp of when the search was performed.
 
-### 📊 **Professional Reporting**
-- **Link Profile Generation**: Complete backlink analysis reports.
-- **Domain Metrics**: Authority, trust, and spam scores.
-- **SEO Insights**: Technical SEO analysis and recommendations (extracted and stored).
-- **Export Capabilities**: JSON (via API).
-- **Historical Tracking**: Domain and link profile changes over time (basic persistence).
+### 3. Technical Audit Data
+Our system performs page-level technical SEO audits, providing insights into website health and optimisation:
+*   **Page-level Metrics**:
+    *   **`url`**: The page URL.
+    *   **`http_status`**: The HTTP response code.
+    *   **`response_time_ms`**: Time to first byte and full load.
+    *   **`page_size_bytes`**: Total HTML size.
+*   **SEO Checks**:
+    *   **`title_length`**: Character count of the `<title>` tag.
+    *   **`meta_description_length`**: Character count of the `<meta name="description">` tag.
+    *   **`h1_count`**: Number of `<h1>` tags found.
+    *   **`broken_links`**: A list of internal/external links on the page returning 4xx/5xx status codes. This is handled by a dedicated **Link Health Auditor** for efficient, batched checks.
+    *   Other checks: `internal_links`, `external_links`, `images_count`, `images_without_alt`, `has_canonical`, `has_robots_meta`, `has_schema_markup`, `mobile_friendly` (basic check).
+*   **`audit_timestamp`**: The UTC timestamp of when the audit was executed.
+*   *(Note: `performance_score` and `accessibility_score` are currently placeholders, awaiting integration with tools like Lighthouse.)*
 
-### 🚀 **RESTful API**
-- **Complete API Coverage**: All features accessible via REST endpoints.
-- **Real-time Job Tracking**: Monitor crawling progress and status.
-- **Scalable Architecture**: Designed for high-volume processing.
-- **Developer Friendly**: Comprehensive OpenAPI documentation.
-- **Background Processing**: Non-blocking operations with job queues.
+### 4. Keyword Research Data
+We gather comprehensive data for keyword suggestions:
+*   **`seed_keyword`**: The initial term used.
+*   **`suggested_keyword`**: Each auto-complete or related suggestion returned.
+*   **`search_volume_monthly`**: Estimated monthly search volume.
+*   **`cpc_estimate`**: Cost-per-click estimate (if available).
+*   **`keyword_trend`**: Monthly interest values (e.g., from Google Trends).
+*   **`competition_level`**: Inferred or scraped competition level (Low/Medium/High).
+*   **`data_timestamp`**: The UTC timestamp when this data was gathered.
 
-## 🏗️ Architecture Overview
+## Architecture Highlights
 
-### **Modular Design**
-```
-link_profiler/
-├── core/                   # Core data models and schemas
-│   └── models.py          # Domain, URL, Backlink, LinkProfile models
-├── crawlers/              # Web crawling engines
-│   ├── web_crawler.py     # Main crawler with rate limiting
-│   ├── link_extractor.py  # Extracts links from HTML
-│   ├── content_parser.py  # Extracts SEO metrics from content
-│   └── robots_parser.py   # Handles robots.txt fetching and parsing
-├── services/              # Business logic layer
-│   ├── crawl_service.py           # Crawling orchestration
-│   ├── domain_service.py          # Domain information retrieval
-│   ├── backlink_service.py        # Backlink API integration
-│   ├── domain_analyzer_service.py # Domain value analysis
-│   └── expired_domain_finder_service.py # Expired domain discovery
-├── database/              # Data persistence layer
-│   ├── database.py        # SQLAlchemy ORM for PostgreSQL
-│   └── models.py          # SQLAlchemy ORM models
-├── api/                   # REST API endpoints
-│   └── main.py           # FastAPI application and routes
-└── setup.py              # Project setup and dependencies
-```
+*   **Modular Design**: Clear separation of concerns with dedicated services (Crawl, Domain, Backlink, SERP, Keyword, Link Health) and crawlers (WebCrawler, LinkExtractor, ContentParser).
+*   **Asynchronous Operations**: Leverages `asyncio` and `aiohttp` for high-concurrency web requests, ensuring efficient I/O-bound operations.
+*   **FastAPI**: Provides a modern, fast (high-performance) web framework for building robust APIs with automatic interactive documentation (Swagger UI).
+*   **SQLAlchemy + PostgreSQL**: For robust and scalable data persistence, with ORM models mapping directly to our rich data structures.
+*   **Redis (Planned)**: For distributed job queuing and caching (currently simulated or handled by local queues in some services).
+*   **Background Jobs**: Crawling and auditing tasks run as background jobs, allowing the API to remain responsive.
 
-### **Key Components**
+## Getting Started
 
-#### **Core Models** (`core/models.py`)
-- **Domain**: Authority scores, trust metrics, spam detection
-- **URL**: Status tracking, metadata, crawl information  
-- **Backlink**: Source/target mapping, anchor text, link types
-- **LinkProfile**: Aggregated metrics and analysis results
-- **CrawlJob**: Job status, progress tracking, error handling
+### Prerequisites
 
-#### **Web Crawler** (`crawlers/web_crawler.py`)
-- Async HTTP client with connection pooling
-- Intelligent robots.txt parsing and compliance
-- Rate limiting with per-domain tracking
-- Content extraction and link discovery
-- Error handling and retry logic
+*   Python 3.8+
+*   Docker and Docker Compose (recommended for PostgreSQL and Redis setup)
 
-#### **Business Services**
-- **CrawlService**: Orchestrates crawling jobs and manages lifecycles.
-- **DomainService**: Handles WHOIS lookups and availability checks (now supports real API integration).
-- **BacklinkService**: Integrates with external backlink data providers (simulated, OpenLinkProfiler, GSC, or paid APIs).
-- **DomainAnalyzerService**: Evaluates domain value and potential.
-- **ExpiredDomainFinderService**: Discovers valuable expired domains.
+### Setup
 
-#### **Data Persistence** (`database/`)
-- **PostgreSQL Database**: Used for structured storage of all crawl data, link profiles, and domain information.
-- **SQLAlchemy ORM**: Provides an object-relational mapping layer for Python objects to database tables.
-- **Upsert Logic**: Ensures data integrity by updating existing records or inserting new ones, preventing duplicate key errors.
-
-## 🛠 Installation & Setup
-
-### **Prerequisites**
-- Python 3.8+ 
-- pip (Python package manager)
-- 4GB+ RAM recommended for large crawls
-- Stable internet connection
-- **PostgreSQL Database**: Required for data persistence.
-
-### **Quick Installation**
-```bash
-# Clone the repository
-git clone <repository_url>
-cd Link_Profiler
-
-# Create virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### **Database Setup (PostgreSQL)**
-
-The application uses a PostgreSQL database for storing crawl data, link profiles, and domain information. You need to have a PostgreSQL server running and create the required database before starting the application.
-
-**For Windows (using PowerShell):**
-
-1.  **Install PostgreSQL**: If you don't have PostgreSQL installed, download and run the installer from the official website: [https://www.postgresql.org/download/windows/](https://www.postgresql.org/download/windows/)
-    *   During installation, remember the password you set for the `postgres` superuser.
-    *   Ensure the command-line tools (like `psql`) are included in your system's PATH environment variable, or note their installation location (e.g., `C:\Program Files\PostgreSQL\14\bin`).
-
-2.  **Open PowerShell**: Open a new PowerShell window.
-
-3.  **Navigate to PostgreSQL bin directory (if not in PATH)**: If `psql` is not in your PATH, navigate to the `bin` directory of your PostgreSQL installation. **Remember to use double quotes for paths with spaces.** For example:
-    ```powershell
-    cd "C:\Program Files\PostgreSQL\14\bin" # Adjust version number if needed
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/yourusername/Link_Profiler.git
+    cd Link_Profiler
     ```
 
-4.  **Connect to PostgreSQL and Create Database**: Use the `psql` command to connect to the default `postgres` database as the `postgres` user and then create the `link_profiler_db`. You will be prompted for the `postgres` user's password.
-    ```powershell
-    .\psql -U postgres -d postgres -c "CREATE DATABASE link_profiler_db;"
+2.  **Install Python dependencies:**
+    ```bash
+    pip install -e .
     ```
-    *   `-U postgres`: Specifies the user to connect as (`postgres`).
-    *   `-d postgres`: Specifies the initial database to connect to (`postgres` is the default).
-    *   `-c "CREATE DATABASE link_profiler_db;"`: Executes the SQL command to create the new database.
 
-5.  **Verify Database Creation**: You can optionally connect to the newly created database to verify it exists:
-    ```powershell
-    .\psql -U postgres -d link_profiler_db
+3.  **Set up Docker services (PostgreSQL, Redis, Coordinator, etc.):**
+    Navigate to the `Link_Profiler/deployment/docker` directory and use the provided `docker-compose.yml`.
+    
+    **Important:** If you plan to use real API clients (e.g., for Domain, Backlink, SERP, Keyword data), you will need to uncomment and set the corresponding environment variables in the `coordinator` service section of `Link_Profiler/deployment/docker/docker-compose.yml`. For example:
+    ```yaml
+        coordinator:
+          # ... other configurations ...
+          environment:
+            # ... existing environment variables ...
+            # - USE_REAL_DOMAIN_API=true
+            # - REAL_DOMAIN_API_KEY=your_real_domain_api_key
+            # - USE_REAL_SERP_API=true
+            # - REAL_SERP_API_KEY=your_real_serp_api_key
+            # ... etc.
     ```
-    If the connection is successful, you will see the `link_profiler_db=#` prompt. Type `\q` and press Enter to exit `psql`.
+    For `USE_GSC_API=true`, ensure your `credentials.json` and `token.json` files are in the project root (`Link_Profiler/`) as described in the "Google Search Console API Setup" section below.
 
-The application is configured to connect to `postgresql://postgres:postgres@localhost:5432/link_profiler_db` by default. If your PostgreSQL setup uses a different username, password, host, or port, you will need to update the `db_url` parameter in the `Link_Profiler/database/database.py` file or configure it via environment variables (a future enhancement).
+    Run Docker Compose:
+    ```bash
+    docker-compose up -d
+    ```
+    This will start PostgreSQL, Redis, the API coordinator, and satellite crawlers.
 
-### **Google Search Console API Setup (for `GSCBacklinkAPIClient`)**
+### Google Search Console API Setup (for `GSCBacklinkAPIClient`)
 
 To use the `GSCBacklinkAPIClient`, you need to set up credentials with Google. This involves a few manual steps:
 
@@ -174,102 +128,20 @@ To use the `GSCBacklinkAPIClient`, you need to set up credentials with Google. T
 
 4.  **Generate `token.json` (First-time Authentication)**:
     *   The `GSCBacklinkAPIClient` will attempt an interactive authentication flow the first time it runs if `token.json` is not found or is invalid.
-    *   When you start the API server with `USE_GSC_API="true"`, it will attempt to open a browser window.
+    *   When you start the API server with `USE_GSC_API="true"` (either via `uvicorn` directly or in `docker-compose.yml`), it will attempt to open a browser window.
     *   Follow the prompts in your browser to authenticate with your Google account and grant the necessary permissions.
     *   After successful authentication, a `token.json` file will be created in your project's root directory. This file stores your access and refresh tokens. **Keep this file secure and do not share it.**
     *   **Important**: This interactive step is not suitable for a headless server environment. For production deployments, you would typically generate `token.json` once on a local machine and then transfer it securely to your server.
 
-### **Dependencies**
-```
-fastapi          # Modern web framework for APIs
-uvicorn[standard] # ASGI server for FastAPI
-aiohttp          # Async HTTP client for web crawling
-beautifulsoup4   # HTML parsing and link extraction
-lxml             # XML/HTML parser (faster than html.parser)
-SQLAlchemy       # SQL toolkit and Object-Relational Mapper
-psycopg2-binary  # PostgreSQL adapter for Python
-google-api-python-client # Google API client library
-google-auth-oauthlib # Google authentication library for OAuth 2.0
-```
+## Usage Guide
 
-## 🚀 Usage Guide
+Once the Docker services are running, the API will be available at: `http://localhost:8000`
+-   **API Documentation**: `http://localhost:8000/docs`
+-   **Interactive API**: `http://localhost:8000/redoc`
 
-### **Starting the API Server**
+### Core API Endpoints
 
-To run the API server, you need to ensure that the project's root directory is added to your `PYTHONPATH`. This allows Python to correctly resolve internal package imports.
-
-**From the project root directory (where `setup.py` is located):**
-
-**For Linux/macOS:**
-```bash
-export PYTHONPATH=$(pwd)
-# To use the simulated APIs (default):
-uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use OpenLinkProfiler.org API:
-# export USE_OPENLINKPROFILER_API="true"
-# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use Google Search Console API (requires credentials.json and token.json):
-# export USE_GSC_API="true"
-# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use a placeholder for a real (paid) Backlink API (requires REAL_BACKLINK_API_KEY env var):
-# export USE_REAL_BACKLINK_API="true"
-# export REAL_BACKLINK_API_KEY="your_backlink_api_key_here"
-# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use a placeholder for a real (paid) Domain API (requires REAL_DOMAIN_API_KEY env var):
-# export USE_REAL_DOMAIN_API="true"
-# export REAL_DOMAIN_API_KEY="your_domain_api_key_here"
-# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-**For Windows (Command Prompt):**
-```cmd
-set PYTHONPATH=%cd%
-rem To use the simulated APIs (default):
-uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-rem To use OpenLinkProfiler.org API:
-rem set USE_OPENLINKPROFILER_API="true"
-rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-rem To use Google Search Console API (requires credentials.json and token.json):
-rem set USE_GSC_API="true"
-rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-rem To use a placeholder for a real (paid) Backlink API (requires REAL_BACKLINK_API_KEY env var):
-rem set USE_REAL_BACKLINK_API="true"
-rem set REAL_BACKLINK_API_KEY="your_backlink_api_key_here"
-rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-rem To use a placeholder for a real (paid) Domain API (requires REAL_DOMAIN_API_KEY env var):
-rem set USE_REAL_DOMAIN_API="true"
-rem set REAL_DOMAIN_API_KEY="your_domain_api_key_here"
-rem uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-**For Windows (PowerShell):**
-```powershell
-$env:PYTHONPATH = (Get-Location).Path
-# To use the simulated APIs (default):
-uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use OpenLinkProfiler.org API:
-# $env:USE_OPENLINKPROFILER_API = "true"
-# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use Google Search Console API (requires credentials.json and token.json):
-# $env:USE_GSC_API = "true"
-# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use a placeholder for a real (paid) Backlink API (requires REAL_BACKLINK_API_KEY env var):
-# $env:USE_REAL_BACKLINK_API = "true"
-# $env:REAL_BACKLINK_API_KEY = "your_backlink_api_key_here"
-# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-# To use a placeholder for a real (paid) Domain API (requires REAL_DOMAIN_API_KEY env var):
-# $env:USE_REAL_DOMAIN_API = "true"
-# $env:REAL_DOMAIN_API_KEY = "your_domain_api_key_here"
-# uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-The API will be available at: `http://localhost:8000`
-- **API Documentation**: `http://localhost:8000/docs`
-- **Interactive API**: `http://localhost:8000/redoc`
-
-### **Core API Endpoints**
-
-#### **🔍 Backlink Discovery**
+#### 🔍 Backlink Discovery
 ```bash
 # Start a backlink discovery job
 POST /crawl/start_backlink_discovery
@@ -296,7 +168,45 @@ GET /link_profile/https://example.com
 GET /backlinks/https://example.com
 ```
 
-#### **💎 Domain Analysis**
+#### 🔗 Link Health Audit
+```bash
+# Start a link health audit job for specific source URLs
+POST /audit/link_health
+{
+    "source_urls": [
+        "https://www.example.com/page1",
+        "https://www.example.com/page2"
+    ]
+}
+```
+
+#### 📈 SERP Data
+```bash
+# Fetch SERP data for a keyword
+POST /serp/search
+{
+    "keyword": "best SEO tools",
+    "num_results": 20
+}
+
+# Get stored SERP results
+GET /serp/results/{keyword}
+```
+
+#### 💡 Keyword Research
+```bash
+# Fetch keyword suggestions for a seed keyword
+POST /keyword/suggest
+{
+    "seed_keyword": "content marketing",
+    "num_suggestions": 15
+}
+
+# Get stored keyword suggestions
+GET /keyword/suggestions/{seed_keyword}
+```
+
+#### 💎 Domain Analysis
 ```bash
 # Check domain availability
 GET /domain/availability/example.com
@@ -319,9 +229,9 @@ POST /domain/find_expired_domains
 }
 ```
 
-### **Configuration Options**
+### Configuration Options
 
-#### **Crawl Configuration**
+#### Crawl Configuration
 ```python
 {
     "max_depth": 3,              # Crawling depth from seed URLs
@@ -340,180 +250,68 @@ POST /domain/find_expired_domains
 }
 ```
 
-## 📊 Data Models & Scoring
+## Troubleshooting
 
-### **Domain Authority Calculation**
-The system uses a multi-factor algorithm:
-- **Backlink Quality**: Domain authority of linking sites
-- **Link Diversity**: Number of unique referring domains
-- **Content Relevance**: Topical relationship analysis
-- **Trust Signals**: HTTPS, domain age, clean WHOIS
-- **Spam Indicators**: Link patterns, anchor text over-optimization
+### Common Issues
 
-### **Link Profile Metrics**
-- **Total Backlinks**: Raw count of all discovered links
-- **Unique Domains**: Number of different referring domains
-- **Authority Score**: 0-100 scale based on link quality
-- **Trust Score**: 0-100 scale based on clean link sources
-- **Spam Score**: 0-100 scale indicating potentially harmful links
-- **Anchor Text Distribution**: Keyword usage patterns
+#### `psycopg2.OperationalError: FATAL: database "link_profiler_db" does not exist`
+-   This means the PostgreSQL database named `link_profiler_db` has not been created. Ensure your Docker PostgreSQL container is running and healthy.
 
-### **Domain Value Assessment**
-For expired domain discovery:
-- **Historical Authority**: Previous domain strength metrics
-- **Backlink Profile Quality**: Clean, relevant link sources
-- **Brand Potential**: Memorable, brandable domain names
-- **SEO Value**: Existing search engine presence
-- **Commercial Viability**: Market demand and monetization potential
+#### "Connection Refused" Errors
+-   Check if target websites are accessible.
+-   Verify internet connection stability.
+-   Reduce concurrent request limits.
+-   Increase timeout values.
+-   **Check PostgreSQL/Redis Connection**: Ensure your Docker containers for PostgreSQL and Redis are running and accessible.
 
-## 🔧 Technical Details
+#### "Robots.txt Blocked" Messages
+-   Normal behaviour for sites that restrict crawling.
+-   Review robots.txt files manually if needed.
+-   Consider alternative seed URLs.
+-   Respect website policies.
 
-### **Performance Characteristics**
-- **Concurrent Requests**: 5-50+ parallel connections
-- **Throughput**: 100-1000+ pages per minute (depending on configuration)
-- **Memory Usage**: ~50-200MB for typical crawls
-- **Storage**: PostgreSQL Database for structured, queryable data.
-- **Scalability**: Horizontal scaling via multiple instances
+#### Slow Performance
+-   Increase `delay_seconds` to reduce server load.
+-   Check available bandwidth and CPU.
+-   Monitor memory usage during large crawls.
+-   Consider crawling in smaller batches.
+-   **Database Performance**: Ensure your PostgreSQL server is adequately resourced and performing well.
 
-### **Rate Limiting & Ethics**
-- **Robots.txt Compliance**: Automatically honors crawling restrictions
-- **Polite Crawling**: Configurable delays prevent server overload
-- **User Agent Identification**: Clear identification as research tool
-- **Domain Respect**: Per-domain rate limiting
-- **Resource Management**: Automatic connection pooling and cleanup
+#### Out of Memory Errors
+-   Reduce `max_pages` limit.
+-   Process domains in smaller batches.
+-   Monitor system resources.
+-   Consider upgrading hardware for large-scale operations.
 
-### **Data Persistence**
-- **Storage Format**: **PostgreSQL Database** for structured, queryable data.
-- **Backup Friendly**: Standard database backup procedures apply.
-- **Version Control**: Schema changes managed via SQLAlchemy models.
+### API Error Codes
+-   **400**: Invalid request parameters or malformed URLs.
+-   **404**: Requested resource not found (job, domain, profile).
+-   **429**: Rate limit exceeded (reduce request frequency).
+-   **500**: Internal server error (check logs for details).
+-   **503**: Service unavailable (server overloaded).
 
-## 🐛 Troubleshooting
+## Contributing
 
-### **Common Issues**
+Contributions are welcome! Please feel free to open issues or submit pull requests.
 
-#### **`psycopg2.OperationalError: FATAL: database "link_profiler_db" does not exist`**
-- This means the PostgreSQL database named `link_profiler_db` has not been created. Follow the "Database Setup (PostgreSQL)" instructions above to create it.
+## License
 
-#### **"Connection Refused" Errors**
-- Check if target websites are accessible
-- Verify internet connection stability
-- Reduce concurrent request limits
-- Increase timeout values
-- **Check PostgreSQL Connection**: Ensure your PostgreSQL server is running and accessible at `localhost:5432` (or the configured address/port). Verify the username and password in `database.py` match your PostgreSQL setup.
+This project is licensed under the MIT License.
 
-#### **"Robots.txt Blocked" Messages**
-- Normal behavior for sites that restrict crawling
-- Review robots.txt files manually if needed
-- Consider alternative seed URLs
-- Respect website policies
+## Support & Community
 
-#### **Slow Performance**
-- Increase `delay_seconds` to reduce server load
-- Check available bandwidth and CPU
-- Monitor memory usage during large crawls
-- Consider crawling in smaller batches
-- **Database Performance**: Ensure your PostgreSQL server is adequately resourced and performing well.
+### Getting Help
+1.  **Documentation**: Check this README and API docs first.
+2.  **Issues**: Create GitHub issues for bugs and feature requests.
+3.  **Discussions**: Use GitHub Discussions for questions and ideas.
+4.  **Code Review**: Submit pull requests for improvements.
 
-#### **Out of Memory Errors**
-- Reduce `max_pages` limit
-- Process domains in smaller batches
-- Monitor system resources
-- Consider upgrading hardware for large-scale operations
-
-### **API Error Codes**
-- **400**: Invalid request parameters or malformed URLs
-- **404**: Requested resource not found (job, domain, profile)
-- **429**: Rate limit exceeded (reduce request frequency)
-- **500**: Internal server error (check logs for details)
-- **503**: Service unavailable (server overloaded)
-
-## 🔮 Roadmap & Future Enhancements
-
-The project has a solid foundation with core crawling, link analysis, and domain assessment capabilities. Future development will focus on enhancing these features, improving scalability, and integrating with real-world data sources.
-
-#### **Immediate Next Steps (High Priority)**
-
-1.  **Refine Link Profile Calculation**:
-    *   **Completed**: The `authority_score`, `trust_score`, and `spam_score` in `LinkProfile` are now calculated based on the metrics of linking domains.
-2.  **Integrate SEO Metrics into Crawl Flow**:
-    *   **Completed**: `ContentParser` extracts SEO metrics, and `CrawlService` now persists this data via `Database.save_seo_metrics`.
-3.  **Implement Real Domain API Integration**:
-    *   **Completed**: The `DomainService` can now be configured to use a `RealDomainAPIClient` (requires `REAL_DOMAIN_API_KEY` environment variable). The client is structured to make actual HTTP calls to external APIs, though the data returned is still simulated for demonstration purposes.
-4.  **Implement Real Backlink API Integration**:
-    *   **Completed**: The `CrawlService` now attempts to fetch backlinks from a `BacklinkService` (which can use a `SimulatedBacklinkAPIClient`, `RealBacklinkAPIClient`, `OpenLinkProfilerAPIClient`, or `GSCBacklinkAPIClient` based on environment variables) before or in conjunction with crawling.
-    *   **Next Action**:
-        *   **OpenLinkProfiler.org Integration**: Implement actual API calls and response parsing within `OpenLinkProfilerAPIClient` to fetch real backlink data from OpenLinkProfiler.org.
-        *   **GSC API Enhancement**: For `GSCBacklinkAPIClient`, implement the actual GSC API calls to fetch backlink data for verified properties. Ensure `credentials.json` is correctly set up and `token.json` is generated via the interactive OAuth flow for your verified properties.
-        *   **Paid API Integration (Optional)**: If a paid API (e.g., Ahrefs, Moz) is acquired, replace the simulated data in `RealBacklinkAPIClient` with actual API calls and response parsing.
-
-#### **Mid-Term Enhancements**
-
-1.  **Advanced Crawl Management**:
-    *   Add API endpoints and internal logic to pause, resume, and stop active crawl jobs gracefully.
-    *   Implement a job queue system (e.g., using Redis and Celery) for more robust background task management and distributed processing.
-2.  **Comprehensive Error Reporting**:
-    *   Enhance `CrawlJob`'s `error_log` to capture more structured and actionable error details during crawling.
-    *   Implement a mechanism to retry failed URLs or segments of a crawl.
-3.  **User Interface / Dashboard**:
-    *   Develop a simple web-based UI to interact with the FastAPI endpoints, visualise crawl progress, link profiles, and domain analysis results.
-4.  **Competitor Backlink Analysis**:
-    *   Add API endpoints and logic to perform link intersect analysis (find common backlinks between domains) and unique backlink discovery.
-
-#### **Long-Term Vision**
-
-1.  **Distributed Crawling Architecture**:
-    *   Enable the crawler to run across multiple machines or containers for large-scale data collection.
-    *   Implement a robust message queue (e.g., RabbitMQ, Kafka) for inter-service communication and task distribution.
-2.  **Machine Learning for Link Quality**:
-    *   Develop ML models to predict link quality, spam likelihood, and domain value based on a wider array of features.
-3.  **Real-time Monitoring & Alerts**:
-    *   Integrate with monitoring tools (e.g., Prometheus, Grafana) to track crawler performance, API health, and database metrics.
-    *   Implement webhook support for real-time notifications on job completion or critical errors.
-4.  **Authentication & User Management**:
-    *   Add API key management and user authentication for secure access to the system.
-5.  **Advanced Reporting & Export**:
-    *   Generate professional PDF reports, Excel spreadsheets, and other custom export formats for analysis results.
-
-## 🤝 Contributing
-
-We welcome contributions! Areas where you can help:
-
-### **Development**
-- Additional link analysis algorithms
-- New domain scoring models  
-- Performance optimizations
-- Bug fixes and stability improvements
-
-### **Documentation**
-- API usage examples
-- Tutorial content
-- Architecture documentation
-- Troubleshooting guides
-
-### **Testing**
-- Unit test coverage
-- Integration tests
-- Performance benchmarking
-- Edge case testing
-
-## 📄 License
-
-This project is open source and available under the MIT License. 
-
-## 🆘 Support & Community
-
-### **Getting Help**
-1.  **Documentation**: Check this README and API docs first
-2.  **Issues**: Create GitHub issues for bugs and feature requests
-3.  **Discussions**: Use GitHub Discussions for questions and ideas
-4.  **Code Review**: Submit pull requests for improvements
-
-### **Best Practices**
-- Start with small test crawls before large operations
-- Monitor system resources during intensive operations
-- Respect website terms of service and robots.txt
-- Use appropriate delays to avoid overwhelming target servers
-- Keep backups of important crawl data
+### Best Practices
+-   Start with small test crawls before large operations.
+-   Monitor system resources during intensive operations.
+-   Respect website terms of service and robots.txt.
+-   Use appropriate delays to avoid overwhelming target servers.
+-   Keep backups of important crawl data.
 
 ---
 
