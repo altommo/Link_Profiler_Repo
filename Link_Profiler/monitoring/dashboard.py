@@ -200,6 +200,20 @@ async def cli_main():
     """CLI interface for queue management"""
     import sys
     
+    parser = argparse.ArgumentParser(description="Satellite Crawler")
+    parser.add_argument("--redis-url", default="redis://localhost:6379", help="Redis connection URL")
+    parser.add_argument("--crawler-id", help="Unique crawler identifier")
+    parser.add_argument("--region", default="default", help="Crawler region/zone")
+    parser.add_argument("--log-level", default="INFO", help="Logging level")
+    
+    args = parser.parse_args()
+    
+    # Configure logging
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper()),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
     if len(sys.argv) < 2:
         print("Usage: python monitoring.py <command>")
         print("Commands:")
@@ -233,6 +247,7 @@ async def cli_main():
         print(f"Unknown command: {command}")
 
 if __name__ == "__main__":
+    import argparse # Import argparse here for cli_main
     asyncio.run(cli_main())
 
 # HTML Template (save as templates/dashboard.html)
@@ -326,5 +341,5 @@ DASHBOARD_HTML = """
 # Save the HTML template
 import os
 os.makedirs("templates", exist_ok=True)
-with open("templates/dashboard.html", "w") as f:
+with open("templates/dashboard.html", "w", encoding="utf-8") as f:
     f.write(DASHBOARD_HTML)
