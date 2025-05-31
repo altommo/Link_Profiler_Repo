@@ -289,9 +289,6 @@ class WebCrawler:
             # of links from a source page. However, if we want to find *more*
             # potential source pages, we might follow internal links on the source.
             
-            # For now, let's follow all discovered links (internal and external)
-            # up to max_depth, but only yield results for links *to the target*.
-            
             for link in result.links_found:
                 # Only add if the domain is allowed by the config
                 parsed_link_url = urlparse(link.target_url)

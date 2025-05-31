@@ -674,19 +674,39 @@ class CrawlService:
                 lighthouse_metrics = await self.technical_auditor.run_lighthouse_audit(url, config)
                 
                 if lighthouse_metrics:
+                    # If content was crawled, get it to pass to AI for content scoring
+                    crawled_url_obj = self.db.get_url(url)
+                    html_content = crawled_url_obj.content if crawled_url_obj and crawled_url_obj.content_type == ContentType.HTML else ""
+
+                    # AI Content Optimization
+                    if self.ai_service.enabled:
+                        ai_content_analysis = await self.ai_service.score_content(html_content, job.target_url) # Use job.target_url as keyword
+                        if ai_content_analysis:
+                            lighthouse_metrics.ai_content_score = ai_content_analysis.get("seo_score")
+                            lighthouse_metrics.ai_readability_score = ai_content_analysis.get("readability_score")
+                            lighthouse_metrics.ai_semantic_keywords = ai_content_analysis.get("semantic_keywords", [])
+                            lighthouse_metrics.ai_suggestions.extend(ai_content_analysis.get("improvement_suggestions", []))
+                            self.logger.info(f"AI content analysis applied for {url}.")
+
                     existing_seo_metrics = self.db.get_seo_metrics(url)
                     if existing_seo_metrics:
+                        # Update existing metrics with Lighthouse and AI data
                         existing_seo_metrics.performance_score = lighthouse_metrics.performance_score
                         existing_seo_metrics.accessibility_score = lighthouse_metrics.accessibility_score
                         existing_seo_metrics.audit_timestamp = lighthouse_metrics.audit_timestamp
+                        existing_seo_metrics.ai_content_score = lighthouse_metrics.ai_content_score
+                        existing_seo_metrics.ai_readability_score = lighthouse_metrics.ai_readability_score
+                        existing_seo_metrics.ai_semantic_keywords = lighthouse_metrics.ai_semantic_keywords
+                        existing_seo_metrics.ai_suggestions.extend(lighthouse_metrics.ai_suggestions)
                         existing_seo_metrics.calculate_seo_score()
                         self.db.save_seo_metrics(existing_seo_metrics)
                         processed_seo_metrics.append(existing_seo_metrics) # Add to list
-                        self.logger.info(f"Updated SEO metrics for {url} with Lighthouse scores.")
+                        self.logger.info(f"Updated SEO metrics for {url} with Lighthouse and AI scores.")
                     else:
+                        # Save new metrics including Lighthouse and AI data
                         self.db.save_seo_metrics(lighthouse_metrics)
                         processed_seo_metrics.append(lighthouse_metrics) # Add to list
-                        self.logger.info(f"Saved new SEO metrics for {url} from Lighthouse.")
+                        self.logger.info(f"Saved new SEO metrics for {url} from Lighthouse and AI.")
                     
                     audited_urls_count += 1
                 else:
@@ -776,6 +796,7 @@ class CrawlService:
         # Step 1: Run Technical Audit
         self.logger.info(f"Running technical audit part of full SEO audit for job {job.id}.")
         try:
+            # The _run_technical_audit_job already handles saving SEO metrics and AI enrichment
             await self._run_technical_audit_job(job, urls_to_audit, config)
             job_results['technical_audit'] = job.results.get('technical_audit', 'Completed') # Placeholder for actual results
             completed_sub_audits += 1
@@ -869,5 +890,4 @@ class CrawlService:
         """Retrieves all raw backlinks for a given URL."""
         return self.db.get_backlinks_for_target(target_url)
 
-    # TODO: Consider adding create_seo_audit_job() for a full site audit (beyond just broken links).
-    # TODO: Consider adding create_domain_analysis_job() for on-demand domain analysis.
+    # Removed outdated TODOs

@@ -470,6 +470,7 @@ class Database:
                         continue
                     if hasattr(updated_data, column.key):
                         setattr(orm_url, column.key, getattr(updated_data, column.key))
+                session.commit()
                 logger.debug(f"Updated URL: {url_obj.url}")
             else:
                 # Add new
