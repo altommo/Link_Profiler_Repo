@@ -551,246 +551,133 @@ class CrawlService:
             else:
                 self.logger.info(f"No backlinks found for {job.target_url}.")
 
-            job.status = CrawlStatus.COMPLETED
-            self.logger.info(f"Crawl job {job.id} completed.")
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
-
-        except Exception as e:
-            job.status = CrawlStatus.FAILED
-            job.add_error(url="N/A", error_type="CrawlJobError", message=f"Crawl failed: {str(e)}", details=str(e))
-            self.logger.error(f"Crawl job {job.id} failed: {e}", exc_info=True)
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
-            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="CrawlJobError").inc()
-            await self._send_to_dead_letter_queue(job, f"Crawl job failed: {str(e)}")
-        finally:
-            job.completed_date = datetime.now()
-            self.db.update_crawl_job(job)
-            if job.id in self.active_crawlers:
-                del self.active_crawlers[job.id]
-
     async def _run_serp_analysis_job(self, job: CrawlJob, keyword: str, num_results: Optional[int]):
         """
         Internal method to execute a SERP analysis job.
         """
-        JOBS_PENDING.labels(job_type=job.job_type).dec()
-        JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
+        self.logger.info(f"Starting SERP analysis logic for job {job.id} for keyword: '{keyword}'")
 
-        job.status = CrawlStatus.IN_PROGRESS
-        job.started_date = datetime.now()
-        self.db.update_crawl_job(job)
-        self.logger.info(f"Starting SERP analysis job {job.id} for keyword: '{keyword}'")
-
-        try:
-            async with self.serp_service as ss:
-                serp_results = await ss.get_serp_data(keyword, num_results or 10)
+        async with self.serp_service as ss:
+            serp_results = await ss.get_serp_data(keyword, num_results or 10)
+        
+        if serp_results:
+            self.logger.info(f"Found {len(serp_results)} SERP results for '{keyword}'.")
+            try:
+                await self.db.add_serp_results(serp_results)
+                if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                    await self.clickhouse_loader.bulk_insert_serp_results(serp_results)
+                self.logger.info(f"Successfully added {len(serp_results)} SERP results to the database.")
+            except Exception as db_e:
+                self.logger.error(f"Error adding SERP results to database: {db_e}", exc_info=True)
+                job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding SERP results: {str(db_e)}", details=str(db_e))
+                JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
             
-            if serp_results:
-                self.logger.info(f"Found {len(serp_results)} SERP results for '{keyword}'.")
-                try:
-                    await self.db.add_serp_results(serp_results)
-                    if self.clickhouse_loader: # Conditionally insert to ClickHouse
-                        await self.clickhouse_loader.bulk_insert_serp_results(serp_results)
-                    self.logger.info(f"Successfully added {len(serp_results)} SERP results to the database.")
-                except Exception as db_e:
-                    self.logger.error(f"Error adding SERP results to database: {db_e}", exc_info=True)
-                    job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding SERP results: {str(db_e)}", details=str(db_e))
-                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
-                
-                job.results['serp_results'] = [serialize_model(res) for res in serp_results]
-                job.urls_discovered = len(serp_results)
-                job.progress_percentage = 100.0
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"SERP analysis job {job.id} completed for '{keyword}'.")
-            else:
-                job.results['serp_results'] = []
-                job.progress_percentage = 100.0
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"No SERP results found for '{keyword}'. Job {job.id} completed.")
-
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
-
-        except Exception as e:
-            job.status = CrawlStatus.FAILED
-            job.add_error(url="N/A", error_type="SERPAnalysisError", message=f"SERP analysis failed: {str(e)}", details=str(e))
-            self.logger.error(f"SERP analysis job {job.id} failed: {e}", exc_info=True)
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
-            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="SERPAnalysisError").inc()
-            await self._send_to_dead_letter_queue(job, f"SERP analysis failed: {str(e)}")
-        finally:
-            job.completed_date = datetime.now()
-            self.db.update_crawl_job(job)
+            job.results['serp_results'] = [serialize_model(res) for res in serp_results]
+            job.urls_discovered = len(serp_results)
+            job.progress_percentage = 100.0
+            self.logger.info(f"SERP analysis job {job.id} completed for '{keyword}'.")
+        else:
+            job.results['serp_results'] = []
+            job.progress_percentage = 100.0
+            self.logger.info(f"No SERP results found for '{keyword}'. Job {job.id} completed.")
 
     async def _run_keyword_research_job(self, job: CrawlJob, seed_keyword: str, num_suggestions: Optional[int]):
         """
         Internal method to execute a keyword research job.
         """
-        JOBS_PENDING.labels(job_type=job.job_type).dec()
-        JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
+        self.logger.info(f"Starting keyword research logic for job {job.id} for seed: '{seed_keyword}'")
 
-        job.status = CrawlStatus.IN_PROGRESS
-        job.started_date = datetime.now()
-        self.db.update_crawl_job(job)
-        self.logger.info(f"Starting keyword research job {job.id} for seed: '{seed_keyword}'")
-
-        try:
-            async with self.keyword_service as ks:
-                suggestions = await ks.get_keyword_data(seed_keyword, num_suggestions or 10)
+        async with self.keyword_service as ks:
+            suggestions = await ks.get_keyword_data(seed_keyword, num_suggestions or 10)
+        
+        if suggestions:
+            self.logger.info(f"Found {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
+            try:
+                await self.db.add_keyword_suggestions(suggestions)
+                if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                    await self.clickhouse_loader.bulk_insert_keyword_suggestions(suggestions)
+                self.logger.info(f"Successfully added {len(suggestions)} keyword suggestions to the database.")
+            except Exception as db_e:
+                self.logger.error(f"Error adding keyword suggestions to database: {db_e}", exc_info=True)
+                job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding keyword suggestions: {str(db_e)}", details=str(db_e))
+                JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
             
-            if suggestions:
-                self.logger.info(f"Found {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
-                try:
-                    await self.db.add_keyword_suggestions(suggestions)
-                    if self.clickhouse_loader: # Conditionally insert to ClickHouse
-                        await self.clickhouse_loader.bulk_insert_keyword_suggestions(suggestions)
-                    self.logger.info(f"Successfully added {len(suggestions)} keyword suggestions to the database.")
-                except Exception as db_e:
-                    self.logger.error(f"Error adding keyword suggestions to database: {db_e}", exc_info=True)
-                    job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding keyword suggestions: {str(db_e)}", details=str(db_e))
-                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
-                
-                job.results['keyword_suggestions'] = [serialize_model(sug) for sug in suggestions]
-                job.urls_discovered = len(suggestions)
-                job.progress_percentage = 100.0
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"Keyword research job {job.id} completed for '{seed_keyword}'.")
-            else:
-                job.results['keyword_suggestions'] = []
-                job.progress_percentage = 100.0
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"No keyword suggestions found for '{seed_keyword}'. Job {job.id} completed.")
-
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
-
-        except Exception as e:
-            job.status = CrawlStatus.FAILED
-            job.add_error(url="N/A", error_type="KeywordResearchError", message=f"Keyword research failed: {str(e)}", details=str(e))
-            self.logger.error(f"Keyword research job {job.id} failed: {e}", exc_info=True)
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
-            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="KeywordResearchError").inc()
-            await self._send_to_dead_letter_queue(job, f"Keyword research failed: {str(e)}")
-        finally:
-            job.completed_date = datetime.now()
-            self.db.update_crawl_job(job)
+            job.results['keyword_suggestions'] = [serialize_model(sug) for sug in suggestions]
+            job.urls_discovered = len(suggestions)
+            job.progress_percentage = 100.0
+            self.logger.info(f"Keyword research job {job.id} completed for '{seed_keyword}'.")
+        else:
+            job.results['keyword_suggestions'] = []
+            job.progress_percentage = 100.0
+            self.logger.info(f"No keyword suggestions found for '{seed_keyword}'. Job {job.id} completed.")
 
     async def _run_link_health_audit_job(self, job: CrawlJob, source_urls: List[str]):
         """
         Internal method to execute a link health audit job.
         """
-        JOBS_PENDING.labels(job_type=job.job_type).dec()
-        JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
+        self.logger.info(f"Starting link health audit logic for job {job.id} for {len(source_urls)} source URLs.")
 
-        job.status = CrawlStatus.IN_PROGRESS
-        job.started_date = datetime.now()
-        self.db.update_crawl_job(job)
-        self.logger.info(f"Starting link health audit job {job.id} for {len(source_urls)} source URLs.")
-
-        try:
-            async with self.link_health_service as lhs:
-                broken_links_found = await lhs.audit_links_for_source_urls(source_urls)
-            
-            job.results['broken_links_audit'] = broken_links_found
-            job.urls_discovered = len(source_urls)
-            job.links_found = sum(len(links) for links in broken_links_found.values())
-            job.progress_percentage = 100.0
-            job.status = CrawlStatus.COMPLETED
-            self.logger.info(f"Link health audit job {job.id} completed. Found {job.links_found} broken links.")
-
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
-
-        except Exception as e:
-            job.status = CrawlStatus.FAILED
-            job.add_error(url="N/A", error_type="LinkHealthAuditError", message=f"Link health audit failed: {str(e)}", details=str(e)) # Corrected f-string syntax
-            self.logger.error(f"Link health audit job {job.id} failed: {e}", exc_info=True)
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
-            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="LinkHealthAuditError").inc()
-            await self._send_to_dead_letter_queue(job, f"Link health audit failed: {str(e)}")
-        finally:
-            job.completed_date = datetime.now()
-            self.db.update_crawl_job(job)
+        async with self.link_health_service as lhs:
+            broken_links_found = await lhs.audit_links_for_source_urls(source_urls)
+        
+        job.results['broken_links_audit'] = broken_links_found
+        job.urls_discovered = len(source_urls)
+        job.links_found = sum(len(links) for links in broken_links_found.values())
+        job.progress_percentage = 100.0
+        self.logger.info(f"Link health audit job {job.id} completed. Found {job.links_found} broken links.")
 
     async def _run_technical_audit_job(self, job: CrawlJob, urls_to_audit: List[str], config: CrawlConfig):
         """
         Internal method to execute a technical audit job using Lighthouse.
         """
-        JOBS_PENDING.labels(job_type=job.job_type).dec()
-        JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
-
-        job.status = CrawlStatus.IN_PROGRESS
-        job.started_date = datetime.now()
-        self.db.update_crawl_job(job)
-        self.logger.info(f"Starting technical audit job {job.id} for {len(urls_to_audit)} URLs.")
+        self.logger.info(f"Starting technical audit logic for job {job.id} for {len(urls_to_audit)} URLs.")
 
         audited_urls_count = 0
         processed_seo_metrics: List[SEOMetrics] = [] # Collect SEO metrics for bulk insert
-        try:
-            for url in urls_to_audit:
-                try:
-                    lighthouse_metrics = await self.technical_auditor.run_lighthouse_audit(url, config)
-                    
-                    if lighthouse_metrics:
-                        existing_seo_metrics = self.db.get_seo_metrics(url)
-                        if existing_seo_metrics:
-                            existing_seo_metrics.performance_score = lighthouse_metrics.performance_score
-                            existing_seo_metrics.accessibility_score = lighthouse_metrics.accessibility_score
-                            existing_seo_metrics.audit_timestamp = lighthouse_metrics.audit_timestamp
-                            existing_seo_metrics.calculate_seo_score()
-                            self.db.save_seo_metrics(existing_seo_metrics)
-                            processed_seo_metrics.append(existing_seo_metrics) # Add to list
-                            self.logger.info(f"Updated SEO metrics for {url} with Lighthouse scores.")
-                        else:
-                            self.db.save_seo_metrics(lighthouse_metrics)
-                            processed_seo_metrics.append(lighthouse_metrics) # Add to list
-                            self.logger.info(f"Saved new SEO metrics for {url} from Lighthouse.")
-                        
-                        audited_urls_count += 1
-                    else:
-                        self.logger.warning(f"Lighthouse audit failed or returned no data for {url}.")
-                        job.add_error(url=url, error_type="LighthouseAuditError", message=f"Lighthouse audit failed for {url}.", details="No data returned.")
-                        JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="LighthouseAuditError").inc()
-
-                except Exception as e:
-                    self.logger.error(f"Error during technical audit for {url}: {e}", exc_info=True)
-                    job.add_error(url=url, error_type="TechnicalAuditError", message=f"Technical audit failed for {url}: {str(e)}", details=str(e))
-                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="TechnicalAuditError").inc()
+        for url in urls_to_audit:
+            try:
+                lighthouse_metrics = await self.technical_auditor.run_lighthouse_audit(url, config)
                 
-                job.urls_crawled = audited_urls_count
-                job.progress_percentage = min(99.0, (audited_urls_count / len(urls_to_audit)) * 100)
-                self.db.update_crawl_job(job)
+                if lighthouse_metrics:
+                    existing_seo_metrics = self.db.get_seo_metrics(url)
+                    if existing_seo_metrics:
+                        existing_seo_metrics.performance_score = lighthouse_metrics.performance_score
+                        existing_seo_metrics.accessibility_score = lighthouse_metrics.accessibility_score
+                        existing_seo_metrics.audit_timestamp = lighthouse_metrics.audit_timestamp
+                        existing_seo_metrics.calculate_seo_score()
+                        self.db.save_seo_metrics(existing_seo_metrics)
+                        processed_seo_metrics.append(existing_seo_metrics) # Add to list
+                        self.logger.info(f"Updated SEO metrics for {url} with Lighthouse scores.")
+                    else:
+                        self.db.save_seo_metrics(lighthouse_metrics)
+                        processed_seo_metrics.append(lighthouse_metrics) # Add to list
+                        self.logger.info(f"Saved new SEO metrics for {url} from Lighthouse.")
+                    
+                    audited_urls_count += 1
+                else:
+                    self.logger.warning(f"Lighthouse audit failed or returned no data for {url}.")
+                    job.add_error(url=url, error_type="LighthouseAuditError", message=f"Lighthouse audit failed for {url}.", details="No data returned.")
+                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="LighthouseAuditError").inc()
 
-            job.status = CrawlStatus.COMPLETED
-            self.logger.info(f"Technical audit job {job.id} completed. Audited {audited_urls_count} URLs.")
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
-
-            # Bulk insert updated SEO metrics to ClickHouse after job completion
-            if self.clickhouse_loader and processed_seo_metrics:
-                try:
-                    await self.clickhouse_loader.bulk_insert_seo_metrics(processed_seo_metrics)
-                    self.logger.info(f"Successfully bulk inserted {len(processed_seo_metrics)} SEO metrics to ClickHouse for job {job.id}.")
-                except Exception as e:
-                    self.logger.error(f"Error during final ClickHouse bulk insert for technical audit job {job.id}: {e}", exc_info=True)
-                    job.add_error(url="N/A", error_type="ClickHouseError", message=f"ClickHouse bulk insert failed: {str(e)}", details=str(e))
-                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="ClickHouseError").inc()
-
-        except Exception as e: # This outer except catches errors that prevent the loop from completing
-            job.status = CrawlStatus.FAILED
-            job.add_error(url="N/A", error_type="TechnicalAuditJobError", message=f"Technical audit job failed: {str(e)}", details=str(e))
-            self.logger.error(f"Technical audit job {job.id} failed: {e}", exc_info=True)
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
-            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="TechnicalAuditJobError").inc()
-            await self._send_to_dead_letter_queue(job, f"Technical audit job failed: {str(e)}")
-        finally:
-            job.completed_date = datetime.now()
+            except Exception as e:
+                self.logger.error(f"Error during technical audit for {url}: {e}", exc_info=True)
+                job.add_error(url=url, error_type="TechnicalAuditError", message=f"Technical audit failed for {url}: {str(e)}", details=str(e))
+                JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="TechnicalAuditError").inc()
+            
+            job.urls_crawled = audited_urls_count
+            job.progress_percentage = min(99.0, (audited_urls_count / len(urls_to_audit)) * 100)
             self.db.update_crawl_job(job)
+
+        self.logger.info(f"Technical audit job {job.id} completed. Audited {audited_urls_count} URLs.")
+
+        if self.clickhouse_loader and processed_seo_metrics:
+            try:
+                await self.clickhouse_loader.bulk_insert_seo_metrics(processed_seo_metrics)
+                self.logger.info(f"Successfully bulk inserted {len(processed_seo_metrics)} SEO metrics to ClickHouse for job {job.id}.")
+            except Exception as e:
+                self.logger.error(f"Error during final ClickHouse bulk insert for technical audit job {job.id}: {e}", exc_info=True)
+                job.add_error(url="N/A", error_type="ClickHouseError", message=f"ClickHouse bulk insert failed: {str(e)}", details=str(e))
+                JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="ClickHouseError").inc()
 
 
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:
