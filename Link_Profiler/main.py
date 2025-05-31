@@ -177,7 +177,8 @@ async def lifespan(app: FastAPI):
         keyword_service_instance,
         link_health_service_instance,
         technical_auditor_instance,
-        crawl_service_for_lifespan # Include crawl_service for its internal service lifecycles
+        # Removed crawl_service_for_lifespan as it is not an async context manager itself.
+        # Its internal dependencies are already managed here.
     ]
 
     # Conditionally add ClickHouseLoader to context managers
