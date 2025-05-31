@@ -134,10 +134,9 @@ class CrawlService:
         if config is None:
             config = CrawlConfig()
 
-        # For testing purposes, explicitly set respect_robots_txt to False
-        # as quotes.toscrape.com's robots.txt disallows all crawling.
-        # TODO: Make this configurable via API or environment variable for production.
-        config.respect_robots_txt = False 
+        # Make respect_robots_txt configurable via environment variable
+        respect_robots_txt_env = os.getenv("RESPECT_ROBOTS_TXT", "true").lower()
+        config.respect_robots_txt = respect_robots_txt_env == "true"
 
         # Ensure target domain is in allowed domains if specified for crawl jobs
         if job_type == 'backlink_discovery' and target_url:
@@ -182,17 +181,91 @@ class CrawlService:
         
         return job
 
-    async def _run_backlink_crawl(self, job: CrawlJob, initial_seed_urls: List[str], config: CrawlConfig):
+    async def execute_predefined_job(
+        self,
+        job: CrawlJob,
+        initial_seed_urls: Optional[List[str]] = None,
+        keyword: Optional[str] = None,
+        num_results: Optional[int] = None,
+        source_urls_to_audit: Optional[List[str]] = None,
+        urls_to_audit_tech: Optional[List[str]] = None
+    ):
         """
-        Internal method to execute the backlink crawl.
+        Executes a pre-defined CrawlJob object. This method is intended to be called
+        by the JobCoordinator or SatelliteCrawler after a job is dequeued.
         """
-        JOBS_PENDING.labels(job_type=job.job_type).dec() # Decrement pending
-        JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc() # Increment in-progress
+        # Deserialize config from job.config (which is a dict)
+        config = CrawlConfig.from_dict(job.config)
+
+        # Update job status and metrics
+        JOBS_PENDING.labels(job_type=job.job_type).dec()
+        JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
 
         job.status = CrawlStatus.IN_PROGRESS
         job.started_date = datetime.now()
         self.db.update_crawl_job(job)
-        self.logger.info(f"Starting backlink crawl job {job.id} for {job.target_url}")
+        self.logger.info(f"Executing {job.job_type} job {job.id} for {job.target_url}")
+
+        try:
+            if job.job_type == 'backlink_discovery':
+                # initial_seed_urls for backlink_discovery comes from job.config
+                initial_seed_urls_from_config = job.config.get("initial_seed_urls", [])
+                if not initial_seed_urls_from_config or not job.target_url:
+                    raise ValueError("initial_seed_urls and target_url must be provided for 'backlink_discovery' job type.")
+                await self._run_backlink_crawl(job, initial_seed_urls_from_config, config)
+            elif job.job_type == 'serp_analysis':
+                # keyword and num_results for serp_analysis come from job.config
+                keyword_from_config = job.config.get("keyword")
+                num_results_from_config = job.config.get("num_results")
+                if not keyword_from_config:
+                    raise ValueError("keyword must be provided for 'serp_analysis' job type.")
+                await self._run_serp_analysis_job(job, keyword_from_config, num_results_from_config)
+            elif job.job_type == 'keyword_research':
+                # seed_keyword and num_suggestions for keyword_research come from job.config
+                seed_keyword_from_config = job.config.get("seed_keyword")
+                num_suggestions_from_config = job.config.get("num_suggestions")
+                if not seed_keyword_from_config:
+                    raise ValueError("seed_keyword must be provided for 'keyword_research' job type.")
+                await self._run_keyword_research_job(job, seed_keyword_from_config, num_suggestions_from_config)
+            elif job.job_type == 'link_health_audit':
+                # source_urls_to_audit for link_health_audit comes from job.config
+                source_urls_to_audit_from_config = job.config.get("source_urls_to_audit", [])
+                if not source_urls_to_audit_from_config:
+                    raise ValueError("source_urls_to_audit must be provided for 'link_health_audit' job type.")
+                await self._run_link_health_audit_job(job, source_urls_to_audit_from_config)
+            elif job.job_type == 'technical_audit':
+                # urls_to_audit_tech for technical_audit comes from job.config
+                urls_to_audit_tech_from_config = job.config.get("urls_to_audit_tech", [])
+                if not urls_to_audit_tech_from_config:
+                    raise ValueError("urls_to_audit_tech must be provided for 'technical_audit' job type.")
+                await self._run_technical_audit_job(job, urls_to_audit_tech_from_config, config)
+            else:
+                raise ValueError(f"Unknown job type: {job.job_type}")
+            
+            job.status = CrawlStatus.COMPLETED
+            self.logger.info(f"Job {job.id} completed successfully.")
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
+
+        except Exception as e:
+            job.status = CrawlStatus.FAILED
+            job.add_error(url="N/A", error_type=f"{job.job_type}Error", message=f"Job execution failed: {str(e)}", details=str(e))
+            self.logger.error(f"Job {job.id} failed: {e}", exc_info=True)
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
+            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type=f"{job.job_type}Error").inc()
+            await self._send_to_dead_letter_queue(job, f"Job execution failed: {str(e)}")
+        finally:
+            job.completed_date = datetime.now()
+            self.db.update_crawl_job(job)
+            if job.id in self.active_crawlers:
+                del self.active_crawlers[job.id]
+
+    async def _run_backlink_crawl(self, job: CrawlJob, initial_seed_urls: List[str], config: CrawlConfig):
+        """
+        Internal method to execute the backlink crawl.
+        """
+        self.logger.info(f"Starting backlink crawl logic for job {job.id} for {job.target_url}")
 
         crawler = WebCrawler(config)
         self.active_crawlers[job.id] = crawler
@@ -203,10 +276,9 @@ class CrawlService:
         debug_file_path = os.path.join("data", f"crawl_results_debug_{job.id}.jsonl")
         os.makedirs(os.path.dirname(debug_file_path), exist_ok=True)
 
-        try:
-            self.logger.info(f"Attempting to fetch backlinks for {job.target_url} from API.")
-            async with self.backlink_service as bs:
-                api_backlinks = await bs.get_backlinks_from_api(job.target_url)
+        self.logger.info(f"Attempting to fetch backlinks for {job.target_url} from API.")
+        async with self.backlink_service as bs:
+            api_backlinks = await bs.get_backlinks_from_api(job.target_url)
                 
             if api_backlinks:
                 self.logger.info(f"Found {len(api_backlinks)} backlinks from API for {job.target_url}.")
@@ -386,7 +458,7 @@ class CrawlService:
                     job.results['target_domain_info'] = serialize_model(target_domain_obj)
                     self.logger.info(f"Saved domain info for {target_domain_name}.")
                 else:
-                    self.logger.warning(f"Could not retrieve domain info for {target_domain_name}.")
+                    self.logger.warning(f"Could not retrieve domain info for target domain: {target_domain_name}.") # Improved logging
                     job.add_error(url=target_domain_name, error_type="DomainInfoError", message=f"Could not retrieve domain info for target domain.", details="Domain info API returned None.")
                     JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DomainInfoError").inc()
 
@@ -407,8 +479,7 @@ class CrawlService:
                             self.db.save_domain(referring_domain_obj)
                             self.logger.info(f"Saved domain info for referring domain: {referring_domain_obj.name}.")
                         else:
-                            # TODO: Log the specific referring domain name that failed to retrieve info.
-                            pass
+                            self.logger.warning(f"Could not retrieve domain info for referring domain: {referring_domain_obj.name if referring_domain_obj else 'N/A'}.") # Improved logging
 
             if discovered_backlinks:
                 self.logger.info("Enriching discovered backlinks with source domain metrics and updating in DB.")
@@ -658,6 +729,7 @@ class CrawlService:
         self.logger.info(f"Starting technical audit job {job.id} for {len(urls_to_audit)} URLs.")
 
         audited_urls_count = 0
+        processed_seo_metrics: List[SEOMetrics] = [] # Collect SEO metrics for bulk insert
         try:
             for url in urls_to_audit:
                 try:
@@ -671,9 +743,11 @@ class CrawlService:
                             existing_seo_metrics.audit_timestamp = lighthouse_metrics.audit_timestamp
                             existing_seo_metrics.calculate_seo_score()
                             self.db.save_seo_metrics(existing_seo_metrics)
+                            processed_seo_metrics.append(existing_seo_metrics) # Add to list
                             self.logger.info(f"Updated SEO metrics for {url} with Lighthouse scores.")
                         else:
                             self.db.save_seo_metrics(lighthouse_metrics)
+                            processed_seo_metrics.append(lighthouse_metrics) # Add to list
                             self.logger.info(f"Saved new SEO metrics for {url} from Lighthouse.")
                         
                         audited_urls_count += 1
@@ -695,6 +769,16 @@ class CrawlService:
             self.logger.info(f"Technical audit job {job.id} completed. Audited {audited_urls_count} URLs.")
             JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
             JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
+
+            # Bulk insert updated SEO metrics to ClickHouse after job completion
+            if self.clickhouse_loader and processed_seo_metrics:
+                try:
+                    await self.clickhouse_loader.bulk_insert_seo_metrics(processed_seo_metrics)
+                    self.logger.info(f"Successfully bulk inserted {len(processed_seo_metrics)} SEO metrics to ClickHouse for job {job.id}.")
+                except Exception as e:
+                    self.logger.error(f"Error during final ClickHouse bulk insert for technical audit job {job.id}: {e}", exc_info=True)
+                    job.add_error(url="N/A", error_type="ClickHouseError", message=f"ClickHouse bulk insert failed: {str(e)}", details=str(e))
+                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="ClickHouseError").inc()
 
         except Exception as e: # This outer except catches errors that prevent the loop from completing
             job.status = CrawlStatus.FAILED

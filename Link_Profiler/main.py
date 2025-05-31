@@ -599,6 +599,15 @@ async def get_crawl_status(job_id: str):
         raise HTTPException(status_code=404, detail="Crawl job not found.")
     return CrawlJobResponse.from_crawl_job(job)
 
+@app.get("/crawl/all_jobs", response_model=List[CrawlJobResponse])
+async def get_all_crawl_jobs():
+    """
+    Retrieves a list of all crawl jobs in the system.
+    """
+    logger.info("Received request for all crawl jobs.")
+    jobs = db.get_all_crawl_jobs() # New method call
+    return [CrawlJobResponse.from_crawl_job(job) for job in jobs]
+
 @app.post("/crawl/pause/{job_id}", response_model=CrawlJobResponse)
 async def pause_crawl_job(job_id: str):
     """

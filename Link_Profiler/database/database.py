@@ -369,6 +369,18 @@ class Database:
         finally:
             session.close()
 
+    def get_all_crawl_jobs(self) -> List[CrawlJob]:
+        """Retrieves a list of all crawl jobs from the database."""
+        session = self._get_session()
+        try:
+            orm_jobs = session.query(CrawlJobORM).all()
+            return [self._to_dataclass(job) for job in orm_jobs]
+        except Exception as e:
+            logger.error(f"Error retrieving all crawl jobs: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
     def update_crawl_job(self, job: CrawlJob) -> None:
         """Updates an existing crawl job's status and progress."""
         session = self._get_session()
@@ -511,13 +523,14 @@ class Database:
                         continue
                     if hasattr(updated_data, column.key):
                         setattr(orm_seo_metrics, column.key, getattr(updated_data, column.key))
+                session.commit()
                 logger.debug(f"Updated SEO metrics for {seo_metrics.url}")
             else:
                 # Add new
                 orm_seo_metrics = self._to_orm(seo_metrics)
                 session.add(orm_seo_metrics)
+                session.commit()
                 logger.debug(f"Added SEO metrics for {seo_metrics.url}")
-            session.commit()
         except Exception as e:
             session.rollback()
             logger.error(f"Error saving SEO metrics for {seo_metrics.url}: {e}", exc_info=True)
