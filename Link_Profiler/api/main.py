@@ -9,27 +9,28 @@ import time # New: Import time for request duration
 
 # --- Robust Project Root Discovery ---
 # This method searches upwards from the current file's directory
-# until it finds the top-level package directory (Link_Profiler)
-# and then adds its parent to sys.path.
-current_file_path = os.path.abspath(__file__)
-current_dir = os.path.dirname(current_file_path)
+# until it finds the directory that contains 'setup.py'.
+# This directory is considered the project root and is added to sys.path.
+current_file_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = None
 
-# Traverse up to find the directory that contains the 'Link_Profiler' package
-# (i.e., the directory that is the parent of the 'Link_Profiler' folder)
-for _ in range(5): # Search up to 5 levels up
-    if os.path.basename(current_dir) == "Link_Profiler" and \
-       os.path.exists(os.path.join(os.path.dirname(current_dir), 'setup.py')):
-        project_root = os.path.dirname(current_dir)
+# Traverse up to find the directory containing setup.py
+path_to_check = current_file_dir
+for _ in range(5): # Limit search to 5 levels up to prevent infinite loops
+    if os.path.exists(os.path.join(path_to_check, 'setup.py')):
+        project_root = path_to_check
         break
-    current_dir = os.path.dirname(current_dir)
+    path_to_check = os.path.dirname(path_to_check)
 
 if project_root and project_root not in sys.path:
     sys.path.insert(0, project_root)
+    print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
+else:
+    print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
+
 # --- End Robust Project Root Discovery ---
 
 # --- Debugging Print Statements ---
-print("PROJECT_ROOT (discovered):", project_root) # Changed to print the new project_root variable
 print("SYS.PATH (after discovery):", sys.path[:5])  # show the first few entries
 # --- End Debugging Print Statements ---
 
@@ -191,6 +192,7 @@ async def lifespan(app: FastAPI):
     try:
         for cm in context_managers:
             logger.info(f"Application startup: Entering {cm.__class__.__name__} context.")
+            # Call __aenter__ and store the result (which is usually 'self' for context managers)
             entered_contexts.append(await cm.__aenter__())
         
         logger.info("Application startup: Pinging Redis.")
