@@ -55,35 +55,44 @@ from Link_Profiler.monitoring.prometheus_metrics import (
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
 from Link_Profiler.api.queue_endpoints import add_queue_endpoints, submit_crawl_to_queue, QueueCrawlRequest # Import the function to add queue endpoints and submit_crawl_to_queue
+from Link_Profiler.config.config_loader import config_loader # Import the centralized config loader
 
 # Configure logging
 logging.basicConfig(level=logging.INFO) 
 logger = logging.getLogger(__name__)
 
+# Retrieve configurations using the config_loader
+REDIS_URL = config_loader.get("redis.url")
+DATABASE_URL = config_loader.get("database.url")
+DEAD_LETTER_QUEUE_NAME = config_loader.get("queue.dead_letter_queue_name")
+CLICKHOUSE_ENABLED = config_loader.get("clickhouse.enabled")
+CLICKHOUSE_HOST = config_loader.get("clickhouse.host")
+CLICKHOUSE_PORT = config_loader.get("clickhouse.port")
+CLICKHOUSE_USER = config_loader.get("clickhouse.user")
+CLICKHOUSE_PASSWORD = config_loader.get("clickhouse.password")
+API_HOST = config_loader.get("api.host")
+API_PORT = config_loader.get("api.port")
+MONITOR_PORT = config_loader.get("monitoring.monitor_port")
+LOG_LEVEL = config_loader.get("logging.level")
+
 # Initialize database
-db = Database()
+db = Database(db_url=DATABASE_URL)
 
 # Initialize Redis connection pool and client
-redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-redis_pool = redis.ConnectionPool.from_url(redis_url)
+redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
 redis_client: Optional[redis.Redis] = redis.Redis(connection_pool=redis_pool) # Make redis_client optional
 
 
 # Initialize ClickHouse Loader conditionally
 clickhouse_loader_instance: Optional[ClickHouseLoader] = None
-if os.getenv("USE_CLICKHOUSE", "false").lower() == "true":
+if CLICKHOUSE_ENABLED:
     logger.info("ClickHouse integration enabled. Attempting to initialize ClickHouseLoader.")
-    clickhouse_host = os.getenv("CLICKHOUSE_HOST", "localhost")
-    clickhouse_port = int(os.getenv("CLICKHOUSE_PORT", 9000))
-    clickhouse_user = os.getenv("CLICKHOUSE_USER", "default")
-    clickhouse_password = os.getenv("CLICKHOUSE_PASSWORD", "")
-    clickhouse_database = os.getenv("CLICKHOUSE_DATABASE", "default")
     clickhouse_loader_instance = ClickHouseLoader(
-        host=clickhouse_host,
-        port=clickhouse_port,
-        user=clickhouse_user,
-        password=clickhouse_password,
-        database=clickhouse_database
+        host=CLICKHOUSE_HOST,
+        port=CLICKHOUSE_PORT,
+        user=CLICKHOUSE_USER,
+        password=CLICKHOUSE_PASSWORD,
+        database=config_loader.get("clickhouse.database")
     )
 else:
     logger.info("ClickHouse integration disabled (USE_CLICKHOUSE is not 'true').")
@@ -91,48 +100,48 @@ else:
 
 # Initialize DomainService globally, but manage its lifecycle with lifespan
 # Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > Simulated
-if os.getenv("USE_ABSTRACT_API", "false").lower() == "true":
-    abstract_api_key = os.getenv("ABSTRACT_API_KEY")
+if config_loader.get("domain_api.abstract_api.enabled"):
+    abstract_api_key = config_loader.get("domain_api.abstract_api.api_key")
     if not abstract_api_key:
         logger.error("ABSTRACT_API_KEY environment variable not set. Falling back to simulated Domain API.")
         domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient())
     else:
         domain_service_instance = DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key))
-elif os.getenv("USE_REAL_DOMAIN_API", "false").lower() == "true":
-    domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=os.getenv("REAL_DOMAIN_API_KEY", "dummy_domain_key")))
+elif config_loader.get("domain_api.real_api.enabled"):
+    domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=config_loader.get("domain_api.real_api.api_key")))
 else:
     domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient())
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
-if os.getenv("USE_GSC_API", "false").lower() == "true":
+if config_loader.get("backlink_api.gsc_api.enabled"):
     backlink_service_instance = BacklinkService(api_client=GSCBacklinkAPIClient())
-elif os.getenv("USE_OPENLINKPROFILER_API", "false").lower() == "true":
+elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
     backlink_service_instance = BacklinkService(api_client=OpenLinkProfilerAPIClient())
-elif os.getenv("USE_REAL_BACKLINK_API", "false").lower() == "true":
-    backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=os.getenv("REAL_BACKLINK_API_KEY", "dummy_backlink_key")))
+elif config_loader.get("backlink_api.real_api.enabled"):
+    backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=config_loader.get("backlink_api.real_api.api_key")))
 else:
     backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient())
 
 # New: Initialize SERPService and SERPCrawler
 serp_crawler_instance = None
-if os.getenv("USE_PLAYWRIGHT_SERP_CRAWLER", "false").lower() == "true":
+if config_loader.get("serp_crawler.playwright.enabled"):
     logger.info("Initialising Playwright SERPCrawler.")
     serp_crawler_instance = SERPCrawler(
-        headless=os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() == "true",
-        browser_type=os.getenv("PLAYWRIGHT_BROWSER_TYPE", "chromium")
+        headless=config_loader.get("serp_crawler.playwright.headless"),
+        browser_type=config_loader.get("serp_crawler.playwright.browser_type")
     )
 serp_service_instance = SERPService(
-    api_client=RealSERPAPIClient(api_key=os.getenv("REAL_SERP_API_KEY", "dummy_serp_key")) if os.getenv("USE_REAL_SERP_API", "false").lower() == "true" else SimulatedSERPAPIClient(),
+    api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key")) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(),
     serp_crawler=serp_crawler_instance
 )
 
 # New: Initialize KeywordService and KeywordScraper
 keyword_scraper_instance = None
-if os.getenv("USE_KEYWORD_SCRAPER", "false").lower() == "true":
+if config_loader.get("keyword_scraper.enabled"):
     logger.info("Initialising KeywordScraper.")
     keyword_scraper_instance = KeywordScraper()
 keyword_service_instance = KeywordService(
-    api_client=RealKeywordAPIClient(api_key=os.getenv("REAL_KEYWORD_API_KEY", "dummy_keyword_key")) if os.getenv("USE_REAL_KEYWORD_API", "false").lower() == "true" else SimulatedKeywordAPIClient(),
+    api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key")) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(),
     keyword_scraper=keyword_scraper_instance
 )
 
@@ -141,7 +150,7 @@ link_health_service_instance = LinkHealthService(db)
 
 # New: Initialize TechnicalAuditor
 technical_auditor_instance = TechnicalAuditor(
-    lighthouse_path=os.getenv("LIGHTHOUSE_PATH", "lighthouse") # Allow custom path for Lighthouse CLI
+    lighthouse_path=config_loader.get("technical_auditor.lighthouse_path") # Allow custom path for Lighthouse CLI
 )
 
 
@@ -912,7 +921,7 @@ async def get_dead_letters():
     if not redis_client:
         raise HTTPException(status_code=503, detail="Redis is not available, dead-letter queue cannot be accessed.")
     
-    dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
+    dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name")
     try:
         # Fetch all items from the dead-letter queue without removing them
         messages = await redis_client.lrange(dead_letter_queue_name, 0, -1)
@@ -931,7 +940,7 @@ async def clear_dead_letters():
     if not redis_client:
         raise HTTPException(status_code=503, detail="Redis is not available, dead-letter queue cannot be cleared.")
     
-    dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
+    dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name")
     try:
         count = await redis_client.delete(dead_letter_queue_name)
         logger.info(f"Cleared {count} messages from dead-letter queue.")
