@@ -5,19 +5,21 @@ File: Link_Profiler/services/domain_analyzer_service.py
 
 import logging
 from typing import Optional, Dict, Any
+import json # Import json for AI response parsing
 
 from Link_Profiler.core.models import Domain, LinkProfile, SpamLevel, serialize_model # Changed to absolute import
 from Link_Profiler.services.domain_service import DomainService # Changed to absolute import
 from Link_Profiler.database.database import Database # Changed to absolute import
-
+from Link_Profiler.services.ai_service import AIService # New: Import AIService
 
 class DomainAnalyzerService:
     """
     Service for analyzing the potential value of a domain, particularly for expired domains.
     """
-    def __init__(self, database: Database, domain_service: DomainService):
+    def __init__(self, database: Database, domain_service: DomainService, ai_service: AIService): # New: Accept ai_service
         self.db = database
         self.domain_service = domain_service
+        self.ai_service = ai_service # Store AI service
         self.logger = logging.getLogger(__name__)
 
     async def analyze_domain_for_expiration_value(
@@ -124,6 +126,27 @@ class DomainAnalyzerService:
         else:
             reasons.append("No link profile available for analysis.")
             value_score -= 20 # Penalty for no link profile
+
+        # New: AI-driven analysis for more nuanced insights
+        if self.ai_service.enabled:
+            self.logger.info(f"Performing AI-driven analysis for domain: {domain_name}")
+            ai_analysis_result = await self.ai_service.analyze_domain_value(
+                domain_name=domain_name,
+                domain_info=domain_obj,
+                link_profile_summary=link_profile
+            )
+            if ai_analysis_result:
+                ai_value_adjustment = ai_analysis_result.get("value_adjustment", 0)
+                ai_reasons = ai_analysis_result.get("reasons", [])
+                ai_details = ai_analysis_result.get("details", {})
+
+                value_score += ai_value_adjustment
+                reasons.extend([f"AI Insight: {r}" for r in ai_reasons])
+                details["ai_analysis"] = ai_details
+                self.logger.info(f"AI adjusted score for {domain_name} by {ai_value_adjustment}. New score: {value_score}")
+            else:
+                reasons.append("AI domain analysis failed or unavailable.")
+                self.logger.warning(f"AI domain analysis failed for {domain_name}.")
 
         is_valuable = value_score >= 50 # Threshold for "valuable"
 

@@ -12,6 +12,7 @@ import openai
 import redis.asyncio as redis
 
 from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.core.models import Domain, LinkProfile # New: Import Domain and LinkProfile models
 
 logger = logging.getLogger(__name__)
 
@@ -268,3 +269,28 @@ class AIService:
             return []
         return result.get("ideas", [])
 
+    async def analyze_domain_value(self, domain_name: str, domain_info: Optional[Domain], link_profile_summary: Optional[LinkProfile]) -> Dict[str, Any]:
+        """
+        Performs an AI-driven analysis of a domain's value, combining various data points.
+        """
+        domain_details = json.dumps(domain_info.to_dict()) if domain_info else "N/A"
+        link_profile_details = json.dumps(link_profile_summary.to_dict()) if link_profile_summary else "N/A"
+
+        prompt = f"""
+        Analyze the potential value of the domain '{domain_name}' for acquisition or SEO purposes.
+        Consider the following data:
+        Domain Info: {domain_details}
+        Link Profile Summary: {link_profile_details}
+
+        Provide a JSON response with:
+        - "value_adjustment": An integer score adjustment (-50 to +50) to the existing value score based on nuanced AI insights.
+        - "reasons": A list of 3-5 key reasons for the domain's value or lack thereof.
+        - "details": A dictionary with any additional AI-generated insights or flags (e.g., "niche_relevance": "high").
+        """
+        cache_key = f"ai_domain_value:{domain_name}:{hash(domain_details)}:{hash(link_profile_details)}"
+        result = await self._call_ai_with_cache("domain_value_analysis", prompt, cache_key, max_tokens=1000)
+
+        if result is None:
+            self.logger.warning(f"AI domain value analysis failed for '{domain_name}'. Returning default adjustment.")
+            return {"value_adjustment": 0, "reasons": ["AI analysis unavailable."], "details": {}}
+        return result
