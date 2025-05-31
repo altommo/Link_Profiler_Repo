@@ -38,6 +38,10 @@
     ],
     "proxy_retry_delay_seconds": 600
   },
+  "captcha_solving": {
+    "enabled": true,
+    "api_key": "your_production_captcha_solving_api_key_here"
+  },
   "quality_assurance": {
     "content_validation": true,
     "duplicate_detection": true,

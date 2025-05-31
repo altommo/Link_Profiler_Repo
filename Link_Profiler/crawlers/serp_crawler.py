@@ -15,6 +15,7 @@ from playwright_stealth import stealth_async
 
 from Link_Profiler.core.models import SERPResult # Absolute import
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
+from Link_Profiler.utils.content_validator import ContentValidator # New: Import ContentValidator
 from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class SERPCrawler:
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.logger = logging.getLogger(__name__)
+        self.content_validator = ContentValidator() # Initialize ContentValidator
 
     async def __aenter__(self):
         """Launches the browser and creates a new context."""
@@ -258,6 +260,19 @@ class SERPCrawler:
             await self._navigate_to_search(page, keyword, search_engine)
             end_time = datetime.now()
             page_load_time = (end_time - start_time).total_seconds()
+
+            # New: Check for CAPTCHA after navigation
+            page_content = await page.content()
+            validation_issues = self.content_validator.validate_crawl_result(page.url, page_content, page.status())
+            if "CAPTCHA detected" in validation_issues or "Cloudflare 'Attention Required' page" in validation_issues:
+                if config_loader.get("anti_detection.captcha_solving_enabled", False):
+                    self.logger.warning(f"CAPTCHA detected on SERP for '{keyword}'. Attempting to solve (simulated).")
+                    # In a real scenario, you'd send the page content/screenshot to a CAPTCHA solving service API here.
+                    # For now, we'll return an empty list to indicate failure to proceed.
+                    return []
+                else:
+                    self.logger.warning(f"CAPTCHA detected on SERP for '{keyword}', but captcha_solving is disabled. Returning empty results.")
+                    return []
 
             if search_engine.lower() == "google":
                 serp_results = await self._extract_google_serp_results(page, keyword, num_results)

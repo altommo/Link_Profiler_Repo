@@ -308,6 +308,31 @@ class WebCrawler:
                             seo_metrics.validation_issues = validation_issues # Store in SEO metrics
                         if validation_issues:
                             self.logger.warning(f"Content validation issues for {url}: {validation_issues}")
+                            # New: Check for CAPTCHA detection and handle it
+                            if "CAPTCHA detected" in validation_issues or "Cloudflare 'Attention Required' page" in validation_issues:
+                                if self.config.captcha_solving_enabled:
+                                    self.logger.info(f"CAPTCHA detected on {url}. Attempting to solve via external service (simulated).")
+                                    # In a real scenario, you'd send the page content/screenshot to a CAPTCHA solving service API here.
+                                    # For now, we'll treat it as a failure to proceed.
+                                    return CrawlResult(
+                                        url=url,
+                                        status_code=response.status, # Keep original status code
+                                        error_message="CAPTCHA_DETECTED_AND_SOLVING_ATTEMPTED",
+                                        crawl_time_ms=crawl_time_ms,
+                                        crawl_timestamp=current_crawl_timestamp,
+                                        validation_issues=validation_issues
+                                    )
+                                else:
+                                    self.logger.warning(f"CAPTCHA detected on {url}, but captcha_solving is disabled. Marking as blocked.")
+                                    return CrawlResult(
+                                        url=url,
+                                        status_code=response.status, # Keep original status code
+                                        error_message="CAPTCHA_DETECTED_AND_SOLVING_DISABLED",
+                                        crawl_time_ms=crawl_time_ms,
+                                        crawl_timestamp=current_crawl_timestamp,
+                                        validation_issues=validation_issues
+                                    )
+
 
                 elif 'application/pdf' in content_type and self.config.extract_pdfs:
                     content = await response.read() # Read as bytes for PDF

@@ -31,6 +31,10 @@
     "proxy_list": [],
     "proxy_retry_delay_seconds": 300
   },
+  "captcha_solving": {
+    "enabled": false,
+    "api_key": "your_dev_captcha_solving_api_key"
+  },
   "quality_assurance": {
     "content_validation": false,
     "duplicate_detection": true,
