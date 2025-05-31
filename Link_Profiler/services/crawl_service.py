@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 import json
 import redis.asyncio as redis
 
-from playwright.async_api import Browser # New: Import Playwright Browser type
+from playwright.async_api import Browser
 
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
@@ -129,14 +129,15 @@ class CrawlService:
         domain_names_to_analyze: Optional[List[str]] = None,
         min_value_score: Optional[float] = None,
         limit: Optional[int] = None,
-        web3_content_identifier: Optional[str] = None, # New: for web3_crawl
+        web3_content_identifier: Optional[str] = None,
+        social_media_query: Optional[str] = None, # New: for social_media_crawl
         config: Optional[CrawlConfig] = None
     ) -> CrawlJob:
         """
         Creates a new crawl job of a specified type and starts it.
         
         Args:
-            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit', 'technical_audit', 'domain_analysis', 'full_seo_audit', 'web3_crawl').
+            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit', 'technical_audit', 'domain_analysis', 'full_seo_audit', 'web3_crawl', 'social_media_crawl').
             target_url: The primary URL relevant to the job (e.g., for backlink discovery).
             initial_seed_urls: Optional list of URLs to start crawling from (for backlink discovery).
             keyword: Optional keyword for SERP or keyword research jobs.
@@ -147,6 +148,7 @@ class CrawlService:
             min_value_score: Optional minimum value score for domain analysis.
             limit: Optional limit for domain analysis results.
             web3_content_identifier: Optional identifier for Web3 content (e.g., IPFS hash, blockchain address).
+            social_media_query: Optional query for social media content (e.g., hashtag, username).
             config: Optional CrawlConfig object. If None, a default config is used.
         
         Returns:
@@ -168,7 +170,7 @@ class CrawlService:
             id=job_id,
             target_url=target_url or keyword or (urls_to_audit_tech[0] if urls_to_audit_tech else None) or \
                        (domain_names_to_analyze[0] if domain_names_to_analyze else None) or \
-                       web3_content_identifier or "N/A", # New: Add web3_content_identifier
+                       web3_content_identifier or social_media_query or "N/A", # New: Add social_media_query
             job_type=job_type,
             status=CrawlStatus.PENDING,
             config=serialize_model(config)
@@ -205,10 +207,14 @@ class CrawlService:
             if not urls_to_audit_tech:
                 raise ValueError("urls_to_audit_full_seo must be provided for 'full_seo_audit' job type.")
             asyncio.create_task(self._run_full_seo_audit_job(job, urls_to_audit_tech, config))
-        elif job_type == 'web3_crawl': # New: Web3 crawl job type
+        elif job_type == 'web3_crawl':
             if not web3_content_identifier:
                 raise ValueError("web3_content_identifier must be provided for 'web3_crawl' job type.")
             asyncio.create_task(self._run_web3_crawl_job(job, web3_content_identifier, config))
+        elif job_type == 'social_media_crawl': # New: Social media crawl job type
+            if not social_media_query:
+                raise ValueError("social_media_query must be provided for 'social_media_crawl' job type.")
+            asyncio.create_task(self._run_social_media_crawl_job(job, social_media_query, config))
         else:
             raise ValueError(f"Unknown job type: {job_type}")
         
@@ -225,7 +231,8 @@ class CrawlService:
         domain_names_to_analyze: Optional[List[str]] = None,
         min_value_score: Optional[float] = None,
         limit: Optional[int] = None,
-        web3_content_identifier: Optional[str] = None # New: for web3_crawl
+        web3_content_identifier: Optional[str] = None,
+        social_media_query: Optional[str] = None # New: for social_media_crawl
     ):
         """
         Executes a pre-defined CrawlJob object. This method is intended to be called
@@ -284,11 +291,16 @@ class CrawlService:
                 if not urls_to_audit_full_seo:
                     raise ValueError("urls_to_audit_full_seo must be provided for 'full_seo_audit' job type.")
                 await self._run_full_seo_audit_job(job, urls_to_audit_full_seo, config)
-            elif job.job_type == 'web3_crawl': # New: Web3 crawl job type
+            elif job.job_type == 'web3_crawl':
                 web3_content_identifier_from_config = job.config.get("web3_content_identifier")
                 if not web3_content_identifier_from_config:
                     raise ValueError("web3_content_identifier must be provided for 'web3_crawl' job type.")
                 await self._run_web3_crawl_job(job, web3_content_identifier_from_config, config)
+            elif job.job_type == 'social_media_crawl': # New: Social media crawl job type
+                social_media_query_from_config = job.config.get("social_media_query")
+                if not social_media_query_from_config:
+                    raise ValueError("social_media_query must be provided for 'social_media_crawl' job type.")
+                await self._run_social_media_crawl_job(job, social_media_query_from_config, config)
             else:
                 raise ValueError(f"Unknown job type: {job.job_type}")
             
@@ -988,6 +1000,43 @@ class CrawlService:
         # Example of adding an anomaly if no data was found
         if not simulated_web3_data.get("extracted_data") and config.anomaly_detection_enabled:
             job.anomalies_detected.append("Empty Web3 Content")
+            self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
+
+    async def _run_social_media_crawl_job(self, job: CrawlJob, social_media_query: str, config: CrawlConfig):
+        """
+        Internal method to execute a social media crawl job.
+        This is a placeholder for actual social media API interaction logic.
+        """
+        self.logger.info(f"Starting social media crawl logic for job {job.id} for query: '{social_media_query}'")
+
+        # Placeholder for social media crawling logic
+        # In a real scenario, this would involve:
+        # - Authenticating with social media APIs (Twitter API, Facebook Graph API, LinkedIn API)
+        # - Fetching posts, comments, user profiles, follower counts, etc.
+        # - Parsing structured data from API responses
+        
+        # Simulate some work
+        await asyncio.sleep(random.uniform(3, 8)) # Simulate longer social media API calls
+        
+        # Simulate results
+        simulated_social_media_data = {
+            "query": social_media_query,
+            "platform": random.choice(config_loader.get("social_media_crawler.platforms", ["unknown"])),
+            "posts_found": random.randint(10, 100),
+            "users_interacted": random.randint(5, 50),
+            "extracted_sample": f"Simulated social media data for '{social_media_query}'. This could be post text, engagement metrics, etc.",
+            "status": "simulated_success"
+        }
+        
+        job.results['social_media_crawl_data'] = simulated_social_media_data
+        job.urls_crawled = 1 # Count the query as one crawled item
+        job.links_found = simulated_social_media_data.get("posts_found", 0) # Re-use links_found for posts found
+        job.progress_percentage = 100.0
+        self.logger.info(f"Social media crawl job {job.id} completed for '{social_media_query}'. Simulated data extracted.")
+
+        # Example of adding an anomaly if no data was found
+        if simulated_social_media_data.get("posts_found", 0) == 0 and config.anomaly_detection_enabled:
+            job.anomalies_detected.append("No Social Media Posts Found")
             self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
 
 

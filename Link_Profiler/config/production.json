@@ -14,7 +14,8 @@
     "user_agent_rotation": true,
     "render_javascript": true,
     "extract_image_text": true,
-    "crawl_web3_content": true
+    "crawl_web3_content": true,
+    "crawl_social_media": true
   },
   "anti_detection": {
     "stealth_mode": true,
@@ -61,6 +62,10 @@
     "enabled": true,
     "headless": true,
     "browser_type": "chromium"
+  },
+  "social_media_crawler": {
+    "enabled": true,
+    "platforms": ["twitter", "facebook", "linkedin"]
   },
   "quality_assurance": {
     "content_validation": true,
