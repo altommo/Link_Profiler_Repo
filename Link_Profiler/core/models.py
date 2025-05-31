@@ -300,7 +300,7 @@ class CrawlJob:
     """Represents a crawling job"""
     id: str
     target_url: str
-    job_type: str  # 'backlinks', 'seo_audit', 'competitor_analysis', 'serp_analysis', 'keyword_research', 'domain_analysis'
+    job_type: str  # 'backlinks', 'seo_audit', 'competitor_analysis', 'serp_analysis', 'keyword_research', 'domain_analysis', 'full_seo_audit'
     status: CrawlStatus = CrawlStatus.PENDING
     priority: int = 5  # 1-10, higher = more priority
     created_date: datetime = field(default_factory=datetime.now)

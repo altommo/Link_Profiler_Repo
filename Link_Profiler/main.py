@@ -304,6 +304,10 @@ class DomainAnalysisJobRequest(BaseModel): # New Pydantic model for domain analy
     limit: Optional[int] = Field(None, description="Maximum number of valuable domains to return.")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration for the analysis (e.g., user agent).")
 
+class FullSEOAduitRequest(BaseModel): # New Pydantic model for full SEO audit job submission
+    urls_to_audit: List[str] = Field(..., description="A list of URLs to perform a full SEO audit on.")
+    config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration for the audit (e.g., user agent).")
+
 
 class CrawlErrorResponse(BaseModel):
     timestamp: datetime
@@ -610,6 +614,34 @@ async def start_technical_audit(
     )
     queue_request.config["urls_to_audit_tech"] = request.urls_to_audit # Pass actual list
     queue_request.config["job_type"] = "technical_audit" # Explicitly set job type in config for queue processing
+
+    return await submit_crawl_to_queue(queue_request)
+
+@app.post("/audit/full_seo_audit", response_model=Dict[str, str], status_code=202) # New endpoint
+async def start_full_seo_audit(
+    request: FullSEOAduitRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Submits a new full SEO audit job to the queue.
+    This job orchestrates technical and link health audits.
+    """
+    logger.info(f"Received request to submit full SEO audit for {len(request.urls_to_audit)} URLs to queue.")
+    JOBS_CREATED_TOTAL.labels(job_type='full_seo_audit').inc()
+
+    if not request.urls_to_audit:
+        raise HTTPException(status_code=400, detail="At least one URL must be provided for full SEO audit.")
+    
+    target_url = request.urls_to_audit[0] if request.urls_to_audit else "N/A"
+
+    queue_request = QueueCrawlRequest(
+        target_url=target_url,
+        initial_seed_urls=request.urls_to_audit, # Re-using for urls_to_audit_full_seo
+        config=request.config.dict() if request.config else {},
+        priority=5
+    )
+    queue_request.config["urls_to_audit_full_seo"] = request.urls_to_audit # Pass actual list
+    queue_request.config["job_type"] = "full_seo_audit" # Explicitly set job type in config for queue processing
 
     return await submit_crawl_to_queue(queue_request)
 

@@ -242,6 +242,29 @@ async def main():
     else:
         print(f"Technical audit job did not complete successfully.")
 
+    # Test Full SEO Audit (submitted to queue)
+    full_seo_audit_urls = ["http://quotes.toscrape.com/", "http://example.com/broken-links-test"]
+    full_seo_audit_payload = {
+        "urls_to_audit": full_seo_audit_urls,
+        "config": {"user_agent": "FullSEOAduitBot/1.0"}
+    }
+    full_seo_audit_payload["config"]["urls_to_audit_full_seo"] = full_seo_audit_urls
+    full_seo_audit_payload["config"]["job_type"] = "full_seo_audit"
+    full_seo_audit_payload["target_url"] = full_seo_audit_urls[0]
+    full_seo_audit_payload["initial_seed_urls"] = [] # Not applicable for this job type
+
+    job_success, _ = await submit_job_and_poll_status(
+        "/audit/full_seo_audit",
+        full_seo_audit_payload,
+        "full_seo_audit"
+    )
+    if job_success:
+        print(f"Full SEO audit job completed.")
+        # Further checks would involve retrieving job results from /crawl/status/{job_id}
+        # and inspecting the aggregated results.
+    else:
+        print(f"Full SEO audit job did not complete successfully.")
+
     # Test Domain Analysis Job (submitted to queue)
     domain_analysis_domains = ["example.com", "google.com", "nonexistent.xyz", "testdomain.org"]
     domain_analysis_payload = {

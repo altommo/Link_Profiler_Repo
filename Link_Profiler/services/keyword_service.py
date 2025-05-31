@@ -100,7 +100,7 @@ class SimulatedKeywordAPIClient(BaseKeywordAPIClient):
                     data_timestamp=datetime.now()
                 )
             )
-        self.logger.info(f"Simulated {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
+        self.logger.info(f"Simulated {len(suggestions)} keyword suggestions for '{keyword}'.")
         return suggestions
 
 class RealKeywordAPIClient(BaseKeywordAPIClient):
@@ -183,6 +183,76 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
             if close_session_after_use and not session_to_use.closed:
                 await session_to_use.close()
 
+class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
+    """
+    A placeholder client for a real Keyword Metrics API (e.g., Ahrefs, SEMrush, Google Ads API).
+    This client would fetch search volume, CPC, and competition level.
+    """
+    def __init__(self, api_key: str, base_url: str = "https://api.real-keyword-metrics.com"):
+        self.logger = logging.getLogger(__name__ + ".RealKeywordMetricsAPIClient")
+        self.api_key = api_key
+        self.base_url = base_url
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def __aenter__(self):
+        self.logger.info("Entering RealKeywordMetricsAPIClient context.")
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self.api_key}"})
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.logger.info("Exiting RealKeywordMetricsAPIClient context.")
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+
+    async def get_keyword_metrics(self, keyword: str) -> Dict[str, Any]:
+        """
+        Simulates fetching detailed metrics for a single keyword.
+        In a real scenario, this would query a paid API.
+        """
+        endpoint = f"{self.base_url}/metrics"
+        params = {"keyword": keyword, "api_key": self.api_key}
+        self.logger.info(f"Attempting real API call for keyword metrics: {endpoint}?keyword={keyword}...")
+
+        session_to_use = self._session
+        close_session_after_use = False
+        if session_to_use is None or session_to_use.closed:
+            self.logger.warning("RealKeywordMetricsAPIClient: aiohttp session not active. Creating temporary session for this call.")
+            session_to_use = aiohttp.ClientSession(headers={"Authorization": f"Bearer {self.api_key}"})
+            close_session_after_use = True
+
+        try:
+            async with session_to_use.get(endpoint, params=params, timeout=10) as response:
+                response.raise_for_status()
+                # data = await response.json()
+                # return {
+                #     "search_volume_monthly": data.get("volume"),
+                #     "cpc_estimate": data.get("cpc"),
+                #     "competition_level": data.get("competition")
+                # }
+                
+                # Simulate data for now
+                domain_hash = sum(ord(c) for c in keyword.lower())
+                return {
+                    "search_volume_monthly": (domain_hash % 9900) + 100, # 100-10000
+                    "cpc_estimate": round(random.uniform(0.5, 5.0), 2),
+                    "competition_level": random.choice(["Low", "Medium", "High"])
+                }
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Error fetching real keyword metrics for '{keyword}': {e}. Returning empty metrics.")
+            return {}
+        except Exception as e:
+            self.logger.error(f"Unexpected error in real keyword metrics fetch for '{keyword}': {e}. Returning empty metrics.")
+            return {}
+        finally:
+            if close_session_after_use and not session_to_use.closed:
+                await session_to_use.close()
+
+    # This client doesn't provide suggestions, only metrics for given keywords
+    async def get_keyword_suggestions(self, seed_keyword: str, num_suggestions: int = 10) -> List[KeywordSuggestion]:
+        raise NotImplementedError("This client is for metrics, not suggestions.")
+
 
 class KeywordService:
     """
@@ -205,6 +275,16 @@ class KeywordService:
             self.api_client = SimulatedKeywordAPIClient()
             
         self.keyword_scraper = keyword_scraper # Store the KeywordScraper instance
+        
+        # Initialize the metrics API client separately
+        self.metrics_api_client: Optional[RealKeywordMetricsAPIClient] = None
+        if config_loader.get("keyword_api.metrics_api.enabled"):
+            metrics_api_key = config_loader.get("keyword_api.metrics_api.api_key")
+            if not metrics_api_key:
+                self.logger.error("Real Keyword Metrics API enabled but API key not found in config. Metrics will be simulated.")
+            else:
+                self.logger.info("Using RealKeywordMetricsAPIClient for keyword metrics.")
+                self.metrics_api_client = RealKeywordMetricsAPIClient(api_key=metrics_api_key)
 
     async def __aenter__(self):
         """Async context manager entry for KeywordService."""
@@ -212,6 +292,8 @@ class KeywordService:
         await self.api_client.__aenter__()
         if self.keyword_scraper: # Also enter the KeywordScraper's context if it exists
             await self.keyword_scraper.__aenter__()
+        if self.metrics_api_client: # Enter metrics client's context
+            await self.metrics_api_client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -220,15 +302,42 @@ class KeywordService:
         await self.api_client.__aexit__(exc_type, exc_val, exc_tb)
         if self.keyword_scraper: # Also exit the KeywordScraper's context if it exists
             await self.keyword_scraper.__aexit__(exc_type, exc_val, exc_tb)
+        if self.metrics_api_client: # Exit metrics client's context
+            await self.metrics_api_client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def get_keyword_data(self, seed_keyword: str, num_suggestions: int = 10) -> List[KeywordSuggestion]:
         """
-        Fetches keyword suggestions for a given seed keyword.
+        Fetches keyword suggestions for a given seed keyword and enriches them with metrics.
         Prioritizes the local KeywordScraper if available, otherwise uses the API client.
         """
+        suggestions: List[KeywordSuggestion] = []
+        
         if self.keyword_scraper and config_loader.get("keyword_scraper.enabled"):
-            self.logger.info(f"Using KeywordScraper to fetch keyword data for '{seed_keyword}'.")
-            return await self.keyword_scraper.get_keyword_data(seed_keyword, num_suggestions)
+            self.logger.info(f"Using KeywordScraper to fetch keyword suggestions for '{seed_keyword}'.")
+            suggestions = await self.keyword_scraper.get_keyword_data(seed_keyword, num_suggestions)
         else:
-            self.logger.info(f"Using Keyword API client to fetch keyword data for '{seed_keyword}'.")
-            return await self.api_client.get_keyword_suggestions(seed_keyword, num_suggestions)
+            self.logger.info(f"Using Keyword API client to fetch keyword suggestions for '{seed_keyword}'.")
+            # Assuming self.api_client (Simulated/RealKeywordAPIClient) can get suggestions
+            suggestions = await self.api_client.get_keyword_suggestions(seed_keyword, num_suggestions)
+        
+        # Enrich suggestions with metrics if metrics API client is enabled
+        if self.metrics_api_client and config_loader.get("keyword_api.metrics_api.enabled"):
+            self.logger.info(f"Enriching keyword suggestions with metrics using RealKeywordMetricsAPIClient.")
+            for suggestion in suggestions:
+                metrics = await self.metrics_api_client.get_keyword_metrics(suggestion.suggested_keyword)
+                if metrics:
+                    suggestion.search_volume_monthly = metrics.get("search_volume_monthly", suggestion.search_volume_monthly)
+                    suggestion.cpc_estimate = metrics.get("cpc_estimate", suggestion.cpc_estimate)
+                    suggestion.competition_level = metrics.get("competition_level", suggestion.competition_level)
+        else:
+            self.logger.info("Keyword metrics API not enabled or configured. Using simulated metrics.")
+            # If metrics API is not enabled, ensure simulated values are present
+            for suggestion in suggestions:
+                if suggestion.search_volume_monthly is None:
+                    suggestion.search_volume_monthly = random.randint(100, 10000)
+                if suggestion.cpc_estimate is None:
+                    suggestion.cpc_estimate = round(random.uniform(0.5, 5.0), 2)
+                if suggestion.competition_level is None:
+                    suggestion.competition_level = random.choice(["Low", "Medium", "High"])
+
+        return suggestions

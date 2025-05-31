@@ -124,7 +124,7 @@ class CrawlService:
         Creates a new crawl job of a specified type and starts it.
         
         Args:
-            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit', 'technical_audit', 'domain_analysis').
+            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit', 'technical_audit', 'domain_analysis', 'full_seo_audit').
             target_url: The primary URL relevant to the job (e.g., for backlink discovery).
             initial_seed_urls: Optional list of URLs to start crawling from (for backlink discovery).
             keyword: Optional keyword for SERP or keyword research jobs.
@@ -189,6 +189,10 @@ class CrawlService:
             if not domain_names_to_analyze:
                 raise ValueError("domain_names_to_analyze must be provided for 'domain_analysis' job type.")
             asyncio.create_task(self._run_domain_analysis_job(job, domain_names_to_analyze, min_value_score, limit))
+        elif job_type == 'full_seo_audit': # New job type dispatch
+            if not urls_to_audit_tech: # Re-using urls_to_audit_tech for full SEO audit target URLs
+                raise ValueError("urls_to_audit_tech must be provided for 'full_seo_audit' job type.")
+            asyncio.create_task(self._run_full_seo_audit_job(job, urls_to_audit_tech, config))
         else:
             raise ValueError(f"Unknown job type: {job_type}")
         
@@ -262,6 +266,11 @@ class CrawlService:
                 if not domain_names_to_analyze_from_config:
                     raise ValueError("domain_names_to_analyze must be provided for 'domain_analysis' job type.")
                 await self._run_domain_analysis_job(job, domain_names_to_analyze_from_config, min_value_score_from_config, limit_from_config)
+            elif job.job_type == 'full_seo_audit': # New job type dispatch
+                urls_to_audit_full_seo = job.config.get("urls_to_audit_full_seo", [])
+                if not urls_to_audit_full_seo:
+                    raise ValueError("urls_to_audit_full_seo must be provided for 'full_seo_audit' job type.")
+                await self._run_full_seo_audit_job(job, urls_to_audit_full_seo, config)
             else:
                 raise ValueError(f"Unknown job type: {job.job_type}")
             
@@ -513,7 +522,10 @@ class CrawlService:
                             "authority_score": source_domain_obj.authority_score,
                             "trust_score": source_domain_obj.trust_score,
                             "spam_score": source_domain_obj.spam_score,
-                            # TODO: Add other relevant domain metrics to source_domain_metrics if needed for backlink analysis.
+                            "age_days": source_domain_obj.age_days,
+                            "total_pages": source_domain_obj.total_pages,
+                            "total_backlinks": source_domain_obj.total_backlinks,
+                            "referring_domains": source_domain_obj.referring_domains,
                         }
                         self.db.update_backlink(backlink)
                     else:
@@ -747,6 +759,59 @@ class CrawlService:
         job.results['valuable_domains_found'] = [serialize_model(d) for d in valuable_domains_found]
         job.links_found = len(valuable_domains_found) # Re-use links_found for valuable domains count
         self.logger.info(f"Domain analysis job {job.id} completed. Analyzed {analyzed_domains_count} domains, found {len(valuable_domains_found)} valuable.")
+
+    async def _run_full_seo_audit_job(self, job: CrawlJob, urls_to_audit: List[str], config: CrawlConfig):
+        """
+        Internal method to execute a full SEO audit job.
+        This orchestrates technical audit and link health audit for the given URLs.
+        """
+        self.logger.info(f"Starting full SEO audit logic for job {job.id} for {len(urls_to_audit)} URLs.")
+
+        total_urls = len(urls_to_audit)
+        completed_sub_audits = 0
+        
+        job_results = {}
+        job_errors = []
+
+        # Step 1: Run Technical Audit
+        self.logger.info(f"Running technical audit part of full SEO audit for job {job.id}.")
+        try:
+            await self._run_technical_audit_job(job, urls_to_audit, config)
+            job_results['technical_audit'] = job.results.get('technical_audit', 'Completed') # Placeholder for actual results
+            completed_sub_audits += 1
+        except Exception as e:
+            error_msg = f"Technical audit sub-job failed: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            job_errors.append(CrawlError(url="N/A", error_type="FullSEOAduit_TechnicalAuditError", message=error_msg))
+        
+        job.progress_percentage = min(99.0, (completed_sub_audits / 2) * 100) # Assuming 2 main sub-audits
+        self.db.update_crawl_job(job)
+
+        # Step 2: Run Link Health Audit
+        self.logger.info(f"Running link health audit part of full SEO audit for job {job.id}.")
+        try:
+            await self._run_link_health_audit_job(job, urls_to_audit) # Re-using urls_to_audit as source_urls
+            job_results['link_health_audit'] = job.results.get('broken_links_audit', 'Completed') # Placeholder for actual results
+            completed_sub_audits += 1
+        except Exception as e:
+            error_msg = f"Link health audit sub-job failed: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            job_errors.append(CrawlError(url="N/A", error_type="FullSEOAduit_LinkHealthAuditError", message=error_msg))
+
+        job.progress_percentage = min(99.0, (completed_sub_audits / 2) * 100)
+        self.db.update_crawl_job(job)
+
+        # Aggregate results and errors
+        job.results['full_seo_audit_summary'] = {
+            "status": "Completed with errors" if job_errors else "Completed successfully",
+            "sub_audits_completed": completed_sub_audits,
+            "total_urls_audited": total_urls,
+            "errors": [serialize_model(err) for err in job_errors]
+        }
+        job.error_log.extend(job_errors)
+        job.errors_count = len(job.error_log)
+        
+        self.logger.info(f"Full SEO audit job {job.id} completed. Sub-audits: {completed_sub_audits}/2.")
 
 
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:

@@ -78,6 +78,10 @@
     "real_api": {
       "enabled": false,
       "api_key": "your_real_keyword_api_key_here"
+    },
+    "metrics_api": {
+      "enabled": false,
+      "api_key": "your_keyword_metrics_api_key_here"
     }
   },
   "technical_auditor": {

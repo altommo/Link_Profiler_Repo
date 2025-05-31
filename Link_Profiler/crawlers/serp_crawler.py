@@ -91,7 +91,18 @@ class SERPCrawler:
             # Example: check if it's a standard organic result div
             class_attr = await result_div.get_attribute("class")
             if class_attr and ("g" not in class_attr.split() and "xpd" not in class_attr.split()):
-                continue # Skip non-standard result blocks
+                # Refined skipping logic for common non-organic blocks
+                if await result_div.query_selector("div[role='heading'][aria-level='3']"): # People also ask
+                    continue
+                if await result_div.query_selector("g-section-with-header"): # Top stories, videos, etc.
+                    continue
+                if await result_div.query_selector("g-scrolling-carousel"): # Image carousel, shopping
+                    continue
+                # Add more specific checks if needed for other non-organic elements
+                
+                # If it's still not a standard organic result, skip
+                if not await result_div.query_selector("h3"): # Most organic results have an h3 title
+                    continue
 
             link_element = await result_div.query_selector("a[jsaction='click:h5fJlb']") # Common selector for organic links
             if not link_element:
@@ -113,7 +124,12 @@ class SERPCrawler:
                     rich_features.append("Knowledge Panel")
                 if await result_div.query_selector(".g-img"): # Image result
                     rich_features.append("Image Result")
-                # TODO: Add more rich feature detection (e.g., local pack, video carousel)
+                if await result_div.query_selector("g-inner-card"): # Local pack, shopping results
+                    rich_features.append("Local/Shopping Result")
+                if await result_div.query_selector("g-video"): # Video result
+                    rich_features.append("Video Result")
+                if await result_div.query_selector("g-news"): # Top stories/News
+                    rich_features.append("News Result")
 
                 if result_url and title_text:
                     results.append(
@@ -148,7 +164,17 @@ class SERPCrawler:
                 snippet_text = await snippet_element.text_content() if snippet_element else ""
 
                 rich_features = []
-                # TODO: Add Bing-specific rich feature detection
+                # Bing-specific rich feature detection
+                if await result_li.query_selector(".b_factrow"): # Quick answers, definitions
+                    rich_features.append("Quick Answer/Fact")
+                if await result_li.query_selector(".b_ans"): # Answer box
+                    rich_features.append("Answer Box")
+                if await result_li.query_selector(".b_rc"): # Related searches, people also ask
+                    rich_features.append("Related Content")
+                if await result_li.query_selector(".b_img"): # Image result
+                    rich_features.append("Image Result")
+                if await result_li.query_selector(".b_video"): # Video result
+                    rich_features.append("Video Result")
 
                 if result_url and title_text:
                     results.append(
