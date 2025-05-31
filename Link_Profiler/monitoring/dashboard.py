@@ -140,10 +140,17 @@ class MonitoringDashboard:
                 
                 success_rate = (successful_jobs_in_window / total_jobs_in_window) * 100
             
-            # For peak satellites and current load, we still rely on heartbeats or external monitoring
-            # as this data is not directly in the DB job records.
             queue_metrics = await self.get_queue_metrics()
             active_satellites = queue_metrics.get("active_satellites", 0)
+            pending_jobs = queue_metrics.get("pending_jobs", 0)
+
+            # Calculate current load: ratio of pending jobs to active satellites
+            # If no active satellites, load is undefined or very high if jobs are pending
+            current_load = 0.0
+            if active_satellites > 0:
+                current_load = min(1.0, pending_jobs / (active_satellites * 10)) # Arbitrary scaling factor (e.g., 10 jobs per satellite)
+            elif pending_jobs > 0:
+                current_load = 1.0 # High load if jobs are pending but no satellites
             
             return {
                 "memory_usage": memory_usage,
@@ -151,7 +158,7 @@ class MonitoringDashboard:
                 "avg_job_duration": round(avg_job_duration, 2),
                 "success_rate": round(success_rate, 1),
                 "peak_satellites": active_satellites, # Using current active as a proxy for peak for now
-                "current_load": 0.75 # This would require more complex load calculation
+                "current_load": round(current_load, 2)
             }
             
         except Exception as e:
