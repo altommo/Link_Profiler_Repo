@@ -38,6 +38,7 @@ import json # Added import for json
 
 from Link_Profiler.services.crawl_service import CrawlService
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient
+from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
 from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService
 from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient
@@ -517,6 +518,7 @@ class KeywordSuggestionResponse(BaseModel):
     data_timestamp: datetime
 
     @classmethod
+
     def from_keyword_suggestion(cls, suggestion: KeywordSuggestion):
         suggestion_dict = serialize_model(suggestion)
         if isinstance(suggestion_dict.get('data_timestamp'), str):
