@@ -1,0 +1,183 @@
+"""
+Report Service - Manages the generation of various types of reports (e.g., PDF, Excel).
+File: Link_Profiler/services/report_service.py
+"""
+
+import logging
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+import io
+
+# Placeholder for PDF generation library. ReportLab is a common choice.
+# You might need to install it: pip install reportlab
+# For more complex HTML-to-PDF, consider WeasyPrint (requires C libraries) or xhtml2pdf.
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    logging.warning("ReportLab not installed. PDF report generation will be simulated. Install with 'pip install reportlab'.")
+    REPORTLAB_AVAILABLE = False
+
+from Link_Profiler.database.database import Database
+from Link_Profiler.core.models import LinkProfile, Backlink, serialize_model
+
+logger = logging.getLogger(__name__)
+
+class ReportService:
+    """
+    Service for generating various types of reports.
+    """
+    def __init__(self, database: Database):
+        self.db = database
+        self.logger = logging.getLogger(__name__)
+
+    async def __aenter__(self):
+        """No specific async setup needed for this class."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """No specific async cleanup needed for this class."""
+        pass
+
+    async def generate_link_profile_pdf_report(self, target_url: str) -> Optional[io.BytesIO]:
+        """
+        Generates a PDF report for a given link profile.
+        Returns a BytesIO object containing the PDF data.
+        """
+        link_profile = self.db.get_link_profile(target_url)
+        if not link_profile:
+            self.logger.warning(f"Link profile not found for {target_url}. Cannot generate PDF report.")
+            return None
+
+        if not REPORTLAB_AVAILABLE:
+            self.logger.error("ReportLab is not installed. Cannot generate PDF report. Returning simulated PDF.")
+            # Simulate a PDF for demonstration if ReportLab is missing
+            dummy_pdf_content = f"Simulated PDF Report for Link Profile: {target_url}\n\n" \
+                                f"Total Backlinks: {link_profile.total_backlinks}\n" \
+                                f"Unique Domains: {link_profile.unique_domains}\n" \
+                                f"Authority Score: {link_profile.authority_score}\n" \
+                                f"This is a placeholder. Install ReportLab for real PDF generation."
+            return io.BytesIO(dummy_pdf_content.encode('utf-8'))
+
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
+        styles = getSampleStyleSheet()
+
+        story = []
+
+        # Title
+        title_style = ParagraphStyle(
+            'TitleStyle',
+            parent=styles['h1'],
+            fontSize=24,
+            leading=28,
+            alignment=1, # Center
+            spaceAfter=12
+        )
+        story.append(Paragraph("Link Profile Report", title_style))
+        story.append(Paragraph(f"For: <font color='blue'>{link_profile.target_url}</font>", styles['h2']))
+        story.append(Spacer(1, 0.2 * inch))
+
+        # Summary Table
+        summary_data = [
+            ['Metric', 'Value'],
+            ['Target Domain', link_profile.target_domain],
+            ['Total Backlinks', str(link_profile.total_backlinks)],
+            ['Unique Referring Domains', str(link_profile.unique_domains)],
+            ['Dofollow Links', str(link_profile.dofollow_links)],
+            ['Nofollow Links', str(link_profile.nofollow_links)],
+            ['Authority Score', f"{link_profile.authority_score:.2f}"],
+            ['Trust Score', f"{link_profile.trust_score:.2f}"],
+            ['Spam Score', f"{link_profile.spam_score:.2f}"],
+            ['Analysis Date', link_profile.analysis_date.strftime("%Y-%m-%d %H:%M:%S")]
+        ]
+        
+        table_style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ])
+        summary_table = Table(summary_data)
+        summary_table.setStyle(table_style)
+        story.append(summary_table)
+        story.append(Spacer(1, 0.4 * inch))
+
+        # Top Anchor Texts
+        story.append(Paragraph("<h3>Top Anchor Texts</h3>", styles['h3']))
+        if link_profile.anchor_text_distribution:
+            # Sort anchor texts by count descending
+            sorted_anchors = sorted(link_profile.anchor_text_distribution.items(), key=lambda item: item[1], reverse=True)[:10]
+            anchor_data = [['Anchor Text', 'Count']]
+            for text, count in sorted_anchors:
+                anchor_data.append([text, str(count)])
+            
+            anchor_table = Table(anchor_data)
+            anchor_table.setStyle(table_style) # Reuse table style
+            story.append(anchor_table)
+        else:
+            story.append(Paragraph("No anchor text data available.", styles['Normal']))
+        story.append(Spacer(1, 0.4 * inch))
+
+        # Referring Domains (Top 10)
+        story.append(Paragraph("<h3>Top Referring Domains</h3>", styles['h3']))
+        if link_profile.referring_domains:
+            # Convert set to list and take top 10 (alphabetical for consistency)
+            sorted_domains = sorted(list(link_profile.referring_domains))[:10]
+            domain_data = [['Domain']]
+            for domain_name in sorted_domains:
+                domain_data.append([domain_name])
+            
+            domain_table = Table(domain_data)
+            domain_table.setStyle(table_style)
+            story.append(domain_table)
+        else:
+            story.append(Paragraph("No referring domain data available.", styles['Normal']))
+        story.append(Spacer(1, 0.4 * inch))
+
+        # Backlinks (Sample)
+        story.append(Paragraph("<h3>Sample Backlinks</h3>", styles['h3']))
+        if link_profile.backlinks:
+            backlink_header = ['Source URL', 'Anchor Text', 'Type', 'Spam Level']
+            backlink_rows = []
+            for bl in link_profile.backlinks[:10]: # Limit to first 10 for sample
+                backlink_rows.append([
+                    bl.source_url,
+                    bl.anchor_text,
+                    bl.link_type.value,
+                    bl.spam_level.value
+                ])
+            
+            backlink_table_data = [backlink_header] + backlink_rows
+            backlink_table = Table(backlink_table_data, colWidths=[2.5*inch, 1.5*inch, 0.8*inch, 0.8*inch])
+            backlink_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+            ]))
+            story.append(backlink_table)
+        else:
+            story.append(Paragraph("No detailed backlink data available.", styles['Normal']))
+        
+        # Build PDF
+        try:
+            doc.build(story)
+            buffer.seek(0)
+            self.logger.info(f"PDF report generated for link profile: {target_url}")
+            return buffer
+        except Exception as e:
+            self.logger.error(f"Error building PDF for {target_url}: {e}", exc_info=True)
+            return None
+
+# Helper for ReportLab units
+inch = 72

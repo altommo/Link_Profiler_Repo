@@ -22,8 +22,8 @@ else:
 # --- End Robust Project Root Discovery ---
 
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status # New: Import Depends, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # New: Import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
 import logging
@@ -47,13 +47,14 @@ from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeyw
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.ai_service import AIService
 from Link_Profiler.services.alert_service import AlertService
-from Link_Profiler.services.auth_service import AuthService # New: Import AuthService
+from Link_Profiler.services.auth_service import AuthService
+from Link_Profiler.services.report_service import ReportService # New: Import ReportService
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, Token # New: Import User, Token
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, Token
 from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
@@ -183,6 +184,9 @@ alert_service_instance = AlertService(db, connection_manager) # Pass connection_
 # New: Initialize Auth Service
 auth_service_instance = AuthService(db)
 
+# New: Initialize Report Service
+report_service_instance = ReportService(db)
+
 # Initialize DomainAnalyzerService (depends on DomainService)
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance, ai_service_instance)
 
@@ -226,7 +230,8 @@ async def lifespan(app: FastAPI):
         technical_auditor_instance,
         ai_service_instance,
         alert_service_instance, # New: Add AlertService to lifespan
-        auth_service_instance # New: Add AuthService to lifespan
+        auth_service_instance, # New: Add AuthService to lifespan
+        report_service_instance # New: Add ReportService to lifespan
         # Removed crawl_service_for_lifespan as it is not an async context manager itself.
         # Its internal dependencies are already managed here.
     ]
@@ -1470,6 +1475,34 @@ async def delete_alert_rule(rule_id: str, current_user: User = Depends(get_curre
     except Exception as e:
         logger.error(f"Error deleting alert rule {rule_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete alert rule: {e}")
+
+# New: Report Generation Endpoint
+@app.get("/reports/link_profile/{target_url:path}/pdf", response_class=Response)
+async def get_link_profile_pdf_report(target_url: str, current_user: User = Depends(get_current_user)): # Protected endpoint
+    """
+    Generates and returns a PDF report for a specific link profile.
+    """
+    logger.info(f"Received request for PDF report of link profile {target_url} by user: {current_user.username}.")
+    if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
+
+    pdf_buffer = await report_service_instance.generate_link_profile_pdf_report(target_url)
+    
+    if pdf_buffer is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate PDF report.")
+    
+    # If ReportLab was not available, it returns a BytesIO with text content
+    # We need to check if it's a real PDF or simulated text
+    content_type = "application/pdf"
+    if not report_service_instance.REPORTLAB_AVAILABLE: # Access the class variable
+        content_type = "text/plain" # Indicate it's plain text if ReportLab is missing
+        logger.warning("Returning simulated PDF as plain text due to missing ReportLab.")
+
+    headers = {
+        "Content-Disposition": f"attachment; filename=link_profile_report_{urlparse(target_url).netloc}.pdf",
+        "Content-Type": content_type
+    }
+    return Response(content=pdf_buffer.getvalue(), headers=headers, media_type=content_type)
 
 
 @app.get("/health")
