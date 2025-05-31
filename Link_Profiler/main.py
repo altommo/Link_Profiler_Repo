@@ -348,6 +348,8 @@ class CrawlConfigRequest(BaseModel):
     render_javascript: bool = Field(False, description="Whether to use a headless browser to render JavaScript content for crawling.")
     browser_type: Optional[str] = Field("chromium", description="Browser type for headless rendering (chromium, firefox, webkit). Only applicable if render_javascript is true.")
     headless_browser: bool = Field(True, description="Whether the browser should run in headless mode. Only applicable if render_javascript is true.")
+    extract_image_text: bool = Field(False, description="Whether to perform OCR on images to extract text.")
+    crawl_web3_content: bool = Field(False, description="Whether to crawl Web3 content (e.g., IPFS, blockchain data).")
 
 
 class StartCrawlRequest(BaseModel):
@@ -371,6 +373,10 @@ class DomainAnalysisJobRequest(BaseModel): # New Pydantic model for domain analy
 class FullSEOAduitRequest(BaseModel): # New Pydantic model for full SEO audit job submission
     urls_to_audit: List[str] = Field(..., description="A list of URLs to perform a full SEO audit on.")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration for the audit (e.g., user agent).")
+
+class Web3CrawlRequest(BaseModel): # New Pydantic model for Web3 crawl job submission
+    web3_content_identifier: str = Field(..., description="The identifier for Web3 content (e.g., IPFS hash, blockchain address).")
+    config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration.")
 
 
 class CrawlErrorResponse(BaseModel):
@@ -736,6 +742,28 @@ async def start_domain_analysis_job(
     queue_request.config["min_value_score"] = request.min_value_score
     queue_request.config["limit"] = request.limit
     queue_request.config["job_type"] = "domain_analysis" # Explicitly set job type in config for queue processing
+
+    return await submit_crawl_to_queue(queue_request)
+
+@app.post("/web3/crawl", response_model=Dict[str, str], status_code=202) # New endpoint
+async def start_web3_crawl(
+    request: Web3CrawlRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Submits a new Web3 content crawl job to the queue.
+    """
+    logger.info(f"Received request to submit Web3 crawl for identifier: {request.web3_content_identifier} to queue.")
+    JOBS_CREATED_TOTAL.labels(job_type='web3_crawl').inc()
+
+    queue_request = QueueCrawlRequest(
+        target_url=request.web3_content_identifier, # Target URL can be the Web3 identifier
+        initial_seed_urls=[], # Not applicable for Web3 crawl
+        config=request.config.dict() if request.config else {},
+        priority=5
+    )
+    queue_request.config["web3_content_identifier"] = request.web3_content_identifier
+    queue_request.config["job_type"] = "web3_crawl" # Explicitly set job type in config for queue processing
 
     return await submit_crawl_to_queue(queue_request)
 

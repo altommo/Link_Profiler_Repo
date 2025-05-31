@@ -58,7 +58,7 @@ class CrawlService:
         technical_auditor: TechnicalAuditor,
         domain_analyzer_service: DomainAnalyzerService,
         ai_service: AIService,
-        playwright_browser: Optional[Browser] = None # New: Accept playwright_browser
+        playwright_browser: Optional[Browser] = None
     ):
         self.db = database
         self.logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ class CrawlService:
         self.content_validator = ContentValidator()
         self.deduplication_set_key = "processed_backlinks_dedup"
         self.dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
-        self.playwright_browser = playwright_browser # New: Store playwright_browser
+        self.playwright_browser = playwright_browser
 
     async def _is_duplicate_backlink(self, source_url: str, target_url: str) -> bool:
         """
@@ -129,13 +129,14 @@ class CrawlService:
         domain_names_to_analyze: Optional[List[str]] = None,
         min_value_score: Optional[float] = None,
         limit: Optional[int] = None,
+        web3_content_identifier: Optional[str] = None, # New: for web3_crawl
         config: Optional[CrawlConfig] = None
     ) -> CrawlJob:
         """
         Creates a new crawl job of a specified type and starts it.
         
         Args:
-            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit', 'technical_audit', 'domain_analysis', 'full_seo_audit').
+            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit', 'technical_audit', 'domain_analysis', 'full_seo_audit', 'web3_crawl').
             target_url: The primary URL relevant to the job (e.g., for backlink discovery).
             initial_seed_urls: Optional list of URLs to start crawling from (for backlink discovery).
             keyword: Optional keyword for SERP or keyword research jobs.
@@ -145,6 +146,7 @@ class CrawlService:
             domain_names_to_analyze: Optional list of domain names for domain analysis.
             min_value_score: Optional minimum value score for domain analysis.
             limit: Optional limit for domain analysis results.
+            web3_content_identifier: Optional identifier for Web3 content (e.g., IPFS hash, blockchain address).
             config: Optional CrawlConfig object. If None, a default config is used.
         
         Returns:
@@ -164,7 +166,9 @@ class CrawlService:
 
         job = CrawlJob(
             id=job_id,
-            target_url=target_url or keyword or (urls_to_audit_tech[0] if urls_to_audit_tech else None) or (domain_names_to_analyze[0] if domain_names_to_analyze else "N/A"),
+            target_url=target_url or keyword or (urls_to_audit_tech[0] if urls_to_audit_tech else None) or \
+                       (domain_names_to_analyze[0] if domain_names_to_analyze else None) or \
+                       web3_content_identifier or "N/A", # New: Add web3_content_identifier
             job_type=job_type,
             status=CrawlStatus.PENDING,
             config=serialize_model(config)
@@ -201,6 +205,10 @@ class CrawlService:
             if not urls_to_audit_tech:
                 raise ValueError("urls_to_audit_full_seo must be provided for 'full_seo_audit' job type.")
             asyncio.create_task(self._run_full_seo_audit_job(job, urls_to_audit_tech, config))
+        elif job_type == 'web3_crawl': # New: Web3 crawl job type
+            if not web3_content_identifier:
+                raise ValueError("web3_content_identifier must be provided for 'web3_crawl' job type.")
+            asyncio.create_task(self._run_web3_crawl_job(job, web3_content_identifier, config))
         else:
             raise ValueError(f"Unknown job type: {job_type}")
         
@@ -216,7 +224,8 @@ class CrawlService:
         urls_to_audit_tech: Optional[List[str]] = None,
         domain_names_to_analyze: Optional[List[str]] = None,
         min_value_score: Optional[float] = None,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        web3_content_identifier: Optional[str] = None # New: for web3_crawl
     ):
         """
         Executes a pre-defined CrawlJob object. This method is intended to be called
@@ -275,6 +284,11 @@ class CrawlService:
                 if not urls_to_audit_full_seo:
                     raise ValueError("urls_to_audit_full_seo must be provided for 'full_seo_audit' job type.")
                 await self._run_full_seo_audit_job(job, urls_to_audit_full_seo, config)
+            elif job.job_type == 'web3_crawl': # New: Web3 crawl job type
+                web3_content_identifier_from_config = job.config.get("web3_content_identifier")
+                if not web3_content_identifier_from_config:
+                    raise ValueError("web3_content_identifier must be provided for 'web3_crawl' job type.")
+                await self._run_web3_crawl_job(job, web3_content_identifier_from_config, config)
             else:
                 raise ValueError(f"Unknown job type: {job.job_type}")
             
@@ -375,7 +389,7 @@ class CrawlService:
                     discovered_backlinks.extend(filtered_api_backlinks)
                     job.links_found = len(discovered_backlinks)
                     try:
-                        self.db.add_backlinks(filtered_api_backlinks)
+                        self.db.add_backlinks(filtered_api_backlinks) 
                         if self.clickhouse_loader:
                             await self.clickhouse_loader.bulk_insert_backlinks(filtered_api_backlinks)
                         BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(filtered_api_backlinks))
@@ -938,6 +952,43 @@ class CrawlService:
         if job.config.get("anomaly_detection_enabled", False):
             if job.anomalies_detected:
                 self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
+
+    async def _run_web3_crawl_job(self, job: CrawlJob, web3_content_identifier: str, config: CrawlConfig):
+        """
+        Internal method to execute a Web3 content crawl job.
+        This is a placeholder for actual Web3 interaction logic.
+        """
+        self.logger.info(f"Starting Web3 crawl logic for job {job.id} for identifier: '{web3_content_identifier}'")
+        
+        # Placeholder for Web3 crawling logic
+        # In a real scenario, this would involve:
+        # - Connecting to a blockchain node (e.g., web3.py for Ethereum)
+        # - Interacting with IPFS gateways
+        # - Querying smart contracts
+        # - Fetching data from decentralised storage
+        
+        # Simulate some work
+        await asyncio.sleep(5) 
+        
+        # Simulate results
+        simulated_web3_data = {
+            "identifier": web3_content_identifier,
+            "type": "IPFS_Content" if web3_content_identifier.startswith("Qm") else "Blockchain_Transaction",
+            "extracted_data": f"Simulated data for {web3_content_identifier}. This could be text, metadata, or transaction details.",
+            "links_found_web3": ["ipfs://QmSimulatedLink1", "ethereum://0xSimulatedAddress"],
+            "status": "simulated_success"
+        }
+        
+        job.results['web3_crawl_data'] = simulated_web3_data
+        job.urls_crawled = 1 # Count the identifier as one crawled item
+        job.links_found = len(simulated_web3_data.get("links_found_web3", []))
+        job.progress_percentage = 100.0
+        self.logger.info(f"Web3 crawl job {job.id} completed for '{web3_content_identifier}'. Simulated data extracted.")
+
+        # Example of adding an anomaly if no data was found
+        if not simulated_web3_data.get("extracted_data") and config.anomaly_detection_enabled:
+            job.anomalies_detected.append("Empty Web3 Content")
+            self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
 
 
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:

@@ -17,7 +17,8 @@
     "max_file_size_mb": 10,
     "user_agent_rotation": false,
     "render_javascript": false,
-    "extract_image_text": false
+    "extract_image_text": false,
+    "crawl_web3_content": false
   },
   "anti_detection": {
     "stealth_mode": true,

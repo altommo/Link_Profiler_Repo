@@ -338,7 +338,7 @@ class CrawlJob:
     """Represents a crawling job"""
     id: str
     target_url: str
-    job_type: str  # 'backlinks', 'seo_audit', 'competitor_analysis', 'serp_analysis', 'keyword_research', 'domain_analysis', 'full_seo_audit'
+    job_type: str  # 'backlinks', 'seo_audit', 'competitor_analysis', 'serp_analysis', 'keyword_research', 'domain_analysis', 'full_seo_audit', 'web3_crawl'
     status: CrawlStatus = CrawlStatus.PENDING
     priority: int = 5  # 1-10, higher = more priority
     created_date: datetime = field(default_factory=datetime.now)
@@ -442,6 +442,7 @@ class CrawlConfig:
     browser_type: Optional[str] = "chromium" # New: Browser type for headless rendering (chromium, firefox, webkit)
     headless_browser: bool = True # New: Whether the browser should run in headless mode (True by default)
     extract_image_text: bool = False # New: Whether to perform OCR on images to extract text
+    crawl_web3_content: bool = False # New: Whether to crawl Web3 content (e.g., IPFS, blockchain data)
 
     # New fields for domain analysis jobs
     domain_names_to_analyze: List[str] = field(default_factory=list)
@@ -475,7 +476,7 @@ class CrawlConfig:
 
         # Filter out any keys not in the dataclass constructor
         # This prevents errors if the dict contains extra serialization metadata
-        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        valid_keys = {f.name for f f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
 
         return cls(**filtered_data)
