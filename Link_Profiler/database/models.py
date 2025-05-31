@@ -8,6 +8,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.inspection import inspect
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY # Import JSONB and ARRAY
 from datetime import datetime
 import enum
 
