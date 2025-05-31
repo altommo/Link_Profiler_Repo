@@ -658,58 +658,55 @@ class CrawlService:
         self.logger.info(f"Starting technical audit job {job.id} for {len(urls_to_audit)} URLs.")
 
         audited_urls_count = 0
-        for url in urls_to_audit:
-            try:
-                lighthouse_metrics = await self.technical_auditor.run_lighthouse_audit(url, config)
-                
-                if lighthouse_metrics:
-                    existing_seo_metrics = self.db.get_seo_metrics(url)
-                    if existing_seo_metrics:
-                        existing_seo_metrics.performance_score = lighthouse_metrics.performance_score
-                        existing_seo_metrics.accessibility_score = lighthouse_metrics.accessibility_score
-                        existing_seo_metrics.audit_timestamp = lighthouse_metrics.audit_timestamp
-                        existing_seo_metrics.calculate_seo_score()
-                        self.db.save_seo_metrics(existing_seo_metrics)
-                        self.logger.info(f"Updated SEO metrics for {url} with Lighthouse scores.")
-                    else:
-                        self.db.save_seo_metrics(lighthouse_metrics)
-                        self.logger.info(f"Saved new SEO metrics for {url} from Lighthouse.")
-                    
-                    audited_urls_count += 1
-                else:
-                    self.logger.warning(f"Lighthouse audit failed or returned no data for {url}.")
-                    job.add_error(url=url, error_type="LighthouseAuditError", message=f"Lighthouse audit failed for {url}.", details="No data returned.")
-                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="LighthouseAuditError").inc()
-
-            except Exception as e:
-                self.logger.error(f"Error during technical audit for {url}: {e}", exc_info=True)
-                job.add_error(url=url, error_type="TechnicalAuditError", message=f"Technical audit failed for {url}: {str(e)}", details=str(e))
-                JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="TechnicalAuditError").inc()
-            
-            job.urls_crawled = audited_urls_count
-            job.progress_percentage = min(99.0, (audited_urls_count / len(urls_to_audit)) * 100)
-            self.db.update_crawl_job(job)
-
-        job.status = CrawlStatus.COMPLETED
-        self.logger.info(f"Technical audit job {job.id} completed. Audited {audited_urls_count} URLs.")
-
         try:
-            if self.clickhouse_loader: # Conditionally insert to ClickHouse
-                # Fetch all updated SEO metrics for the job and bulk insert to ClickHouse
-                # This would require a method to get all SEO metrics related to this job's URLs
-                # For simplicity, this is left as a TODO for now.
-                pass
-        except Exception as e:
-            self.logger.error(f"Error during final ClickHouse bulk insert for technical audit job {job.id}: {e}", exc_info=True)
-            job.add_error(url="N/A", error_type="ClickHouseError", message=f"ClickHouse bulk insert failed: {str(e)}", details=str(e))
-            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="ClickHouseError").inc()
+            for url in urls_to_audit:
+                try:
+                    lighthouse_metrics = await self.technical_auditor.run_lighthouse_audit(url, config)
+                    
+                    if lighthouse_metrics:
+                        existing_seo_metrics = self.db.get_seo_metrics(url)
+                        if existing_seo_metrics:
+                            existing_seo_metrics.performance_score = lighthouse_metrics.performance_score
+                            existing_seo_metrics.accessibility_score = lighthouse_metrics.accessibility_score
+                            existing_seo_metrics.audit_timestamp = lighthouse_metrics.audit_timestamp
+                            existing_seo_metrics.calculate_seo_score()
+                            self.db.save_seo_metrics(existing_seo_metrics)
+                            self.logger.info(f"Updated SEO metrics for {url} with Lighthouse scores.")
+                        else:
+                            self.db.save_seo_metrics(lighthouse_metrics)
+                            self.logger.info(f"Saved new SEO metrics for {url} from Lighthouse.")
+                        
+                        audited_urls_count += 1
+                    else:
+                        self.logger.warning(f"Lighthouse audit failed or returned no data for {url}.")
+                        job.add_error(url=url, error_type="LighthouseAuditError", message=f"Lighthouse audit failed for {url}.", details="No data returned.")
+                        JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="LighthouseAuditError").inc()
+
+                except Exception as e:
+                    self.logger.error(f"Error during technical audit for {url}: {e}", exc_info=True)
+                    job.add_error(url=url, error_type="TechnicalAuditError", message=f"Technical audit failed for {url}: {str(e)}", details=str(e))
+                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="TechnicalAuditError").inc()
+                
+                job.urls_crawled = audited_urls_count
+                job.progress_percentage = min(99.0, (audited_urls_count / len(urls_to_audit)) * 100)
+                self.db.update_crawl_job(job)
+
+            job.status = CrawlStatus.COMPLETED
+            self.logger.info(f"Technical audit job {job.id} completed. Audited {audited_urls_count} URLs.")
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
+
+        except Exception as e: # This outer except catches errors that prevent the loop from completing
+            job.status = CrawlStatus.FAILED
+            job.add_error(url="N/A", error_type="TechnicalAuditJobError", message=f"Technical audit job failed: {str(e)}", details=str(e))
+            self.logger.error(f"Technical audit job {job.id} failed: {e}", exc_info=True)
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
+            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="TechnicalAuditJobError").inc()
+            await self._send_to_dead_letter_queue(job, f"Technical audit job failed: {str(e)}")
         finally:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
-            if job.status == CrawlStatus.FAILED: # Check if job failed in the try block
-                await self._send_to_dead_letter_queue(job, f"Technical audit failed: {str(e)}")
 
 
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:

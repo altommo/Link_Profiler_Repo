@@ -34,6 +34,7 @@ from urllib.parse import urlparse
 from datetime import datetime
 from contextlib import asynccontextmanager
 import redis.asyncio as redis
+import json # Added import for json
 
 from Link_Profiler.services.crawl_service import CrawlService
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient
