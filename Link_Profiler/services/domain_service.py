@@ -39,11 +39,11 @@ class BaseDomainAPIClient:
 class SimulatedDomainAPIClient(BaseDomainAPIClient):
     """
     A simulated client for domain information APIs.
-    Uses aiohttp to simulate network requests.
+    Generates dummy domain data with consistent scores for testing.
     """
     def __init__(self):
         self.logger = logging.getLogger(__name__ + ".SimulatedDomainAPIClient")
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: Optional[aiohttp.ClientSession] = None # For simulating network calls
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
@@ -412,6 +412,7 @@ class DomainService:
     async def get_domain_info(self, domain_name: str) -> Optional[Domain]:
         """
         Combines WHOIS info and availability check into a Domain model.
+        Assigns consistent simulated scores if no real API is used.
         """
         whois_data = await self.get_whois_info(domain_name)
         if not whois_data:
@@ -458,12 +459,38 @@ class DomainService:
         if creation_date:
             age_days = (datetime.now() - creation_date).days
 
-        # Create a Domain object (authority_score, trust_score, spam_score are placeholders for now)
+        # --- Simulated Authority, Trust, Spam Scores (more consistent for testing) ---
+        # These scores would ideally come from a real SEO metrics API.
+        # For simulation, we make them somewhat deterministic based on domain name.
+        # This allows DomainAnalyzerService to have consistent inputs for its rules.
+        
+        # Simple hash-based simulation for consistent scores
+        # This is NOT a real scoring model, just for predictable testing
+        domain_hash = sum(ord(c) for c in domain_name.lower())
+        
+        simulated_authority_score = (domain_hash % 100) + 1 # 1-100
+        simulated_trust_score = (domain_hash % 80) + 20 # 20-100
+        simulated_spam_score = (domain_hash % 50) + 1 # 1-50
+
+        # Example: make "google.com" always high authority, low spam
+        if domain_name.lower() == "google.com":
+            simulated_authority_score = 95.0
+            simulated_trust_score = 99.0
+            simulated_spam_score = 5.0
+        elif domain_name.lower() == "example.com":
+            simulated_authority_score = 70.0
+            simulated_trust_score = 80.0
+            simulated_spam_score = 15.0
+        elif domain_name.lower() == "nonexistent.xyz":
+            simulated_authority_score = 10.0
+            simulated_trust_score = 20.0
+            simulated_spam_score = 40.0
+        
         domain_obj = Domain(
             name=domain_name,
-            authority_score=random.uniform(0, 100), # Placeholder
-            trust_score=random.uniform(0, 100),     # Placeholder
-            spam_score=random.uniform(0, 100),      # Placeholder
+            authority_score=simulated_authority_score,
+            trust_score=simulated_trust_score,
+            spam_score=simulated_spam_score,
             age_days=age_days,
             whois_data=whois_data,
             first_seen=creation_date,
