@@ -11,6 +11,7 @@ from uuid import uuid4
 from datetime import datetime
 from urllib.parse import urlparse
 import json
+import redis.asyncio as redis # New: Import redis
 
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
@@ -19,7 +20,7 @@ from Link_Profiler.core.models import (
 )
 from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult
 from Link_Profiler.database.database import Database
-from Link_Profiler.database.clickhouse_loader import ClickHouseLoader # New: Import ClickHouseLoader
+from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.services.domain_service import DomainService
 from Link_Profiler.services.backlink_service import BacklinkService
 from Link_Profiler.services.serp_service import SERPService
@@ -40,7 +41,8 @@ class CrawlService:
         serp_service: SERPService,
         keyword_service: KeywordService,
         link_health_service: LinkHealthService,
-        clickhouse_loader: ClickHouseLoader # New: Inject ClickHouseLoader
+        clickhouse_loader: ClickHouseLoader,
+        redis_client: redis.Redis # New: Inject Redis client
     ):
         self.db = database
         self.logger = logging.getLogger(__name__)
@@ -50,7 +52,31 @@ class CrawlService:
         self.serp_service = serp_service
         self.keyword_service = keyword_service
         self.link_health_service = link_health_service
-        self.clickhouse_loader = clickhouse_loader # New: Store ClickHouseLoader
+        self.clickhouse_loader = clickhouse_loader
+        self.redis = redis_client # New: Store Redis client
+        self.deduplication_set_key = "processed_backlinks_dedup" # Key for Redis set
+
+    async def _is_duplicate_backlink(self, source_url: str, target_url: str) -> bool:
+        """
+        Checks if a backlink (source_url, target_url pair) has already been processed
+        using a Redis set for deduplication.
+        Returns True if it's a duplicate (already in set), False otherwise.
+        """
+        # Create a unique identifier for the backlink pair
+        backlink_id = f"{source_url}|{target_url}"
+        
+        # sadd returns 1 if the element was added (new), 0 if it already existed (duplicate)
+        # We want to return True if it's a duplicate (sadd returned 0)
+        is_new = await self.redis.sadd(self.deduplication_set_key, backlink_id)
+        
+        if is_new == 0:
+            self.logger.debug(f"Duplicate backlink detected: {source_url} -> {target_url}")
+            return True
+        else:
+            # Optionally set an expiry for the deduplication key to prevent it from growing indefinitely
+            # For backlinks, you might want to keep them for a long time, or clear periodically.
+            # await self.redis.expire(self.deduplication_set_key, timedelta(days=30)) # Example: expire after 30 days
+            return False
 
     async def create_and_start_crawl_job(
         self, 
@@ -149,16 +175,26 @@ class CrawlService:
                 
             if api_backlinks:
                 self.logger.info(f"Found {len(api_backlinks)} backlinks from API for {job.target_url}.")
-                discovered_backlinks.extend(api_backlinks)
-                job.links_found = len(discovered_backlinks)
-                try:
-                    self.db.add_backlinks(api_backlinks)
-                    # TODO: Add bulk insert to ClickHouse for API backlinks
-                    # await self.clickhouse_loader.bulk_insert_backlinks(api_backlinks)
-                    self.logger.info(f"Successfully added {len(api_backlinks)} API backlinks to the database.")
-                except Exception as db_e:
-                    self.logger.error(f"Error adding API backlinks to database: {db_e}", exc_info=True)
-                    job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding API backlinks: {str(db_e)}", details=str(db_e))
+                
+                # Deduplicate API backlinks before adding
+                deduplicated_api_backlinks = []
+                for bl in api_backlinks:
+                    if not await self._is_duplicate_backlink(bl.source_url, bl.target_url):
+                        deduplicated_api_backlinks.append(bl)
+                
+                if deduplicated_api_backlinks:
+                    discovered_backlinks.extend(deduplicated_api_backlinks)
+                    job.links_found = len(discovered_backlinks)
+                    try:
+                        self.db.add_backlinks(deduplicated_api_backlinks)
+                        # TODO: Add bulk insert to ClickHouse for API backlinks
+                        # await self.clickhouse_loader.bulk_insert_backlinks(deduplicated_api_backlinks)
+                        self.logger.info(f"Successfully added {len(deduplicated_api_backlinks)} new API backlinks to the database.")
+                    except Exception as db_e:
+                        self.logger.error(f"Error adding API backlinks to database: {db_e}", exc_info=True)
+                        job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding API backlinks: {str(db_e)}", details=str(db_e))
+                else:
+                    self.logger.info(f"All {len(api_backlinks)} API backlinks for {job.target_url} were duplicates.")
             else:
                 self.logger.info(f"No backlinks found from API for {job.target_url}. Proceeding with web crawl.")
 
@@ -248,23 +284,25 @@ class CrawlService:
 
                             if crawl_result.links_found:
                                 self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url} via crawl.")
-                                new_backlinks = []
-                                existing_backlink_pairs = {(bl.source_url, bl.target_url) for bl in discovered_backlinks}
+                                
+                                # Deduplicate crawled backlinks before adding
+                                deduplicated_crawled_backlinks = []
                                 for bl in crawl_result.links_found:
-                                    if (bl.source_url, bl.target_url) not in existing_backlink_pairs:
-                                        new_backlinks.append(bl)
-                                        existing_backlink_pairs.add((bl.source_url, bl.target_url))
+                                    if not await self._is_duplicate_backlink(bl.source_url, bl.target_url):
+                                        deduplicated_crawled_backlinks.append(bl)
 
-                                if new_backlinks:
-                                    discovered_backlinks.extend(new_backlinks)
+                                if deduplicated_crawled_backlinks:
+                                    discovered_backlinks.extend(deduplicated_crawled_backlinks)
                                     job.links_found = len(discovered_backlinks)
                                     try:
-                                        self.db.add_backlinks(new_backlinks) 
+                                        self.db.add_backlinks(deduplicated_crawled_backlinks) 
                                         # TODO: Add bulk insert to ClickHouse for crawled backlinks
-                                        # await self.clickhouse_loader.bulk_insert_backlinks(new_backlinks)
+                                        # await self.clickhouse_loader.bulk_insert_backlinks(deduplicated_crawled_backlinks)
                                     except Exception as db_e:
                                         self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
                                         job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error adding crawled backlinks: {str(db_e)}", details=str(db_e))
+                                else:
+                                    self.logger.info(f"All {len(crawl_result.links_found)} crawled backlinks from {crawl_result.url} were duplicates.")
                             
                             self.logger.debug(f"CrawlResult.seo_metrics for {crawl_result.url}: {crawl_result.seo_metrics}")
                             if crawl_result.seo_metrics:

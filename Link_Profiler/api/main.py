@@ -36,6 +36,7 @@ import logging
 from urllib.parse import urlparse
 from datetime import datetime # Import datetime for Pydantic models
 from contextlib import asynccontextmanager # Import asynccontextmanager
+import redis.asyncio as redis # New: Import redis
 
 from Link_Profiler.services.crawl_service import CrawlService # Changed to absolute import
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient # Import new DomainService components
@@ -46,6 +47,7 @@ from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPICli
 from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient # New: Import KeywordService components
 from Link_Profiler.services.link_health_service import LinkHealthService # New: Import LinkHealthService
 from Link_Profiler.database.database import Database # Changed to absolute import
+from Link_Profiler.database.clickhouse_loader import ClickHouseLoader # New: Import ClickHouseLoader
 from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion # Import new core models
 
 
@@ -55,6 +57,25 @@ logger = logging.getLogger(__name__)
 
 # Initialize database
 db = Database()
+
+# Initialize Redis connection pool and client
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+redis_pool = redis.ConnectionPool.from_url(redis_url)
+redis_client = redis.Redis(connection_pool=redis_pool)
+
+# Initialize ClickHouse Loader
+clickhouse_host = os.getenv("CLICKHOUSE_HOST", "localhost")
+clickhouse_port = int(os.getenv("CLICKHOUSE_PORT", 9000))
+clickhouse_user = os.getenv("CLICKHOUSE_USER", "default")
+clickhouse_password = os.getenv("CLICKHOUSE_PASSWORD", "")
+clickhouse_database = os.getenv("CLICKHOUSE_DATABASE", "default")
+clickhouse_loader_instance = ClickHouseLoader(
+    host=clickhouse_host,
+    port=clickhouse_port,
+    user=clickhouse_user,
+    password=clickhouse_password,
+    database=clickhouse_database
+)
 
 # Initialize DomainService globally, but manage its lifecycle with lifespan
 # Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > Simulated
@@ -113,7 +134,9 @@ crawl_service = CrawlService(
     domain_service=domain_service_instance,
     serp_service=serp_service_instance,
     keyword_service=keyword_service_instance,
-    link_health_service=link_health_service_instance # Inject LinkHealthService
+    link_health_service=link_health_service_instance,
+    clickhouse_loader=clickhouse_loader_instance, # Inject ClickHouseLoader
+    redis_client=redis_client # Inject Redis client
 ) 
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service)
@@ -129,19 +152,33 @@ async def lifespan(app: FastAPI):
     async with domain_service_instance as ds:
         logger.info("Application startup: Entering BacklinkService context.")
         async with backlink_service_instance as bs:
-            logger.info("Application startup: Entering SERPService context.") # New
-            async with serp_service_instance as ss: # New
-                logger.info("Application startup: Entering KeywordService context.") # New
-                async with keyword_service_instance as ks: # New
-                    logger.info("Application startup: Entering LinkHealthService context.") # New
-                    async with link_health_service_instance as lhs: # New
-                        # Yield control to the application
-                        yield
-                    logger.info("Application shutdown: Exiting LinkHealthService context.") # New
-                logger.info("Application shutdown: Exiting KeywordService context.") # New
-            logger.info("Application shutdown: Exiting SERPService context.") # New
+            logger.info("Application startup: Entering SERPService context.")
+            async with serp_service_instance as ss:
+                logger.info("Application startup: Entering KeywordService context.")
+                async with keyword_service_instance as ks:
+                    logger.info("Application startup: Entering LinkHealthService context.")
+                    async with link_health_service_instance as lhs:
+                        logger.info("Application startup: Entering ClickHouseLoader context.") # New
+                        async with clickhouse_loader_instance as ch_loader: # New
+                            logger.info("Application startup: Pinging Redis.") # New
+                            try:
+                                await redis_client.ping() # New: Ping Redis to ensure connection
+                                logger.info("Redis connection successful.")
+                            except Exception as e:
+                                logger.error(f"Failed to connect to Redis: {e}")
+                                # Depending on criticality, you might want to raise an exception here
+                                # or degrade gracefully. For now, just log.
+                            
+                            # Yield control to the application
+                            yield
+                        logger.info("Application shutdown: Exiting ClickHouseLoader context.") # New
+                    logger.info("Application shutdown: Exiting LinkHealthService context.")
+                logger.info("Application shutdown: Exiting KeywordService context.")
+            logger.info("Application shutdown: Exiting SERPService context.")
         logger.info("Application shutdown: Exiting BacklinkService context.")
     logger.info("Application shutdown: Exiting DomainService context.")
+    logger.info("Application shutdown: Closing Redis connection pool.") # New
+    await redis_pool.disconnect() # New: Disconnect Redis pool
 
 
 app = FastAPI(
@@ -657,7 +694,7 @@ async def find_expired_domains(request: FindExpiredDomainsRequest):
     )
 
 # New: SERP Endpoints
-@app.post("/serp/search", response_model=List[SERPResultResponse])
+@app.post("/serp/search", response_model=CrawlJobResponse, status_code=202) # Changed response_model to CrawlJobResponse
 async def search_serp(request: SERPSearchRequest):
     """
     Fetches Search Engine Results Page (SERP) data for a given keyword.
@@ -693,7 +730,7 @@ async def get_serp_results(keyword: str):
         raise HTTPException(status_code=500, detail=f"Failed to retrieve SERP results: {e}")
 
 # New: Keyword Research Endpoints
-@app.post("/keyword/suggest", response_model=List[KeywordSuggestionResponse])
+@app.post("/keyword/suggest", response_model=CrawlJobResponse, status_code=202) # Changed response_model to CrawlJobResponse
 async def suggest_keywords(request: KeywordSuggestRequest):
     """
     Fetches keyword suggestions for a given seed keyword.
