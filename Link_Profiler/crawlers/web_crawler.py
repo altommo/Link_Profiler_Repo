@@ -367,6 +367,20 @@ class WebCrawler:
                             seo_metrics.nlp_topics = nlp_results.get("topics", [])
                             self.logger.debug(f"NLP analysis for {url}: Sentiment={nlp_results.get('sentiment')}, Topics={nlp_results.get('topics')}")
 
+                    # New: Perform video content analysis if enabled and video tags are found
+                    if self.config.extract_video_content and self.ai_service.enabled:
+                        soup = BeautifulSoup(content_str, 'lxml')
+                        video_tags = soup.find_all('video', src=True)
+                        if video_tags:
+                            self.logger.info(f"Video content detected on {url}. Simulating video analysis.")
+                            # In a real scenario, you'd fetch video stream/metadata and send to a video analysis API.
+                            # For now, simulate a generic video analysis result.
+                            video_analysis_results = await self.ai_service.analyze_video_content(url)
+                            if video_analysis_results:
+                                seo_metrics.video_transcription = video_analysis_results.get("transcription")
+                                seo_metrics.video_topics = video_analysis_results.get("topics", [])
+                                self.logger.debug(f"Video analysis for {url}: Topics={video_analysis_results.get('topics')}")
+
 
                 elif 'image' in content_type and self.config.extract_image_text and self.ai_service.enabled:
                     # If the URL itself is an image and OCR is enabled
@@ -378,6 +392,20 @@ class WebCrawler:
                     seo_metrics.page_size_bytes = len(content)
                     seo_metrics.calculate_seo_score()
                     links = [] # No links from image content itself
+
+                elif 'video' in content_type and self.config.extract_video_content and self.ai_service.enabled:
+                    # If the URL itself is a video and video analysis is enabled
+                    self.logger.info(f"Performing video analysis on video URL: {url}")
+                    video_analysis_results = await self.ai_service.analyze_video_content(url)
+                    seo_metrics = SEOMetrics(url=url, audit_timestamp=current_crawl_timestamp)
+                    if video_analysis_results:
+                        seo_metrics.video_transcription = video_analysis_results.get("transcription")
+                        seo_metrics.video_topics = video_analysis_results.get("topics", [])
+                    seo_metrics.http_status = status_code
+                    seo_metrics.response_time_ms = crawl_time_ms
+                    seo_metrics.page_size_bytes = len(content)
+                    seo_metrics.calculate_seo_score()
+                    links = [] # No links from video content itself
 
                 elif 'application/pdf' in content_type and self.config.extract_pdfs:
                     # PDF content is bytes, no direct link extraction from here yet

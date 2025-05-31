@@ -15,7 +15,8 @@
     "render_javascript": true,
     "extract_image_text": true,
     "crawl_web3_content": true,
-    "crawl_social_media": true
+    "crawl_social_media": true,
+    "extract_video_content": true
   },
   "anti_detection": {
     "stealth_mode": true,

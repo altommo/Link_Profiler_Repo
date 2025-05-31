@@ -13,7 +13,8 @@
     "render_javascript": false,
     "extract_image_text": false,
     "crawl_web3_content": false,
-    "crawl_social_media": false
+    "crawl_social_media": false,
+    "extract_video_content": false
   },
   "anti_detection": {
     "stealth_mode": true,

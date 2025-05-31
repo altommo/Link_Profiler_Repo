@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import openai
 import redis.asyncio as redis
+import random # New: Import random for simulated video analysis
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.core.models import Domain, LinkProfile # New: Import Domain and LinkProfile models
@@ -365,3 +366,25 @@ class AIService:
         result["sentiment"] = sentiment
 
         return result
+
+    async def analyze_video_content(self, video_url: str, video_data: Optional[bytes] = None) -> Dict[str, Any]:
+        """
+        Simulates AI-powered video content analysis and transcription.
+        In a real scenario, this would involve sending video data to a specialized API.
+        """
+        if not self.enabled:
+            self.logger.warning("AI service is disabled. Cannot perform video analysis.")
+            return {}
+
+        # For simulation, we'll generate dummy data.
+        # In a real implementation, video_data (bytes) would be sent to an API.
+        
+        simulated_transcription = f"Simulated transcription for video at {video_url}. This video discusses {random.choice(['SEO strategies', 'digital marketing trends', 'web development', 'link building techniques'])} and provides actionable insights."
+        simulated_topics = random.sample(["SEO", "Marketing", "Video Content", "Analytics", "Strategy"], random.randint(1, 3))
+        
+        self.logger.info(f"Simulated video analysis for {video_url}. Topics: {simulated_topics}")
+        
+        return {
+            "transcription": simulated_transcription,
+            "topics": simulated_topics
+        }

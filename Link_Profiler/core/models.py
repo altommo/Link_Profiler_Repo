@@ -338,7 +338,7 @@ class CrawlJob:
     """Represents a crawling job"""
     id: str
     target_url: str
-    job_type: str  # 'backlinks', 'seo_audit', 'competitor_analysis', 'serp_analysis', 'keyword_research', 'domain_analysis', 'full_seo_audit', 'web3_crawl', 'social_media_crawl'
+    job_type: str  # 'backlinks', 'seo_audit', 'competitor_analysis', 'serp_analysis', 'keyword_research', 'domain_analysis', 'full_seo_audit', 'web3_crawl', 'social_media_crawl', 'video_analysis'
     status: CrawlStatus = CrawlStatus.PENDING
     priority: int = 5  # 1-10, higher = more priority
     created_date: datetime = field(default_factory=datetime.now)
@@ -444,6 +444,7 @@ class CrawlConfig:
     extract_image_text: bool = False # New: Whether to perform OCR on images to extract text
     crawl_web3_content: bool = False # New: Whether to crawl Web3 content (e.g., IPFS, blockchain data)
     crawl_social_media: bool = False # New: Whether to crawl social media content
+    extract_video_content: bool = False # New: Whether to extract and analyze video content
 
     # New fields for domain analysis jobs
     domain_names_to_analyze: List[str] = field(default_factory=list)
@@ -525,6 +526,8 @@ class SEOMetrics:
     nlp_entities: List[str] = field(default_factory=list) # New: Entities extracted via NLP
     nlp_sentiment: Optional[str] = None # New: Sentiment extracted via NLP (positive, neutral, negative)
     nlp_topics: List[str] = field(default_factory=list) # New: Main topics extracted via NLP
+    video_transcription: Optional[str] = None # New: Transcription of video content
+    video_topics: List[str] = field(default_factory=list) # New: Topics extracted from video content
 
     # AI-generated insights
     ai_content_score: Optional[float] = None # AI-driven content quality score (0-100)

@@ -19,7 +19,8 @@
     "render_javascript": false,
     "extract_image_text": false,
     "crawl_web3_content": false,
-    "crawl_social_media": false
+    "crawl_social_media": false,
+    "extract_video_content": false
   },
   "anti_detection": {
     "stealth_mode": true,
@@ -236,10 +237,12 @@
       "competitor_analysis": "openai/gpt-4",
       "content_generation": "anthropic/claude-3-5-sonnet",
       "content_classification": "anthropic/claude-3-haiku",
-      "content_nlp_analysis": "anthropic/claude-3-haiku"
+      "content_nlp_analysis": "anthropic/claude-3-haiku",
+      "video_analysis": "anthropic/claude-3-haiku"
     },
     "content_classification_enabled": false,
-    "content_nlp_analysis_enabled": false
+    "content_nlp_analysis_enabled": false,
+    "video_analysis_enabled": false
   },
   "api_cache": {
     "enabled": true,
