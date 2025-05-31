@@ -27,15 +27,18 @@ REM Install dependencies
 echo Installing dependencies...
 pip install -r requirements.txt
 
+REM Set PYTHONPATH to include the project root
+set PYTHONPATH=%cd%
+
 REM Start components
-echo Starting coordinator...
-start "Coordinator" python -m queue_system.job_coordinator
+echo Starting coordinator (API server)...
+start "Coordinator" uvicorn Link_Profiler.main:app --host 0.0.0.0 --port 8000 --reload
 
 echo Starting satellite crawler...
-start "Satellite" python -m queue_system.satellite_crawler --region local-dev
+start "Satellite" python -m Link_Profiler.queue_system.satellite_crawler --region local-dev
 
 echo Starting monitoring dashboard...
-start "Monitor" python -m monitoring.dashboard dashboard
+start "Monitor" python -m Link_Profiler.monitoring.dashboard dashboard
 
 echo All components started!
 echo API: http://localhost:8000

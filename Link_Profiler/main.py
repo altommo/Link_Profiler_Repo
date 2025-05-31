@@ -54,7 +54,7 @@ from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
-
+from Link_Profiler.api.queue_endpoints import add_queue_endpoints, submit_crawl_to_queue, QueueCrawlRequest # Import the function to add queue endpoints and submit_crawl_to_queue
 
 # Configure logging
 logging.basicConfig(level=logging.INFO) 
@@ -145,8 +145,9 @@ technical_auditor_instance = TechnicalAuditor(
 )
 
 
-# Initialize other services that depend on domain_service and backlink_service
-crawl_service = CrawlService(
+# Initialize CrawlService (will be used by SatelliteCrawler, not directly by API endpoints for job creation)
+# This instance is primarily for the lifespan management of its internal services.
+crawl_service_for_lifespan = CrawlService(
     db, 
     backlink_service=backlink_service_instance, 
     domain_service=domain_service_instance,
@@ -176,6 +177,7 @@ async def lifespan(app: FastAPI):
         keyword_service_instance,
         link_health_service_instance,
         technical_auditor_instance,
+        crawl_service_for_lifespan # Include crawl_service for its internal service lifecycles
     ]
 
     # Conditionally add ClickHouseLoader to context managers
@@ -415,6 +417,7 @@ class DomainResponse(BaseModel):
     ip_address: Optional[str]
     whois_data: Dict
     total_pages: int
+
     total_backlinks: int
     referring_domains: int
     first_seen: Optional[datetime]
@@ -508,109 +511,82 @@ class KeywordSuggestionResponse(BaseModel):
 
 # --- API Endpoints ---
 
-@app.post("/crawl/start_backlink_discovery", response_model=CrawlJobResponse, status_code=202)
+@app.post("/crawl/start_backlink_discovery", response_model=Dict[str, str], status_code=202)
 async def start_backlink_discovery(
     request: StartCrawlRequest, 
     background_tasks: BackgroundTasks
 ):
     """
-    Starts a new backlink discovery job for a given target URL.
-    The crawl runs in the background.
+    Submits a new backlink discovery job to the queue.
     """
-    logger.info(f"Received request to start backlink discovery for {request.target_url}")
+    logger.info(f"Received request to submit backlink discovery for {request.target_url} to queue.")
     JOBS_CREATED_TOTAL.labels(job_type='backlink_discovery').inc()
-    JOBS_IN_PROGRESS.labels(job_type='backlink_discovery').inc()
+    
+    # Convert StartCrawlRequest to QueueCrawlRequest
+    queue_request = QueueCrawlRequest(
+        target_url=request.target_url,
+        initial_seed_urls=request.initial_seed_urls,
+        config=request.config.dict() if request.config else {},
+        priority=5 # Default priority
+    )
+    
+    return await submit_crawl_to_queue(queue_request)
 
-    # Convert Pydantic CrawlConfigRequest to internal CrawlConfig dataclass using from_dict
-    crawl_config = CrawlConfig.from_dict(request.config.dict() if request.config else {})
-
-    # Validate target_url and initial_seed_urls
-    if not urlparse(request.target_url).scheme or not urlparse(request.target_url).netloc:
-        raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
-    for url in request.initial_seed_urls:
-        if not urlparse(url).scheme or not urlparse(url).netloc:
-            raise HTTPException(status_code=400, detail=f"Invalid initial_seed_url: {url}. Must be a full URL.")
-
-    try:
-        job = await crawl_service.create_and_start_crawl_job(
-            job_type='backlink_discovery',
-            target_url=request.target_url,
-            initial_seed_urls=request.initial_seed_urls,
-            config=crawl_config
-        )
-        return CrawlJobResponse.from_crawl_job(job)
-    except Exception as e:
-        logger.error(f"Error starting crawl job: {e}", exc_info=True)
-        JOBS_IN_PROGRESS.labels(job_type='backlink_discovery').dec() # Decrement on immediate failure
-        JOBS_FAILED_TOTAL.labels(job_type='backlink_discovery').inc()
-        raise HTTPException(status_code=500, detail=f"Failed to start crawl job: {e}")
-
-@app.post("/audit/link_health", response_model=CrawlJobResponse, status_code=202)
+@app.post("/audit/link_health", response_model=Dict[str, str], status_code=202)
 async def start_link_health_audit(
     request: LinkHealthAuditRequest,
     background_tasks: BackgroundTasks
 ):
     """
-    Starts a new link health audit job for a list of source URLs.
-    The audit runs in the background.
+    Submits a new link health audit job to the queue.
     """
-    logger.info(f"Received request to start link health audit for {len(request.source_urls)} URLs.")
+    logger.info(f"Received request to submit link health audit for {len(request.source_urls)} URLs to queue.")
     JOBS_CREATED_TOTAL.labels(job_type='link_health_audit').inc()
-    JOBS_IN_PROGRESS.labels(job_type='link_health_audit').inc()
 
     if not request.source_urls:
         raise HTTPException(status_code=400, detail="At least one source URL must be provided for link health audit.")
     
-    for url in request.source_urls:
-        if not urlparse(url).scheme or not urlparse(url).netloc:
-            raise HTTPException(status_code=400, detail=f"Invalid source_url: {url}. Must be a full URL (e.g., https://example.com).")
+    # For link health audit, target_url can be the first source_url or a generic placeholder
+    target_url = request.source_urls[0] if request.source_urls else "N/A"
 
-    try:
-        job = await crawl_service.create_and_start_crawl_job(
-            job_type='link_health_audit',
-            source_urls_to_audit=request.source_urls
-        )
-        return CrawlJobResponse.from_crawl_job(job)
-    except Exception as e:
-        logger.error(f"Error starting link health audit job: {e}", exc_info=True)
-        JOBS_IN_PROGRESS.labels(job_type='link_health_audit').dec()
-        JOBS_FAILED_TOTAL.labels(job_type='link_health_audit').inc()
-        raise HTTPException(status_code=500, detail=f"Failed to start link health audit job: {e}")
+    queue_request = QueueCrawlRequest(
+        target_url=target_url,
+        initial_seed_urls=request.source_urls, # Re-using initial_seed_urls for source_urls_to_audit
+        config={"job_specific_param": "source_urls_to_audit"}, # Add a flag for job type
+        priority=5
+    )
+    queue_request.config["source_urls_to_audit"] = request.source_urls # Pass actual list
+    queue_request.config["job_type"] = "link_health_audit" # Explicitly set job type in config for queue processing
 
-@app.post("/audit/technical_audit", response_model=CrawlJobResponse, status_code=202)
+    return await submit_crawl_to_queue(queue_request)
+
+@app.post("/audit/technical_audit", response_model=Dict[str, str], status_code=202)
 async def start_technical_audit(
     request: TechnicalAuditRequest,
     background_tasks: BackgroundTasks
 ):
     """
-    Starts a new technical audit job for a list of URLs using Lighthouse.
-    The audit runs in the background.
+    Submits a new technical audit job to the queue.
     """
-    logger.info(f"Received request to start technical audit for {len(request.urls_to_audit)} URLs.")
+    logger.info(f"Received request to submit technical audit for {len(request.urls_to_audit)} URLs to queue.")
     JOBS_CREATED_TOTAL.labels(job_type='technical_audit').inc()
-    JOBS_IN_PROGRESS.labels(job_type='technical_audit').inc()
 
     if not request.urls_to_audit:
         raise HTTPException(status_code=400, detail="At least one URL must be provided for technical audit.")
     
-    for url in request.urls_to_audit:
-        if not urlparse(url).scheme or not urlparse(url).netloc:
-            raise HTTPException(status_code=400, detail=f"Invalid URL for audit: {url}. Must be a full URL (e.g., https://example.com).")
+    # For technical audit, target_url can be the first url_to_audit or a generic placeholder
+    target_url = request.urls_to_audit[0] if request.urls_to_audit else "N/A"
 
-    try:
-        crawl_config = CrawlConfig.from_dict(request.config.dict() if request.config else {})
+    queue_request = QueueCrawlRequest(
+        target_url=target_url,
+        initial_seed_urls=request.urls_to_audit, # Re-using initial_seed_urls for urls_to_audit_tech
+        config=request.config.dict() if request.config else {},
+        priority=5
+    )
+    queue_request.config["urls_to_audit_tech"] = request.urls_to_audit # Pass actual list
+    queue_request.config["job_type"] = "technical_audit" # Explicitly set job type in config for queue processing
 
-        job = await crawl_service.create_and_start_crawl_job(
-            job_type='technical_audit',
-            urls_to_audit_tech=request.urls_to_audit,
-            config=crawl_config
-        )
-        return CrawlJobResponse.from_crawl_job(job)
-    except Exception as e:
-        logger.error(f"Error starting technical audit job: {e}", exc_info=True)
-        JOBS_IN_PROGRESS.labels(job_type='technical_audit').dec()
-        JOBS_FAILED_TOTAL.labels(job_type='technical_audit').inc()
-        raise HTTPException(status_code=500, detail=f"Failed to start technical audit job: {e}")
+    return await submit_crawl_to_queue(queue_request)
 
 
 @app.get("/crawl/status/{job_id}", response_model=CrawlJobResponse)
@@ -629,7 +605,7 @@ async def pause_crawl_job(job_id: str):
     Pauses an in-progress crawl job.
     """
     try:
-        job = await crawl_service.pause_crawl_job(job_id)
+        job = await crawl_service_for_lifespan.pause_crawl_job(job_id) # Use the lifespan-managed instance
         # Prometheus: Update gauge for job status
         if job.job_type:
             JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
@@ -647,7 +623,7 @@ async def resume_crawl_job(job_id: str):
     Resumes a paused crawl job.
     """
     try:
-        job = await crawl_service.resume_crawl_job(job_id)
+        job = await crawl_service_for_lifespan.resume_crawl_job(job_id) # Use the lifespan-managed instance
         # Prometheus: Update gauge for job status
         if job.job_type:
             JOBS_PENDING.labels(job_type=job.job_type).dec()
@@ -665,7 +641,7 @@ async def stop_crawl_job(job_id: str):
     Stops an active or paused crawl job.
     """
     try:
-        job = await crawl_service.stop_crawl_job(job_id)
+        job = await crawl_service_for_lifespan.stop_crawl_job(job_id) # Use the lifespan-managed instance
         # Prometheus: Update gauge for job status
         if job.job_type:
             if job.status == CrawlStatus.STOPPED: # Only decrement if it was actually in progress/paused
@@ -794,27 +770,23 @@ async def find_expired_domains(request: FindExpiredDomainsRequest):
         valuable_domains_found=len(found_domains)
     )
 
-@app.post("/serp/search", response_model=CrawlJobResponse, status_code=202)
+@app.post("/serp/search", response_model=Dict[str, str], status_code=202)
 async def search_serp(request: SERPSearchRequest):
     """
-    Fetches Search Engine Results Page (SERP) data for a given keyword.
+    Submits a SERP search job to the queue.
     """
-    logger.info(f"Received request to search SERP for keyword: {request.keyword}")
+    logger.info(f"Received request to submit SERP search for keyword: {request.keyword} to queue.")
     JOBS_CREATED_TOTAL.labels(job_type='serp_analysis').inc()
-    JOBS_IN_PROGRESS.labels(job_type='serp_analysis').inc()
 
-    try:
-        job = await crawl_service.create_and_start_crawl_job(
-            job_type='serp_analysis',
-            keyword=request.keyword,
-            num_results=request.num_results
-        )
-        return CrawlJobResponse.from_crawl_job(job)
-    except Exception as e:
-        logger.error(f"Error fetching SERP results for '{request.keyword}': {e}", exc_info=True)
-        JOBS_IN_PROGRESS.labels(job_type='serp_analysis').dec()
-        JOBS_FAILED_TOTAL.labels(job_type='serp_analysis').inc()
-        raise HTTPException(status_code=500, detail=f"Failed to fetch SERP results: {e}")
+    queue_request = QueueCrawlRequest(
+        target_url=request.keyword, # Target URL can be the keyword for this job type
+        initial_seed_urls=[], # Not applicable for SERP search
+        config={"keyword": request.keyword, "num_results": request.num_results, "search_engine": request.search_engine},
+        priority=5
+    )
+    queue_request.config["job_type"] = "serp_analysis" # Explicitly set job type in config for queue processing
+
+    return await submit_crawl_to_queue(queue_request)
 
 @app.get("/serp/results/{keyword}", response_model=List[SERPResultResponse])
 async def get_serp_results(keyword: str):
@@ -833,27 +805,23 @@ async def get_serp_results(keyword: str):
         logger.error(f"Error retrieving stored SERP results for '{keyword}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve SERP results: {e}")
 
-@app.post("/keyword/suggest", response_model=CrawlJobResponse, status_code=202)
+@app.post("/keyword/suggest", response_model=Dict[str, str], status_code=202)
 async def suggest_keywords(request: KeywordSuggestRequest):
     """
-    Fetches keyword suggestions for a given seed keyword.
+    Submits a keyword suggestion job to the queue.
     """
-    logger.info(f"Received request to get keyword suggestions for seed: {request.seed_keyword}")
+    logger.info(f"Received request to submit keyword suggestions for seed: {request.seed_keyword} to queue.")
     JOBS_CREATED_TOTAL.labels(job_type='keyword_research').inc()
-    JOBS_IN_PROGRESS.labels(job_type='keyword_research').inc()
 
-    try:
-        job = await crawl_service.create_and_start_crawl_job(
-            job_type='keyword_research',
-            keyword=request.seed_keyword,
-            num_results=request.num_suggestions
-        )
-        return CrawlJobResponse.from_crawl_job(job)
-    except Exception as e:
-        logger.error(f"Error fetching keyword suggestions for '{request.seed_keyword}': {e}", exc_info=True)
-        JOBS_IN_PROGRESS.labels(job_type='keyword_research').dec()
-        JOBS_FAILED_TOTAL.labels(job_type='keyword_research').inc()
-        raise HTTPException(status_code=500, detail=f"Failed to fetch keyword suggestions: {e}")
+    queue_request = QueueCrawlRequest(
+        target_url=request.seed_keyword, # Target URL can be the seed_keyword for keyword jobs
+        initial_seed_urls=[], # Not applicable
+        config={"seed_keyword": request.seed_keyword, "num_suggestions": request.num_suggestions},
+        priority=5
+    )
+    queue_request.config["job_type"] = "keyword_research" # Explicitly set job type in config for queue processing
+
+    return await submit_crawl_to_queue(queue_request)
 
 @app.get("/keyword/suggestions/{seed_keyword}", response_model=List[KeywordSuggestionResponse])
 async def get_keyword_suggestions(seed_keyword: str):
@@ -921,3 +889,6 @@ async def clear_dead_letters():
     except Exception as e:
         logger.error(f"Error clearing dead-letter messages: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to clear dead-letter messages: {e}")
+
+# Add queue-related endpoints to the main app
+add_queue_endpoints(app)

@@ -29,7 +29,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
-COPY Link_Profiler/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright browsers (Chromium)
@@ -39,7 +39,7 @@ RUN playwright install --with-deps chromium
 # Install Lighthouse CLI globally
 RUN npm install -g lighthouse
 
-# Copy application code
+# Copy application code (the entire Link_Profiler package)
 COPY Link_Profiler/ ./Link_Profiler/
 
 # Set Python path

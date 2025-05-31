@@ -6,18 +6,40 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libxkbcommon0 \
+    libdrm-dev \
+    libgbm-dev \
+    libasound2 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
+    libfontconfig1 \
+    libjpeg-dev \
+    libpng-dev \
+    zlib1g-dev \
+    # Dependencies for Node.js and npm (if needed by crawlers)
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only satellite requirements (lighter)
-COPY Link_Profiler/deployment/docker/requirements-satellite.txt .
+COPY requirements-satellite.txt .
 RUN pip install --no-cache-dir -r requirements-satellite.txt
+
+# Install Playwright browsers (Chromium) - required for SERPCrawler
+RUN playwright install --with-deps chromium
+
+# Install Lighthouse CLI globally (if technical_auditor is used by satellite)
+RUN npm install -g lighthouse
 
 # Copy only necessary components for satellite
 COPY Link_Profiler/crawlers/ ./Link_Profiler/crawlers/
-COPY Link_Profiler/core/models.py ./Link_Profiler/core/models.py
-COPY Link_Profiler/core/__init__.py ./Link_Profiler/core/__init__.py
+COPY Link_Profiler/core/ ./Link_Profiler/core/
+COPY Link_Profiler/services/ ./Link_Profiler/services/
+COPY Link_Profiler/database/ ./Link_Profiler/database/
+COPY Link_Profiler/monitoring/prometheus_metrics.py ./Link_Profiler/monitoring/prometheus_metrics.py
 COPY Link_Profiler/__init__.py ./Link_Profiler/__init__.py
-COPY Link_Profiler/queue_system/satellite_crawler.py .
+COPY Link_Profiler/queue_system/satellite_crawler.py ./Link_Profiler/queue_system/satellite_crawler.py
 
 # Set Python path
 ENV PYTHONPATH=/app
@@ -28,4 +50,4 @@ ENV REGION=default
 ENV LOG_LEVEL=INFO
 
 # Start satellite crawler
-CMD ["python", "satellite_crawler.py", "--redis-url", "$REDIS_URL", "--region", "$REGION", "--log-level", "$LOG_LEVEL"]
+CMD ["python", "-m", "Link_Profiler.queue_system.satellite_crawler", "--redis-url", "$REDIS_URL", "--region", "$REGION", "--log-level", "$LOG_LEVEL"]

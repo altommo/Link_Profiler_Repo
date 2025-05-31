@@ -27,17 +27,20 @@ source venv/bin/activate
 echo "📦 Installing dependencies..."
 pip install -r requirements.txt
 
+# Set PYTHONPATH to include the project root
+export PYTHONPATH=$(pwd)
+
 # Start components in background
 echo "🚀 Starting coordinator..."
-python -m queue_system.job_coordinator &
+uvicorn Link_Profiler.main:app --host 0.0.0.0 --port 8000 --reload &
 COORDINATOR_PID=$!
 
 echo "🛰️ Starting satellite crawler..."
-python -m queue_system.satellite_crawler --region local-dev &
+python -m Link_Profiler.queue_system.satellite_crawler --region local-dev &
 SATELLITE_PID=$!
 
 echo "📊 Starting monitoring dashboard..."
-python -m monitoring.dashboard dashboard &
+python -m Link_Profiler.monitoring.dashboard dashboard &
 MONITOR_PID=$!
 
 echo "✅ All components started!"
