@@ -7,7 +7,9 @@ SQLAlchemy
 psycopg2-binary
 google-api-python-client
 google-auth-oauthlib
-clickhouse-driver # New: For ClickHouse bulk loading
+clickhouse-driver
+playwright # New: For Playwright-based crawlers
+playwright-stealth # New: For Playwright bot detection evasion
 
 # Queue System Dependencies
 redis>=4.5.0
