@@ -385,6 +385,10 @@ class CrawlConfig:
     human_like_delays: bool = False # New: Add small random delays to mimic human behavior
     stealth_mode: bool = True # New: Enable Playwright stealth mode (default True for Playwright)
     
+    # New fields for proxy management
+    use_proxies: bool = False # New: Whether to use proxies for crawling
+    proxy_list: List[str] = field(default_factory=list) # New: List of proxy URLs (e.g., 'http://user:pass@ip:port')
+
     # New fields for domain analysis jobs
     domain_names_to_analyze: List[str] = field(default_factory=list)
     min_value_score: float = 50.0

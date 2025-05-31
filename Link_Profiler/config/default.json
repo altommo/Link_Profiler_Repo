@@ -23,6 +23,11 @@
     "human_like_delays": false,
     "request_header_randomization": false
   },
+  "proxy_management": {
+    "enabled": false,
+    "proxy_list": [],
+    "proxy_retry_delay_seconds": 300
+  },
   "quality_assurance": {
     "content_validation": false,
     "duplicate_detection": true,

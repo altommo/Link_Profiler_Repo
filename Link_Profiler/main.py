@@ -55,6 +55,8 @@ from Link_Profiler.api.queue_endpoints import add_queue_endpoints, submit_crawl_
 from Link_Profiler.config.config_loader import ConfigLoader # Import the ConfigLoader class
 from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config # New: Import logging setup
 from Link_Profiler.utils.data_exporter import export_to_csv # New: Import data_exporter
+from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import user_agent_manager
+from Link_Profiler.utils.proxy_manager import proxy_manager # New: Import proxy_manager
 
 # Initialize and load config once using the absolute path
 config_loader = ConfigLoader()
@@ -299,6 +301,8 @@ class CrawlConfigRequest(BaseModel):
     request_header_randomization: bool = Field(False, description="Whether to randomize other request headers (Accept, Accept-Language, etc.).")
     human_like_delays: bool = Field(False, description="Whether to add small random delays to mimic human browsing behavior.")
     stealth_mode: bool = Field(True, description="Whether to enable Playwright stealth mode for browser-based crawling.")
+    use_proxies: bool = Field(False, description="Whether to use proxies for crawling.")
+    proxy_list: Optional[List[str]] = Field(None, description="List of proxy URLs (e.g., 'http://user:pass@ip:port').")
 
 
 class StartCrawlRequest(BaseModel):

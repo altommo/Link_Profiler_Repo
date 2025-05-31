@@ -24,6 +24,7 @@ from .link_extractor import LinkExtractor
 from .content_parser import ContentParser
 from .robots_parser import RobotsParser
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
+from Link_Profiler.utils.proxy_manager import proxy_manager # New: Import ProxyManager
 from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
 
@@ -114,6 +115,18 @@ class WebCrawler:
         self.crawled_urls: Set[str] = set()
         self.failed_urls: Set[str] = set()
         self.logger = logging.getLogger(__name__)
+
+        # Initialize ProxyManager if enabled
+        if config_loader.get("proxy_management.enabled", False) and self.config.proxy_list:
+            proxy_manager.load_proxies(
+                self.config.proxy_list,
+                config_loader.get("proxy_management.proxy_retry_delay_seconds", 300)
+            )
+            self.use_proxies = True
+            self.logger.info("WebCrawler initialized with proxy management enabled.")
+        else:
+            self.use_proxies = False
+            self.logger.info("WebCrawler initialized without proxy management.")
         
     async def __aenter__(self):
         """Async context manager entry"""
@@ -190,8 +203,16 @@ class WebCrawler:
         if config_loader.get("anti_detection.human_like_delays", False):
             await asyncio.sleep(random.uniform(0.1, 0.5)) # Small random delay before request
 
+        current_proxy = None
+        if self.use_proxies:
+            current_proxy = proxy_manager.get_next_proxy()
+            if current_proxy:
+                self.logger.debug(f"Using proxy {current_proxy} for {url}")
+            else:
+                self.logger.warning(f"No available proxies for {url}. Proceeding without proxy.")
+
         try:
-            async with self.session.get(url, allow_redirects=self.config.follow_redirects) as response:
+            async with self.session.get(url, allow_redirects=self.config.follow_redirects, proxy=current_proxy) as response:
                 crawl_time_ms = int((time.time() - start_time) * 1000)
                 
                 # Get content type
@@ -248,6 +269,8 @@ class WebCrawler:
                 )
                 
         except asyncio.TimeoutError:
+            if current_proxy:
+                proxy_manager.mark_proxy_bad(current_proxy, reason="timeout")
             return CrawlResult(
                 url=url,
                 status_code=408,
@@ -255,8 +278,30 @@ class WebCrawler:
                 crawl_time_ms=int((time.time() - start_time) * 1000),
                 crawl_timestamp=current_crawl_timestamp
             )
+        except aiohttp.ClientProxyConnectionError as e:
+            if current_proxy:
+                proxy_manager.mark_proxy_bad(current_proxy, reason=f"proxy_connection_error: {e}")
+            return CrawlResult(
+                url=url,
+                status_code=502, # Bad Gateway or Proxy Error
+                error_message=f"Proxy connection error: {str(e)}",
+                crawl_time_ms=int((time.time() - start_time) * 1000),
+                crawl_timestamp=current_crawl_timestamp
+            )
+        except aiohttp.ClientResponseError as e:
+            if current_proxy and e.status in [403, 407, 429, 500, 502, 503, 504]:
+                proxy_manager.mark_proxy_bad(current_proxy, reason=f"http_status_{e.status}")
+            return CrawlResult(
+                url=url,
+                status_code=e.status,
+                error_message=f"HTTP error: {e.message}",
+                crawl_time_ms=int((time.time() - start_time) * 1000),
+                crawl_timestamp=current_crawl_timestamp
+            )
         except aiohttp.ClientError as e:
-            # This will catch connection errors, DNS errors, etc.
+            # This will catch other connection errors, DNS errors, etc.
+            if current_proxy:
+                proxy_manager.mark_proxy_bad(current_proxy, reason=f"client_error: {e}")
             return CrawlResult(
                 url=url,
                 status_code=0, # Use 0 or a specific code for network errors
@@ -265,6 +310,8 @@ class WebCrawler:
                 crawl_timestamp=current_crawl_timestamp
             )
         except Exception as e:
+            if current_proxy:
+                proxy_manager.mark_proxy_bad(current_proxy, reason=f"unexpected_error: {e}")
             return CrawlResult(
                 url=url,
                 status_code=500,
