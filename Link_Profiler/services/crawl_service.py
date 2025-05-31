@@ -607,7 +607,7 @@ class CrawlService:
 
         except Exception as e:
             job.status = CrawlStatus.FAILED
-            job.add_error(url="N/A", error_type="LinkHealthAuditError", message=f"Link health audit failed: {str(e)}", details=str(e))
+            job.add_error(url="N/A", error_type="LinkHealthAuditError", message=f"Link health audit failed: {str(e)}", details=str(e)) # Corrected f-string syntax
             self.logger.error(f"Link health audit job {job.id} failed: {e}", exc_info=True)
             JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
             JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()

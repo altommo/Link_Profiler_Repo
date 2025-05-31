@@ -9,51 +9,55 @@ import time # New: Import time for request duration
 
 # --- Robust Project Root Discovery ---
 # This method searches upwards from the current file's directory
-# until it finds a known marker file (e.g., setup.py).
-# This is more resilient to different ways of launching the application.
-current_dir = os.path.dirname(os.path.abspath(__file__))
-found_project_root = None
-for _ in range(5): # Search up to 5 levels
-    # Look for setup.py as the primary indicator of the project root.
-    if os.path.exists(os.path.join(current_dir, 'setup.py')):
-        found_project_root = current_dir
+# until it finds the top-level package directory (Link_Profiler)
+# and then adds its parent to sys.path.
+current_file_path = os.path.abspath(__file__)
+current_dir = os.path.dirname(current_file_path)
+project_root = None
+
+# Traverse up to find the directory that contains the 'Link_Profiler' package
+# (i.e., the directory that is the parent of the 'Link_Profiler' folder)
+for _ in range(5): # Search up to 5 levels up
+    if os.path.basename(current_dir) == "Link_Profiler" and \
+       os.path.exists(os.path.join(os.path.dirname(current_dir), 'setup.py')):
+        project_root = os.path.dirname(current_dir)
         break
     current_dir = os.path.dirname(current_dir)
 
-if found_project_root and found_project_root not in sys.path:
-    sys.path.insert(0, found_project_root)
+if project_root and project_root not in sys.path:
+    sys.path.insert(0, project_root)
 # --- End Robust Project Root Discovery ---
 
 # --- Debugging Print Statements ---
-print("PROJECT_ROOT (discovered):", found_project_root)
+print("PROJECT_ROOT (discovered):", project_root) # Changed to print the new project_root variable
 print("SYS.PATH (after discovery):", sys.path[:5])  # show the first few entries
 # --- End Debugging Print Statements ---
 
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response # New: Import Request, Response
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
 import logging
 from urllib.parse import urlparse
-from datetime import datetime # Import datetime for Pydantic models
-from contextlib import asynccontextmanager # Import asynccontextmanager
+from datetime import datetime
+from contextlib import asynccontextmanager
 import redis.asyncio as redis
 
-from Link_Profiler.services.crawl_service import CrawlService # Changed to absolute import
-from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient # Import new DomainService components
-from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient # Import new BacklinkService components
-from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Changed to absolute import
-from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService # Changed to absolute import
-from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient # New: Import SERPService components
-from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient # New: Import KeywordService components
-from Link_Profiler.services.link_health_service import LinkHealthService # New: Import LinkHealthService
-from Link_Profiler.database.database import Database # Changed to absolute import
-from Link_Profiler.database.clickhouse_loader import ClickHouseLoader # New: Import ClickHouseLoader
-from Link_Profiler.crawlers.serp_crawler import SERPCrawler # New: Import SERPCrawler
-from Link_Profiler.crawlers.keyword_scraper import KeywordScraper # New: Import KeywordScraper
-from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor # New: Import TechnicalAuditor
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion # Import new core models
-from Link_Profiler.monitoring.prometheus_metrics import ( # New: Import Prometheus metrics
+from Link_Profiler.services.crawl_service import CrawlService
+from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient
+from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient
+from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
+from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService
+from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient
+from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient
+from Link_Profiler.services.link_health_service import LinkHealthService
+from Link_Profiler.database.database import Database
+from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
+from Link_Profiler.crawlers.serp_crawler import SERPCrawler
+from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
+from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion
+from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
@@ -163,55 +167,50 @@ async def lifespan(app: FastAPI):
     Context manager for managing the lifespan of the FastAPI application.
     Ensures resources like aiohttp sessions are properly opened and closed.
     """
-    logger.info("Application startup: Entering DomainService context.")
-    async with domain_service_instance as ds:
-        logger.info("Application startup: Entering BacklinkService context.")
-        async with backlink_service_instance as bs:
-            logger.info("Application startup: Entering SERPService context.")
-            async with serp_service_instance as ss:
-                logger.info("Application startup: Entering KeywordService context.")
-                async with keyword_service_instance as ks:
-                    logger.info("Application startup: Entering LinkHealthService context.")
-                    async with link_health_service_instance as lhs:
-                        logger.info("Application startup: Entering ClickHouseLoader context.")
-                        async with clickhouse_loader_instance as ch_loader:
-                            logger.info("Application startup: Entering TechnicalAuditor context.")
-                            async with technical_auditor_instance as ta:
-                                # Conditionally enter SERPCrawler context
-                                if serp_crawler_instance:
-                                    logger.info("Application startup: Entering SERPCrawler context.")
-                                    await serp_crawler_instance.__aenter__()
-                                
-                                # Conditionally enter KeywordScraper context
-                                if keyword_scraper_instance:
-                                    logger.info("Application startup: Entering KeywordScraper context.")
-                                    await keyword_scraper_instance.__aenter__()
+    # Use a list to hold context managers to ensure they are entered and exited in order
+    # and that all are exited even if one fails.
+    context_managers = [
+        domain_service_instance,
+        backlink_service_instance,
+        serp_service_instance,
+        keyword_service_instance,
+        link_health_service_instance,
+        clickhouse_loader_instance,
+        technical_auditor_instance,
+    ]
 
-                                logger.info("Application startup: Pinging Redis.")
-                                try:
-                                    await redis_client.ping()
-                                    logger.info("Redis connection successful.")
-                                except Exception as e:
-                                    logger.error(f"Failed to connect to Redis: {e}")
-                                
-                                yield # This is the single yield point for the lifespan
+    # Add Playwright and KeywordScraper contexts if they are enabled
+    if serp_crawler_instance:
+        context_managers.append(serp_crawler_instance)
+    if keyword_scraper_instance:
+        context_managers.append(keyword_scraper_instance)
 
-                                # Clean up optional contexts in reverse order
-                                if keyword_scraper_instance:
-                                    logger.info("Application shutdown: Exiting KeywordScraper context.")
-                                    await keyword_scraper_instance.__aexit__(None, None, None)
-                                if serp_crawler_instance:
-                                    logger.info("Application shutdown: Exiting SERPCrawler context.")
-                                    await serp_crawler_instance.__aexit__(None, None, None)
-                            logger.info("Application shutdown: Exiting TechnicalAuditor context.")
-                        logger.info("Application shutdown: Exiting ClickHouseLoader context.")
-                    logger.info("Application shutdown: Exiting LinkHealthService context.")
-                logger.info("Application shutdown: Exiting KeywordService context.")
-            logger.info("Application shutdown: Exiting SERPService context.")
-        logger.info("Application shutdown: Exiting BacklinkService context.")
-    logger.info("Application shutdown: Exiting DomainService context.")
-    logger.info("Application shutdown: Closing Redis connection pool.")
-    await redis_pool.disconnect()
+    # Manually manage the context managers to ensure proper nesting and single yield
+    # This pattern ensures all __aenter__ are called before yield, and __aexit__ in reverse order.
+    entered_contexts = []
+    try:
+        for cm in context_managers:
+            logger.info(f"Application startup: Entering {cm.__class__.__name__} context.")
+            entered_contexts.append(await cm.__aenter__())
+        
+        logger.info("Application startup: Pinging Redis.")
+        try:
+            await redis_client.ping()
+            logger.info("Redis connection successful.")
+        except Exception as e:
+            logger.error(f"Failed to connect to Redis: {e}")
+        
+        yield # This is the single yield point for the lifespan
+
+    finally:
+        # Exit contexts in reverse order of entry
+        for cm in reversed(entered_contexts):
+            logger.info(f"Application shutdown: Exiting {cm.__class__.__name__} context.")
+            # Pass None, None, None for exc_type, exc_val, exc_tb as we're handling exceptions outside
+            await cm.__aexit__(None, None, None)
+        
+        logger.info("Application shutdown: Closing Redis connection pool.")
+        await redis_pool.disconnect()
 
 
 app = FastAPI(
