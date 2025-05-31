@@ -11,7 +11,7 @@ from uuid import uuid4
 from datetime import datetime
 from urllib.parse import urlparse
 import json
-import redis.asyncio as redis # New: Import redis
+import redis.asyncio as redis
 
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
@@ -19,6 +19,7 @@ from Link_Profiler.core.models import (
     SERPResult, KeywordSuggestion, LinkProfile
 )
 from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult
+from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.services.domain_service import DomainService
@@ -26,6 +27,10 @@ from Link_Profiler.services.backlink_service import BacklinkService
 from Link_Profiler.services.serp_service import SERPService
 from Link_Profiler.services.keyword_service import KeywordService
 from Link_Profiler.services.link_health_service import LinkHealthService
+from Link_Profiler.monitoring.prometheus_metrics import ( # New: Import Prometheus metrics
+    JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL,
+    CRAWLED_URLS_TOTAL, BACKLINKS_FOUND_TOTAL, JOB_ERRORS_TOTAL
+)
 
 
 class CrawlService:
@@ -42,7 +47,8 @@ class CrawlService:
         keyword_service: KeywordService,
         link_health_service: LinkHealthService,
         clickhouse_loader: ClickHouseLoader,
-        redis_client: redis.Redis # New: Inject Redis client
+        redis_client: redis.Redis,
+        technical_auditor: TechnicalAuditor
     ):
         self.db = database
         self.logger = logging.getLogger(__name__)
@@ -53,8 +59,9 @@ class CrawlService:
         self.keyword_service = keyword_service
         self.link_health_service = link_health_service
         self.clickhouse_loader = clickhouse_loader
-        self.redis = redis_client # New: Store Redis client
-        self.deduplication_set_key = "processed_backlinks_dedup" # Key for Redis set
+        self.redis = redis_client
+        self.technical_auditor = technical_auditor
+        self.deduplication_set_key = "processed_backlinks_dedup"
 
     async def _is_duplicate_backlink(self, source_url: str, target_url: str) -> bool:
         """
@@ -62,20 +69,13 @@ class CrawlService:
         using a Redis set for deduplication.
         Returns True if it's a duplicate (already in set), False otherwise.
         """
-        # Create a unique identifier for the backlink pair
         backlink_id = f"{source_url}|{target_url}"
-        
-        # sadd returns 1 if the element was added (new), 0 if it already existed (duplicate)
-        # We want to return True if it's a duplicate (sadd returned 0)
         is_new = await self.redis.sadd(self.deduplication_set_key, backlink_id)
         
         if is_new == 0:
             self.logger.debug(f"Duplicate backlink detected: {source_url} -> {target_url}")
             return True
         else:
-            # Optionally set an expiry for the deduplication key to prevent it from growing indefinitely
-            # For backlinks, you might want to keep them for a long time, or clear periodically.
-            # await self.redis.expire(self.deduplication_set_key, timedelta(days=30)) # Example: expire after 30 days
             return False
 
     async def create_and_start_crawl_job(
@@ -86,18 +86,20 @@ class CrawlService:
         keyword: Optional[str] = None,
         num_results: Optional[int] = None,
         source_urls_to_audit: Optional[List[str]] = None,
+        urls_to_audit_tech: Optional[List[str]] = None,
         config: Optional[CrawlConfig] = None
     ) -> CrawlJob:
         """
         Creates a new crawl job of a specified type and starts it.
         
         Args:
-            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit').
+            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit', 'technical_audit').
             target_url: The primary URL relevant to the job (e.g., for backlink discovery).
             initial_seed_urls: Optional list of URLs to start crawling from (for backlink discovery).
             keyword: Optional keyword for SERP or keyword research jobs.
             num_results: Optional number of results/suggestions to fetch for SERP/keyword jobs.
             source_urls_to_audit: Optional list of URLs whose outgoing links should be audited (for link_health_audit).
+            urls_to_audit_tech: Optional list of URLs for technical audit.
             config: Optional CrawlConfig object. If None, a default config is used.
         
         Returns:
@@ -120,13 +122,14 @@ class CrawlService:
 
         job = CrawlJob(
             id=job_id,
-            target_url=target_url or keyword or "N/A",
+            target_url=target_url or keyword or (urls_to_audit_tech[0] if urls_to_audit_tech else "N/A"),
             job_type=job_type,
             status=CrawlStatus.PENDING,
             config=serialize_model(config)
         )
         self.db.add_crawl_job(job)
         self.logger.info(f"Created {job_type} job {job_id} for {job.target_url}")
+        JOBS_PENDING.labels(job_type=job_type).inc() # Increment pending jobs metric
 
         # Dispatch to appropriate runner based on job_type
         if job_type == 'backlink_discovery':
@@ -145,6 +148,10 @@ class CrawlService:
             if not source_urls_to_audit:
                 raise ValueError("source_urls_to_audit must be provided for 'link_health_audit' job type.")
             asyncio.create_task(self._run_link_health_audit_job(job, source_urls_to_audit))
+        elif job_type == 'technical_audit':
+            if not urls_to_audit_tech:
+                raise ValueError("urls_to_audit_tech must be provided for 'technical_audit' job type.")
+            asyncio.create_task(self._run_technical_audit_job(job, urls_to_audit_tech, config))
         else:
             raise ValueError(f"Unknown job type: {job_type}")
         
@@ -154,6 +161,9 @@ class CrawlService:
         """
         Internal method to execute the backlink crawl.
         """
+        JOBS_PENDING.labels(job_type=job.job_type).dec() # Decrement pending
+        JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc() # Increment in-progress
+
         job.status = CrawlStatus.IN_PROGRESS
         job.started_date = datetime.now()
         self.db.update_crawl_job(job)
@@ -176,7 +186,6 @@ class CrawlService:
             if api_backlinks:
                 self.logger.info(f"Found {len(api_backlinks)} backlinks from API for {job.target_url}.")
                 
-                # Deduplicate API backlinks before adding
                 deduplicated_api_backlinks = []
                 for bl in api_backlinks:
                     if not await self._is_duplicate_backlink(bl.source_url, bl.target_url):
@@ -189,10 +198,12 @@ class CrawlService:
                         self.db.add_backlinks(deduplicated_api_backlinks)
                         # TODO: Add bulk insert to ClickHouse for API backlinks
                         # await self.clickhouse_loader.bulk_insert_backlinks(deduplicated_api_backlinks)
+                        BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(deduplicated_api_backlinks))
                         self.logger.info(f"Successfully added {len(deduplicated_api_backlinks)} new API backlinks to the database.")
                     except Exception as db_e:
                         self.logger.error(f"Error adding API backlinks to database: {db_e}", exc_info=True)
                         job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding API backlinks: {str(db_e)}", details=str(db_e))
+                        JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
                 else:
                     self.logger.info(f"All {len(api_backlinks)} API backlinks for {job.target_url} were duplicates.")
             else:
@@ -212,23 +223,31 @@ class CrawlService:
                             self.logger.info(f"Crawl job {job.id} paused. Saving current state.")
                             job.status = CrawlStatus.PAUSED
                             self.db.update_crawl_job(job)
+                            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+                            JOBS_PENDING.labels(job_type=job.job_type).inc()
                             while True:
                                 await asyncio.sleep(5)
                                 current_job = self.db.get_crawl_job(job.id)
                                 if current_job and current_job.status == CrawlStatus.IN_PROGRESS:
                                     self.logger.info(f"Crawl job {job.id} resumed.")
+                                    JOBS_PENDING.labels(job_type=job.job_type).dec()
+                                    JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
                                     break
                                 elif current_job and current_job.status == CrawlStatus.STOPPED:
                                     self.logger.info(f"Crawl job {job.id} stopped during pause.")
                                     job.status = CrawlStatus.STOPPED
                                     job.completed_date = datetime.now()
                                     self.db.update_crawl_job(job)
+                                    JOBS_PENDING.labels(job_type=job.job_type).dec()
+                                    JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
                                     return
                         elif current_job and current_job.status == CrawlStatus.STOPPED:
                             self.logger.info(f"Crawl job {job.id} stopped.")
                             job.status = CrawlStatus.STOPPED
                             job.completed_date = datetime.now()
                             self.db.update_crawl_job(job)
+                            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+                            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
                             return
 
                         url, current_depth = await urls_to_crawl_queue.get()
@@ -242,6 +261,7 @@ class CrawlService:
                         crawled_urls_set.add(url)
                         urls_crawled_count += 1
                         job.urls_crawled = urls_crawled_count
+                        CRAWLED_URLS_TOTAL.labels(job_type=job.job_type).inc() # Increment crawled URLs metric
 
                         self.logger.info(f"Crawling: {url} (Depth: {current_depth}, Crawled: {urls_crawled_count}/{config.max_pages})")
 
@@ -258,9 +278,11 @@ class CrawlService:
                                         else:
                                             self.logger.error(f"Failed to crawl {url} after {config.max_retries + 1} attempts: {crawl_result.error_message}")
                                             job.add_error(url=url, error_type="CrawlError", message=f"Failed after retries: {crawl_result.error_message}", details=crawl_result.error_message)
+                                            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="CrawlError").inc()
                                     else:
                                         self.logger.warning(f"Failed to crawl {url}: {crawl_result.error_message}")
                                         job.add_error(url=url, error_type="CrawlError", message=f"Non-retryable crawl error: {crawl_result.error_message}", details=crawl_result.error_message)
+                                        JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="CrawlError").inc()
                                 else:
                                     break
                             except Exception as e:
@@ -271,6 +293,7 @@ class CrawlService:
                                 else:
                                     self.logger.error(f"Unexpected error crawling {url} after {config.max_retries + 1} attempts: {e}", exc_info=True)
                                     job.add_error(url=url, error_type="UnexpectedError", message=f"Unexpected error: {str(e)}", details=str(e))
+                                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="UnexpectedError").inc()
                             crawl_result = None
 
                         if crawl_result:
@@ -281,11 +304,11 @@ class CrawlService:
                             except Exception as e:
                                 self.logger.error(f"Error writing crawl result to debug file for {crawl_result.url}: {e}")
                                 job.add_error(url=crawl_result.url, error_type="FileWriteError", message=f"Error writing debug data: {str(e)}", details=str(e))
+                                JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="FileWriteError").inc()
 
                             if crawl_result.links_found:
                                 self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url} via crawl.")
                                 
-                                # Deduplicate crawled backlinks before adding
                                 deduplicated_crawled_backlinks = []
                                 for bl in crawl_result.links_found:
                                     if not await self._is_duplicate_backlink(bl.source_url, bl.target_url):
@@ -298,9 +321,11 @@ class CrawlService:
                                         self.db.add_backlinks(deduplicated_crawled_backlinks) 
                                         # TODO: Add bulk insert to ClickHouse for crawled backlinks
                                         # await self.clickhouse_loader.bulk_insert_backlinks(deduplicated_crawled_backlinks)
+                                        BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(deduplicated_crawled_backlinks))
                                     except Exception as db_e:
                                         self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
                                         job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error adding crawled backlinks: {str(db_e)}", details=str(db_e))
+                                        JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
                                 else:
                                     self.logger.info(f"All {len(crawl_result.links_found)} crawled backlinks from {crawl_result.url} were duplicates.")
                             
@@ -314,6 +339,7 @@ class CrawlService:
                                 except Exception as seo_e:
                                     self.logger.error(f"Error saving SEO metrics for {crawl_result.url}: {seo_e}", exc_info=True)
                                     job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error saving SEO metrics: {str(seo_e)}", details=str(seo_e))
+                                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
 
                         if crawl_result and crawl_result.links_found:
                             for link in crawl_result.links_found:
@@ -337,6 +363,7 @@ class CrawlService:
                 else:
                     self.logger.warning(f"Could not retrieve domain info for {target_domain_name}.")
                     job.add_error(url=target_domain_name, error_type="DomainInfoError", message=f"Could not retrieve domain info for target domain.", details="Domain info API returned None.")
+                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DomainInfoError").inc()
 
                 if discovered_backlinks:
                     unique_referring_domains = {bl.source_domain for bl in discovered_backlinks}
@@ -430,11 +457,16 @@ class CrawlService:
 
             job.status = CrawlStatus.COMPLETED
             self.logger.info(f"Crawl job {job.id} completed.")
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
 
         except Exception as e:
             job.status = CrawlStatus.FAILED
             job.add_error(url="N/A", error_type="CrawlJobError", message=f"Crawl failed: {str(e)}", details=str(e))
             self.logger.error(f"Crawl job {job.id} failed: {e}", exc_info=True)
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
+            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="CrawlJobError").inc()
         finally:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
@@ -445,6 +477,9 @@ class CrawlService:
         """
         Internal method to execute a SERP analysis job.
         """
+        JOBS_PENDING.labels(job_type=job.job_type).dec()
+        JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
+
         job.status = CrawlStatus.IN_PROGRESS
         job.started_date = datetime.now()
         self.db.update_crawl_job(job)
@@ -464,6 +499,7 @@ class CrawlService:
                 except Exception as db_e:
                     self.logger.error(f"Error adding SERP results to database: {db_e}", exc_info=True)
                     job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding SERP results: {str(db_e)}", details=str(db_e))
+                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
                 
                 job.results['serp_results'] = [serialize_model(res) for res in serp_results]
                 job.urls_discovered = len(serp_results)
@@ -476,10 +512,16 @@ class CrawlService:
                 job.status = CrawlStatus.COMPLETED
                 self.logger.info(f"No SERP results found for '{keyword}'. Job {job.id} completed.")
 
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
+
         except Exception as e:
             job.status = CrawlStatus.FAILED
             job.add_error(url="N/A", error_type="SERPAnalysisError", message=f"SERP analysis failed: {str(e)}", details=str(e))
             self.logger.error(f"SERP analysis job {job.id} failed: {e}", exc_info=True)
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
+            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="SERPAnalysisError").inc()
         finally:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
@@ -488,6 +530,9 @@ class CrawlService:
         """
         Internal method to execute a keyword research job.
         """
+        JOBS_PENDING.labels(job_type=job.job_type).dec()
+        JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
+
         job.status = CrawlStatus.IN_PROGRESS
         job.started_date = datetime.now()
         self.db.update_crawl_job(job)
@@ -507,6 +552,7 @@ class CrawlService:
                 except Exception as db_e:
                     self.logger.error(f"Error adding keyword suggestions to database: {db_e}", exc_info=True)
                     job.add_error(url="N/A", error_type="DatabaseError", message=f"DB error adding keyword suggestions: {str(db_e)}", details=str(db_e))
+                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DatabaseError").inc()
                 
                 job.results['keyword_suggestions'] = [serialize_model(sug) for sug in suggestions]
                 job.urls_discovered = len(suggestions)
@@ -519,10 +565,16 @@ class CrawlService:
                 job.status = CrawlStatus.COMPLETED
                 self.logger.info(f"No keyword suggestions found for '{seed_keyword}'. Job {job.id} completed.")
 
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
+
         except Exception as e:
             job.status = CrawlStatus.FAILED
             job.add_error(url="N/A", error_type="KeywordResearchError", message=f"Keyword research failed: {str(e)}", details=str(e))
             self.logger.error(f"Keyword research job {job.id} failed: {e}", exc_info=True)
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
+            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="KeywordResearchError").inc()
         finally:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
@@ -531,6 +583,9 @@ class CrawlService:
         """
         Internal method to execute a link health audit job.
         """
+        JOBS_PENDING.labels(job_type=job.job_type).dec()
+        JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
+
         job.status = CrawlStatus.IN_PROGRESS
         job.started_date = datetime.now()
         self.db.update_crawl_job(job)
@@ -547,13 +602,81 @@ class CrawlService:
             job.status = CrawlStatus.COMPLETED
             self.logger.info(f"Link health audit job {job.id} completed. Found {job.links_found} broken links.")
 
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
+
         except Exception as e:
             job.status = CrawlStatus.FAILED
-            job.add_error(url="N/A", error_type="LinkHealthAuditError", message=f"Link health audit failed: {str(e)}", details=str(e))
+            job.add_error(url="N/A", error_type="LinkHealthAuditError", message=f"Link health audit failed: {str(e)}", details=str(e)}")
             self.logger.error(f"Link health audit job {job.id} failed: {e}", exc_info=True)
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
+            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="LinkHealthAuditError").inc()
         finally:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
+
+    async def _run_technical_audit_job(self, job: CrawlJob, urls_to_audit: List[str], config: CrawlConfig):
+        """
+        Internal method to execute a technical audit job using Lighthouse.
+        """
+        JOBS_PENDING.labels(job_type=job.job_type).dec()
+        JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
+
+        job.status = CrawlStatus.IN_PROGRESS
+        job.started_date = datetime.now()
+        self.db.update_crawl_job(job)
+        self.logger.info(f"Starting technical audit job {job.id} for {len(urls_to_audit)} URLs.")
+
+        audited_urls_count = 0
+        for url in urls_to_audit:
+            try:
+                lighthouse_metrics = await self.technical_auditor.run_lighthouse_audit(url, config)
+                
+                if lighthouse_metrics:
+                    existing_seo_metrics = self.db.get_seo_metrics(url)
+                    if existing_seo_metrics:
+                        existing_seo_metrics.performance_score = lighthouse_metrics.performance_score
+                        existing_seo_metrics.accessibility_score = lighthouse_metrics.accessibility_score
+                        existing_seo_metrics.audit_timestamp = lighthouse_metrics.audit_timestamp
+                        existing_seo_metrics.calculate_seo_score()
+                        self.db.save_seo_metrics(existing_seo_metrics)
+                        self.logger.info(f"Updated SEO metrics for {url} with Lighthouse scores.")
+                    else:
+                        self.db.save_seo_metrics(lighthouse_metrics)
+                        self.logger.info(f"Saved new SEO metrics for {url} from Lighthouse.")
+                    
+                    audited_urls_count += 1
+                else:
+                    self.logger.warning(f"Lighthouse audit failed or returned no data for {url}.")
+                    job.add_error(url=url, error_type="LighthouseAuditError", message=f"Lighthouse audit failed for {url}.", details="No data returned.")
+                    JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="LighthouseAuditError").inc()
+
+            except Exception as e:
+                self.logger.error(f"Error during technical audit for {url}: {e}", exc_info=True)
+                job.add_error(url=url, error_type="TechnicalAuditError", message=f"Technical audit failed for {url}: {str(e)}", details=str(e))
+                JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="TechnicalAuditError").inc()
+            
+            job.urls_crawled = audited_urls_count
+            job.progress_percentage = min(99.0, (audited_urls_count / len(urls_to_audit)) * 100)
+            self.db.update_crawl_job(job)
+
+        job.status = CrawlStatus.COMPLETED
+        self.logger.info(f"Technical audit job {job.id} completed. Audited {audited_urls_count} URLs.")
+
+        try:
+            # Optionally, you might want to fetch all updated SEO metrics and bulk insert to ClickHouse
+            # For simplicity, this is left as a TODO for now.
+            pass
+        except Exception as e:
+            self.logger.error(f"Error during final ClickHouse bulk insert for technical audit job {job.id}: {e}", exc_info=True)
+            job.add_error(url="N/A", error_type="ClickHouseError", message=f"ClickHouse bulk insert failed: {str(e)}", details=str(e))
+            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="ClickHouseError").inc()
+        finally:
+            job.completed_date = datetime.now()
+            self.db.update_crawl_job(job)
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
 
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:
         """Retrieves the current status of a crawl job."""
@@ -567,7 +690,8 @@ class CrawlService:
         if job.status == CrawlStatus.IN_PROGRESS:
             job.status = CrawlStatus.PAUSED
             self.db.update_crawl_job(job)
-            self.logger.info(f"Crawl job {job.id} paused.")
+            self.logger.info(f"Crawl job {job_id} paused.")
+            # Metrics update handled in _run_backlink_crawl loop
             return job
         else:
             raise ValueError(f"Crawl job {job_id} cannot be paused from status {job.status.value}.")
@@ -581,6 +705,7 @@ class CrawlService:
             job.status = CrawlStatus.IN_PROGRESS
             self.db.update_crawl_job(job)
             self.logger.info(f"Crawl job {job.id} resumed.")
+            # Metrics update handled in _run_backlink_crawl loop
             return job
         else:
             raise ValueError(f"Crawl job {job_id} cannot be resumed from status {job.status.value}.")
@@ -595,6 +720,7 @@ class CrawlService:
             job.completed_date = datetime.now()
             self.db.update_crawl_job(job)
             self.logger.info(f"Crawl job {job.id} stopped.")
+            # Metrics update handled in _run_backlink_crawl loop
             return job
         else:
             raise ValueError(f"Crawl job {job.id} cannot be stopped from status {job.status.value}.")

@@ -5,6 +5,7 @@ File: api/main.py
 
 import os
 import sys
+import time # New: Import time for request duration
 
 # --- Robust Project Root Discovery ---
 # This method searches upwards from the current file's directory
@@ -29,14 +30,14 @@ print("SYS.PATH (after discovery):", sys.path[:5])  # show the first few entries
 # --- End Debugging Print Statements ---
 
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response # New: Import Request, Response
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
 import logging
 from urllib.parse import urlparse
 from datetime import datetime # Import datetime for Pydantic models
 from contextlib import asynccontextmanager # Import asynccontextmanager
-import redis.asyncio as redis # New: Import redis
+import redis.asyncio as redis
 
 from Link_Profiler.services.crawl_service import CrawlService # Changed to absolute import
 from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient # Import new DomainService components
@@ -48,7 +49,14 @@ from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeyw
 from Link_Profiler.services.link_health_service import LinkHealthService # New: Import LinkHealthService
 from Link_Profiler.database.database import Database # Changed to absolute import
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader # New: Import ClickHouseLoader
+from Link_Profiler.crawlers.serp_crawler import SERPCrawler # New: Import SERPCrawler
+from Link_Profiler.crawlers.keyword_scraper import KeywordScraper # New: Import KeywordScraper
+from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor # New: Import TechnicalAuditor
 from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion # Import new core models
+from Link_Profiler.monitoring.prometheus_metrics import ( # New: Import Prometheus metrics
+    API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
+    JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
+)
 
 
 # Configure logging
@@ -101,30 +109,36 @@ elif os.getenv("USE_REAL_BACKLINK_API", "false").lower() == "true":
 else:
     backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient())
 
-# New: Initialize SERPService
-if os.getenv("USE_REAL_SERP_API", "false").lower() == "true":
-    real_serp_api_key = os.getenv("REAL_SERP_API_KEY")
-    if not real_serp_api_key:
-        logger.error("REAL_SERP_API_KEY environment variable not set. Falling back to simulated SERP API.")
-        serp_service_instance = SERPService(api_client=SimulatedSERPAPIClient())
-    else:
-        serp_service_instance = SERPService(api_client=RealSERPAPIClient(api_key=real_serp_api_key))
-else:
-    serp_service_instance = SERPService(api_client=SimulatedSERPAPIClient())
+# New: Initialize SERPService and SERPCrawler
+serp_crawler_instance = None
+if os.getenv("USE_PLAYWRIGHT_SERP_CRAWLER", "false").lower() == "true":
+    logger.info("Initialising Playwright SERPCrawler.")
+    serp_crawler_instance = SERPCrawler(
+        headless=os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() == "true",
+        browser_type=os.getenv("PLAYWRIGHT_BROWSER_TYPE", "chromium")
+    )
+serp_service_instance = SERPService(
+    api_client=RealSERPAPIClient(api_key=os.getenv("REAL_SERP_API_KEY", "dummy_serp_key")) if os.getenv("USE_REAL_SERP_API", "false").lower() == "true" else SimulatedSERPAPIClient(),
+    serp_crawler=serp_crawler_instance
+)
 
-# New: Initialize KeywordService
-if os.getenv("USE_REAL_KEYWORD_API", "false").lower() == "true":
-    real_keyword_api_key = os.getenv("REAL_KEYWORD_API_KEY")
-    if not real_keyword_api_key:
-        logger.error("REAL_KEYWORD_API_KEY environment variable not set. Falling back to simulated Keyword API.")
-        keyword_service_instance = KeywordService(api_client=SimulatedKeywordAPIClient())
-    else:
-        keyword_service_instance = KeywordService(api_client=RealKeywordAPIClient(api_key=real_keyword_api_key))
-else:
-    keyword_service_instance = KeywordService(api_client=SimulatedKeywordAPIClient())
+# New: Initialize KeywordService and KeywordScraper
+keyword_scraper_instance = None
+if os.getenv("USE_KEYWORD_SCRAPER", "false").lower() == "true":
+    logger.info("Initialising KeywordScraper.")
+    keyword_scraper_instance = KeywordScraper()
+keyword_service_instance = KeywordService(
+    api_client=RealKeywordAPIClient(api_key=os.getenv("REAL_KEYWORD_API_KEY", "dummy_keyword_key")) if os.getenv("USE_REAL_KEYWORD_API", "false").lower() == "true" else SimulatedKeywordAPIClient(),
+    keyword_scraper=keyword_scraper_instance
+)
 
 # New: Initialize LinkHealthService
 link_health_service_instance = LinkHealthService(db)
+
+# New: Initialize TechnicalAuditor
+technical_auditor_instance = TechnicalAuditor(
+    lighthouse_path=os.getenv("LIGHTHOUSE_PATH", "lighthouse") # Allow custom path for Lighthouse CLI
+)
 
 
 # Initialize other services that depend on domain_service and backlink_service
@@ -135,8 +149,9 @@ crawl_service = CrawlService(
     serp_service=serp_service_instance,
     keyword_service=keyword_service_instance,
     link_health_service=link_health_service_instance,
-    clickhouse_loader=clickhouse_loader_instance, # Inject ClickHouseLoader
-    redis_client=redis_client # Inject Redis client
+    clickhouse_loader=clickhouse_loader_instance,
+    redis_client=redis_client,
+    technical_auditor=technical_auditor_instance
 ) 
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service)
@@ -158,27 +173,53 @@ async def lifespan(app: FastAPI):
                 async with keyword_service_instance as ks:
                     logger.info("Application startup: Entering LinkHealthService context.")
                     async with link_health_service_instance as lhs:
-                        logger.info("Application startup: Entering ClickHouseLoader context.") # New
-                        async with clickhouse_loader_instance as ch_loader: # New
-                            logger.info("Application startup: Pinging Redis.") # New
-                            try:
-                                await redis_client.ping() # New: Ping Redis to ensure connection
-                                logger.info("Redis connection successful.")
-                            except Exception as e:
-                                logger.error(f"Failed to connect to Redis: {e}")
-                                # Depending on criticality, you might want to raise an exception here
-                                # or degrade gracefully. For now, just log.
-                            
-                            # Yield control to the application
-                            yield
-                        logger.info("Application shutdown: Exiting ClickHouseLoader context.") # New
+                        logger.info("Application startup: Entering ClickHouseLoader context.")
+                        async with clickhouse_loader_instance as ch_loader:
+                            logger.info("Application startup: Entering TechnicalAuditor context.")
+                            async with technical_auditor_instance as ta:
+                                # New: Enter SERPCrawler context if it's being used
+                                if serp_crawler_instance:
+                                    logger.info("Application startup: Entering SERPCrawler context.")
+                                    async with serp_crawler_instance as sc:
+                                        # New: Enter KeywordScraper context if it's being used
+                                        if keyword_scraper_instance:
+                                            logger.info("Application startup: Entering KeywordScraper context.")
+                                            async with keyword_scraper_instance as ksc:
+                                                logger.info("Application startup: Pinging Redis.")
+                                                try:
+                                                    await redis_client.ping()
+                                                    logger.info("Redis connection successful.")
+                                                except Exception as e:
+                                                    logger.error(f"Failed to connect to Redis: {e}")
+                                                
+                                                yield # Yield control to the application
+                                            logger.info("Application shutdown: Exiting KeywordScraper context.")
+                                        else: # No KeywordScraper, but SERPCrawler is active
+                                            logger.info("Application startup: Pinging Redis.")
+                                            try:
+                                                await redis_client.ping()
+                                                logger.info("Redis connection successful.")
+                                            except Exception as e:
+                                                logger.error(f"Failed to connect to Redis: {e}")
+                                            yield # Yield control to the application
+                                logger.info("Application shutdown: Exiting SERPCrawler context.")
+                            else: # No SERPCrawler, no KeywordScraper
+                                logger.info("Application startup: Pinging Redis.")
+                                try:
+                                    await redis_client.ping()
+                                    logger.info("Redis connection successful.")
+                                except Exception as e:
+                                    logger.error(f"Failed to connect to Redis: {e}")
+                                yield # Yield control to the application
+                            logger.info("Application shutdown: Exiting TechnicalAuditor context.")
+                        logger.info("Application shutdown: Exiting ClickHouseLoader context.")
                     logger.info("Application shutdown: Exiting LinkHealthService context.")
                 logger.info("Application shutdown: Exiting KeywordService context.")
             logger.info("Application shutdown: Exiting SERPService context.")
         logger.info("Application shutdown: Exiting BacklinkService context.")
     logger.info("Application shutdown: Exiting DomainService context.")
-    logger.info("Application shutdown: Closing Redis connection pool.") # New
-    await redis_pool.disconnect() # New: Disconnect Redis pool
+    logger.info("Application shutdown: Closing Redis connection pool.")
+    await redis_pool.disconnect()
 
 
 app = FastAPI(
@@ -188,6 +229,23 @@ app = FastAPI(
     lifespan=lifespan # Register the lifespan context manager
 )
 
+# --- Middleware for Prometheus Metrics ---
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    start_time = time.perf_counter()
+    
+    response = await call_next(request)
+    
+    process_time = time.perf_counter() - start_time
+    endpoint = request.url.path
+    method = request.method
+    status_code = response.status_code
+
+    API_REQUESTS_TOTAL.labels(endpoint=endpoint, method=method, status_code=status_code).inc()
+    API_REQUEST_DURATION_SECONDS.labels(endpoint=endpoint, method=method).observe(process_time)
+    
+    response.headers["X-Process-Time"] = str(process_time)
+    return response
 
 # --- Pydantic Models for API Request/Response ---
 
@@ -214,8 +272,12 @@ class StartCrawlRequest(BaseModel):
     initial_seed_urls: List[str] = Field(..., description="A list of URLs to start crawling from to discover backlinks.")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration.")
 
-class LinkHealthAuditRequest(BaseModel): # New Pydantic model for link health audit
+class LinkHealthAuditRequest(BaseModel):
     source_urls: List[str] = Field(..., description="A list of source URLs whose outgoing links should be audited for brokenness.")
+
+class TechnicalAuditRequest(BaseModel):
+    urls_to_audit: List[str] = Field(..., description="A list of URLs to perform a technical audit on using Lighthouse.")
+    config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration for the audit (e.g., user agent).")
 
 class CrawlErrorResponse(BaseModel):
     timestamp: datetime
@@ -241,7 +303,7 @@ class CrawlJobResponse(BaseModel):
     urls_crawled: int
     links_found: int
     errors_count: int
-    error_log: List[CrawlErrorResponse] # Changed to List[CrawlErrorResponse]
+    error_log: List[CrawlErrorResponse]
     results: Dict = Field(default_factory=dict)
 
     @classmethod
@@ -252,33 +314,27 @@ class CrawlJobResponse(BaseModel):
         # Explicitly convert Enum to its value string for Pydantic
         job_dict['status'] = job.status.value 
 
-        # Ensure datetime objects are correctly handled by Pydantic
-        # Pydantic v2 handles ISO 8601 strings automatically if the type hint is datetime
-        # We can remove the explicit conversion here if serialize_model already outputs ISO strings
-        # Let's keep it for robustness in case serialize_model changes or for older Pydantic versions
         if isinstance(job_dict.get('created_date'), str):
             try:
                 job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
             except ValueError:
                  logger.warning(f"Could not parse created_date string: {job_dict.get('created_date')}")
-                 job_dict['created_date'] = None # Or handle as error
+                 job_dict['created_date'] = None
 
         if isinstance(job_dict.get('started_date'), str):
              try:
                 job_dict['started_date'] = datetime.fromisoformat(job_dict['started_date'])
              except ValueError:
                  logger.warning(f"Could not parse started_date string: {job_dict.get('started_date')}")
-                 job_dict['started_date'] = None # Or handle as error
+                 job_dict['started_date'] = None
 
         if isinstance(job_dict.get('completed_date'), str):
              try:
                 job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
              except ValueError:
                  logger.warning(f"Could not parse completed_date string: {job_dict.get('completed_date')}")
-                 job_dict['completed_date'] = None # Or handle as error
+                 job_dict['completed_date'] = None
 
-        # Convert CrawlError dataclasses to CrawlErrorResponse Pydantic models
-        # Ensure job.error_log is treated as a list of CrawlError objects
         job_dict['error_log'] = [CrawlErrorResponse.from_crawl_error(err) for err in job.error_log]
 
         return cls(**job_dict)
@@ -306,7 +362,7 @@ class LinkProfileResponse(BaseModel):
                 profile_dict['analysis_date'] = datetime.fromisoformat(profile_dict['analysis_date'])
             except ValueError:
                  logger.warning(f"Could not parse analysis_date string: {profile_dict.get('analysis_date')}")
-                 profile_dict['analysis_date'] = None # Or handle as error
+                 profile_dict['analysis_date'] = None
         return cls(**profile_dict)
 
 class BacklinkResponse(BaseModel):
@@ -316,25 +372,21 @@ class BacklinkResponse(BaseModel):
     target_domain: str
     anchor_text: str
     link_type: LinkType 
-    rel_attributes: List[str] = Field(default_factory=list) # Added rel_attributes
+    rel_attributes: List[str] = Field(default_factory=list)
     context_text: str
     is_image_link: bool
     alt_text: Optional[str]
     discovered_date: datetime
-    authority_passed: float # Changed type from bool to float
+    authority_passed: float
     spam_level: SpamLevel 
-    http_status: Optional[int] = None # New field
-    crawl_timestamp: Optional[datetime] = None # New field
-    source_domain_metrics: Dict[str, Any] = Field(default_factory=dict) # New field
+    http_status: Optional[int] = None
+    crawl_timestamp: Optional[datetime] = None
+    source_domain_metrics: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_backlink(cls, backlink: Backlink):
         backlink_dict = serialize_model(backlink)
         
-        # Convert database Enum types to core Enum types for Pydantic validation.
-        # The Backlink dataclass might contain Enum instances from Link_Profiler.database.models
-        # if they were directly mapped from ORM objects. Pydantic expects an instance
-        # of the *exact* Enum type specified in the model (Link_Profiler.core.models.LinkType/SpamLevel).
         backlink_dict['link_type'] = LinkType(backlink.link_type.value)
         backlink_dict['spam_level'] = SpamLevel(backlink.spam_level.value)
         
@@ -343,13 +395,13 @@ class BacklinkResponse(BaseModel):
                 backlink_dict['discovered_date'] = datetime.fromisoformat(backlink_dict['discovered_date'])
             except ValueError:
                  logger.warning(f"Could not parse discovered_date string: {backlink_dict.get('discovered_date')}")
-                 backlink_dict['discovered_date'] = None # Or handle as error
-        if isinstance(backlink_dict.get('crawl_timestamp'), str): # New field
+                 backlink_dict['discovered_date'] = None
+        if isinstance(backlink_dict.get('crawl_timestamp'), str):
             try:
                 backlink_dict['crawl_timestamp'] = datetime.fromisoformat(backlink_dict['crawl_timestamp'])
             except ValueError:
                  logger.warning(f"Could not parse crawl_timestamp string: {backlink_dict.get('crawl_timestamp')}")
-                 backlink_dict['crawl_timestamp'] = None # Or handle as error
+                 backlink_dict['crawl_timestamp'] = None
         return cls(**backlink_dict)
 
 class DomainResponse(BaseModel):
@@ -375,13 +427,13 @@ class DomainResponse(BaseModel):
                 domain_dict['first_seen'] = datetime.fromisoformat(domain_dict['first_seen'])
             except ValueError:
                  logger.warning(f"Could not parse first_seen string: {domain_dict.get('first_seen')}")
-                 domain_dict['first_seen'] = None # Or handle as error
+                 domain_dict['first_seen'] = None
         if isinstance(domain_dict.get('last_crawled'), str):
             try:
                 domain_dict['last_crawled'] = datetime.fromisoformat(domain_dict['last_crawled'])
             except ValueError:
                  logger.warning(f"Could not parse last_crawled string: {domain_dict.get('last_crawled')}")
-                 domain_dict['last_crawled'] = None # Or handle as error
+                 domain_dict['last_crawled'] = None
         return cls(**domain_dict)
 
 class DomainAnalysisResponse(BaseModel):
@@ -402,10 +454,10 @@ class FindExpiredDomainsResponse(BaseModel):
     total_candidates_processed: int
     valuable_domains_found: int
 
-# New: Pydantic models for SERP and Keyword data
 class SERPSearchRequest(BaseModel):
     keyword: str = Field(..., description="The search term to get SERP results for.")
     num_results: int = Field(10, description="Number of SERP results to fetch.")
+    search_engine: str = Field("google", description="The search engine to use (e.g., 'google', 'bing').")
 
 class SERPResultResponse(BaseModel):
     keyword: str
@@ -465,7 +517,9 @@ async def start_backlink_discovery(
     The crawl runs in the background.
     """
     logger.info(f"Received request to start backlink discovery for {request.target_url}")
-    
+    JOBS_CREATED_TOTAL.labels(job_type='backlink_discovery').inc()
+    JOBS_IN_PROGRESS.labels(job_type='backlink_discovery').inc()
+
     # Convert Pydantic CrawlConfigRequest to internal CrawlConfig dataclass using from_dict
     crawl_config = CrawlConfig.from_dict(request.config.dict() if request.config else {})
 
@@ -486,6 +540,8 @@ async def start_backlink_discovery(
         return CrawlJobResponse.from_crawl_job(job)
     except Exception as e:
         logger.error(f"Error starting crawl job: {e}", exc_info=True)
+        JOBS_IN_PROGRESS.labels(job_type='backlink_discovery').dec() # Decrement on immediate failure
+        JOBS_FAILED_TOTAL.labels(job_type='backlink_discovery').inc()
         raise HTTPException(status_code=500, detail=f"Failed to start crawl job: {e}")
 
 @app.post("/audit/link_health", response_model=CrawlJobResponse, status_code=202)
@@ -498,6 +554,8 @@ async def start_link_health_audit(
     The audit runs in the background.
     """
     logger.info(f"Received request to start link health audit for {len(request.source_urls)} URLs.")
+    JOBS_CREATED_TOTAL.labels(job_type='link_health_audit').inc()
+    JOBS_IN_PROGRESS.labels(job_type='link_health_audit').inc()
 
     if not request.source_urls:
         raise HTTPException(status_code=400, detail="At least one source URL must be provided for link health audit.")
@@ -514,7 +572,44 @@ async def start_link_health_audit(
         return CrawlJobResponse.from_crawl_job(job)
     except Exception as e:
         logger.error(f"Error starting link health audit job: {e}", exc_info=True)
+        JOBS_IN_PROGRESS.labels(job_type='link_health_audit').dec()
+        JOBS_FAILED_TOTAL.labels(job_type='link_health_audit').inc()
         raise HTTPException(status_code=500, detail=f"Failed to start link health audit job: {e}")
+
+@app.post("/audit/technical_audit", response_model=CrawlJobResponse, status_code=202)
+async def start_technical_audit(
+    request: TechnicalAuditRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Starts a new technical audit job for a list of URLs using Lighthouse.
+    The audit runs in the background.
+    """
+    logger.info(f"Received request to start technical audit for {len(request.urls_to_audit)} URLs.")
+    JOBS_CREATED_TOTAL.labels(job_type='technical_audit').inc()
+    JOBS_IN_PROGRESS.labels(job_type='technical_audit').inc()
+
+    if not request.urls_to_audit:
+        raise HTTPException(status_code=400, detail="At least one URL must be provided for technical audit.")
+    
+    for url in request.urls_to_audit:
+        if not urlparse(url).scheme or not urlparse(url).netloc:
+            raise HTTPException(status_code=400, detail=f"Invalid URL for audit: {url}. Must be a full URL (e.g., https://example.com).")
+
+    try:
+        crawl_config = CrawlConfig.from_dict(request.config.dict() if request.config else {})
+
+        job = await crawl_service.create_and_start_crawl_job(
+            job_type='technical_audit',
+            urls_to_audit_tech=request.urls_to_audit,
+            config=crawl_config
+        )
+        return CrawlJobResponse.from_crawl_job(job)
+    except Exception as e:
+        logger.error(f"Error starting technical audit job: {e}", exc_info=True)
+        JOBS_IN_PROGRESS.labels(job_type='technical_audit').dec()
+        JOBS_FAILED_TOTAL.labels(job_type='technical_audit').inc()
+        raise HTTPException(status_code=500, detail=f"Failed to start technical audit job: {e}")
 
 
 @app.get("/crawl/status/{job_id}", response_model=CrawlJobResponse)
@@ -522,7 +617,7 @@ async def get_crawl_status(job_id: str):
     """
     Retrieves the current status of a specific crawl job.
     """
-    job = db.get_crawl_job(job_id) # Fetch directly from DB
+    job = db.get_crawl_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Crawl job not found.")
     return CrawlJobResponse.from_crawl_job(job)
@@ -534,6 +629,10 @@ async def pause_crawl_job(job_id: str):
     """
     try:
         job = await crawl_service.pause_crawl_job(job_id)
+        # Prometheus: Update gauge for job status
+        if job.job_type:
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+            JOBS_PENDING.labels(job_type=job.job_type).inc() # Treat paused as pending for simplicity
         return CrawlJobResponse.from_crawl_job(job)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -548,6 +647,10 @@ async def resume_crawl_job(job_id: str):
     """
     try:
         job = await crawl_service.resume_crawl_job(job_id)
+        # Prometheus: Update gauge for job status
+        if job.job_type:
+            JOBS_PENDING.labels(job_type=job.job_type).dec()
+            JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
         return CrawlJobResponse.from_crawl_job(job)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -562,6 +665,16 @@ async def stop_crawl_job(job_id: str):
     """
     try:
         job = await crawl_service.stop_crawl_job(job_id)
+        # Prometheus: Update gauge for job status
+        if job.job_type:
+            if job.status == CrawlStatus.STOPPED: # Only decrement if it was actually in progress/paused
+                if job.job_type:
+                    JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
+                    # If it was pending/paused, decrement that too
+                    # This assumes a job is either IN_PROGRESS or PENDING before being STOPPED
+                    # A more robust solution would check the previous state.
+                    # For simplicity, we'll just decrement IN_PROGRESS and increment FAILED.
+                    JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc() # Treat stopped as a form of failure for metrics
         return CrawlJobResponse.from_crawl_job(job)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -574,15 +687,10 @@ async def get_link_profile(target_url: str):
     """
     Retrieves the link profile for a given target URL.
     """
-    # Ensure the target_url is properly encoded if it contains special characters
-    # FastAPI's path converter handles this to some extent, but for consistency
-    # with how it's stored, it's good to ensure it's canonical.
-    
-    # Basic validation
     if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
         raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
 
-    profile = db.get_link_profile(target_url) # Fetch directly from DB
+    profile = db.get_link_profile(target_url)
     if not profile:
         raise HTTPException(status_code=404, detail="Link profile not found for this URL. A crawl might not have been completed yet.")
     return LinkProfileResponse.from_link_profile(profile)
@@ -592,20 +700,16 @@ async def get_backlinks(target_url: str):
     """
     Retrieves all raw backlinks found for a given target URL.
     """
-    # Basic validation
     if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
         raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
 
-    # Revert to using the database method directly
     backlinks = db.get_backlinks_for_target(target_url) 
     
     if not backlinks:
-        # This will now correctly return 404 if the database query returns 0
         raise HTTPException(status_code=404, detail=f"No backlinks found for target URL {target_url}.")
     
     return [BacklinkResponse.from_backlink(bl) for bl in backlinks]
 
-# Temporary endpoint to get ALL backlinks for debugging
 @app.get("/debug/all_backlinks", response_model=List[BacklinkResponse])
 async def debug_get_all_backlinks():
     """
@@ -625,7 +729,6 @@ async def check_domain_availability(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    # Use the context-managed domain_service_instance
     is_available = await domain_service_instance.check_domain_availability(domain_name)
     return {"domain_name": domain_name, "is_available": is_available}
 
@@ -637,7 +740,6 @@ async def get_domain_whois(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    # Use the context-managed domain_service_instance
     whois_info = await domain_service_instance.get_whois_info(domain_name)
     if not whois_info:
         raise HTTPException(status_code=404, detail="WHOIS information not found for this domain.")
@@ -651,7 +753,6 @@ async def get_domain_info(domain_name: str):
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
-    # Use the context-managed domain_service_instance
     domain_obj = await domain_service_instance.get_domain_info(domain_name)
     if not domain_obj:
         raise HTTPException(status_code=404, detail="Domain information not found.")
@@ -668,7 +769,6 @@ async def analyze_domain(domain_name: str):
     analysis_result = await domain_analyzer_service.analyze_domain_for_expiration_value(domain_name)
     
     if not analysis_result:
-        # This case might occur if domain_analyzer_service couldn't get domain info
         raise HTTPException(status_code=404, detail="Failed to perform domain analysis, domain info not found or error occurred.")
     
     return analysis_result
@@ -693,23 +793,26 @@ async def find_expired_domains(request: FindExpiredDomainsRequest):
         valuable_domains_found=len(found_domains)
     )
 
-# New: SERP Endpoints
-@app.post("/serp/search", response_model=CrawlJobResponse, status_code=202) # Changed response_model to CrawlJobResponse
+@app.post("/serp/search", response_model=CrawlJobResponse, status_code=202)
 async def search_serp(request: SERPSearchRequest):
     """
     Fetches Search Engine Results Page (SERP) data for a given keyword.
     """
     logger.info(f"Received request to search SERP for keyword: {request.keyword}")
+    JOBS_CREATED_TOTAL.labels(job_type='serp_analysis').inc()
+    JOBS_IN_PROGRESS.labels(job_type='serp_analysis').inc()
+
     try:
         job = await crawl_service.create_and_start_crawl_job(
             job_type='serp_analysis',
             keyword=request.keyword,
             num_results=request.num_results
         )
-        # Return the job status immediately, results will be populated asynchronously
         return CrawlJobResponse.from_crawl_job(job)
     except Exception as e:
         logger.error(f"Error fetching SERP results for '{request.keyword}': {e}", exc_info=True)
+        JOBS_IN_PROGRESS.labels(job_type='serp_analysis').dec()
+        JOBS_FAILED_TOTAL.labels(job_type='serp_analysis').inc()
         raise HTTPException(status_code=500, detail=f"Failed to fetch SERP results: {e}")
 
 @app.get("/serp/results/{keyword}", response_model=List[SERPResultResponse])
@@ -729,23 +832,26 @@ async def get_serp_results(keyword: str):
         logger.error(f"Error retrieving stored SERP results for '{keyword}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve SERP results: {e}")
 
-# New: Keyword Research Endpoints
-@app.post("/keyword/suggest", response_model=CrawlJobResponse, status_code=202) # Changed response_model to CrawlJobResponse
+@app.post("/keyword/suggest", response_model=CrawlJobResponse, status_code=202)
 async def suggest_keywords(request: KeywordSuggestRequest):
     """
     Fetches keyword suggestions for a given seed keyword.
     """
     logger.info(f"Received request to get keyword suggestions for seed: {request.seed_keyword}")
+    JOBS_CREATED_TOTAL.labels(job_type='keyword_research').inc()
+    JOBS_IN_PROGRESS.labels(job_type='keyword_research').inc()
+
     try:
         job = await crawl_service.create_and_start_crawl_job(
             job_type='keyword_research',
             keyword=request.seed_keyword,
             num_results=request.num_suggestions
         )
-        # Return the job status immediately, results will be populated asynchronously
         return CrawlJobResponse.from_crawl_job(job)
     except Exception as e:
         logger.error(f"Error fetching keyword suggestions for '{request.seed_keyword}': {e}", exc_info=True)
+        JOBS_IN_PROGRESS.labels(job_type='keyword_research').dec()
+        JOBS_FAILED_TOTAL.labels(job_type='keyword_research').inc()
         raise HTTPException(status_code=500, detail=f"Failed to fetch keyword suggestions: {e}")
 
 @app.get("/keyword/suggestions/{seed_keyword}", response_model=List[KeywordSuggestionResponse])
@@ -765,10 +871,16 @@ async def get_keyword_suggestions(seed_keyword: str):
         logger.error(f"Error retrieving stored keyword suggestions for '{seed_keyword}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve keyword suggestions: {e}")
 
-# Health check endpoint
 @app.get("/health")
 async def health_check():
     """
     Basic health check endpoint.
     """
     return {"status": "ok", "message": "Link Profiler API is running"}
+
+@app.get("/metrics", response_class=Response)
+async def prometheus_metrics():
+    """
+    Exposes Prometheus metrics.
+    """
+    return Response(content=get_metrics_text(), media_type="text/plain; version=0.0.4; charset=utf-8")

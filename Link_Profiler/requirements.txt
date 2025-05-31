@@ -10,7 +10,8 @@ google-auth-oauthlib
 clickhouse-driver
 playwright
 playwright-stealth
-pytrends # New: For Google Trends data
+pytrends
+prometheus_client # New: For Prometheus metrics
 
 # Queue System Dependencies
 redis>=4.5.0
