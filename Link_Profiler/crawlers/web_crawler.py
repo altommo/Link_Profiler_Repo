@@ -122,7 +122,7 @@ class WebCrawler:
         # Initialize ProxyManager if enabled
         if config_loader.get("proxy_management.enabled", False) and self.config.proxy_list:
             proxy_manager.load_proxies(
-                self.config.proxy_list,
+                self.config.proxy_list, # Pass the new format
                 config_loader.get("proxy_management.proxy_retry_delay_seconds", 300)
             )
             self.use_proxies = True
@@ -208,7 +208,7 @@ class WebCrawler:
 
         current_proxy = None
         if self.use_proxies:
-            current_proxy = proxy_manager.get_next_proxy()
+            current_proxy = proxy_manager.get_next_proxy(desired_region=self.config.proxy_region) # Pass desired_region
             if current_proxy:
                 self.logger.debug(f"Using proxy {current_proxy} for {url}")
             else:

@@ -30,6 +30,7 @@ from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
+from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
 
 logger = logging.getLogger(__name__)
@@ -68,13 +69,13 @@ class SatelliteCrawler:
         # Initialize services required by CrawlService
         self.db = Database() # Satellite needs its own DB connection
         self.clickhouse_loader: Optional[ClickHouseLoader] = None
-        if os.getenv("USE_CLICKHOUSE", "false").lower() == "true":
+        if config_loader.get("clickhouse.enabled", False):
             logger.info("ClickHouse integration enabled for satellite. Attempting to initialize ClickHouseLoader.")
-            clickhouse_host = os.getenv("CLICKHOUSE_HOST", "localhost")
-            clickhouse_port = int(os.getenv("CLICKHOUSE_PORT", 9000))
-            clickhouse_user = os.getenv("CLICKHOUSE_USER", "default")
-            clickhouse_password = os.getenv("CLICKHOUSE_PASSWORD", "")
-            clickhouse_database = os.getenv("CLICKHOUSE_DATABASE", "default")
+            clickhouse_host = config_loader.get("clickhouse.host", "localhost")
+            clickhouse_port = config_loader.get("clickhouse.port", 9000)
+            clickhouse_user = config_loader.get("clickhouse.user", "default")
+            clickhouse_password = config_loader.get("clickhouse.password", "")
+            clickhouse_database = config_loader.get("clickhouse.database", "default")
             self.clickhouse_loader = ClickHouseLoader(
                 host=clickhouse_host,
                 port=clickhouse_port,
@@ -90,17 +91,17 @@ class SatelliteCrawler:
         backlink_service_instance = self._init_backlink_service()
         serp_crawler_instance = self._init_serp_crawler()
         serp_service_instance = SERPService(
-            api_client=RealSERPAPIClient(api_key=os.getenv("REAL_SERP_API_KEY", "dummy_serp_key")) if os.getenv("USE_REAL_SERP_API", "false").lower() == "true" else SimulatedSERPAPIClient(),
+            api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key")) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(),
             serp_crawler=serp_crawler_instance
         )
         keyword_scraper_instance = self._init_keyword_scraper()
         keyword_service_instance = KeywordService(
-            api_client=RealKeywordAPIClient(api_key=os.getenv("REAL_KEYWORD_API_KEY", "dummy_keyword_key")) if os.getenv("USE_REAL_KEYWORD_API", "false").lower() == "true" else SimulatedKeywordAPIClient(),
+            api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key")) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(),
             keyword_scraper=keyword_scraper_instance
         )
         link_health_service_instance = LinkHealthService(self.db)
         technical_auditor_instance = TechnicalAuditor(
-            lighthouse_path=os.getenv("LIGHTHOUSE_PATH", "lighthouse")
+            lighthouse_path=config_loader.get("technical_auditor.lighthouse_path")
         )
         ai_service_instance = AIService() # New: Initialize AIService for satellite
 
@@ -142,40 +143,40 @@ class SatelliteCrawler:
             self._context_managers.append(keyword_scraper_instance)
 
     def _init_domain_service(self):
-        if os.getenv("USE_ABSTRACT_API", "false").lower() == "true":
-            abstract_api_key = os.getenv("ABSTRACT_API_KEY")
+        if config_loader.get("domain_api.abstract_api.enabled"):
+            abstract_api_key = config_loader.get("domain_api.abstract_api.api_key")
             if not abstract_api_key:
-                logger.error("ABSTRACT_API_KEY environment variable not set. Falling back to simulated Domain API.")
+                logger.error("AbstractAPI enabled but API key not found in config. Falling back to simulated Domain API.")
                 return DomainService(api_client=SimulatedDomainAPIClient())
             else:
                 logger.info("Using AbstractDomainAPIClient for domain lookups in satellite.")
                 return DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key))
-        elif os.getenv("USE_REAL_DOMAIN_API", "false").lower() == "true":
-            return DomainService(api_client=RealDomainAPIClient(api_key=os.getenv("REAL_DOMAIN_API_KEY", "dummy_domain_key")))
+        elif config_loader.get("domain_api.real_api.enabled"):
+            return DomainService(api_client=RealDomainAPIClient(api_key=config_loader.get("domain_api.real_api.api_key")))
         else:
             return DomainService(api_client=SimulatedDomainAPIClient())
 
     def _init_backlink_service(self):
-        if os.getenv("USE_GSC_API", "false").lower() == "true":
+        if config_loader.get("backlink_api.gsc_api.enabled"):
             return BacklinkService(api_client=GSCBacklinkAPIClient())
-        elif os.getenv("USE_OPENLINKPROFILER_API", "false").lower() == "true":
+        elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
             return BacklinkService(api_client=OpenLinkProfilerAPIClient())
-        elif os.getenv("USE_REAL_BACKLINK_API", "false").lower() == "true":
-            return BacklinkService(api_client=RealBacklinkAPIClient(api_key=os.getenv("REAL_BACKLINK_API_KEY", "dummy_backlink_key")))
+        elif config_loader.get("backlink_api.real_api.enabled"):
+            return BacklinkService(api_client=RealBacklinkAPIClient(api_key=config_loader.get("backlink_api.real_api.api_key")))
         else:
             return BacklinkService(api_client=SimulatedBacklinkAPIClient())
 
     def _init_serp_crawler(self):
-        if os.getenv("USE_PLAYWRIGHT_SERP_CRAWLER", "false").lower() == "true":
+        if config_loader.get("serp_crawler.playwright.enabled"):
             logger.info("Initialising Playwright SERPCrawler for satellite.")
             return SERPCrawler(
-                headless=os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() == "true",
-                browser_type=os.getenv("PLAYWRIGHT_BROWSER_TYPE", "chromium")
+                headless=config_loader.get("serp_crawler.playwright.headless"),
+                browser_type=config_loader.get("serp_crawler.playwright.browser_type")
             )
         return None
 
     def _init_keyword_scraper(self):
-        if os.getenv("USE_KEYWORD_SCRAPER", "false").lower() == "true":
+        if config_loader.get("keyword_scraper.enabled"):
             logger.info("Initialising KeywordScraper for satellite.")
             return KeywordScraper()
         return None

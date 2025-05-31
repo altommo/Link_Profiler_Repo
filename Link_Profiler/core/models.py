@@ -387,7 +387,8 @@ class CrawlConfig:
     
     # New fields for proxy management
     use_proxies: bool = False # New: Whether to use proxies for crawling
-    proxy_list: List[str] = field(default_factory=list) # New: List of proxy URLs (e.g., 'http://user:pass@ip:port')
+    proxy_list: List[Dict[str, str]] = field(default_factory=list) # New: List of proxy dictionaries (e.g., {'url': 'http://user:pass@ip:port', 'region': 'us-east'})
+    proxy_region: Optional[str] = None # New: Desired proxy region for this crawl job
 
     # New fields for domain analysis jobs
     domain_names_to_analyze: List[str] = field(default_factory=list)
@@ -414,6 +415,10 @@ class CrawlConfig:
         # Ensure custom_headers is a dict, even if it was None in input data
         if 'custom_headers' in data and data['custom_headers'] is None:
             data['custom_headers'] = {}
+
+        # Ensure proxy_list is a list of dicts, even if it was None
+        if 'proxy_list' in data and data['proxy_list'] is None:
+            data['proxy_list'] = []
 
         # Filter out any keys not in the dataclass constructor
         # This prevents errors if the dict contains extra serialization metadata
