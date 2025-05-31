@@ -40,9 +40,10 @@ RUN playwright install --with-deps chromium
 RUN npm install -g lighthouse
 
 # Copy application code (the entire Link_Profiler package)
+# This copies the whole Link_Profiler/ directory into /app/Link_Profiler/
 COPY Link_Profiler/ ./Link_Profiler/
 
-# Set Python path
+# Set Python path to include the /app directory where the package resides
 ENV PYTHONPATH=/app
 
 # Expose API port

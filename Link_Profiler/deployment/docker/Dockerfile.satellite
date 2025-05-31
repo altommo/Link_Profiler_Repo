@@ -22,9 +22,10 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only satellite requirements (lighter)
-COPY requirements-satellite.txt .
-RUN pip install --no-cache-dir -r requirements-satellite.txt
+# Copy requirements and install Python dependencies
+# Satellite now uses the main requirements.txt as it copies the full package
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright browsers (Chromium) - required for SERPCrawler
 RUN playwright install --with-deps chromium
@@ -32,16 +33,11 @@ RUN playwright install --with-deps chromium
 # Install Lighthouse CLI globally (if technical_auditor is used by satellite)
 RUN npm install -g lighthouse
 
-# Copy only necessary components for satellite
-COPY Link_Profiler/crawlers/ ./Link_Profiler/crawlers/
-COPY Link_Profiler/core/ ./Link_Profiler/core/
-COPY Link_Profiler/services/ ./Link_Profiler/services/
-COPY Link_Profiler/database/ ./Link_Profiler/database/
-COPY Link_Profiler/monitoring/prometheus_metrics.py ./Link_Profiler/monitoring/prometheus_metrics.py
-COPY Link_Profiler/__init__.py ./Link_Profiler/__init__.py
-COPY Link_Profiler/queue_system/satellite_crawler.py ./Link_Profiler/queue_system/satellite_crawler.py
+# Copy application code (the entire Link_Profiler package)
+# This copies the whole Link_Profiler/ directory into /app/Link_Profiler/
+COPY Link_Profiler/ ./Link_Profiler/
 
-# Set Python path
+# Set Python path to include the /app directory where the package resides
 ENV PYTHONPATH=/app
 
 # Default environment variables

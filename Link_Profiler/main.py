@@ -991,5 +991,55 @@ async def clear_dead_letters():
         logger.error(f"Error clearing dead-letter messages: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to clear dead-letter messages: {e}")
 
+@app.post("/debug/reprocess_dead_letters", response_model=Dict[str, str])
+async def reprocess_dead_letters():
+    """
+    DEBUG endpoint: Moves all messages from the dead-letter queue back to the main job queue for reprocessing.
+    """
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Redis is not available, dead-letter queue cannot be reprocessed.")
+    
+    dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name")
+    job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs") # Assuming default job queue name
+    
+    try:
+        messages = await redis_client.lrange(dead_letter_queue_name, 0, -1)
+        if not messages:
+            return {"status": "success", "message": "Dead-letter queue is empty. Nothing to reprocess."}
+        
+        requeued_count = 0
+        for msg in messages:
+            try:
+                job_data = json.loads(msg.decode('utf-8'))
+                # Remove dead_letter_reason and timestamp before re-queuing
+                job_data.pop('dead_letter_reason', None)
+                job_data.pop('dead_letter_timestamp', None)
+                
+                # Optionally reset status to PENDING if it was FAILED
+                if job_data.get('status') == CrawlStatus.FAILED.value:
+                    job_data['status'] = CrawlStatus.PENDING.value
+                    job_data['errors_count'] = 0
+                    job_data['error_log'] = []
+                
+                # Re-add to the sorted set job queue with its original priority
+                # Assuming job_data contains 'priority' and 'id'
+                priority = job_data.get('priority', 5)
+                await redis_client.zadd(job_queue_name, {json.dumps(job_data): priority})
+                requeued_count += 1
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to decode dead-letter message during reprocess: {msg.decode('utf-8')[:100]}... Error: {e}")
+            except Exception as e:
+                logger.error(f"Error re-queuing dead-letter message {msg.decode('utf-8')[:100]}... Error: {e}")
+        
+        # Clear the dead-letter queue after successful re-queuing
+        await redis_client.delete(dead_letter_queue_name)
+        
+        logger.info(f"Reprocessed {requeued_count} messages from dead-letter queue to {job_queue_name}.")
+        return {"status": "success", "message": f"Reprocessed {requeued_count} messages from dead-letter queue."}
+    except Exception as e:
+        logger.error(f"Error reprocessing dead-letter messages: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to reprocess dead-letter messages: {e}")
+
+
 # Add queue-related endpoints to the main app
 add_queue_endpoints(app, db) # Pass the db instance to add_queue_endpoints
