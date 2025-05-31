@@ -6,8 +6,9 @@ File: Link_Profiler/crawlers/content_parser.py
 from typing import Optional, Dict, Any, List
 from bs4 import BeautifulSoup
 import logging
-from urllib.parse import urlparse, urljoin # Added import
-from datetime import datetime # Import datetime
+from urllib.parse import urlparse, urljoin
+from datetime import datetime
+import json # Import the json module
 
 from Link_Profiler.core.models import SEOMetrics # Absolute import
 
@@ -131,4 +132,3 @@ class ContentParser:
         """Helper to extract content from meta tags."""
         tag = soup.find('meta', attrs={attr_name: attr_value})
         return tag.get('content').strip() if tag and tag.get('content') else None
-
