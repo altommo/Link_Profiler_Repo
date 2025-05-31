@@ -44,6 +44,7 @@ from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPICli
 from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.ai_service import AIService # New: Import AIService
+from Link_Profiler.services.alert_service import AlertService # New: Import AlertService
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
@@ -172,6 +173,9 @@ technical_auditor_instance = TechnicalAuditor(
 # New: Initialize AI Service
 ai_service_instance = AIService()
 
+# New: Initialize Alert Service
+alert_service_instance = AlertService(db)
+
 # Initialize DomainAnalyzerService (depends on DomainService)
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance, ai_service_instance)
 
@@ -212,7 +216,8 @@ async def lifespan(app: FastAPI):
         keyword_service_instance,
         link_health_service_instance,
         technical_auditor_instance,
-        ai_service_instance # New: Add AI Service to lifespan
+        ai_service_instance,
+        alert_service_instance # New: Add AlertService to lifespan
         # Removed crawl_service_for_lifespan as it is not an async context manager itself.
         # Its internal dependencies are already managed here.
     ]
@@ -270,6 +275,9 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("Redis client not initialized. Skipping Redis ping.")
         
+        # New: Start alert rule refreshing in background
+        asyncio.create_task(alert_service_instance.refresh_rules())
+
         yield # This is the single yield point for the lifespan
 
     finally:
@@ -457,6 +465,7 @@ class LinkProfileResponse(BaseModel):
     authority_score: float
     trust_score: float
     spam_score: float
+
     anchor_text_distribution: Dict[str, int]
     referring_domains: List[str] # Convert set to list for JSON serialization
     analysis_date: datetime
@@ -1277,6 +1286,9 @@ async def create_alert_rule(request: AlertRuleCreateRequest):
     new_rule = AlertRule(id=rule_id, **request.dict())
     try:
         db.save_alert_rule(new_rule)
+        # After saving, trigger a refresh of rules in the AlertService
+        if alert_service_instance:
+            await alert_service_instance.load_active_rules()
         logger.info(f"Created new alert rule: {new_rule.name} (ID: {new_rule.id})")
         return AlertRuleResponse.from_alert_rule(new_rule)
     except ValueError as e:
@@ -1315,6 +1327,9 @@ async def update_alert_rule(rule_id: str, request: AlertRuleCreateRequest):
     updated_rule = AlertRule(id=rule_id, **request.dict())
     try:
         db.save_alert_rule(updated_rule) # save_alert_rule handles update if ID exists
+        # After saving, trigger a refresh of rules in the AlertService
+        if alert_service_instance:
+            await alert_service_instance.load_active_rules()
         logger.info(f"Updated alert rule: {updated_rule.name} (ID: {updated_rule.id})")
         return AlertRuleResponse.from_alert_rule(updated_rule)
     except ValueError as e:
@@ -1332,6 +1347,9 @@ async def delete_alert_rule(rule_id: str):
         deleted = db.delete_alert_rule(rule_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Alert rule not found.")
+        # After deleting, trigger a refresh of rules in the AlertService
+        if alert_service_instance:
+            await alert_service_instance.load_active_rules()
         logger.info(f"Deleted alert rule ID: {rule_id}")
         return Response(status_code=204)
     except Exception as e:
@@ -1551,4 +1569,4 @@ async def reprocess_dead_letters():
 
 
 # Add queue-related endpoints to the main app
-add_queue_endpoints(app, db) # Pass the db instance to add_queue_endpoints
+add_queue_endpoints(app, db, alert_service_instance) # Pass the db and alert_service_instance to add_queue_endpoints

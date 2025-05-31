@@ -15,16 +15,18 @@ import aiohttp # New: Import aiohttp for webhooks
 from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, serialize_model, CrawlError
 from Link_Profiler.database.database import Database
 from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.services.alert_service import AlertService # New: Import AlertService
 
 logger = logging.getLogger(__name__)
 
 class JobCoordinator:
     """Manages distributed crawling jobs via Redis queues"""
     
-    def __init__(self, redis_url: str = "redis://localhost:6379", database: Database = None):
+    def __init__(self, redis_url: str = "redis://localhost:6379", database: Database = None, alert_service: Optional[AlertService] = None):
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
         self.db = database
+        self.alert_service = alert_service # New: Store AlertService instance
         
         # Queue names
         self.job_queue = "crawl_jobs"
@@ -38,7 +40,7 @@ class JobCoordinator:
         
         self.scheduler_interval = config_loader.get("queue.scheduler_interval", 5)
 
-        # Webhook configuration
+        # Webhook configuration (for job completion webhooks)
         self.webhook_enabled = config_loader.get("notifications.webhooks.enabled", False)
         self.webhook_urls = config_loader.get("notifications.webhooks.urls", [])
         self._session: Optional[aiohttp.ClientSession] = None # New: aiohttp client session
@@ -196,6 +198,10 @@ class JobCoordinator:
         # New: Send webhook notification if enabled and job is completed or failed
         if self.webhook_enabled and (job.status == CrawlStatus.COMPLETED or job.status == CrawlStatus.FAILED):
             await self._send_webhook_notification(job)
+
+        # New: Evaluate alert rules for job status changes or anomalies
+        if self.alert_service:
+            await self.alert_service.evaluate_job_update(job)
     
     async def _send_webhook_notification(self, job: CrawlJob):
         """Sends a webhook notification for a job status change."""
@@ -323,11 +329,13 @@ async def main():
     logging.basicConfig(level=logging.INFO)
     # Initialize Database for standalone coordinator if needed
     db_instance = Database() 
-    async with JobCoordinator(database=db_instance) as coordinator:
+    alert_service_instance = AlertService(db_instance) # New: Initialize AlertService
+    async with JobCoordinator(database=db_instance, alert_service=alert_service_instance) as coordinator: # Pass AlertService
         # Start monitoring tasks
         asyncio.create_task(coordinator.process_results())
         asyncio.create_task(coordinator.monitor_satellites())
         asyncio.create_task(coordinator._process_scheduled_jobs())
+        asyncio.create_task(alert_service_instance.refresh_rules()) # New: Start alert rule refreshing
         
         logger.info("Job Coordinator started. Press Ctrl+C to exit.")
         # Keep the main task alive
