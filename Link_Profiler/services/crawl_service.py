@@ -425,7 +425,7 @@ class CrawlService:
                                         self.db.add_backlinks(deduplicated_crawled_backlinks) 
                                         if self.clickhouse_loader: # Conditionally insert to ClickHouse
                                             await self.clickhouse_loader.bulk_insert_backlinks(deduplicated_crawled_backlinks)
-                                        BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(deduplicated_crawled_backlinks))
+                                        BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(deduplicated_api_backlinks))
                                     except Exception as db_e:
                                         self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
                                         job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error adding crawled backlinks: {str(db_e)}", details=str(db_e))
@@ -506,6 +506,7 @@ class CrawlService:
                     else:
                         self.logger.warning(f"Could not find domain info for source domain {backlink.source_domain} to enrich backlink {backlink.id}.")
 
+                # Calculate LinkProfile scores based on enriched backlinks
                 total_authority_score_sum = 0.0
                 total_trust_score_sum = 0.0
                 total_spam_score_sum = 0.0

@@ -50,10 +50,12 @@ class DomainAnalyzerService:
         # aiohttp session is active for API calls.
         async with self.domain_service as ds: 
             if not domain_obj:
-                # If not found in DB, try to fetch fresh info (though this might be slow for many domains)
-                self.logger.info(f"Domain {domain_name} not found in DB, fetching fresh info.")
+                # If not found in DB, try to fetch fresh info and save it
+                self.logger.info(f"Domain {domain_name} not found in DB, fetching fresh info and saving.")
                 domain_obj = await ds.get_domain_info(domain_name) # Use ds from context manager
-                if not domain_obj:
+                if domain_obj:
+                    self.db.save_domain(domain_obj) # Save the newly fetched domain info
+                else:
                     return {
                         "domain_name": domain_name,
                         "value_score": 0,
@@ -84,21 +86,21 @@ class DomainAnalyzerService:
             value_score += 20 # Bonus for availability
             reasons.append("Domain is available for registration.")
 
-        # Rule 1: Authority Score
+        # Rule 1: Authority Score (using domain_obj's score)
         if domain_obj.authority_score >= min_authority_score:
             value_score += 30
             reasons.append(f"High authority score ({domain_obj.authority_score:.2f}).")
         else:
             reasons.append(f"Low authority score ({domain_obj.authority_score:.2f}).")
 
-        # Rule 2: Spam Score
+        # Rule 2: Spam Score (using domain_obj's score)
         if domain_obj.spam_score <= max_spam_score:
             value_score += 25
             reasons.append(f"Acceptable spam score ({domain_obj.spam_score:.2f}).")
         else:
             reasons.append(f"High spam score ({domain_obj.spam_score:.2f}).")
 
-        # Rule 3: Age
+        # Rule 3: Age (using domain_obj's age)
         if domain_obj.age_days and domain_obj.age_days >= min_age_days:
             value_score += 15
             reasons.append(f"Domain is old ({domain_obj.age_days} days).")
