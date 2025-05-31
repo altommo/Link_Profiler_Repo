@@ -17,7 +17,7 @@ A comprehensive, open-source link analysis and expired domain discovery system i
 ### 🔍 **Link Analysis & Profiling**
 - **Comprehensive Backlink Discovery**: Find all links pointing to target domains, either by crawling or via external APIs.
 - **Authority Calculation**: Domain and page authority scoring algorithms (now more sophisticated, leveraging linking domain metrics).
-- **Spam Detection**: AI-powered spam link identification and configurable filtering based on spam level and source domain quality.
+- **Spam Detection & Quality Filtering**: Configurable filtering of backlinks based on their `SpamLevel` and the quality signals (e.g., low authority, high spam score) of the source domain.
 - **Anchor Text Analysis**: Detailed anchor text distribution and patterns.
 - **Link Type Classification**: dofollow, nofollow, sponsored, UGC, redirect, canonical detection.
 - **SEO Metrics Extraction**: Extracts and stores on-page SEO data (e.g., title length, heading counts, internal/external links, structured data, social meta).
@@ -469,6 +469,7 @@ The project has a solid foundation with core crawling, link analysis, and domain
 - **AI Integration**: For content scoring, domain value analysis, etc.
 - **Proxy Management**: Implemented rotation and blacklisting.
 - **Content Validation**: Implemented checks for bot detection and content completeness.
+- **Backlink Quality Filtering and Spam Detection**: Implemented configurable filtering based on spam level and source domain quality.
 - **Export Capabilities**: CSV export for various data types.
 
 ### **Immediate Next Steps (High Priority)**
