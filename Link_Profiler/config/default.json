@@ -75,7 +75,7 @@
     "enabled": false
   },
   "keyword_api": {
-    "real_api": {
+    ""real_api": {
       "enabled": false,
       "api_key": "your_real_keyword_api_key_here"
     },
@@ -107,5 +107,9 @@
       "competitor_analysis": "openai/gpt-4",
       "content_generation": "anthropic/claude-3-5-sonnet"
     }
+  },
+  "api_cache": {
+    "enabled": true,
+    "ttl": 3600
   }
 }

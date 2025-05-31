@@ -79,6 +79,8 @@ API_HOST = config_loader.get("api.host")
 API_PORT = config_loader.get("api.port")
 MONITOR_PORT = config_loader.get("monitoring.monitor_port")
 LOG_LEVEL = config_loader.get("logging.level")
+API_CACHE_ENABLED = config_loader.get("api_cache.enabled")
+API_CACHE_TTL = config_loader.get("api_cache.ttl")
 
 # Initialize database
 db = Database(db_url=DATABASE_URL)
@@ -109,23 +111,23 @@ if config_loader.get("domain_api.abstract_api.enabled"):
     abstract_api_key = config_loader.get("domain_api.abstract_api.api_key")
     if not abstract_api_key:
         logger.error("ABSTRACT_API_KEY environment variable not set. Falling back to simulated Domain API.")
-        domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient())
+        domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
     else:
-        domain_service_instance = DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key))
+        domain_service_instance = DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
 elif config_loader.get("domain_api.real_api.enabled"):
-    domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=config_loader.get("domain_api.real_api.api_key")))
+    domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=config_loader.get("domain_api.real_api.api_key")), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
 else:
-    domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient())
+    domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
 if config_loader.get("backlink_api.gsc_api.enabled"):
-    backlink_service_instance = BacklinkService(api_client=GSCBacklinkAPIClient())
+    backlink_service_instance = BacklinkService(api_client=GSCBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
 elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
-    backlink_service_instance = BacklinkService(api_client=OpenLinkProfilerAPIClient())
+    backlink_service_instance = BacklinkService(api_client=OpenLinkProfilerAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
 elif config_loader.get("backlink_api.real_api.enabled"):
-    backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=config_loader.get("backlink_api.real_api.api_key")))
+    backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=config_loader.get("backlink_api.real_api.api_key")), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
 else:
-    backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient())
+    backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
 
 # New: Initialize SERPService and SERPCrawler
 serp_crawler_instance = None
