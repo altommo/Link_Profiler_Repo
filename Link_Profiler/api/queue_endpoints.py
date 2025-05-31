@@ -38,6 +38,7 @@ async def get_coordinator(db_instance: Database) -> JobCoordinator:
         # Start background tasks
         asyncio.create_task(coordinator.process_results())
         asyncio.create_task(coordinator.monitor_satellites())
+        asyncio.create_task(coordinator._process_scheduled_jobs()) # New: Start scheduled jobs processor
     
     return coordinator
 
@@ -47,6 +48,10 @@ class QueueCrawlRequest(BaseModel):
     initial_seed_urls: List[str] = Field(..., description="URLs to start crawling from")
     config: Optional[Dict] = Field(None, description="Optional crawl configuration")
     priority: int = Field(5, description="Job priority (1-10, higher = more priority)")
+    
+    # New fields for scheduling
+    scheduled_at: Optional[datetime] = Field(None, description="Specific UTC datetime to run the job (ISO format). If set, job is scheduled.")
+    cron_schedule: Optional[str] = Field(None, description="Cron string for recurring jobs (e.g., '0 0 * * *'). Requires scheduled_at for first run.")
 
 class QueueStatsResponse(BaseModel):
     pending_jobs: int
@@ -85,6 +90,9 @@ async def submit_crawl_to_queue(request: QueueCrawlRequest):
             job_type=job_type,
             status=CrawlStatus.PENDING,
             priority=request.priority,
+            created_date=datetime.now(), # Ensure created_date is set here
+            scheduled_at=request.scheduled_at, # Pass scheduled_at
+            cron_schedule=request.cron_schedule, # Pass cron_schedule
             config=serialize_model(crawl_config_obj), # Store serialized config
             # Pass initial_seed_urls, keyword, etc. within the config dict for the satellite to use
             # The satellite will deserialize this config and pass it to CrawlService.execute_predefined_job
@@ -223,6 +231,24 @@ def add_queue_endpoints(app, db_instance: Database): # Accept db_instance
             priority=7
         )
         return await submit_crawl_to_queue(sample_request)
+
+    # New: Endpoint for scheduling jobs
+    @app.post("/schedule/crawl", response_model=Dict[str, str])
+    async def schedule_crawl_endpoint(request: QueueCrawlRequest):
+        """
+        Schedule a crawl job to run at a specific time or on a recurring basis.
+        Requires 'scheduled_at' for one-time scheduling or 'cron_schedule' for recurring.
+        """
+        if not request.scheduled_at and not request.cron_schedule:
+            raise HTTPException(status_code=400, detail="Either 'scheduled_at' or 'cron_schedule' must be provided for scheduling.")
+        
+        if request.cron_schedule and not request.scheduled_at:
+            # For recurring jobs, scheduled_at should be the first run time
+            raise HTTPException(status_code=400, detail="For recurring jobs, 'scheduled_at' must be provided for the initial run time.")
+
+        logger.info(f"Received request to schedule job for {request.target_url} at {request.scheduled_at} with cron '{request.cron_schedule}'.")
+        return await submit_crawl_to_queue(request)
+
 
     # Add startup/shutdown events for coordinator
     @app.on_event("startup")

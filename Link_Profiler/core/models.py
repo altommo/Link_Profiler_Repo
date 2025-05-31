@@ -315,6 +315,10 @@ class CrawlJob:
     results: Dict = field(default_factory=dict)
     error_log: List[CrawlError] = field(default_factory=list) # Changed to List[CrawlError]
     
+    # New fields for scheduling
+    scheduled_at: Optional[datetime] = None # When the job should be moved to the active queue
+    cron_schedule: Optional[str] = None # Cron string for recurring jobs (e.g., "0 0 * * *")
+    
     @property
     def duration_seconds(self) -> Optional[float]:
         """Calculate job duration"""
@@ -344,6 +348,8 @@ class CrawlJob:
             data['started_date'] = datetime.fromisoformat(data['started_date'])
         if 'completed_date' in data and isinstance(data['completed_date'], str):
             data['completed_date'] = datetime.fromisoformat(data['completed_date'])
+        if 'scheduled_at' in data and isinstance(data['scheduled_at'], str):
+            data['scheduled_at'] = datetime.fromisoformat(data['scheduled_at'])
         
         # Deserialize error_log
         if 'error_log' in data and isinstance(data['error_log'], list):
@@ -485,7 +491,7 @@ class SEOMetrics:
         if self.mobile_friendly is False:
             score -= 15
         if self.accessibility_score is not None:
-            score -= (100 - self.accessibility_score) * 0.05 # Smaller penalty for accessibility
+            score -= (100 - self.accessibility_score) * 0.05 # Smaller adjustment for accessibility
 
         # AI-driven score adjustments
         if self.ai_content_score is not None:

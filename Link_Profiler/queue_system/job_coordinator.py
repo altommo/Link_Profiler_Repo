@@ -9,9 +9,11 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from dataclasses import asdict
 import logging
+from croniter import croniter # New: Import croniter for cron scheduling
 
 from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, serialize_model, CrawlError
 from Link_Profiler.database.database import Database # Import Database
+from Link_Profiler.config.config_loader import config_loader # Import config_loader
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +26,17 @@ class JobCoordinator:
         self.db = database # Store the database instance
         
         # Queue names
-        self.job_queue = "crawl_jobs"
+        self.job_queue = "crawl_jobs" # Main queue for jobs ready to be processed
         self.result_queue = "crawl_results" 
-        self.heartbeat_queue_sorted = "crawler_heartbeats_sorted" # Changed to sorted set
+        self.heartbeat_queue_sorted = "crawler_heartbeats_sorted" # Sorted set for heartbeats
+        self.scheduled_jobs_queue = "scheduled_jobs" # New: Sorted set for scheduled jobs
         
         # Job tracking (authoritative state is in DB, this is for quick in-memory lookup of active jobs)
         self.active_jobs_cache: Dict[str, CrawlJob] = {} # Stores CrawlJob objects for quick access
         self.satellite_crawlers: Dict[str, datetime] = {} # Stores crawler_id -> last_seen datetime
         
+        self.scheduler_interval = config_loader.get("queue.scheduler_interval", 5) # How often to check scheduled jobs
+
     async def __aenter__(self):
         # Ensure Redis connection is active
         try:
@@ -47,24 +52,30 @@ class JobCoordinator:
         logger.info("JobCoordinator Redis connection closed.")
     
     async def submit_crawl_job(self, job: CrawlJob) -> str:
-        """Submit a new crawl job to the queue"""
+        """Submit a new crawl job to the queue (either immediate or scheduled)"""
         
         # Add job to database first (authoritative source)
         self.db.add_crawl_job(job)
         
-        # Add to Redis queue with priority
-        # Serialize the CrawlJob dataclass to JSON string
         job_message = serialize_model(job)
-        
-        await self.redis.zadd(
-            self.job_queue, 
-            {json.dumps(job_message): job.priority}
-        )
+
+        if job.scheduled_at:
+            # If scheduled_at is in the past, treat as immediate
+            if job.scheduled_at <= datetime.now():
+                logger.info(f"Scheduled job {job.id} is due now. Adding to immediate queue.")
+                await self.redis.zadd(self.job_queue, {json.dumps(job_message): job.priority})
+            else:
+                # Add to scheduled jobs queue with scheduled_at timestamp as score
+                await self.redis.zadd(self.scheduled_jobs_queue, {json.dumps(job_message): job.scheduled_at.timestamp()})
+                logger.info(f"Scheduled job {job.id} (type: {job.job_type}) for {job.target_url} scheduled at {job.scheduled_at} with cron '{job.cron_schedule}'.")
+        else:
+            # Add to immediate queue with priority
+            await self.redis.zadd(self.job_queue, {json.dumps(job_message): job.priority})
+            logger.info(f"Submitted immediate crawl job {job.id} (type: {job.job_type}) for {job.target_url} with priority {job.priority}")
         
         # Add to in-memory cache for quick lookup by get_job_status
         self.active_jobs_cache[job.id] = job
         
-        logger.info(f"Submitted crawl job {job.id} (type: {job.job_type}) for {job.target_url} with priority {job.priority}")
         return job.id
     
     async def get_job_status(self, job_id: str) -> Optional[CrawlJob]:
@@ -120,6 +131,31 @@ class JobCoordinator:
             job.completed_date = datetime.now()
             job.results = result_data.get("results", {})
             logger.info(f"Job {job.id} completed successfully")
+
+            # If it's a recurring job, schedule the next run
+            if job.cron_schedule:
+                try:
+                    iter = croniter(job.cron_schedule, job.completed_date)
+                    next_run_time = iter.get_next(datetime)
+                    
+                    # Create a new job instance for the next run
+                    next_job = CrawlJob(
+                        id=str(uuid.uuid4()),
+                        target_url=job.target_url,
+                        job_type=job.job_type,
+                        status=CrawlStatus.PENDING,
+                        priority=job.priority,
+                        created_date=datetime.now(),
+                        scheduled_at=next_run_time,
+                        cron_schedule=job.cron_schedule,
+                        config=job.config # Copy original config
+                    )
+                    self.db.add_crawl_job(next_job) # Add to DB
+                    await self.redis.zadd(self.scheduled_jobs_queue, {json.dumps(serialize_model(next_job)): next_run_time.timestamp()})
+                    logger.info(f"Recurring job {job.id} completed. Next run ({next_job.id}) scheduled for {next_run_time}.")
+                except Exception as e:
+                    logger.error(f"Failed to schedule next run for recurring job {job.id}: {e}", exc_info=True)
+                    job.add_error(url="N/A", error_type="SchedulingError", message=f"Failed to schedule next run: {str(e)}")
         
         elif job.status == CrawlStatus.FAILED:
             job.completed_date = datetime.now()
@@ -175,9 +211,47 @@ class JobCoordinator:
             finally:
                 await asyncio.sleep(10) # Check every 10 seconds
     
+    async def _process_scheduled_jobs(self):
+        """
+        Periodically checks the scheduled jobs queue and moves due jobs
+        to the main job queue.
+        """
+        logger.info("Starting scheduled jobs processing loop.")
+        while True:
+            try:
+                now_timestamp = datetime.now().timestamp()
+                
+                # Get all jobs that are due (score <= current timestamp)
+                due_jobs = await self.redis.zrangebyscore(
+                    self.scheduled_jobs_queue, 
+                    "-inf", 
+                    now_timestamp, 
+                    withscores=False
+                )
+                
+                if due_jobs:
+                    logger.info(f"Found {len(due_jobs)} scheduled jobs due for processing.")
+                    for job_json in due_jobs:
+                        job_dict = json.loads(job_json)
+                        job = CrawlJob.from_dict(job_dict)
+                        
+                        # Remove from scheduled queue
+                        await self.redis.zrem(self.scheduled_jobs_queue, job_json)
+                        
+                        # Add to main job queue
+                        await self.redis.zadd(self.job_queue, {json.dumps(serialize_model(job)): job.priority})
+                        logger.info(f"Moved scheduled job {job.id} (type: {job.job_type}) to main job queue.")
+                        
+                
+            except Exception as e:
+                logger.error(f"Error processing scheduled jobs: {e}", exc_info=True)
+            finally:
+                await asyncio.sleep(self.scheduler_interval) # Check every X seconds
+    
     async def get_queue_stats(self) -> Dict:
         """Get current queue statistics"""
         pending_jobs = await self.redis.zcard(self.job_queue)
+        scheduled_jobs = await self.redis.zcard(self.scheduled_jobs_queue) # New: Get scheduled jobs count
         active_crawlers = len(self.satellite_crawlers)
         
         # Total and completed jobs should ideally come from DB for accuracy
@@ -186,6 +260,7 @@ class JobCoordinator:
         
         return {
             "pending_jobs": pending_jobs,
+            "scheduled_jobs": scheduled_jobs, # New: Include scheduled jobs count
             "active_crawlers": active_crawlers,
             "total_jobs": total_jobs_db,
             "completed_jobs": completed_jobs_db
@@ -200,6 +275,7 @@ async def main():
         # Start monitoring tasks
         asyncio.create_task(coordinator.process_results())
         asyncio.create_task(coordinator.monitor_satellites())
+        asyncio.create_task(coordinator._process_scheduled_jobs()) # New: Start scheduled jobs processor
         
         logger.info("Job Coordinator started. Press Ctrl+C to exit.")
         # Keep the main task alive
