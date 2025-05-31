@@ -8,7 +8,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.inspection import inspect
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY # Import JSONB and ARRAY
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from datetime import datetime
 import enum
 
@@ -218,6 +218,7 @@ class SEOMetricsORM(Base):
     twitter_title = Column(String, nullable=True)
     twitter_description = Column(Text, nullable=True)
     validation_issues = Column(ARRAY(String), default=[]) # Issues found by ContentValidator
+    ocr_text = Column(Text, nullable=True) # New: Extracted text from images via OCR
 
     # Relationships
     url_rel = relationship("URLORM", back_populates="seo_metrics")

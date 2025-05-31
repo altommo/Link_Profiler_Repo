@@ -10,7 +10,8 @@
     "extract_pdfs": false,
     "max_file_size_mb": 5,
     "user_agent_rotation": false,
-    "render_javascript": false
+    "render_javascript": false,
+    "extract_image_text": false
   },
   "anti_detection": {
     "stealth_mode": true,

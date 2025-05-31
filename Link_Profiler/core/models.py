@@ -227,7 +227,7 @@ class CrawlResult:
     """Result of a single page crawl"""
     url: str
     status_code: int
-    content: str = ""
+    content: Union[str, bytes] = "" # Content can be string (HTML) or bytes (image/pdf)
     headers: Dict[str, str] = field(default_factory=dict)
     links_found: List[Backlink] = field(default_factory=list)
     redirect_url: Optional[str] = None
@@ -248,6 +248,13 @@ class CrawlResult:
         if 'seo_metrics' in data and isinstance(data['seo_metrics'], dict):
             data['seo_metrics'] = SEOMetrics.from_dict(data['seo_metrics'])
         
+        # Handle content which might be bytes but serialized as string
+        if 'content' in data and isinstance(data['content'], str) and data.get('content_type') != 'text/html':
+            try:
+                data['content'] = data['content'].encode('latin-1') # Or appropriate encoding
+            except Exception:
+                pass # Keep as string if encoding fails
+
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered_data)
@@ -434,6 +441,7 @@ class CrawlConfig:
     render_javascript: bool = False # New: Whether to use a headless browser to render JavaScript content
     browser_type: Optional[str] = "chromium" # New: Browser type for headless rendering (chromium, firefox, webkit)
     headless_browser: bool = True # New: Whether the browser should run in headless mode (True by default)
+    extract_image_text: bool = False # New: Whether to perform OCR on images to extract text
 
     # New fields for domain analysis jobs
     domain_names_to_analyze: List[str] = field(default_factory=list)
@@ -511,6 +519,7 @@ class SEOMetrics:
     twitter_description: Optional[str] = None
     validation_issues: List[str] = field(default_factory=list) # Issues found by ContentValidator
     ai_content_classification: Optional[str] = None # New: AI-driven content classification (e.g., "high_quality", "spam")
+    ocr_text: Optional[str] = None # New: Extracted text from images via OCR
 
     # AI-generated insights
     ai_content_score: Optional[float] = None # AI-driven content quality score (0-100)
