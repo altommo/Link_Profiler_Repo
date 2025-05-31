@@ -13,9 +13,10 @@ import random # New: Import random for human-like delays
 from playwright.async_api import async_playwright, Page, BrowserContext, Browser
 from playwright_stealth import stealth_async
 
-from Link_Profiler.core.models import SERPResult # Absolute import
+from Link_Profiler.core.models import SERPResult, CrawlResult # Absolute import CrawlResult
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.utils.content_validator import ContentValidator # New: Import ContentValidator
+from Link_Profiler.utils.anomaly_detector import anomaly_detector # New: Import AnomalyDetector
 from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
 logger = logging.getLogger(__name__)
@@ -263,7 +264,27 @@ class SERPCrawler:
 
             # New: Check for CAPTCHA after navigation
             page_content = await page.content()
-            validation_issues = self.content_validator.validate_crawl_result(page.url, page_content, page.status())
+            page_status = page.status()
+            validation_issues = self.content_validator.validate_crawl_result(page.url, page_content, page_status)
+            
+            # Create a dummy CrawlResult for anomaly detection
+            temp_crawl_result = CrawlResult(
+                url=page.url,
+                status_code=page_status,
+                content=page_content,
+                links_found=[], # Not relevant for SERP page itself
+                crawl_time_ms=int(page_load_time * 1000),
+                content_type="text/html",
+                validation_issues=validation_issues
+            )
+
+            if config_loader.get("anti_detection.anomaly_detection_enabled", False):
+                anomalies = anomaly_detector.detect_anomalies_for_crawl_result(temp_crawl_result)
+                if anomalies:
+                    self.logger.warning(f"Anomalies detected on SERP page for '{keyword}': {anomalies}")
+                    # Decide how to handle anomalies for SERP. For now, just log and proceed.
+                    # In a real system, this might trigger a retry with a new proxy/fingerprint.
+
             if "CAPTCHA detected" in validation_issues or "Cloudflare 'Attention Required' page" in validation_issues:
                 if config_loader.get("anti_detection.captcha_solving_enabled", False):
                     self.logger.warning(f"CAPTCHA detected on SERP for '{keyword}'. Attempting to solve (simulated).")

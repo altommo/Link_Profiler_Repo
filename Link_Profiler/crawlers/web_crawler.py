@@ -27,6 +27,7 @@ from .robots_parser import RobotsParser
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.utils.proxy_manager import proxy_manager # New: Import ProxyManager
 from Link_Profiler.utils.content_validator import ContentValidator # New: Import ContentValidator
+from Link_Profiler.utils.anomaly_detector import anomaly_detector # New: Import AnomalyDetector
 from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
 
@@ -142,6 +143,7 @@ class CrawlResult:
     seo_metrics: Optional[SEOMetrics] = None # Added for SEO metrics
     crawl_timestamp: Optional[datetime] = None # New: UTC timestamp when the page was crawled
     validation_issues: List[str] = field(default_factory=list) # New: Issues found by ContentValidator
+    anomaly_flags: List[str] = field(default_factory=list) # New: Anomalies detected for this crawl result
 
 
 class WebCrawler:
@@ -274,6 +276,7 @@ class WebCrawler:
                 links = []
                 seo_metrics = None # Initialize seo_metrics
                 validation_issues = [] # Initialize validation issues
+                anomaly_flags = [] # Initialize anomaly flags
                 
                 if 'text/html' in content_type:
                     content = await response.text()
@@ -332,6 +335,21 @@ class WebCrawler:
                                         crawl_timestamp=current_crawl_timestamp,
                                         validation_issues=validation_issues
                                     )
+                    
+                    # New: Perform anomaly detection if enabled
+                    if self.config.anomaly_detection_enabled:
+                        current_crawl_result = CrawlResult( # Create a temporary result for anomaly detection
+                            url=url,
+                            status_code=response.status,
+                            content=content,
+                            links_found=links,
+                            crawl_time_ms=crawl_time_ms,
+                            content_type=content_type,
+                            validation_issues=validation_issues
+                        )
+                        anomaly_flags = anomaly_detector.detect_anomalies_for_crawl_result(current_crawl_result)
+                        if anomaly_flags:
+                            self.logger.warning(f"Anomalies detected for {url}: {anomaly_flags}")
 
 
                 elif 'application/pdf' in content_type and self.config.extract_pdfs:
@@ -351,7 +369,8 @@ class WebCrawler:
                     content_type=content_type,
                     seo_metrics=seo_metrics, # Pass SEO metrics in CrawlResult
                     crawl_timestamp=current_crawl_timestamp, # Pass the crawl timestamp
-                    validation_issues=validation_issues # Pass validation issues
+                    validation_issues=validation_issues, # Pass validation issues
+                    anomaly_flags=anomaly_flags # Pass anomaly flags
                 )
                 
         except asyncio.TimeoutError:
@@ -362,7 +381,8 @@ class WebCrawler:
                 status_code=408,
                 error_message="Request timeout",
                 crawl_time_ms=int((time.time() - start_time) * 1000),
-                crawl_timestamp=current_crawl_timestamp
+                crawl_timestamp=current_crawl_timestamp,
+                anomaly_flags=["Request Timeout"] # Add anomaly flag
             )
         except aiohttp.ClientProxyConnectionError as e:
             if current_proxy:
@@ -372,7 +392,8 @@ class WebCrawler:
                 status_code=502, # Bad Gateway or Proxy Error
                 error_message=f"Proxy connection error: {str(e)}",
                 crawl_time_ms=int((time.time() - start_time) * 1000),
-                crawl_timestamp=current_crawl_timestamp
+                crawl_timestamp=current_crawl_timestamp,
+                anomaly_flags=["Proxy Connection Error"] # Add anomaly flag
             )
         except aiohttp.ClientResponseError as e:
             if current_proxy and e.status in [403, 407, 429, 500, 502, 503, 504]:
@@ -382,7 +403,8 @@ class WebCrawler:
                 status_code=e.status,
                 error_message=f"HTTP error: {e.message}",
                 crawl_time_ms=int((time.time() - start_time) * 1000),
-                crawl_timestamp=current_crawl_timestamp
+                crawl_timestamp=current_crawl_timestamp,
+                anomaly_flags=[f"HTTP Error {e.status}"] # Add anomaly flag
             )
         except aiohttp.ClientError as e:
             # This will catch other connection errors, DNS errors, etc.
@@ -393,7 +415,8 @@ class WebCrawler:
                 status_code=0, # Use 0 or a specific code for network errors
                 error_message=f"Network or client error: {str(e)}", # More generic message
                 crawl_time_ms=int((time.time() - start_time) * 1000),
-                crawl_timestamp=current_crawl_timestamp
+                crawl_timestamp=current_crawl_timestamp,
+                anomaly_flags=["Network Error"] # Add anomaly flag
             )
         except Exception as e:
             if current_proxy:
@@ -403,7 +426,8 @@ class WebCrawler:
                 status_code=500,
                 error_message=f"Unexpected error during crawl: {str(e)}", # More specific message
                 crawl_time_ms=int((time.time() - start_time) * 1000),
-                crawl_timestamp=current_crawl_timestamp
+                crawl_timestamp=current_crawl_timestamp,
+                anomaly_flags=["Unexpected Error"] # Add anomaly flag
             )
     
     async def _extract_links_from_html(self, source_url: str, html_content: str) -> List[Backlink]:

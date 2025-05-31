@@ -30,6 +30,7 @@ from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Import DomainAnalyzerService
 from Link_Profiler.services.ai_service import AIService # Import AIService
 from Link_Profiler.utils.content_validator import ContentValidator # New: Import ContentValidator
+from Link_Profiler.utils.anomaly_detector import anomaly_detector # New: Import AnomalyDetector
 from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 from Link_Profiler.monitoring.prometheus_metrics import (
     JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL,
@@ -233,6 +234,10 @@ class CrawlService:
         self.logger.info(f"Executing {job.job_type} job {job.id} for {job.target_url}")
 
         try:
+            # Reset anomaly detector history for a new job
+            if config.anomaly_detection_enabled:
+                anomaly_detector.reset_history()
+
             if job.job_type == 'backlink_discovery':
                 # initial_seed_urls for backlink_discovery comes from job.config
                 initial_seed_urls_from_config = job.config.get("initial_seed_urls", [])
@@ -245,7 +250,7 @@ class CrawlService:
                 num_results_from_config = job.config.get("num_results")
                 if not keyword_from_config:
                     raise ValueError("keyword must be provided for 'serp_analysis' job type.")
-                await self._run_serp_analysis_job(job, keyword_from_config, num_results_from_config)
+                await self._run_serp_analysis_job(job, keyword_from_config, num_results_from_config, config) # Pass config
             elif job.job_type == 'keyword_research':
                 # seed_keyword and num_suggestions for keyword_research come from job.config
                 seed_keyword_from_config = job.config.get("seed_keyword")
@@ -445,6 +450,10 @@ class CrawlService:
                                             self.logger.error(f"Failed to crawl {url} after {config.max_retries + 1} attempts: {crawl_result.error_message}")
                                             job.add_error(url=url, error_type="CrawlError", message=f"Failed after retries: {crawl_result.error_message}", details=crawl_result.error_message)
                                             JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="CrawlError").inc()
+                                    elif crawl_result.error_message in ["CAPTCHA_DETECTED_AND_SOLVING_ATTEMPTED", "CAPTCHA_DETECTED_AND_SOLVING_DISABLED"]:
+                                        self.logger.warning(f"Crawl for {url} stopped due to CAPTCHA: {crawl_result.error_message}")
+                                        job.add_error(url=url, error_type="CAPTCHA_BLOCKED", message=f"Crawl blocked by CAPTCHA: {crawl_result.error_message}", details=crawl_result.error_message)
+                                        JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="CAPTCHA_BLOCKED").inc()
                                     else:
                                         self.logger.warning(f"Failed to crawl {url}: {crawl_result.error_message}")
                                         job.add_error(url=url, error_type="CrawlError", message=f"Non-retryable crawl error: {crawl_result.error_message}", details=crawl_result.error_message)
@@ -471,6 +480,11 @@ class CrawlService:
                                 self.logger.error(f"Error writing crawl result to debug file for {crawl_result.url}: {e}")
                                 job.add_error(url=crawl_result.url, error_type="FileWriteError", message=f"Error writing debug data: {str(e)}", details=str(e))
                                 JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="FileWriteError").inc()
+
+                            # Aggregate anomalies from crawl result to job
+                            if crawl_result.anomaly_flags:
+                                job.anomalies_detected.extend(crawl_result.anomaly_flags)
+                                job.anomalies_detected = list(set(job.anomalies_detected)) # Deduplicate anomalies
 
                             if crawl_result.links_found:
                                 self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url} via crawl.")
@@ -631,7 +645,13 @@ class CrawlService:
             else:
                 self.logger.info(f"No backlinks found for {job.target_url}.")
 
-    async def _run_serp_analysis_job(self, job: CrawlJob, keyword: str, num_results: Optional[int]):
+            # New: Alerting for anomalies at the end of the job
+            if job.anomalies_detected:
+                self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
+                # In a real system, this would trigger an email, Slack notification, PagerDuty alert, etc.
+                # For now, we just log a critical message.
+
+    async def _run_serp_analysis_job(self, job: CrawlJob, keyword: str, num_results: Optional[int], config: CrawlConfig):
         """
         Internal method to execute a SERP analysis job.
         """
@@ -660,6 +680,15 @@ class CrawlService:
             job.results['serp_results'] = []
             job.progress_percentage = 100.0
             self.logger.info(f"No SERP results found for '{keyword}'. Job {job.id} completed.")
+
+        # New: Alerting for anomalies at the end of the job
+        if config.anomaly_detection_enabled:
+            # Check for anomalies related to the overall SERP fetch (e.g., no results found when expected)
+            if not serp_results:
+                job.anomalies_detected.append("No SERP Results Found")
+            
+            if job.anomalies_detected:
+                self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
 
     async def _run_keyword_research_job(self, job: CrawlJob, seed_keyword: str, num_suggestions: Optional[int]):
         """
@@ -691,6 +720,14 @@ class CrawlService:
             job.progress_percentage = 100.0
             self.logger.info(f"No keyword suggestions found for '{seed_keyword}'. Job {job.id} completed.")
 
+        # New: Alerting for anomalies at the end of the job
+        if job.config.get("anomaly_detection_enabled", False):
+            if not suggestions:
+                job.anomalies_detected.append("No Keyword Suggestions Found")
+            
+            if job.anomalies_detected:
+                self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
+
     async def _run_link_health_audit_job(self, job: CrawlJob, source_urls: List[str]):
         """
         Internal method to execute a link health audit job.
@@ -705,6 +742,14 @@ class CrawlService:
         job.links_found = sum(len(links) for links in broken_links_found.values())
         job.progress_percentage = 100.0
         self.logger.info(f"Link health audit job {job.id} completed. Found {job.links_found} broken links.")
+
+        # New: Alerting for anomalies at the end of the job
+        if job.config.get("anomaly_detection_enabled", False):
+            if job.links_found > 0: # If any broken links were found
+                job.anomalies_detected.append(f"Broken Links Detected ({job.links_found})")
+            
+            if job.anomalies_detected:
+                self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
 
     async def _run_technical_audit_job(self, job: CrawlJob, urls_to_audit: List[str], config: CrawlConfig):
         """
@@ -799,6 +844,16 @@ class CrawlService:
                 job.add_error(url="N/A", error_type="ClickHouseError", message=f"ClickHouse bulk insert failed: {str(e)}", details=str(e))
                 JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="ClickHouseError").inc()
 
+        # New: Alerting for anomalies at the end of the job
+        if job.config.get("anomaly_detection_enabled", False):
+            # Example: If a significant portion of audits failed
+            failed_audits_count = len(urls_to_audit) - audited_urls_count
+            if failed_audits_count / len(urls_to_audit) > 0.2: # More than 20% failed
+                job.anomalies_detected.append(f"High Technical Audit Failure Rate ({failed_audits_count}/{len(urls_to_audit)})")
+            
+            if job.anomalies_detected:
+                self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
+
     async def _run_domain_analysis_job(self, job: CrawlJob, domain_names: List[str], min_value_score: Optional[float], limit: Optional[int]):
         """
         Internal method to execute a domain analysis job.
@@ -865,6 +920,14 @@ class CrawlService:
         job.links_found = len(valuable_domains_found) # Re-use links_found for valuable domains count
         self.logger.info(f"Domain analysis job {job.id} completed. Analyzed {analyzed_domains_count} domains, found {len(valuable_domains_found)} valuable.")
 
+        # New: Alerting for anomalies at the end of the job
+        if job.config.get("anomaly_detection_enabled", False):
+            if len(valuable_domains_found) == 0 and len(domain_names) > 0:
+                job.anomalies_detected.append("No Valuable Domains Found")
+            
+            if job.anomalies_detected:
+                self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
+
     async def _run_full_seo_audit_job(self, job: CrawlJob, urls_to_audit: List[str], config: CrawlConfig):
         """
         Internal method to execute a full SEO audit job.
@@ -918,6 +981,11 @@ class CrawlService:
         job.errors_count = len(job.error_log)
         
         self.logger.info(f"Full SEO audit job {job.id} completed. Sub-audits: {completed_sub_audits}/2.")
+
+        # New: Alerting for anomalies at the end of the job
+        if job.config.get("anomaly_detection_enabled", False):
+            if job.anomalies_detected:
+                self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
 
 
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:

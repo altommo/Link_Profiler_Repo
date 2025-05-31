@@ -6,7 +6,8 @@ File: Link_Profiler/database/models.py
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY # For storing dicts and lists/sets
+from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.inspection import inspect
 from datetime import datetime
 import enum
 
@@ -175,6 +176,7 @@ class CrawlJobORM(Base):
     config = Column(JSONB, default={}) # Store CrawlConfig as JSON
     results = Column(JSONB, default={})
     error_log = Column(JSONB, default=[]) # Changed to JSONB to store list of structured errors
+    anomalies_detected = Column(ARRAY(String), default=[]) # New: List of detected anomalies for the job
 
     def __repr__(self):
         return f"<CrawlJob(id='{self.id}', target_url='{self.target_url}', status='{self.status}')>"

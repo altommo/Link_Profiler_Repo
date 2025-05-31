@@ -314,6 +314,7 @@ class CrawlJob:
     config: Dict = field(default_factory=dict)
     results: Dict = field(default_factory=dict)
     error_log: List[CrawlError] = field(default_factory=list) # Changed to List[CrawlError]
+    anomalies_detected: List[str] = field(default_factory=list) # New: List of detected anomalies for the job
     
     # New fields for scheduling
     scheduled_at: Optional[datetime] = None # When the job should be moved to the active queue
@@ -354,6 +355,10 @@ class CrawlJob:
         # Deserialize error_log
         if 'error_log' in data and isinstance(data['error_log'], list):
             data['error_log'] = [CrawlError.from_dict(err_data) for err_data in data['error_log']]
+        
+        # Ensure anomalies_detected is a list
+        if 'anomalies_detected' in data and data['anomalies_detected'] is None:
+            data['anomalies_detected'] = []
 
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
@@ -387,6 +392,7 @@ class CrawlConfig:
     browser_fingerprint_randomization: bool = False # New: Randomize browser fingerprint properties
     ml_rate_optimization: bool = False # New: Enable machine learning-based rate optimization
     captcha_solving_enabled: bool = False # New: Enable CAPTCHA solving for browser-based crawls
+    anomaly_detection_enabled: bool = False # New: Enable real-time anomaly detection
 
     # New fields for proxy management
     use_proxies: bool = False # New: Whether to use proxies for crawling

@@ -23,7 +23,8 @@
     "human_like_delays": false,
     "request_header_randomization": false,
     "browser_fingerprint_randomization": false,
-    "ml_rate_optimization": false
+    "ml_rate_optimization": false,
+    "anomaly_detection_enabled": false
   },
   "rate_limiter": {
     "history_size": 10,
@@ -40,6 +41,17 @@
   "captcha_solving": {
     "enabled": false,
     "api_key": "your_captcha_solving_api_key_here"
+  },
+  "anomaly_detection": {
+    "enabled": false,
+    "error_rate_threshold": 0.20,
+    "empty_content_threshold": 100,
+    "low_link_count_threshold": 2,
+    "captcha_spike_threshold": 3,
+    "captcha_time_window_seconds": 60,
+    "crawl_rate_drop_threshold": 0.5,
+    "history_window_size": 100,
+    "unexpected_status_codes": [403, 407, 429, 500, 502, 503, 504]
   },
   "quality_assurance": {
     "content_validation": false,
