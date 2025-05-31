@@ -168,6 +168,36 @@ class AIService:
             }
         return result
 
+    async def classify_content(self, content: str, target_keyword: str) -> Optional[str]:
+        """
+        Classifies the content based on its quality and relevance to a target keyword.
+        Possible classifications: "high_quality", "low_quality", "spam", "irrelevant".
+        """
+        prompt = f"""
+        Classify the following content based on its quality and relevance to the target keyword '{target_keyword}'.
+        Consider factors like depth, originality, readability, and topical alignment.
+        Return a single word classification in JSON format, with a key "classification".
+        Possible classifications: "high_quality", "low_quality", "spam", "irrelevant".
+
+        Content:
+        ---
+        {content}
+        ---
+        """
+        cache_key = f"ai_content_classification:{target_keyword}:{hash(content)}"
+        result = await self._call_ai_with_cache("content_classification", prompt, cache_key, max_tokens=50) # Small max_tokens for single word
+        
+        if result and "classification" in result:
+            classification = result["classification"].lower()
+            if classification in ["high_quality", "low_quality", "spam", "irrelevant"]:
+                self.logger.info(f"Content classified as: {classification}")
+                return classification
+            else:
+                self.logger.warning(f"AI returned unexpected classification: {classification}. Defaulting to 'unknown'.")
+                return "unknown"
+        self.logger.warning(f"AI content classification failed for keyword '{target_keyword}'. Returning None.")
+        return None
+
     async def analyze_content_gaps(self, target_url: str, competitor_urls: List[str]) -> Dict[str, Any]:
         """
         Analyzes content gaps between a target URL and its competitors.

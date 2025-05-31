@@ -149,10 +149,11 @@ class CrawlResult:
 class WebCrawler:
     """Main web crawler class"""
     
-    def __init__(self, config: CrawlConfig, db: Database, job_id: str):
+    def __init__(self, config: CrawlConfig, db: Database, job_id: str, ai_service: 'AIService'): # Added ai_service type hint
         self.config = config
         self.db = db # Database instance to check job status
         self.job_id = job_id # ID of the current crawl job
+        self.ai_service = ai_service # Store AI service instance
         
         # Initialize AdaptiveRateLimiter with ML optimization flag and config
         self.rate_limiter = AdaptiveRateLimiter(
@@ -350,6 +351,13 @@ class WebCrawler:
                         anomaly_flags = anomaly_detector.detect_anomalies_for_crawl_result(current_crawl_result)
                         if anomaly_flags:
                             self.logger.warning(f"Anomalies detected for {url}: {anomaly_flags}")
+
+                    # New: Perform AI content classification if enabled
+                    if config_loader.get("ai.content_classification_enabled", False) and self.ai_service.enabled:
+                        classification = await self.ai_service.classify_content(content, url) # Use URL as target keyword for classification
+                        if seo_metrics:
+                            seo_metrics.ai_content_classification = classification
+                            self.logger.debug(f"AI content classification for {url}: {classification}")
 
 
                 elif 'application/pdf' in content_type and self.config.extract_pdfs:

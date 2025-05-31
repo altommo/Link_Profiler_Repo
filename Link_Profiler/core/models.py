@@ -474,6 +474,7 @@ class SEOMetrics:
     twitter_title: Optional[str] = None
     twitter_description: Optional[str] = None
     validation_issues: List[str] = field(default_factory=list) # Issues found by ContentValidator
+    ai_content_classification: Optional[str] = None # New: AI-driven content classification (e.g., "high_quality", "spam")
 
     # AI-generated insights
     ai_content_score: Optional[float] = None # AI-driven content quality score (0-100)
@@ -530,6 +531,14 @@ class SEOMetrics:
             score += (self.ai_content_score - 50) * 0.1 # Adjust based on AI score, e.g., +5 for 100, -5 for 0
         if self.ai_readability_score is not None:
             score += (self.ai_readability_score - 50) * 0.05 # Smaller adjustment for readability
+        
+        # AI content classification adjustment
+        if self.ai_content_classification == "spam":
+            score -= 30
+        elif self.ai_content_classification == "low_quality":
+            score -= 10
+        elif self.ai_content_classification == "irrelevant":
+            score -= 5
 
         # Penalize for validation issues
         if self.validation_issues:
