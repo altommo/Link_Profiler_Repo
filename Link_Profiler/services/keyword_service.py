@@ -100,7 +100,7 @@ class SimulatedKeywordAPIClient(BaseKeywordAPIClient):
                     data_timestamp=datetime.now()
                 )
             )
-        self.logger.info(f"Simulated {len(suggestions)} keyword suggestions for '{keyword}'.")
+        self.logger.info(f"Simulated {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
         return suggestions
 
 class RealKeywordAPIClient(BaseKeywordAPIClient):
