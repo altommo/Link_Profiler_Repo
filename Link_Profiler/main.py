@@ -44,6 +44,7 @@ from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFi
 from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient
 from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient
 from Link_Profiler.services.link_health_service import LinkHealthService
+from Link_Profiler.services.ai_service import AIService # New: Import AIService
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
@@ -157,6 +158,8 @@ technical_auditor_instance = TechnicalAuditor(
     lighthouse_path=config_loader.get("technical_auditor.lighthouse_path") # Allow custom path for Lighthouse CLI
 )
 
+# New: Initialize AI Service
+ai_service_instance = AIService()
 
 # Initialize DomainAnalyzerService (depends on DomainService)
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
@@ -173,7 +176,8 @@ crawl_service_for_lifespan = CrawlService(
     clickhouse_loader=clickhouse_loader_instance, # Pass the potentially None instance
     redis_client=redis_client, # Pass the potentially None instance
     technical_auditor=technical_auditor_instance,
-    domain_analyzer_service=domain_analyzer_service # Pass the domain_analyzer_service
+    domain_analyzer_service=domain_analyzer_service, # Pass the domain_analyzer_service
+    ai_service=ai_service_instance # New: Pass AI Service
 ) 
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service)
 
@@ -193,6 +197,7 @@ async def lifespan(app: FastAPI):
         keyword_service_instance,
         link_health_service_instance,
         technical_auditor_instance,
+        ai_service_instance # New: Add AI Service to lifespan
         # Removed crawl_service_for_lifespan as it is not an async context manager itself.
         # Its internal dependencies are already managed here.
     ]

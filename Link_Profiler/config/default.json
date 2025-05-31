@@ -94,5 +94,18 @@
     "user": "default",
     "password": "",
     "database": "default"
+  },
+  "ai": {
+    "openrouter_api_key": "your_openrouter_key_here",
+    "cache_ttl": 3600,
+    "enabled": false,
+    "models": {
+      "content_scoring": "anthropic/claude-3-haiku",
+      "content_gap_analysis": "openai/gpt-4-turbo",
+      "keyword_research": "google/gemini-pro",
+      "technical_seo_analysis": "anthropic/claude-3-5-sonnet",
+      "competitor_analysis": "openai/gpt-4",
+      "content_generation": "anthropic/claude-3-5-sonnet"
+    }
   }
 }

@@ -437,6 +437,12 @@ class SEOMetrics:
     seo_score: float = 0.0
     issues: List[str] = field(default_factory=list)
     
+    # AI-generated insights
+    ai_content_score: Optional[float] = None # AI-driven content quality score (0-100)
+    ai_suggestions: List[str] = field(default_factory=list) # AI-generated improvement suggestions
+    ai_semantic_keywords: List[str] = field(default_factory=list) # AI-identified semantic keywords
+    ai_readability_score: Optional[float] = None # AI-assessed readability score
+
     def calculate_seo_score(self) -> float:
         """Calculate overall SEO score"""
         score = 100.0
@@ -480,6 +486,12 @@ class SEOMetrics:
             score -= 15
         if self.accessibility_score is not None:
             score -= (100 - self.accessibility_score) * 0.05 # Smaller penalty for accessibility
+
+        # AI-driven score adjustments
+        if self.ai_content_score is not None:
+            score += (self.ai_content_score - 50) * 0.1 # Adjust based on AI score, e.g., +5 for 100, -5 for 0
+        if self.ai_readability_score is not None:
+            score += (self.ai_readability_score - 50) * 0.05 # Smaller adjustment for readability
 
         self.seo_score = max(0.0, score)
         return self.seo_score
