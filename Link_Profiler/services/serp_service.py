@@ -11,6 +11,7 @@ import random
 import aiohttp
 
 from Link_Profiler.core.models import SERPResult # Absolute import
+from Link_Profiler.crawlers.serp_crawler import SERPCrawler # New import
 
 logger = logging.getLogger(__name__)
 
@@ -191,23 +192,36 @@ class SERPService:
     """
     Service for fetching Search Engine Results Page (SERP) data.
     """
-    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None):
+    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None):
         self.logger = logging.getLogger(__name__)
         self.api_client = api_client if api_client else SimulatedSERPAPIClient()
+        self.serp_crawler = serp_crawler # Store the SERPCrawler instance
 
     async def __aenter__(self):
         """Async context manager entry for SERPService."""
         self.logger.debug("Entering SERPService context.")
         await self.api_client.__aenter__()
+        if self.serp_crawler: # Also enter the SERPCrawler's context if it exists
+            await self.serp_crawler.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for SERPService."""
         self.logger.debug("Exiting SERPService context.")
         await self.api_client.__aexit__(exc_type, exc_val, exc_tb)
+        if self.serp_crawler: # Also exit the SERPCrawler's context if it exists
+            await self.serp_crawler.__aexit__(exc_type, exc_val, exc_tb)
 
-    async def get_serp_data(self, keyword: str, num_results: int = 10) -> List[SERPResult]:
+    async def get_serp_data(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
         """
         Fetches SERP data for a given keyword.
+        Prioritizes the local SERPCrawler if available, otherwise uses the API client.
         """
-        return await self.api_client.get_serp_results(keyword, num_results)
+        if self.serp_crawler:
+            self.logger.info(f"Using SERPCrawler to fetch SERP data for '{keyword}' from {search_engine}.")
+            return await self.serp_crawler.get_serp_data(keyword, num_results, search_engine)
+        else:
+            self.logger.info(f"Using SERP API client to fetch SERP data for '{keyword}'.")
+            # The API client's get_serp_results method does not take 'search_engine' as an argument.
+            # It's assumed the API client is configured for a specific search engine or handles it internally.
+            return await self.api_client.get_serp_results(keyword, num_results)
