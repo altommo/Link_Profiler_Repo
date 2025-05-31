@@ -16,7 +16,19 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Link_Profiler.crawlers.web_crawler import WebCrawler
-from Link_Profiler.core.models import CrawlConfig, Backlink
+from Link_Profiler.core.models import CrawlConfig, Backlink, CrawlJob, serialize_model, CrawlStatus
+from Link_Profiler.services.crawl_service import CrawlService
+from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient
+from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient
+from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient
+from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient
+from Link_Profiler.services.link_health_service import LinkHealthService
+from Link_Profiler.database.database import Database
+from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
+from Link_Profiler.crawlers.serp_crawler import SERPCrawler
+from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
+from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +50,8 @@ class SatelliteCrawler:
         
         # Queue names (must match coordinator)
         self.job_queue = "crawl_jobs"
-        self.result_queue = "crawl_results"
-        self.heartbeat_queue = "crawler_heartbeats"
+        self.result_queue = "crawl_results" 
+        self.heartbeat_queue_sorted = "crawler_heartbeats_sorted" # Changed to sorted set
         
         # Crawler state
         self.is_running = False
@@ -50,11 +62,128 @@ class SatelliteCrawler:
             "total_links_found": 0,
             "start_time": datetime.now()
         }
-    
+
+        # Initialize services required by CrawlService
+        self.db = Database() # Satellite needs its own DB connection
+        self.clickhouse_loader: Optional[ClickHouseLoader] = None
+        if os.getenv("USE_CLICKHOUSE", "false").lower() == "true":
+            logger.info("ClickHouse integration enabled for satellite. Attempting to initialize ClickHouseLoader.")
+            clickhouse_host = os.getenv("CLICKHOUSE_HOST", "localhost")
+            clickhouse_port = int(os.getenv("CLICKHOUSE_PORT", 9000))
+            clickhouse_user = os.getenv("CLICKHOUSE_USER", "default")
+            clickhouse_password = os.getenv("CLICKHOUSE_PASSWORD", "")
+            clickhouse_database = os.getenv("CLICKHOUSE_DATABASE", "default")
+            self.clickhouse_loader = ClickHouseLoader(
+                host=clickhouse_host,
+                port=clickhouse_port,
+                user=clickhouse_user,
+                password=clickhouse_password,
+                database=clickhouse_database
+            )
+        else:
+            logger.info("ClickHouse integration disabled for satellite.")
+
+        # Initialize API clients and crawlers for CrawlService
+        domain_service_instance = self._init_domain_service()
+        backlink_service_instance = self._init_backlink_service()
+        serp_crawler_instance = self._init_serp_crawler()
+        serp_service_instance = SERPService(
+            api_client=RealSERPAPIClient(api_key=os.getenv("REAL_SERP_API_KEY", "dummy_serp_key")) if os.getenv("USE_REAL_SERP_API", "false").lower() == "true" else SimulatedSERPAPIClient(),
+            serp_crawler=serp_crawler_instance
+        )
+        keyword_scraper_instance = self._init_keyword_scraper()
+        keyword_service_instance = KeywordService(
+            api_client=RealKeywordAPIClient(api_key=os.getenv("REAL_KEYWORD_API_KEY", "dummy_keyword_key")) if os.getenv("USE_REAL_KEYWORD_API", "false").lower() == "true" else SimulatedKeywordAPIClient(),
+            keyword_scraper=keyword_scraper_instance
+        )
+        link_health_service_instance = LinkHealthService(self.db)
+        technical_auditor_instance = TechnicalAuditor(
+            lighthouse_path=os.getenv("LIGHTHOUSE_PATH", "lighthouse")
+        )
+
+        # Initialize CrawlService instance that will execute jobs
+        self.crawl_service = CrawlService(
+            database=self.db,
+            backlink_service=backlink_service_instance,
+            domain_service=domain_service_instance,
+            serp_service=serp_service_instance,
+            keyword_service=keyword_service_instance,
+            link_health_service=link_health_service_instance,
+            clickhouse_loader=self.clickhouse_loader,
+            redis_client=self.redis, # Pass the satellite's redis client for deduplication
+            technical_auditor=technical_auditor_instance
+        )
+
+        # List of context managers to enter/exit during satellite lifespan
+        self._context_managers = [
+            domain_service_instance,
+            backlink_service_instance,
+            serp_service_instance,
+            keyword_service_instance,
+            link_health_service_instance,
+            technical_auditor_instance,
+            # crawl_service is not an async context manager itself, its internal services are.
+            # self.crawl_service # Removed from here as it doesn't have __aenter__/__aexit__
+        ]
+        if self.clickhouse_loader:
+            self._context_managers.append(self.clickhouse_loader)
+        if serp_crawler_instance:
+            self._context_managers.append(serp_crawler_instance)
+        if keyword_scraper_instance:
+            self._context_managers.append(keyword_scraper_instance)
+
+    def _init_domain_service(self):
+        if os.getenv("USE_ABSTRACT_API", "false").lower() == "true":
+            abstract_api_key = os.getenv("ABSTRACT_API_KEY")
+            if not abstract_api_key:
+                logger.error("ABSTRACT_API_KEY environment variable not set. Falling back to simulated Domain API.")
+                return DomainService(api_client=SimulatedDomainAPIClient())
+            else:
+                logger.info("Using AbstractDomainAPIClient for domain lookups in satellite.")
+                return DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key))
+        elif os.getenv("USE_REAL_DOMAIN_API", "false").lower() == "true":
+            return DomainService(api_client=RealDomainAPIClient(api_key=os.getenv("REAL_DOMAIN_API_KEY", "dummy_domain_key")))
+        else:
+            return DomainService(api_client=SimulatedDomainAPIClient())
+
+    def _init_backlink_service(self):
+        if os.getenv("USE_GSC_API", "false").lower() == "true":
+            return BacklinkService(api_client=GSCBacklinkAPIClient())
+        elif os.getenv("USE_OPENLINKPROFILER_API", "false").lower() == "true":
+            return BacklinkService(api_client=OpenLinkProfilerAPIClient())
+        elif os.getenv("USE_REAL_BACKLINK_API", "false").lower() == "true":
+            return BacklinkService(api_client=RealBacklinkAPIClient(api_key=os.getenv("REAL_BACKLINK_API_KEY", "dummy_backlink_key")))
+        else:
+            return BacklinkService(api_client=SimulatedBacklinkAPIClient())
+
+    def _init_serp_crawler(self):
+        if os.getenv("USE_PLAYWRIGHT_SERP_CRAWLER", "false").lower() == "true":
+            logger.info("Initialising Playwright SERPCrawler for satellite.")
+            return SERPCrawler(
+                headless=os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() == "true",
+                browser_type=os.getenv("PLAYWRIGHT_BROWSER_TYPE", "chromium")
+            )
+        return None
+
+    def _init_keyword_scraper(self):
+        if os.getenv("USE_KEYWORD_SCRAPER", "false").lower() == "true":
+            logger.info("Initialising KeywordScraper for satellite.")
+            return KeywordScraper()
+        return None
+
     async def __aenter__(self):
+        """Enter all managed contexts."""
+        self._entered_contexts = []
+        for cm in self._context_managers:
+            logger.info(f"Satellite startup: Entering {cm.__class__.__name__} context.")
+            self._entered_contexts.append(await cm.__aenter__())
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit all managed contexts in reverse order."""
+        for cm in reversed(self._entered_contexts):
+            logger.info(f"Satellite shutdown: Exiting {cm.__class__.__name__} context.")
+            await cm.__aexit__(exc_type, exc_val, exc_tb)
         await self.redis.close()
     
     async def start(self):
@@ -80,100 +209,92 @@ class SatelliteCrawler:
         while self.is_running:
             try:
                 # Get highest priority job from queue
+                # Use bzpopmax to get the highest score (priority) element
                 job_data = await self.redis.bzpopmax(self.job_queue, timeout=5)
                 
                 if job_data:
                     _, job_json, priority = job_data
-                    job = json.loads(job_json)
+                    job_dict = json.loads(job_json)
                     
-                    logger.info(f"Received job {job['job_id']} with priority {priority}")
+                    # Reconstruct CrawlJob dataclass from dict
+                    job = CrawlJob.from_dict(job_dict)
+
+                    logger.info(f"Received job {job.id} (type: {job.job_type}) with priority {priority}")
                     await self._execute_crawl_job(job)
                     
             except Exception as e:
                 logger.error(f"Error processing job: {e}")
                 await asyncio.sleep(1)
     
-    async def _execute_crawl_job(self, job: Dict):
-        """Execute a single crawl job"""
-        job_id = job["job_id"]
-        self.current_job_id = job_id
+    async def _execute_crawl_job(self, job: CrawlJob):
+        """Execute a single crawl job using the CrawlService"""
+        self.current_job_id = job.id
         
         try:
-            # Parse job parameters
-            target_url = job["target_url"]
-            initial_seed_urls = job["initial_seed_urls"]
-            config_dict = job["config"]
-            
-            # Create crawl config
-            config = CrawlConfig.from_dict(config_dict)
-            
             # Send job start notification
-            await self._send_job_update(job_id, {
+            await self._send_job_update(job.id, {
                 "status": "started",
                 "crawler_id": self.crawler_id,
                 "start_time": datetime.now().isoformat()
             })
             
-            # Execute crawl
-            discovered_backlinks = []
-            urls_crawled = 0
+            # Extract job-specific parameters from job.config
+            # These parameters are needed by crawl_service.execute_predefined_job
+            initial_seed_urls = job.config.get("initial_seed_urls") # For backlink_discovery
+            keyword = job.config.get("keyword") # For serp_analysis, keyword_research
+            num_results = job.config.get("num_results") # For serp_analysis, keyword_research
+            source_urls_to_audit = job.config.get("source_urls_to_audit") # For link_health_audit
+            urls_to_audit_tech = job.config.get("urls_to_audit_tech") # For technical_audit
             
-            async with WebCrawler(config) as crawler:
-                async for crawl_result in crawler.crawl_for_backlinks(target_url, initial_seed_urls):
-                    urls_crawled += 1
-                    
-                    if crawl_result.links_found:
-                        discovered_backlinks.extend(crawl_result.links_found)
-                        
-                        # Send progress update every 10 URLs
-                        if urls_crawled % 10 == 0:
-                            progress = min(99.0, (urls_crawled / config.max_pages) * 100)
-                            await self._send_job_update(job_id, {
-                                "status": "in_progress",
-                                "urls_crawled": urls_crawled,
-                                "links_found": len(discovered_backlinks),
-                                "progress_percentage": progress
-                            })
+            # Execute the job using the shared CrawlService instance
+            await self.crawl_service.execute_predefined_job(
+                job,
+                initial_seed_urls=initial_seed_urls,
+                keyword=keyword,
+                num_results=num_results,
+                source_urls_to_audit=source_urls_to_audit,
+                urls_to_audit_tech=urls_to_audit_tech
+            )
             
-            # Send completion result
-            await self._send_job_result(job_id, {
-                "status": "completed",
-                "urls_crawled": urls_crawled,
-                "links_found": len(discovered_backlinks),
-                "progress_percentage": 100.0,
-                "backlinks": [self._serialize_backlink(bl) for bl in discovered_backlinks],
-                "completed_at": datetime.now().isoformat(),
-                "crawler_id": self.crawler_id
-            })
+            # After execute_predefined_job completes, the job object's status and results
+            # will be updated by CrawlService and persisted to the DB.
+            # We just need to send a final notification to the coordinator.
             
-            # Update stats
-            self.stats["jobs_processed"] += 1
-            self.stats["total_urls_crawled"] += urls_crawled
-            self.stats["total_links_found"] += len(discovered_backlinks)
-            
-            logger.info(f"Completed job {job_id}: {urls_crawled} URLs, {len(discovered_backlinks)} backlinks")
+            if job.status == CrawlStatus.COMPLETED:
+                await self._send_job_result(job.id, {
+                    "status": "completed",
+                    "urls_crawled": job.urls_crawled,
+                    "links_found": job.links_found,
+                    "progress_percentage": 100.0,
+                    "results": job.results, # Send back the full results dict
+                    "completed_at": datetime.now().isoformat(),
+                    "crawler_id": self.crawler_id
+                })
+                self.stats["jobs_processed"] += 1
+                self.stats["total_urls_crawled"] += job.urls_crawled
+                self.stats["total_links_found"] += job.links_found
+                logger.info(f"Completed job {job.id}: {job.urls_crawled} URLs, {job.links_found} backlinks")
+            elif job.status == CrawlStatus.FAILED:
+                await self._send_job_result(job.id, {
+                    "status": "failed",
+                    "error_message": job.error_log[-1].message if job.error_log else "Job failed without specific error message.",
+                    "failed_at": datetime.now().isoformat(),
+                    "crawler_id": self.crawler_id,
+                    "error_log": [serialize_model(err) for err in job.error_log] # Send full error log
+                })
+                logger.error(f"Job {job.id} failed during execution: {job.error_log[-1].message if job.error_log else 'Unknown error'}")
             
         except Exception as e:
-            logger.error(f"Job {job_id} failed: {e}")
-            await self._send_job_result(job_id, {
+            # This catches errors that prevent the job from even being passed to crawl_service or unexpected issues
+            logger.error(f"Satellite failed to execute job {job.id}: {e}", exc_info=True)
+            await self._send_job_result(job.id, {
                 "status": "failed",
-                "error_message": str(e),
+                "error_message": f"Satellite execution error: {str(e)}",
                 "failed_at": datetime.now().isoformat(),
                 "crawler_id": self.crawler_id
             })
         finally:
             self.current_job_id = None
-    
-    def _serialize_backlink(self, backlink: Backlink) -> Dict:
-        """Convert backlink to JSON-serializable dict"""
-        return {
-            "source_url": backlink.source_url,
-            "target_url": backlink.target_url,
-            "anchor_text": backlink.anchor_text,
-            "link_type": backlink.link_type.value,
-            "context_text": backlink.context_text,
-            "discovered_date": backlink.discovered_date.isoformat()
-        }
     
     async def _send_job_update(self, job_id: str, update_data: Dict):
         """Send job progress update"""
@@ -207,7 +328,13 @@ class SatelliteCrawler:
                     "stats": self.stats
                 }
                 
-                await self.redis.lpush(self.heartbeat_queue, json.dumps(heartbeat))
+                # Use ZADD to update heartbeat with current timestamp as score
+                # This allows coordinator to easily get recent heartbeats
+                await self.redis.zadd(
+                    "crawler_heartbeats_sorted", 
+                    {json.dumps(heartbeat): datetime.now().timestamp()}
+                )
+                
                 await asyncio.sleep(30)  # Send heartbeat every 30 seconds
                 
             except Exception as e:
@@ -227,7 +354,10 @@ class SatelliteCrawler:
         }
         
         try:
-            await self.redis.lpush(self.heartbeat_queue, json.dumps(final_heartbeat))
+            await self.redis.zadd(
+                "crawler_heartbeats_sorted", 
+                {json.dumps(final_heartbeat): datetime.now().timestamp()}
+            )
         except Exception as e:
             logger.error(f"Error sending final heartbeat: {e}")
 

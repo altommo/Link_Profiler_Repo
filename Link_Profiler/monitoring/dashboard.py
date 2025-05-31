@@ -12,6 +12,14 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import uvicorn
 import logging # Added import for logging
+import sys
+import os
+
+# Add project root to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from Link_Profiler.database.database import Database # Import Database
+from Link_Profiler.core.models import CrawlJob # Import CrawlJob model
 
 app = FastAPI(title="Link Profiler Monitor")
 templates = Jinja2Templates(directory="templates")
@@ -20,7 +28,8 @@ class MonitoringDashboard:
     def __init__(self, redis_url: str = "redis://localhost:6379"):
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
-    
+        self.db = Database() # Initialize database connection for job history
+
     async def get_queue_metrics(self) -> Dict:
         """Get comprehensive queue metrics"""
         try:
@@ -28,7 +37,7 @@ class MonitoringDashboard:
             job_queue_size = await self.redis.zcard("crawl_jobs")
             result_queue_size = await self.redis.llen("crawl_results")
             
-            # Get recent heartbeats (last 5 minutes)
+            # Get recent heartbeats (last 5 minutes) from the sorted set
             cutoff = (datetime.now() - timedelta(minutes=5)).timestamp()
             recent_heartbeats = await self.redis.zrangebyscore(
                 "crawler_heartbeats_sorted", 
@@ -45,6 +54,7 @@ class MonitoringDashboard:
                     hb['last_seen'] = datetime.fromtimestamp(timestamp)
                     satellites.append(hb)
                 except json.JSONDecodeError:
+                    logging.warning(f"Failed to decode heartbeat data: {heartbeat_data}")
                     continue
             
             return {
@@ -56,25 +66,36 @@ class MonitoringDashboard:
             }
             
         except Exception as e:
+            logging.error(f"Error getting queue metrics: {e}", exc_info=True)
             return {"error": str(e), "timestamp": datetime.now()}
     
     async def get_job_history(self, limit: int = 50) -> List[Dict]:
-        """Get recent job completion history"""
+        """Get recent job completion history from the database."""
         try:
-            # This would typically come from your database
-            # For now, return mock data
-            return [
-                {
-                    "job_id": f"job-{i:04d}",
-                    "status": "completed" if i % 4 != 0 else "failed",
-                    "urls_crawled": 100 + (i * 10),
-                    "links_found": 50 + (i * 5),
-                    "duration_seconds": 300 + (i * 20),
-                    "completed_at": datetime.now() - timedelta(minutes=i*5)
-                }
-                for i in range(limit)
-            ]
+            # Fetch all jobs from the database
+            all_jobs = self.db.get_all_crawl_jobs()
+            
+            # Filter for completed/failed jobs and sort by completion date
+            completed_jobs = sorted(
+                [job for job in all_jobs if job.is_completed],
+                key=lambda job: job.completed_date if job.completed_date else datetime.min,
+                reverse=True
+            )
+            
+            # Prepare data for display
+            history_data = []
+            for job in completed_jobs[:limit]:
+                history_data.append({
+                    "job_id": job.id,
+                    "status": job.status.value,
+                    "urls_crawled": job.urls_crawled,
+                    "links_found": job.links_found,
+                    "duration_seconds": round(job.duration_seconds, 2) if job.duration_seconds is not None else "N/A",
+                    "completed_at": job.completed_date.strftime("%Y-%m-%d %H:%M:%S") if job.completed_date else "N/A"
+                })
+            return history_data
         except Exception as e:
+            logging.error(f"Error getting job history: {e}", exc_info=True)
             return []
     
     async def get_performance_stats(self) -> Dict:
@@ -84,19 +105,19 @@ class MonitoringDashboard:
             info = await self.redis.info("memory")
             memory_usage = info.get("used_memory_human", "Unknown")
             
-            # Calculate throughput (jobs per hour)
-            # This would typically come from your job tracking
-            
+            # TODO: Implement actual throughput and success rate calculation based on historical job data
+            # For now, keep mock data for these specific metrics
             return {
                 "memory_usage": memory_usage,
                 "jobs_per_hour": 450,  # Mock data
-                "avg_job_duration": 285,  # seconds
-                "success_rate": 95.2,  # percentage
-                "peak_satellites": 8,
-                "current_load": 0.75  # 0-1 scale
+                "avg_job_duration": 285,  # seconds (Mock data)
+                "success_rate": 95.2,  # percentage (Mock data)
+                "peak_satellites": 8, # (Mock data)
+                "current_load": 0.75  # 0-1 scale (Mock data)
             }
             
         except Exception as e:
+            logging.error(f"Error getting performance stats: {e}", exc_info=True)
             return {"error": str(e)}
 
 # Global dashboard instance
@@ -173,39 +194,67 @@ class QueueManager:
         """Get sizes of all queues"""
         jobs = await self.redis.zcard("crawl_jobs")
         results = await self.redis.llen("crawl_results")
-        heartbeats = await self.redis.llen("crawler_heartbeats")
+        # Use the sorted set for heartbeats
+        heartbeats_count = await self.redis.zcard("crawler_heartbeats_sorted")
         
         print(f"Queue Sizes:")
         print(f"  Jobs: {jobs}")
         print(f"  Results: {results}")
-        print(f"  Heartbeats: {heartbeats}")
+        print(f"  Heartbeats (active satellites): {heartbeats_count}")
     
     async def list_satellites(self):
         """List all known satellites"""
-        # Get recent heartbeats
-        heartbeats = await self.redis.lrange("crawler_heartbeats", 0, -1)
+        # Get recent heartbeats from the sorted set
+        cutoff = (datetime.now() - timedelta(minutes=5)).timestamp()
+        recent_heartbeats = await self.redis.zrangebyscore(
+            "crawler_heartbeats_sorted", 
+            cutoff, 
+            "+inf", 
+            withscores=True
+        )
         
         satellites = set()
-        for hb_data in heartbeats:
+        for heartbeat_data, timestamp in recent_heartbeats:
             try:
-                hb = json.loads(hb_data)
+                hb = json.loads(heartbeat_data)
                 satellites.add(hb.get("crawler_id", "unknown"))
             except json.JSONDecodeError:
+                logging.warning(f"Failed to decode heartbeat data in list_satellites: {heartbeat_data}")
                 continue
         
-        print(f"Known Satellites ({len(satellites)}):")
-        for sat in sorted(satellites):
-            print(f"  - {sat}")
+        print(f"Known Active Satellites ({len(satellites)}):")
+        if satellites:
+            for sat in sorted(list(satellites)):
+                print(f"  - {sat}")
+        else:
+            print("  No active satellites detected in the last 5 minutes.")
 
 async def cli_main():
     """CLI interface for queue management"""
-    import sys
+    import argparse # Import argparse here for cli_main
     
-    parser = argparse.ArgumentParser(description="Satellite Crawler")
+    parser = argparse.ArgumentParser(description="Link Profiler Monitoring CLI")
     parser.add_argument("--redis-url", default="redis://localhost:6379", help="Redis connection URL")
-    parser.add_argument("--crawler-id", help="Unique crawler identifier")
-    parser.add_argument("--region", default="default", help="Crawler region/zone")
     parser.add_argument("--log-level", default="INFO", help="Logging level")
+    
+    # Subparsers for commands
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Dashboard command
+    dashboard_parser = subparsers.add_parser("dashboard", help="Start the web monitoring dashboard")
+
+    # Clear queues commands
+    clear_jobs_parser = subparsers.add_parser("clear-jobs", help="Clear the job queue")
+    clear_results_parser = subparsers.add_parser("clear-results", help="Clear the results queue")
+    clear_dead_letters_parser = subparsers.add_parser("clear-dead-letters", help="Clear the dead-letter queue")
+
+    # Pause/Resume commands
+    pause_parser = subparsers.add_parser("pause", help="Pause job processing")
+    resume_parser = subparsers.add_parser("resume", help="Resume job processing")
+
+    # Status commands
+    status_parser = subparsers.add_parser("status", help="Show queue status")
+    satellites_parser = subparsers.add_parser("satellites", help="List active satellites")
     
     args = parser.parse_args()
     
@@ -215,37 +264,26 @@ async def cli_main():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    if len(sys.argv) < 2:
-        print("Usage: python monitoring.py <command>")
-        print("Commands:")
-        print("  dashboard - Start web dashboard")
-        print("  clear-jobs - Clear job queue")
-        print("  clear-results - Clear results queue")
-        print("  pause - Pause processing")
-        print("  resume - Resume processing")
-        print("  status - Show queue status")
-        print("  satellites - List satellites")
-        return
+    manager = QueueManager(redis_url=args.redis_url)
     
-    command = sys.argv[1]
-    manager = QueueManager()
-    
-    if command == "dashboard":
+    if args.command == "dashboard":
         uvicorn.run(app, host="0.0.0.0", port=8001)
-    elif command == "clear-jobs":
+    elif args.command == "clear-jobs":
         await manager.clear_queue("crawl_jobs")
-    elif command == "clear-results":
+    elif args.command == "clear-results":
         await manager.clear_queue("crawl_results")
-    elif command == "pause":
+    elif args.command == "clear-dead-letters":
+        await manager.clear_queue(os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue"))
+    elif args.command == "pause":
         await manager.pause_processing()
-    elif command == "resume":
+    elif args.command == "resume":
         await manager.resume_processing()
-    elif command == "status":
+    elif args.command == "status":
         await manager.get_queue_sizes()
-    elif command == "satellites":
+    elif args.command == "satellites":
         await manager.list_satellites()
     else:
-        print(f"Unknown command: {command}")
+        parser.print_help()
 
 if __name__ == "__main__":
     import argparse # Import argparse here for cli_main

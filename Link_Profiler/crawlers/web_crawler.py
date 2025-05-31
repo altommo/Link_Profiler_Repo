@@ -234,46 +234,6 @@ class WebCrawler:
             self.logger.error(f"Error extracting links from {source_url}: {e}")
             return []
     
-    async def _get_seed_urls_for_backlink_discovery(self, target_domain: str) -> Set[str]:
-        """
-        Placeholder for generating initial seed URLs for backlink discovery.
-        In a real system, this might involve:
-        - Querying search engines (e.g., Google, Bing) for pages mentioning the target domain.
-        - Using known backlink databases (e.g., Ahrefs, SEMrush APIs - if available/free tier).
-        - Starting with common directories or industry-specific sites.
-        For now, we'll use a very basic approach: just the target domain itself.
-        """
-        self.logger.info(f"Generating seed URLs for target domain: {target_domain}")
-        # Example: A very basic seed could be the target domain's homepage
-        # or a few common pages. For finding backlinks, we need *other* sites.
-        # This is a complex problem. For a simple start, we might assume
-        # we have a list of "known good" sites to crawl.
-        
-        # For demonstration, let's assume we have a few external sites
-        # that might link to our target. In a real scenario, these would
-        # come from a more intelligent discovery process.
-        
-        # IMPORTANT: For finding backlinks, we need to crawl *other* domains,
-        # not just the target domain itself.
-        
-        # If the goal is to find expired domains, you might start by crawling
-        # lists of expired domains or domains known to have many backlinks.
-        
-        # For the purpose of demonstrating the backlink discovery,
-        # let's assume we have a few external sites to start crawling.
-        # These would typically be discovered via external means (e.g., search queries).
-        
-        # This is a critical point: the crawler needs to know *where to look* for backlinks.
-        # Without external data, it's hard to find them.
-        
-        # Let's return an empty set for now, and rely on an external process
-        # to feed URLs into the crawl. The `crawl_domain_for_backlinks`
-        # method will need to be initiated with some starting URLs.
-        
-        # Instead, the `crawl_domain_for_backlinks` will take an initial list of
-        # `seed_urls` as an argument.
-        return set() # This method will be refactored out or replaced.
-    
     async def crawl_for_backlinks(self, target_url: str, initial_seed_urls: List[str]) -> AsyncGenerator[CrawlResult, None]:
         """
         Crawl web to find backlinks to target URL/domain.
