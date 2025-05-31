@@ -7,6 +7,7 @@ SQLAlchemy
 psycopg2-binary
 google-api-python-client
 google-auth-oauthlib
+clickhouse-driver # New: For ClickHouse bulk loading
 
 # Queue System Dependencies
 redis>=4.5.0

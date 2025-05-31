@@ -15,10 +15,11 @@ import json
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
     CrawlJob, ContentType, serialize_model, SEOMetrics, SpamLevel, CrawlError,
-    SERPResult, KeywordSuggestion, LinkProfile # Added LinkProfile
+    SERPResult, KeywordSuggestion, LinkProfile
 )
 from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult
 from Link_Profiler.database.database import Database
+from Link_Profiler.database.clickhouse_loader import ClickHouseLoader # New: Import ClickHouseLoader
 from Link_Profiler.services.domain_service import DomainService
 from Link_Profiler.services.backlink_service import BacklinkService
 from Link_Profiler.services.serp_service import SERPService
@@ -38,7 +39,8 @@ class CrawlService:
         domain_service: DomainService,
         serp_service: SERPService,
         keyword_service: KeywordService,
-        link_health_service: LinkHealthService
+        link_health_service: LinkHealthService,
+        clickhouse_loader: ClickHouseLoader # New: Inject ClickHouseLoader
     ):
         self.db = database
         self.logger = logging.getLogger(__name__)
@@ -48,6 +50,7 @@ class CrawlService:
         self.serp_service = serp_service
         self.keyword_service = keyword_service
         self.link_health_service = link_health_service
+        self.clickhouse_loader = clickhouse_loader # New: Store ClickHouseLoader
 
     async def create_and_start_crawl_job(
         self, 
@@ -78,8 +81,12 @@ class CrawlService:
         if config is None:
             config = CrawlConfig()
 
+        # For testing purposes, explicitly set respect_robots_txt to False
+        # as quotes.toscrape.com's robots.txt disallows all crawling.
+        # TODO: Make this configurable via API or environment variable for production.
         config.respect_robots_txt = False 
 
+        # Ensure target domain is in allowed domains if specified for crawl jobs
         if job_type == 'backlink_discovery' and target_url:
             parsed_target_domain = urlparse(target_url).netloc
             if config.allowed_domains and parsed_target_domain not in config.allowed_domains:
@@ -95,6 +102,7 @@ class CrawlService:
         self.db.add_crawl_job(job)
         self.logger.info(f"Created {job_type} job {job_id} for {job.target_url}")
 
+        # Dispatch to appropriate runner based on job_type
         if job_type == 'backlink_discovery':
             if not initial_seed_urls or not target_url:
                 raise ValueError("initial_seed_urls and target_url must be provided for 'backlink_discovery' job type.")
@@ -145,6 +153,8 @@ class CrawlService:
                 job.links_found = len(discovered_backlinks)
                 try:
                     self.db.add_backlinks(api_backlinks)
+                    # TODO: Add bulk insert to ClickHouse for API backlinks
+                    # await self.clickhouse_loader.bulk_insert_backlinks(api_backlinks)
                     self.logger.info(f"Successfully added {len(api_backlinks)} API backlinks to the database.")
                 except Exception as db_e:
                     self.logger.error(f"Error adding API backlinks to database: {db_e}", exc_info=True)
@@ -250,6 +260,8 @@ class CrawlService:
                                     job.links_found = len(discovered_backlinks)
                                     try:
                                         self.db.add_backlinks(new_backlinks) 
+                                        # TODO: Add bulk insert to ClickHouse for crawled backlinks
+                                        # await self.clickhouse_loader.bulk_insert_backlinks(new_backlinks)
                                     except Exception as db_e:
                                         self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
                                         job.add_error(url=crawl_result.url, error_type="DatabaseError", message=f"DB error adding crawled backlinks: {str(db_e)}", details=str(db_e))
@@ -258,6 +270,8 @@ class CrawlService:
                             if crawl_result.seo_metrics:
                                 try:
                                     self.db.save_seo_metrics(crawl_result.seo_metrics)
+                                    # TODO: Add bulk insert to ClickHouse for SEO metrics
+                                    # await self.clickhouse_loader.bulk_insert_seo_metrics([crawl_result.seo_metrics])
                                     self.logger.info(f"Saved SEO metrics for {crawl_result.url}.")
                                 except Exception as seo_e:
                                     self.logger.error(f"Error saving SEO metrics for {crawl_result.url}: {seo_e}", exc_info=True)
@@ -303,6 +317,7 @@ class CrawlService:
                             self.db.save_domain(referring_domain_obj)
                             self.logger.info(f"Saved domain info for referring domain: {referring_domain_obj.name}.")
                         else:
+                            # TODO: Log the specific referring domain name that failed to retrieve info.
                             pass
 
             if discovered_backlinks:
@@ -314,6 +329,7 @@ class CrawlService:
                             "authority_score": source_domain_obj.authority_score,
                             "trust_score": source_domain_obj.trust_score,
                             "spam_score": source_domain_obj.spam_score,
+                            # TODO: Add other relevant domain metrics to source_domain_metrics if needed for backlink analysis.
                         }
                         self.db.update_backlink(backlink)
                     else:
@@ -404,6 +420,8 @@ class CrawlService:
                 self.logger.info(f"Found {len(serp_results)} SERP results for '{keyword}'.")
                 try:
                     await self.db.add_serp_results(serp_results)
+                    # TODO: Add bulk insert to ClickHouse for SERP results
+                    # await self.clickhouse_loader.bulk_insert_serp_results(serp_results)
                     self.logger.info(f"Successfully added {len(serp_results)} SERP results to the database.")
                 except Exception as db_e:
                     self.logger.error(f"Error adding SERP results to database: {db_e}", exc_info=True)
@@ -445,6 +463,8 @@ class CrawlService:
                 self.logger.info(f"Found {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
                 try:
                     await self.db.add_keyword_suggestions(suggestions)
+                    # TODO: Add bulk insert to ClickHouse for keyword suggestions
+                    # await self.clickhouse_loader.bulk_insert_keyword_suggestions(suggestions)
                     self.logger.info(f"Successfully added {len(suggestions)} keyword suggestions to the database.")
                 except Exception as db_e:
                     self.logger.error(f"Error adding keyword suggestions to database: {db_e}", exc_info=True)
@@ -509,7 +529,7 @@ class CrawlService:
         if job.status == CrawlStatus.IN_PROGRESS:
             job.status = CrawlStatus.PAUSED
             self.db.update_crawl_job(job)
-            self.logger.info(f"Crawl job {job_id} paused.")
+            self.logger.info(f"Crawl job {job.id} paused.")
             return job
         else:
             raise ValueError(f"Crawl job {job_id} cannot be paused from status {job.status.value}.")
@@ -548,3 +568,7 @@ class CrawlService:
     def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
         """Retrieves all raw backlinks for a given URL."""
         return self.db.get_backlinks_for_target(target_url)
+
+    # TODO: Add get_all_jobs() method to retrieve a list of all crawl jobs.
+    # TODO: Consider adding create_seo_audit_job() for a full site audit (beyond just broken links).
+    # TODO: Consider adding create_domain_analysis_job() for on-demand domain analysis.
