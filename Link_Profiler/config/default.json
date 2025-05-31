@@ -1,4 +1,7 @@
 {
+  "database": {
+    "url": "postgresql://postgres:postgres@localhost:5432/link_profiler_db"
+  },
   "crawler": {
     "max_depth": 3,
     "max_pages": 1000,
@@ -15,11 +18,74 @@
     "retry_delay": 5,
     "priority_levels": [1, 5, 10],
     "heartbeat_interval": 30,
-    "stale_timeout": 60
+    "stale_timeout": 60,
+    "dead_letter_queue_name": "dead_letter_queue"
   },
   "monitoring": {
     "dashboard_refresh": 30,
     "max_job_history": 100,
     "performance_window": 3600
+  },
+  "api": {
+    "host": "0.0.0.0",
+    "port": 8000
+  },
+  "logging": {
+    "level": "INFO"
+  },
+  "domain_api": {
+    "abstract_api": {
+      "enabled": false,
+      "api_key": "your_abstract_api_key_here"
+    },
+    "real_api": {
+      "enabled": false,
+      "api_key": "your_real_domain_api_key_here"
+    }
+  },
+  "backlink_api": {
+    "gsc_api": {
+      "enabled": false
+    },
+    "openlinkprofiler_api": {
+      "enabled": false
+    },
+    "real_api": {
+      "enabled": false,
+      "api_key": "your_real_backlink_api_key_here"
+    }
+  },
+  "serp_crawler": {
+    "playwright": {
+      "enabled": false,
+      "headless": true,
+      "browser_type": "chromium"
+    }
+  },
+  "serp_api": {
+    "real_api": {
+      "enabled": false,
+      "api_key": "your_real_serp_api_key_here"
+    }
+  },
+  "keyword_scraper": {
+    "enabled": false
+  },
+  "keyword_api": {
+    "real_api": {
+      "enabled": false,
+      "api_key": "your_real_keyword_api_key_here"
+    }
+  },
+  "technical_auditor": {
+    "lighthouse_path": "lighthouse"
+  },
+  "clickhouse": {
+    "enabled": false,
+    "host": "localhost",
+    "port": 9000,
+    "user": "default",
+    "password": "",
+    "database": "default"
   }
 }
