@@ -27,6 +27,7 @@ from Link_Profiler.services.backlink_service import BacklinkService
 from Link_Profiler.services.serp_service import SERPService
 from Link_Profiler.services.keyword_service import KeywordService
 from Link_Profiler.services.link_health_service import LinkHealthService
+from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Import DomainAnalyzerService
 from Link_Profiler.monitoring.prometheus_metrics import (
     JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL,
     CRAWLED_URLS_TOTAL, BACKLINKS_FOUND_TOTAL, JOB_ERRORS_TOTAL
@@ -48,7 +49,8 @@ class CrawlService:
         link_health_service: LinkHealthService,
         clickhouse_loader: Optional[ClickHouseLoader], # Made optional
         redis_client: Optional[redis.Redis], # Made optional
-        technical_auditor: TechnicalAuditor
+        technical_auditor: TechnicalAuditor,
+        domain_analyzer_service: DomainAnalyzerService # Add DomainAnalyzerService
     ):
         self.db = database
         self.logger = logging.getLogger(__name__)
@@ -61,6 +63,7 @@ class CrawlService:
         self.clickhouse_loader = clickhouse_loader # Store the loader instance
         self.redis = redis_client # Store the Redis client instance (can be None)
         self.technical_auditor = technical_auditor
+        self.domain_analyzer_service = domain_analyzer_service # Store DomainAnalyzerService
         self.deduplication_set_key = "processed_backlinks_dedup"
         self.dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
 
@@ -112,19 +115,25 @@ class CrawlService:
         num_results: Optional[int] = None,
         source_urls_to_audit: Optional[List[str]] = None,
         urls_to_audit_tech: Optional[List[str]] = None,
+        domain_names_to_analyze: Optional[List[str]] = None, # New parameter
+        min_value_score: Optional[float] = None, # New parameter
+        limit: Optional[int] = None, # New parameter
         config: Optional[CrawlConfig] = None
     ) -> CrawlJob:
         """
         Creates a new crawl job of a specified type and starts it.
         
         Args:
-            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit', 'technical_audit').
+            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit', 'technical_audit', 'domain_analysis').
             target_url: The primary URL relevant to the job (e.g., for backlink discovery).
             initial_seed_urls: Optional list of URLs to start crawling from (for backlink discovery).
             keyword: Optional keyword for SERP or keyword research jobs.
             num_results: Optional number of results/suggestions to fetch for SERP/keyword jobs.
             source_urls_to_audit: Optional list of URLs whose outgoing links should be audited (for link_health_audit).
             urls_to_audit_tech: Optional list of URLs for technical audit.
+            domain_names_to_analyze: Optional list of domain names for domain analysis.
+            min_value_score: Optional minimum value score for domain analysis.
+            limit: Optional limit for domain analysis results.
             config: Optional CrawlConfig object. If None, a default config is used.
         
         Returns:
@@ -146,7 +155,7 @@ class CrawlService:
 
         job = CrawlJob(
             id=job_id,
-            target_url=target_url or keyword or (urls_to_audit_tech[0] if urls_to_audit_tech else "N/A"),
+            target_url=target_url or keyword or (urls_to_audit_tech[0] if urls_to_audit_tech else None) or (domain_names_to_analyze[0] if domain_names_to_analyze else "N/A"),
             job_type=job_type,
             status=CrawlStatus.PENDING,
             config=serialize_model(config)
@@ -176,6 +185,10 @@ class CrawlService:
             if not urls_to_audit_tech:
                 raise ValueError("urls_to_audit_tech must be provided for 'technical_audit' job type.")
             asyncio.create_task(self._run_technical_audit_job(job, urls_to_audit_tech, config))
+        elif job_type == 'domain_analysis': # New job type dispatch
+            if not domain_names_to_analyze:
+                raise ValueError("domain_names_to_analyze must be provided for 'domain_analysis' job type.")
+            asyncio.create_task(self._run_domain_analysis_job(job, domain_names_to_analyze, min_value_score, limit))
         else:
             raise ValueError(f"Unknown job type: {job_type}")
         
@@ -188,7 +201,10 @@ class CrawlService:
         keyword: Optional[str] = None,
         num_results: Optional[int] = None,
         source_urls_to_audit: Optional[List[str]] = None,
-        urls_to_audit_tech: Optional[List[str]] = None
+        urls_to_audit_tech: Optional[List[str]] = None,
+        domain_names_to_analyze: Optional[List[str]] = None, # New parameter
+        min_value_score: Optional[float] = None, # New parameter
+        limit: Optional[int] = None # New parameter
     ):
         """
         Executes a pre-defined CrawlJob object. This method is intended to be called
@@ -239,6 +255,13 @@ class CrawlService:
                 if not urls_to_audit_tech_from_config:
                     raise ValueError("urls_to_audit_tech must be provided for 'technical_audit' job type.")
                 await self._run_technical_audit_job(job, urls_to_audit_tech_from_config, config)
+            elif job.job_type == 'domain_analysis': # New job type dispatch
+                domain_names_to_analyze_from_config = job.config.get("domain_names_to_analyze", [])
+                min_value_score_from_config = job.config.get("min_value_score")
+                limit_from_config = job.config.get("limit")
+                if not domain_names_to_analyze_from_config:
+                    raise ValueError("domain_names_to_analyze must be provided for 'domain_analysis' job type.")
+                await self._run_domain_analysis_job(job, domain_names_to_analyze_from_config, min_value_score_from_config, limit_from_config)
             else:
                 raise ValueError(f"Unknown job type: {job.job_type}")
             
@@ -679,6 +702,52 @@ class CrawlService:
                 job.add_error(url="N/A", error_type="ClickHouseError", message=f"ClickHouse bulk insert failed: {str(e)}", details=str(e))
                 JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="ClickHouseError").inc()
 
+    async def _run_domain_analysis_job(self, job: CrawlJob, domain_names: List[str], min_value_score: Optional[float], limit: Optional[int]):
+        """
+        Internal method to execute a domain analysis job.
+        """
+        self.logger.info(f"Starting domain analysis logic for job {job.id} for {len(domain_names)} domains.")
+
+        analyzed_domains_count = 0
+        valuable_domains_found = []
+        
+        # Use the domain_analyzer_service to perform the analysis
+        for domain_name in domain_names:
+            try:
+                analysis_result = await self.domain_analyzer_service.analyze_domain_for_expiration_value(
+                    domain_name,
+                    min_authority_score=job.config.get("min_authority_score", 20.0), # Use config values if present
+                    min_dofollow_backlinks=job.config.get("min_dofollow_backlinks", 5),
+                    min_age_days=job.config.get("min_age_days", 365),
+                    max_spam_score=job.config.get("max_spam_score", 30.0)
+                )
+                
+                if analysis_result.get("is_valuable") and \
+                   (min_value_score is None or analysis_result.get("value_score", 0) >= min_value_score):
+                    valuable_domains_found.append(analysis_result)
+                    self.logger.info(f"Domain {domain_name} is valuable (Score: {analysis_result.get('value_score'):.2f}).")
+                else:
+                    self.logger.info(f"Domain {domain_name} is not valuable enough (Score: {analysis_result.get('value_score'):.2f}).")
+                
+                analyzed_domains_count += 1
+                
+                if limit and len(valuable_domains_found) >= limit:
+                    self.logger.info(f"Domain analysis job {job.id} reached limit of {limit} valuable domains.")
+                    break
+
+            except Exception as e:
+                self.logger.error(f"Error during domain analysis for {domain_name}: {e}", exc_info=True)
+                job.add_error(url=domain_name, error_type="DomainAnalysisError", message=f"Domain analysis failed for {domain_name}: {str(e)}", details=str(e))
+                JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="DomainAnalysisError").inc()
+            
+            job.urls_crawled = analyzed_domains_count # Re-use urls_crawled for domains analyzed
+            job.progress_percentage = min(99.0, (analyzed_domains_count / len(domain_names)) * 100)
+            self.db.update_crawl_job(job)
+
+        job.results['valuable_domains_found'] = [serialize_model(d) for d in valuable_domains_found]
+        job.links_found = len(valuable_domains_found) # Re-use links_found for valuable domains count
+        self.logger.info(f"Domain analysis job {job.id} completed. Analyzed {analyzed_domains_count} domains, found {len(valuable_domains_found)} valuable.")
+
 
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:
         """Retrieves the current status of a crawl job."""
@@ -735,6 +804,5 @@ class CrawlService:
         """Retrieves all raw backlinks for a given URL."""
         return self.db.get_backlinks_for_target(target_url)
 
-    # TODO: Add get_all_jobs() method to retrieve a list of all crawl jobs.
     # TODO: Consider adding create_seo_audit_job() for a full site audit (beyond just broken links).
     # TODO: Consider adding create_domain_analysis_job() for on-demand domain analysis.

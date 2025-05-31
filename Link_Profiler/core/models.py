@@ -300,7 +300,7 @@ class CrawlJob:
     """Represents a crawling job"""
     id: str
     target_url: str
-    job_type: str  # 'backlinks', 'seo_audit', 'competitor_analysis', 'serp_analysis', 'keyword_research'
+    job_type: str  # 'backlinks', 'seo_audit', 'competitor_analysis', 'serp_analysis', 'keyword_research', 'domain_analysis'
     status: CrawlStatus = CrawlStatus.PENDING
     priority: int = 5  # 1-10, higher = more priority
     created_date: datetime = field(default_factory=datetime.now)
@@ -372,6 +372,11 @@ class CrawlConfig:
     custom_headers: Dict[str, str] = field(default_factory=dict) # Ensure default is a dict
     max_retries: int = 3 # Added max_retries
     retry_delay_seconds: float = 5.0 # Added retry_delay_seconds
+    
+    # New fields for domain analysis jobs
+    domain_names_to_analyze: List[str] = field(default_factory=list)
+    min_value_score: float = 50.0
+    limit: Optional[int] = None
     
     def is_domain_allowed(self, domain: str) -> bool:
         """Check if domain is allowed for crawling"""
@@ -470,7 +475,7 @@ class SEOMetrics:
         if self.broken_links:
             score -= len(self.broken_links) * 5 # Penalty for broken links
         if self.performance_score is not None:
-            score -= (100 - self.performance_score) * 0.1 # Scale 0-100 to 0-10 penalty
+            score -= (100 - self.performance_score) * 0.1 # Scale 0-100 to 0-1 penalty
         if self.mobile_friendly is False:
             score -= 15
         if self.accessibility_score is not None:

@@ -242,6 +242,34 @@ async def main():
     else:
         print(f"Technical audit job did not complete successfully.")
 
+    # Test Domain Analysis Job (submitted to queue)
+    domain_analysis_domains = ["example.com", "google.com", "nonexistent.xyz", "testdomain.org"]
+    domain_analysis_payload = {
+        "domain_names": domain_analysis_domains,
+        "min_value_score": 60.0,
+        "limit": 2
+    }
+    domain_analysis_payload["config"] = {
+        "domain_names_to_analyze": domain_analysis_domains,
+        "min_value_score": domain_analysis_payload["min_value_score"],
+        "limit": domain_analysis_payload["limit"],
+        "job_type": "domain_analysis"
+    }
+    domain_analysis_payload["target_url"] = domain_analysis_domains[0] # Set target_url for QueueCrawlRequest
+    domain_analysis_payload["initial_seed_urls"] = [] # Required by QueueCrawlRequest
+
+    job_success, _ = await submit_job_and_poll_status(
+        "/domain/analyze_batch",
+        domain_analysis_payload,
+        "domain_analysis"
+    )
+    if job_success:
+        print(f"Domain analysis job completed.")
+        # Further checks would involve retrieving job results from /crawl/status/{job_id}
+        # and inspecting the 'valuable_domains_found' field.
+    else:
+        print(f"Domain analysis job did not complete successfully.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

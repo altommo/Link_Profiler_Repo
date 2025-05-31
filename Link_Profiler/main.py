@@ -145,6 +145,9 @@ technical_auditor_instance = TechnicalAuditor(
 )
 
 
+# Initialize DomainAnalyzerService (depends on DomainService)
+domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
+
 # Initialize CrawlService (will be used by SatelliteCrawler, not directly by API endpoints for job creation)
 # This instance is primarily for the lifespan management of its internal services.
 crawl_service_for_lifespan = CrawlService(
@@ -156,9 +159,9 @@ crawl_service_for_lifespan = CrawlService(
     link_health_service=link_health_service_instance,
     clickhouse_loader=clickhouse_loader_instance, # Pass the potentially None instance
     redis_client=redis_client, # Pass the potentially None instance
-    technical_auditor=technical_auditor_instance
+    technical_auditor=technical_auditor_instance,
+    domain_analyzer_service=domain_analyzer_service # Pass the domain_analyzer_service
 ) 
-domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance)
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service)
 
 
@@ -281,6 +284,13 @@ class LinkHealthAuditRequest(BaseModel):
 class TechnicalAuditRequest(BaseModel):
     urls_to_audit: List[str] = Field(..., description="A list of URLs to perform a technical audit on using Lighthouse.")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration for the audit (e.g., user agent).")
+
+class DomainAnalysisJobRequest(BaseModel): # New Pydantic model for domain analysis job submission
+    domain_names: List[str] = Field(..., description="A list of domain names to analyze.")
+    min_value_score: Optional[float] = Field(None, description="Minimum value score for a domain to be considered valuable.")
+    limit: Optional[int] = Field(None, description="Maximum number of valuable domains to return.")
+    config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration for the analysis (e.g., user agent).")
+
 
 class CrawlErrorResponse(BaseModel):
     timestamp: datetime
@@ -586,6 +596,36 @@ async def start_technical_audit(
     )
     queue_request.config["urls_to_audit_tech"] = request.urls_to_audit # Pass actual list
     queue_request.config["job_type"] = "technical_audit" # Explicitly set job type in config for queue processing
+
+    return await submit_crawl_to_queue(queue_request)
+
+@app.post("/domain/analyze_batch", response_model=Dict[str, str], status_code=202) # New endpoint
+async def start_domain_analysis_job(
+    request: DomainAnalysisJobRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Submits a new batch domain analysis job to the queue.
+    """
+    logger.info(f"Received request to submit domain analysis for {len(request.domain_names)} domains to queue.")
+    JOBS_CREATED_TOTAL.labels(job_type='domain_analysis').inc()
+
+    if not request.domain_names:
+        raise HTTPException(status_code=400, detail="At least one domain name must be provided for analysis.")
+    
+    # For domain analysis, target_url can be the first domain name or a generic placeholder
+    target_url = request.domain_names[0] if request.domain_names else "N/A"
+
+    queue_request = QueueCrawlRequest(
+        target_url=target_url,
+        initial_seed_urls=[], # Not applicable for this job type
+        config=request.config.dict() if request.config else {},
+        priority=5
+    )
+    queue_request.config["domain_names_to_analyze"] = request.domain_names
+    queue_request.config["min_value_score"] = request.min_value_score
+    queue_request.config["limit"] = request.limit
+    queue_request.config["job_type"] = "domain_analysis" # Explicitly set job type in config for queue processing
 
     return await submit_crawl_to_queue(queue_request)
 
