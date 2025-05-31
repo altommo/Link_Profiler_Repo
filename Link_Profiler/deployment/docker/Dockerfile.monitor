@@ -8,9 +8,9 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy monitoring requirements
-COPY Link_Profiler/deployment/docker/requirements-monitor.txt .
-RUN pip install --no-cache-dir -r requirements-monitor.txt
+# Copy main requirements.txt and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy monitoring components
 COPY Link_Profiler/monitoring/ ./Link_Profiler/monitoring/
