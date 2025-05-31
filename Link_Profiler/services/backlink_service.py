@@ -19,6 +19,9 @@ from googleapiclient.discovery import build
 from Link_Profiler.core.models import Backlink, LinkType, SpamLevel, Domain # Assuming Domain model might be needed for context
 from Link_Profiler.config.config_loader import config_loader # Import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
+from Link_Profiler.monitoring.prometheus_metrics import ( # Import Prometheus metrics
+    API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL
+)
 
 logger = logging.getLogger(__name__)
 
@@ -513,23 +516,29 @@ class BacklinkService:
         self.logger.debug("Exiting BacklinkService context.")
         await self.api_client.__aexit__(exc_type, exc_val, exc_tb) # Exit the client's context
 
-    async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
+    async def _get_cached_response(self, cache_key: str, service_name: str, endpoint_name: str) -> Optional[Any]:
         if self.api_cache_enabled and self.redis_client:
             try:
                 cached_data = await self.redis_client.get(cache_key)
                 if cached_data:
+                    API_CACHE_HITS_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
                     self.logger.debug(f"Cache hit for {cache_key}")
                     return json.loads(cached_data)
+                else:
+                    API_CACHE_MISSES_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
             except Exception as e:
+                API_CACHE_ERRORS_TOTAL.labels(service=service_name, endpoint=endpoint_name, error_type=type(e).__name__).inc()
                 self.logger.error(f"Error retrieving from cache for {cache_key}: {e}", exc_info=True)
         return None
 
-    async def _set_cached_response(self, cache_key: str, data: Any):
+    async def _set_cached_response(self, cache_key: str, data: Any, service_name: str, endpoint_name: str):
         if self.api_cache_enabled and self.redis_client:
             try:
                 await self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(data))
+                API_CACHE_SET_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
                 self.logger.debug(f"Cached {cache_key} with TTL {self.cache_ttl}")
             except Exception as e:
+                API_CACHE_ERRORS_TOTAL.labels(service=service_name, endpoint=endpoint_name, error_type=type(e).__name__).inc()
                 self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
 
     async def get_backlinks_from_api(self, target_url: str) -> List[Backlink]:
@@ -538,12 +547,12 @@ class BacklinkService:
         Uses caching.
         """
         cache_key = f"backlinks:{target_url}"
-        cached_result = await self._get_cached_response(cache_key)
+        cached_result = await self._get_cached_response(cache_key, "backlink_api", "get_backlinks")
         if cached_result is not None:
             # Convert cached list of dicts back to list of Backlink objects
             return [Backlink.from_dict(bl_data) for bl_data in cached_result]
 
         result = await self.api_client.get_backlinks_for_url(target_url)
         if result: # Only cache if result is not empty
-            await self._set_cached_response(cache_key, [bl.to_dict() for bl in result]) # Cache as list of dicts
+            await self._set_cached_response(cache_key, [bl.to_dict() for bl in result], "backlink_api", "get_backlinks") # Cache as list of dicts
         return result

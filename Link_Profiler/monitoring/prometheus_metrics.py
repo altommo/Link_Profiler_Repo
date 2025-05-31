@@ -136,6 +136,39 @@ EXTERNAL_API_CALL_ERRORS_TOTAL = Counter(
     ['service', 'api_client_type', 'endpoint', 'status_code']
 )
 
+# Counter for rate limiter throttles
+API_RATE_LIMITER_THROTTLES_TOTAL = Counter(
+    'link_profiler_api_rate_limiter_throttles_total',
+    'Total number of times an API call was throttled by the rate limiter',
+    ['service', 'api_client_type', 'endpoint']
+)
+
+# --- API Cache Metrics ---
+API_CACHE_HITS_TOTAL = Counter(
+    'link_profiler_api_cache_hits_total',
+    'Total number of API cache hits',
+    ['service', 'endpoint']
+)
+
+API_CACHE_MISSES_TOTAL = Counter(
+    'link_profiler_api_cache_misses_total',
+    'Total number of API cache misses',
+    ['service', 'endpoint']
+)
+
+API_CACHE_SET_TOTAL = Counter(
+    'link_profiler_api_cache_set_total',
+    'Total number of times an API response was cached',
+    ['service', 'endpoint']
+)
+
+API_CACHE_ERRORS_TOTAL = Counter(
+    'link_profiler_api_cache_errors_total',
+    'Total number of errors encountered during API caching operations',
+    ['service', 'endpoint', 'error_type']
+)
+
+
 # --- Utility function to expose metrics ---
 def get_metrics_text():
     """Returns the current metrics in Prometheus text format."""
