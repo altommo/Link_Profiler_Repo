@@ -8,8 +8,9 @@ psycopg2-binary
 google-api-python-client
 google-auth-oauthlib
 clickhouse-driver
-playwright # New: For Playwright-based crawlers
-playwright-stealth # New: For Playwright bot detection evasion
+playwright
+playwright-stealth
+pytrends # New: For Google Trends data
 
 # Queue System Dependencies
 redis>=4.5.0
