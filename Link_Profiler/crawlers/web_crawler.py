@@ -18,6 +18,7 @@ from Link_Profiler.core.models import ( # Changed to absolute import
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
     CrawlJob, ContentType, serialize_model, SEOMetrics # Import SEOMetrics
 )
+from Link_Profiler.database.database import Database # Import Database for job status checks
 from .link_extractor import LinkExtractor
 from .content_parser import ContentParser
 from .robots_parser import RobotsParser
@@ -68,8 +69,10 @@ class CrawlResult:
 class WebCrawler:
     """Main web crawler class"""
     
-    def __init__(self, config: CrawlConfig):
+    def __init__(self, config: CrawlConfig, db: Database, job_id: str):
         self.config = config
+        self.db = db # Database instance to check job status
+        self.job_id = job_id # ID of the current crawl job
         self.rate_limiter = RateLimiter(1.0 / config.delay_seconds)
         self.robots_parser = RobotsParser() # Initialise, but session managed by __aenter__
         self.link_extractor = LinkExtractor()
@@ -252,6 +255,24 @@ class WebCrawler:
         crawled_count = 0
         
         while not urls_to_visit.empty() and crawled_count < self.config.max_pages:
+            # Periodically check job status from DB
+            current_job = self.db.get_crawl_job(self.job_id)
+            if current_job:
+                if current_job.status == CrawlStatus.PAUSED:
+                    self.logger.info(f"Crawler for job {self.job_id} paused. Waiting to resume...")
+                    while True:
+                        await asyncio.sleep(5) # Check every 5 seconds
+                        rechecked_job = self.db.get_crawl_job(self.job_id)
+                        if rechecked_job and rechecked_job.status == CrawlStatus.IN_PROGRESS:
+                            self.logger.info(f"Crawler for job {self.job_id} resumed.")
+                            break
+                        elif rechecked_job and rechecked_job.status == CrawlStatus.STOPPED:
+                            self.logger.info(f"Crawler for job {self.job_id} stopped during pause.")
+                            return # Exit the generator
+                elif current_job.status == CrawlStatus.STOPPED:
+                    self.logger.info(f"Crawler for job {self.job_id} stopped.")
+                    return # Exit the generator
+
             url, current_depth = await urls_to_visit.get()
             
             if url in self.crawled_urls:

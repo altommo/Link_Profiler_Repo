@@ -28,6 +28,7 @@ from Link_Profiler.services.serp_service import SERPService
 from Link_Profiler.services.keyword_service import KeywordService
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Import DomainAnalyzerService
+from Link_Profiler.services.ai_service import AIService # Import AIService
 from Link_Profiler.monitoring.prometheus_metrics import (
     JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL,
     CRAWLED_URLS_TOTAL, BACKLINKS_FOUND_TOTAL, JOB_ERRORS_TOTAL
@@ -50,7 +51,8 @@ class CrawlService:
         clickhouse_loader: Optional[ClickHouseLoader], # Made optional
         redis_client: Optional[redis.Redis], # Made optional
         technical_auditor: TechnicalAuditor,
-        domain_analyzer_service: DomainAnalyzerService # Add DomainAnalyzerService
+        domain_analyzer_service: DomainAnalyzerService, # Add DomainAnalyzerService
+        ai_service: AIService # Add AIService
     ):
         self.db = database
         self.logger = logging.getLogger(__name__)
@@ -64,6 +66,7 @@ class CrawlService:
         self.redis = redis_client # Store the Redis client instance (can be None)
         self.technical_auditor = technical_auditor
         self.domain_analyzer_service = domain_analyzer_service # Store DomainAnalyzerService
+        self.ai_service = ai_service # Store AIService
         self.deduplication_set_key = "processed_backlinks_dedup"
         self.dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
 
@@ -299,7 +302,8 @@ class CrawlService:
         """
         self.logger.info(f"Starting backlink crawl logic for job {job.id} for {job.target_url}")
 
-        crawler = WebCrawler(config)
+        # Pass db and job_id to WebCrawler for job control
+        crawler = WebCrawler(config, self.db, job.id)
         self.active_crawlers[job.id] = crawler
 
         discovered_backlinks: List[Backlink] = []
@@ -347,38 +351,9 @@ class CrawlService:
                     crawled_urls_set = set()
 
                     while not urls_to_crawl_queue.empty() and urls_crawled_count < config.max_pages:
-                        current_job = self.db.get_crawl_job(job.id)
-                        if current_job and current_job.status == CrawlStatus.PAUSED:
-                            self.logger.info(f"Crawl job {job.id} paused. Saving current state.")
-                            job.status = CrawlStatus.PAUSED
-                            self.db.update_crawl_job(job)
-                            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-                            JOBS_PENDING.labels(job_type=job.job_type).inc()
-                            while True:
-                                await asyncio.sleep(5)
-                                current_job = self.db.get_crawl_job(job.id)
-                                if current_job and current_job.status == CrawlStatus.IN_PROGRESS:
-                                    self.logger.info(f"Crawl job {job.id} resumed.")
-                                    JOBS_PENDING.labels(job_type=job.job_type).dec()
-                                    JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
-                                    break
-                                elif current_job and current_job.status == CrawlStatus.STOPPED:
-                                    self.logger.info(f"Crawl job {job.id} stopped during pause.")
-                                    job.status = CrawlStatus.STOPPED
-                                    job.completed_date = datetime.now()
-                                    self.db.update_crawl_job(job)
-                                    JOBS_PENDING.labels(job_type=job.job_type).dec()
-                                    JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
-                                    return
-                        elif current_job and current_job.status == CrawlStatus.STOPPED:
-                            self.logger.info(f"Crawl job {job.id} stopped.")
-                            job.status = CrawlStatus.STOPPED
-                            job.completed_date = datetime.now()
-                            self.db.update_crawl_job(job)
-                            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-                            JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
-                            return
-
+                        # The WebCrawler's internal loop now handles pause/stop checks
+                        # No need to duplicate here.
+                        
                         url, current_depth = await urls_to_crawl_queue.get()
 
                         if url in crawled_urls_set:
@@ -670,6 +645,26 @@ class CrawlService:
         audited_urls_count = 0
         processed_seo_metrics: List[SEOMetrics] = [] # Collect SEO metrics for bulk insert
         for url in urls_to_audit:
+            # Check job status before processing each URL
+            current_job = self.db.get_crawl_job(job.id)
+            if current_job:
+                if current_job.status == CrawlStatus.PAUSED:
+                    self.logger.info(f"Technical audit for job {job.id} paused. Waiting to resume...")
+                    while True:
+                        await asyncio.sleep(5) # Check every 5 seconds
+                        rechecked_job = self.db.get_crawl_job(job.id)
+                        if rechecked_job and rechecked_job.status == CrawlStatus.IN_PROGRESS:
+                            self.logger.info(f"Technical audit for job {job.id} resumed.")
+                            break
+                        elif rechecked_job and rechecked_job.status == CrawlStatus.STOPPED:
+                            self.logger.info(f"Technical audit for job {job.id} stopped during pause.")
+                            job.status = CrawlStatus.STOPPED # Mark job as stopped
+                            return # Exit the method
+                elif current_job.status == CrawlStatus.STOPPED:
+                    self.logger.info(f"Technical audit for job {job.id} stopped.")
+                    job.status = CrawlStatus.STOPPED # Mark job as stopped
+                    return # Exit the method
+
             try:
                 lighthouse_metrics = await self.technical_auditor.run_lighthouse_audit(url, config)
                 
@@ -745,6 +740,26 @@ class CrawlService:
         
         # Use the domain_analyzer_service to perform the analysis
         for domain_name in domain_names:
+            # Check job status before processing each domain
+            current_job = self.db.get_crawl_job(job.id)
+            if current_job:
+                if current_job.status == CrawlStatus.PAUSED:
+                    self.logger.info(f"Domain analysis for job {job.id} paused. Waiting to resume...")
+                    while True:
+                        await asyncio.sleep(5) # Check every 5 seconds
+                        rechecked_job = self.db.get_crawl_job(job.id)
+                        if rechecked_job and rechecked_job.status == CrawlStatus.IN_PROGRESS:
+                            self.logger.info(f"Domain analysis for job {job.id} resumed.")
+                            break
+                        elif rechecked_job and rechecked_job.status == CrawlStatus.STOPPED:
+                            self.logger.info(f"Domain analysis for job {job.id} stopped during pause.")
+                            job.status = CrawlStatus.STOPPED # Mark job as stopped
+                            return # Exit the method
+                elif current_job.status == CrawlStatus.STOPPED:
+                    self.logger.info(f"Domain analysis for job {job.id} stopped.")
+                    job.status = CrawlStatus.STOPPED # Mark job as stopped
+                    return # Exit the method
+
             try:
                 analysis_result = await self.domain_analyzer_service.analyze_domain_for_expiration_value(
                     domain_name,
