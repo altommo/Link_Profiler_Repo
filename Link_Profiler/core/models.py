@@ -379,6 +379,12 @@ class CrawlConfig:
     max_retries: int = 3 # Added max_retries
     retry_delay_seconds: float = 5.0 # Added retry_delay_seconds
     
+    # New fields for anti-detection and quality assurance
+    user_agent_rotation: bool = False # New: Rotate user agents from a pool
+    request_header_randomization: bool = False # New: Randomize other request headers
+    human_like_delays: bool = False # New: Add small random delays to mimic human behavior
+    stealth_mode: bool = True # New: Enable Playwright stealth mode (default True for Playwright)
+    
     # New fields for domain analysis jobs
     domain_names_to_analyze: List[str] = field(default_factory=list)
     min_value_score: float = 50.0

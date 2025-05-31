@@ -8,7 +8,20 @@
     "follow_redirects": true,
     "extract_images": false,
     "extract_pdfs": false,
-    "max_file_size_mb": 5
+    "max_file_size_mb": 5,
+    "user_agent_rotation": false
+  },
+  "anti_detection": {
+    "stealth_mode": true,
+    "fingerprint_randomization": false,
+    "human_like_delays": false,
+    "request_header_randomization": false
+  },
+  "quality_assurance": {
+    "content_validation": false,
+    "duplicate_detection": true,
+    "spam_filtering": true,
+    "data_quality_scoring": true
   },
   "queue": {
     "max_retries": 2,

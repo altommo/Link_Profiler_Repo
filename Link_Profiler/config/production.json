@@ -1,14 +1,29 @@
 {
   "crawler": {
-    "max_depth": 5,
-    "max_pages": 5000,
+    "max_depth": 3,
+    "max_pages": 10000,
     "delay_seconds": 2.0,
     "timeout_seconds": 45,
+    "max_retries": 5,
+    "retry_delay_seconds": 1.5,
     "respect_robots_txt": true,
     "follow_redirects": true,
     "extract_images": true,
     "extract_pdfs": true,
-    "max_file_size_mb": 50
+    "max_file_size_mb": 50,
+    "user_agent_rotation": true
+  },
+  "anti_detection": {
+    "stealth_mode": true,
+    "fingerprint_randomization": false,
+    "human_like_delays": true,
+    "request_header_randomization": true
+  },
+  "quality_assurance": {
+    "content_validation": true,
+    "duplicate_detection": true,
+    "spam_filtering": true,
+    "data_quality_scoring": true
   },
   "queue": {
     "max_retries": 5,
@@ -22,4 +37,4 @@
     "max_job_history": 500,
     "performance_window": 7200
   }
-}
+}````
