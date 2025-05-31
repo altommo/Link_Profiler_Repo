@@ -22,7 +22,7 @@ else:
 # --- End Robust Project Root Discovery ---
 
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect # New: Import WebSocket and WebSocketDisconnect
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
 import logging
@@ -175,7 +175,7 @@ technical_auditor_instance = TechnicalAuditor(
 ai_service_instance = AIService()
 
 # New: Initialize Alert Service
-alert_service_instance = AlertService(db)
+alert_service_instance = AlertService(db) # Will pass connection_manager later
 
 # Initialize DomainAnalyzerService (depends on DomainService)
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance, ai_service_instance)
@@ -201,6 +201,46 @@ crawl_service_for_lifespan = CrawlService(
 ) 
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service) # Corrected class name
 
+# New: WebSocket Connection Manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+        self.logger = logging.getLogger(__name__ + ".ConnectionManager")
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        self.logger.info(f"WebSocket connected: {websocket.client.host}:{websocket.client.port}. Total active connections: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+        self.logger.info(f"WebSocket disconnected: {websocket.client.host}:{websocket.client.port}. Total active connections: {len(self.active_connections)}")
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+    async def broadcast(self, message: Dict[str, Any]):
+        """Broadcasts a JSON message to all active WebSocket connections."""
+        message_str = json.dumps(message)
+        disconnected_websockets = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(message_str)
+            except WebSocketDisconnect:
+                disconnected_websockets.append(connection)
+                self.logger.warning(f"WebSocket disconnected during broadcast: {connection.client.host}:{connection.client.port}")
+            except Exception as e:
+                self.logger.error(f"Error sending message to WebSocket {connection.client.host}:{connection.client.port}: {e}", exc_info=True)
+                disconnected_websockets.append(connection)
+        
+        for ws in disconnected_websockets:
+            if ws in self.active_connections: # Ensure it's still in the list before removing
+                self.active_connections.remove(ws)
+        self.logger.debug(f"Broadcasted message to {len(self.active_connections)} active connections. Message type: {message.get('type')}")
+
+# Global instance of ConnectionManager
+connection_manager = ConnectionManager()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -208,8 +248,10 @@ async def lifespan(app: FastAPI):
     Context manager for managing the lifespan of the FastAPI application.
     Ensures resources like aiohttp sessions are properly opened and closed.
     """
-    # Use a list to hold context managers to ensure they are entered and exited in order
-    # and that all are exited even if one fails.
+    # Pass connection_manager to AlertService
+    alert_service_instance.connection_manager = connection_manager
+    logger.info("ConnectionManager passed to AlertService.")
+
     context_managers = [
         domain_service_instance,
         backlink_service_instance,
@@ -1357,6 +1399,26 @@ async def delete_alert_rule(rule_id: str):
         logger.error(f"Error deleting alert rule {rule_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to delete alert rule: {e}")
 
+# New: WebSocket endpoint for real-time notifications
+@app.websocket("/ws/notifications")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time notifications and job updates.
+    Clients can connect to this endpoint to receive live data.
+    """
+    await connection_manager.connect(websocket)
+    try:
+        while True:
+            # Keep the connection alive. Clients can send messages if needed,
+            # but for now, this is primarily a server-to-client channel.
+            # A simple ping/pong or a timeout could be implemented here.
+            await websocket.receive_text() # Just receive to keep connection open, or it will close
+    except WebSocketDisconnect:
+        connection_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}", exc_info=True)
+        connection_manager.disconnect(websocket)
+
 
 @app.get("/health")
 async def health_check():
@@ -1570,4 +1632,4 @@ async def reprocess_dead_letters():
 
 
 # Add queue-related endpoints to the main app
-add_queue_endpoints(app, db, alert_service_instance) # Pass the db and alert_service_instance to add_queue_endpoints
+add_queue_endpoints(app, db, alert_service_instance, connection_manager) # Pass the db, alert_service_instance, and connection_manager

@@ -16,17 +16,19 @@ from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, serial
 from Link_Profiler.database.database import Database
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.services.alert_service import AlertService # New: Import AlertService
+from Link_Profiler.main import ConnectionManager # New: Import ConnectionManager
 
 logger = logging.getLogger(__name__)
 
 class JobCoordinator:
     """Manages distributed crawling jobs via Redis queues"""
     
-    def __init__(self, redis_url: str = "redis://localhost:6379", database: Database = None, alert_service: Optional[AlertService] = None):
+    def __init__(self, redis_url: str = "redis://localhost:6379", database: Database = None, alert_service: Optional[AlertService] = None, connection_manager: Optional[ConnectionManager] = None): # New: Add connection_manager
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
         self.db = database
         self.alert_service = alert_service # New: Store AlertService instance
+        self.connection_manager = connection_manager # New: Store ConnectionManager instance
         
         # Queue names
         self.job_queue = "crawl_jobs"
@@ -95,6 +97,17 @@ class JobCoordinator:
         
         # Add to in-memory cache for quick lookup by get_job_status
         self.active_jobs_cache[job.id] = job
+
+        # New: Broadcast job submission to WebSocket clients
+        if self.connection_manager:
+            await self.connection_manager.broadcast({
+                "type": "job_submitted",
+                "job_id": job.id,
+                "job_type": job.job_type,
+                "target_url": job.target_url,
+                "status": job.status.value,
+                "created_date": job.created_date.isoformat()
+            })
         
         return job.id
     
@@ -202,6 +215,21 @@ class JobCoordinator:
         # New: Evaluate alert rules for job status changes or anomalies
         if self.alert_service:
             await self.alert_service.evaluate_job_update(job)
+
+        # New: Broadcast job update to WebSocket clients
+        if self.connection_manager:
+            await self.connection_manager.broadcast({
+                "type": "job_update",
+                "job_id": job.id,
+                "job_type": job.job_type,
+                "target_url": job.target_url,
+                "status": job.status.value,
+                "progress_percentage": job.progress_percentage,
+                "urls_crawled": job.urls_crawled,
+                "links_found": job.links_found,
+                "errors_count": job.errors_count,
+                "completed_date": job.completed_date.isoformat() if job.completed_date else None
+            })
     
     async def _send_webhook_notification(self, job: CrawlJob):
         """Sends a webhook notification for a job status change."""
@@ -330,12 +358,13 @@ async def main():
     # Initialize Database for standalone coordinator if needed
     db_instance = Database() 
     alert_service_instance = AlertService(db_instance) # New: Initialize AlertService
-    async with JobCoordinator(database=db_instance, alert_service=alert_service_instance) as coordinator: # Pass AlertService
+    # For standalone, connection_manager would be None or a dummy
+    async with JobCoordinator(database=db_instance, alert_service=alert_service_instance, connection_manager=None) as coordinator: # Pass AlertService and None for connection_manager
         # Start monitoring tasks
         asyncio.create_task(coordinator.process_results())
         asyncio.create_task(coordinator.monitor_satellites())
         asyncio.create_task(coordinator._process_scheduled_jobs())
-        asyncio.create_task(alert_service_instance.refresh_rules()) # New: Start alert rule refreshing
+        asyncio.create_task(alert_service_instance.refresh_rules())
         
         logger.info("Job Coordinator started. Press Ctrl+C to exit.")
         # Keep the main task alive

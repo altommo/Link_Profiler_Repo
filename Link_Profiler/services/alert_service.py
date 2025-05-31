@@ -11,7 +11,8 @@ from typing import List, Dict, Any, Optional, Union
 import aiohttp # For sending webhooks (even if just logging for now)
 
 from Link_Profiler.database.database import Database
-from Link_Profiler.core.models import AlertRule, CrawlJob, SEOMetrics, AlertSeverity, AlertChannel, serialize_model, CrawlStatus # Import CrawlStatus
+from Link_Profiler.core.models import AlertRule, CrawlJob, SEOMetrics, AlertSeverity, AlertChannel, serialize_model, CrawlStatus
+from Link_Profiler.main import ConnectionManager # New: Import ConnectionManager
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +20,11 @@ class AlertService:
     """
     Manages alert rules, evaluates conditions, and dispatches notifications.
     """
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, connection_manager: Optional[ConnectionManager] = None): # New: Add connection_manager
         self.db = database
         self.active_rules: List[AlertRule] = []
         self._session: Optional[aiohttp.ClientSession] = None # For potential future webhook/HTTP notifications
+        self.connection_manager = connection_manager # New: Store ConnectionManager instance
         self.logger = logging.getLogger(__name__)
 
     async def __aenter__(self):
@@ -53,7 +55,18 @@ class AlertService:
         for channel in rule.notification_channels:
             if channel == AlertChannel.DASHBOARD:
                 self.logger.info(f"DASHBOARD ALERT [{rule.severity.value.upper()}]: Rule '{rule.name}' triggered. Subject: '{subject}'. Message: '{message}'")
-                # In a real UI, this would push to a WebSocket or store in a dashboard-specific table
+                # New: Send to WebSocket clients
+                if self.connection_manager:
+                    await self.connection_manager.broadcast({
+                        "type": "alert",
+                        "rule_id": rule.id,
+                        "rule_name": rule.name,
+                        "severity": rule.severity.value,
+                        "subject": subject,
+                        "message": message,
+                        "payload": payload,
+                        "timestamp": datetime.now().isoformat()
+                    })
                 notification_sent = True
             elif channel == AlertChannel.WEBHOOK:
                 if self._session and rule.notification_recipients:
