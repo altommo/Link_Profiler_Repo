@@ -177,40 +177,32 @@ async def lifespan(app: FastAPI):
                         async with clickhouse_loader_instance as ch_loader:
                             logger.info("Application startup: Entering TechnicalAuditor context.")
                             async with technical_auditor_instance as ta:
-                                # New: Enter SERPCrawler context if it's being used
+                                # Conditionally enter SERPCrawler context
                                 if serp_crawler_instance:
                                     logger.info("Application startup: Entering SERPCrawler context.")
-                                    async with serp_crawler_instance as sc:
-                                        # New: Enter KeywordScraper context if it's being used
-                                        if keyword_scraper_instance:
-                                            logger.info("Application startup: Entering KeywordScraper context.")
-                                            async with keyword_scraper_instance as ksc:
-                                                logger.info("Application startup: Pinging Redis.")
-                                                try:
-                                                    await redis_client.ping()
-                                                    logger.info("Redis connection successful.")
-                                                except Exception as e:
-                                                    logger.error(f"Failed to connect to Redis: {e}")
-                                                
-                                                yield # Yield control to the application
-                                            logger.info("Application shutdown: Exiting KeywordScraper context.")
-                                        else: # No KeywordScraper, but SERPCrawler is active
-                                            logger.info("Application startup: Pinging Redis.")
-                                            try:
-                                                await redis_client.ping()
-                                                logger.info("Redis connection successful.")
-                                            except Exception as e:
-                                                logger.error(f"Failed to connect to Redis: {e}")
-                                            yield # Yield control to the application
-                                logger.info("Application shutdown: Exiting SERPCrawler context.")
-                            else: # No SERPCrawler, no KeywordScraper
+                                    await serp_crawler_instance.__aenter__()
+                                
+                                # Conditionally enter KeywordScraper context
+                                if keyword_scraper_instance:
+                                    logger.info("Application startup: Entering KeywordScraper context.")
+                                    await keyword_scraper_instance.__aenter__()
+
                                 logger.info("Application startup: Pinging Redis.")
                                 try:
                                     await redis_client.ping()
                                     logger.info("Redis connection successful.")
                                 except Exception as e:
                                     logger.error(f"Failed to connect to Redis: {e}")
-                                yield # Yield control to the application
+                                
+                                yield # This is the single yield point for the lifespan
+
+                                # Clean up optional contexts in reverse order
+                                if keyword_scraper_instance:
+                                    logger.info("Application shutdown: Exiting KeywordScraper context.")
+                                    await keyword_scraper_instance.__aexit__(None, None, None)
+                                if serp_crawler_instance:
+                                    logger.info("Application shutdown: Exiting SERPCrawler context.")
+                                    await serp_crawler_instance.__aexit__(None, None, None)
                             logger.info("Application shutdown: Exiting TechnicalAuditor context.")
                         logger.info("Application shutdown: Exiting ClickHouseLoader context.")
                     logger.info("Application shutdown: Exiting LinkHealthService context.")
@@ -293,6 +285,7 @@ class CrawlErrorResponse(BaseModel):
 
 class CrawlJobResponse(BaseModel):
     id: str
+
     target_url: str
     job_type: str
     status: CrawlStatus # Keep as Enum type hint
