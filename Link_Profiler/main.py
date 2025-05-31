@@ -55,11 +55,15 @@ from Link_Profiler.monitoring.prometheus_metrics import (
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
 from Link_Profiler.api.queue_endpoints import add_queue_endpoints, submit_crawl_to_queue, QueueCrawlRequest # Import the function to add queue endpoints and submit_crawl_to_queue
-from Link_Profiler.config.config_loader import config_loader # Import the centralized config loader
+from Link_Profiler.config.config_loader import ConfigLoader # Import the ConfigLoader class
 
 # Configure logging
 logging.basicConfig(level=logging.INFO) 
 logger = logging.getLogger(__name__)
+
+# Initialize and load config once using the absolute path
+config_loader = ConfigLoader()
+config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
 
 # Retrieve configurations using the config_loader
 REDIS_URL = config_loader.get("redis.url")
