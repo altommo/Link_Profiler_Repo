@@ -48,7 +48,7 @@ from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult
 from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
@@ -125,13 +125,13 @@ else:
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
 if config_loader.get("backlink_api.gsc_api.enabled"):
-    backlink_service_instance = BacklinkService(api_client=GSCBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
+    backlink_service_instance = BacklinkService(api_client=GSCBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
-    backlink_service_instance = BacklinkService(api_client=OpenLinkProfilerAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
+    backlink_service_instance = BacklinkService(api_client=OpenLinkProfilerAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 elif config_loader.get("backlink_api.real_api.enabled"):
-    backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=config_loader.get("backlink_api.real_api.api_key")), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
+    backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=config_loader.get("backlink_api.real_api.api_key")), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 else:
-    backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
+    backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 
 # New: Initialize SERPService and SERPCrawler
 serp_crawler_instance = None
@@ -612,6 +612,19 @@ class KeywordSuggestionResponse(BaseModel):
                 logger.warning(f"Could not parse data_timestamp string: {suggestion_dict.get('data_timestamp')}")
                 suggestion_dict['data_timestamp'] = None
         return cls(**suggestion_dict)
+
+class LinkIntersectRequest(BaseModel):
+    primary_domain: str = Field(..., description="The primary domain for analysis (e.g., 'example.com').")
+    competitor_domains: List[str] = Field(..., description="A list of competitor domains to compare against (e.g., ['competitor1.com', 'competitor2.com']).")
+
+class LinkIntersectResponse(BaseModel):
+    primary_domain: str
+    competitor_domains: List[str]
+    common_linking_domains: List[str]
+
+    @classmethod
+    def from_link_intersect_result(cls, result: LinkIntersectResult):
+        return cls(**serialize_model(result))
 
 
 # --- API Endpoints ---
@@ -1142,6 +1155,24 @@ async def get_keyword_suggestions(seed_keyword: str):
     except Exception as e:
         logger.error(f"Error retrieving stored keyword suggestions for '{seed_keyword}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve keyword suggestions: {e}")
+
+@app.post("/competitor/link_intersect", response_model=LinkIntersectResponse)
+async def get_link_intersect_analysis(request: LinkIntersectRequest):
+    """
+    Performs a link intersect analysis to find common linking domains.
+    Identifies source domains that link to the primary domain AND at least one of the competitor domains.
+    """
+    if not request.primary_domain or not request.competitor_domains:
+        raise HTTPException(status_code=400, detail="Primary domain and at least one competitor domain are required.")
+    
+    logger.info(f"Received request for link intersect analysis: Primary={request.primary_domain}, Competitors={request.competitor_domains}")
+    
+    result = await backlink_service_instance.perform_link_intersect_analysis(
+        primary_domain=request.primary_domain,
+        competitor_domains=request.competitor_domains
+    )
+    
+    return LinkIntersectResponse.from_link_intersect_result(result)
 
 @app.get("/health")
 async def health_check():

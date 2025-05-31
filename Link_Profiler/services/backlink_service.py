@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 import random
@@ -16,13 +16,14 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
-from Link_Profiler.core.models import Backlink, LinkType, SpamLevel, Domain # Assuming Domain model might be needed for context
+from Link_Profiler.core.models import Backlink, LinkType, SpamLevel, Domain, LinkIntersectResult # Assuming Domain model might be needed for context
 from Link_Profiler.config.config_loader import config_loader # Import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
 from Link_Profiler.monitoring.prometheus_metrics import ( # Import Prometheus metrics
     API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL
 )
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
+from Link_Profiler.database.database import Database # Import Database
 
 logger = logging.getLogger(__name__)
 
@@ -520,11 +521,12 @@ class BacklinkService:
     """
     Service for retrieving backlink information, either from a crawler or an API.
     """
-    def __init__(self, api_client: Optional[BaseBacklinkAPIClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
+    def __init__(self, api_client: Optional[BaseBacklinkAPIClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None):
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
         self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
+        self.db = database # New: Store database instance
         
         # Determine which API client to use based on config_loader priority
         if config_loader.get("backlink_api.gsc_api.enabled"):
@@ -596,3 +598,31 @@ class BacklinkService:
         if result: # Only cache if result is not empty
             await self._set_cached_response(cache_key, [bl.to_dict() for bl in result], "backlink_api", "get_backlinks") # Cache as list of dicts
         return result
+
+    async def perform_link_intersect_analysis(self, primary_domain: str, competitor_domains: List[str]) -> LinkIntersectResult:
+        """
+        Performs a link intersect analysis to find common linking domains.
+        Finds source domains that link to the primary domain AND at least one of the competitor domains.
+        """
+        if not self.db:
+            self.logger.error("Database instance not provided to BacklinkService. Cannot perform link intersect analysis.")
+            return LinkIntersectResult(primary_domain=primary_domain, competitor_domains=competitor_domains, common_linking_domains=[])
+
+        all_target_domains = [primary_domain] + competitor_domains
+        linking_domains_map = self.db.get_source_domains_for_target_domains(all_target_domains)
+
+        primary_linking_domains = linking_domains_map.get(primary_domain, set())
+        
+        common_linking_domains = set()
+        for comp_domain in competitor_domains:
+            comp_linking_domains = linking_domains_map.get(comp_domain, set())
+            # Find sources that link to primary AND this specific competitor
+            intersection = primary_linking_domains.intersection(comp_linking_domains)
+            common_linking_domains.update(intersection) # Add to the overall set of common domains
+
+        self.logger.info(f"Performed link intersect analysis for {primary_domain} against {competitor_domains}. Found {len(common_linking_domains)} common linking domains.")
+        return LinkIntersectResult(
+            primary_domain=primary_domain,
+            competitor_domains=competitor_domains,
+            common_linking_domains=sorted(list(common_linking_domains)) # Return sorted list for consistency
+        )

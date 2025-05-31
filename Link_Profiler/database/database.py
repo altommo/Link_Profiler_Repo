@@ -4,7 +4,7 @@ File: Link_Profiler/database/database.py
 """
 
 import logging
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Set
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -661,5 +661,33 @@ class Database:
         except Exception as e:
             logger.error(f"Error retrieving keyword suggestions for seed '{seed_keyword}': {e}", exc_info=True)
             return []
+        finally:
+            session.close()
+
+    def get_source_domains_for_target_domains(self, target_domains: List[str]) -> Dict[str, Set[str]]:
+        """
+        Retrieves all unique source domains linking to each of the specified target domains.
+        Returns a dictionary where keys are target domains and values are sets of unique source domains.
+        """
+        session = self._get_session()
+        try:
+            # Query for backlinks where target_domain_name is in the list of target_domains
+            # Select source_domain_name and target_domain_name
+            results = session.query(
+                BacklinkORM.source_domain_name,
+                BacklinkORM.target_domain_name
+            ).filter(
+                BacklinkORM.target_domain_name.in_(target_domains)
+            ).all()
+
+            linking_domains_map: Dict[str, Set[str]] = {domain: set() for domain in target_domains}
+            for source_domain, target_domain in results:
+                linking_domains_map[target_domain].add(source_domain)
+            
+            logger.info(f"Retrieved linking domains for {len(target_domains)} target domains.")
+            return linking_domains_map
+        except Exception as e:
+            logger.error(f"Error retrieving source domains for target domains {target_domains}: {e}", exc_info=True)
+            return {domain: set() for domain in target_domains} # Return empty sets on error
         finally:
             session.close()

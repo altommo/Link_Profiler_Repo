@@ -318,6 +318,14 @@ class LinkProfile:
 
 
 @dataclass
+class LinkIntersectResult:
+    """Result of a link intersect analysis."""
+    primary_domain: str
+    competitor_domains: List[str]
+    common_linking_domains: List[str] = field(default_factory=list)
+
+
+@dataclass
 class CrawlError:
     """Represents a structured error encountered during crawling."""
     timestamp: datetime = field(default_factory=datetime.now)
