@@ -42,9 +42,9 @@ class ClickHouseLoader:
             self.logger.info("Successfully connected to ClickHouse.")
             await self._create_tables_if_not_exists()
         except Exception as e:
-            self.logger.error(f"Failed to connect to ClickHouse: {e}", exc_info=True)
+            self.logger.error(f"Failed to connect to ClickHouse: {e}. ClickHouse features will be disabled.", exc_info=True)
             self.client = None # Ensure client is None if connection fails
-            raise
+            # Do NOT re-raise the exception, allow the application to start without ClickHouse
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):

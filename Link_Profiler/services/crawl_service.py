@@ -46,7 +46,7 @@ class CrawlService:
         serp_service: SERPService,
         keyword_service: KeywordService,
         link_health_service: LinkHealthService,
-        clickhouse_loader: ClickHouseLoader,
+        clickhouse_loader: Optional[ClickHouseLoader], # Made optional
         redis_client: redis.Redis,
         technical_auditor: TechnicalAuditor
     ):
@@ -58,7 +58,7 @@ class CrawlService:
         self.serp_service = serp_service
         self.keyword_service = keyword_service
         self.link_health_service = link_health_service
-        self.clickhouse_loader = clickhouse_loader
+        self.clickhouse_loader = clickhouse_loader # Store the loader instance
         self.redis = redis_client
         self.technical_auditor = technical_auditor
         self.deduplication_set_key = "processed_backlinks_dedup"
@@ -196,8 +196,8 @@ class CrawlService:
                     job.links_found = len(discovered_backlinks)
                     try:
                         self.db.add_backlinks(deduplicated_api_backlinks)
-                        # TODO: Add bulk insert to ClickHouse for API backlinks
-                        # await self.clickhouse_loader.bulk_insert_backlinks(deduplicated_api_backlinks)
+                        if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                            await self.clickhouse_loader.bulk_insert_backlinks(deduplicated_api_backlinks)
                         BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(deduplicated_api_backlinks))
                         self.logger.info(f"Successfully added {len(deduplicated_api_backlinks)} new API backlinks to the database.")
                     except Exception as db_e:
@@ -319,8 +319,8 @@ class CrawlService:
                                     job.links_found = len(discovered_backlinks)
                                     try:
                                         self.db.add_backlinks(deduplicated_crawled_backlinks) 
-                                        # TODO: Add bulk insert to ClickHouse for crawled backlinks
-                                        # await self.clickhouse_loader.bulk_insert_backlinks(deduplicated_crawled_backlinks)
+                                        if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                                            await self.clickhouse_loader.bulk_insert_backlinks(deduplicated_crawled_backlinks)
                                         BACKLINKS_FOUND_TOTAL.labels(job_type=job.job_type).inc(len(deduplicated_crawled_backlinks))
                                     except Exception as db_e:
                                         self.logger.error(f"Error adding crawled backlinks to database for {crawl_result.url}: {db_e}", exc_info=True)
@@ -333,8 +333,8 @@ class CrawlService:
                             if crawl_result.seo_metrics:
                                 try:
                                     self.db.save_seo_metrics(crawl_result.seo_metrics)
-                                    # TODO: Add bulk insert to ClickHouse for SEO metrics
-                                    # await self.clickhouse_loader.bulk_insert_seo_metrics([crawl_result.seo_metrics])
+                                    if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                                        await self.clickhouse_loader.bulk_insert_seo_metrics([crawl_result.seo_metrics])
                                     self.logger.info(f"Saved SEO metrics for {crawl_result.url}.")
                                 except Exception as seo_e:
                                     self.logger.error(f"Error saving SEO metrics for {crawl_result.url}: {seo_e}", exc_info=True)
@@ -493,8 +493,8 @@ class CrawlService:
                 self.logger.info(f"Found {len(serp_results)} SERP results for '{keyword}'.")
                 try:
                     await self.db.add_serp_results(serp_results)
-                    # TODO: Add bulk insert to ClickHouse for SERP results
-                    # await self.clickhouse_loader.bulk_insert_serp_results(serp_results)
+                    if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                        await self.clickhouse_loader.bulk_insert_serp_results(serp_results)
                     self.logger.info(f"Successfully added {len(serp_results)} SERP results to the database.")
                 except Exception as db_e:
                     self.logger.error(f"Error adding SERP results to database: {db_e}", exc_info=True)
@@ -546,8 +546,8 @@ class CrawlService:
                 self.logger.info(f"Found {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
                 try:
                     await self.db.add_keyword_suggestions(suggestions)
-                    # TODO: Add bulk insert to ClickHouse for keyword suggestions
-                    # await self.clickhouse_loader.bulk_insert_keyword_suggestions(suggestions)
+                    if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                        await self.clickhouse_loader.bulk_insert_keyword_suggestions(suggestions)
                     self.logger.info(f"Successfully added {len(suggestions)} keyword suggestions to the database.")
                 except Exception as db_e:
                     self.logger.error(f"Error adding keyword suggestions to database: {db_e}", exc_info=True)
@@ -665,9 +665,11 @@ class CrawlService:
         self.logger.info(f"Technical audit job {job.id} completed. Audited {audited_urls_count} URLs.")
 
         try:
-            # Optionally, you might want to fetch all updated SEO metrics and bulk insert to ClickHouse
-            # For simplicity, this is left as a TODO for now.
-            pass
+            if self.clickhouse_loader: # Conditionally insert to ClickHouse
+                # Fetch all updated SEO metrics for the job and bulk insert to ClickHouse
+                # This would require a method to get all SEO metrics related to this job's URLs
+                # For simplicity, this is left as a TODO for now.
+                pass
         except Exception as e:
             self.logger.error(f"Error during final ClickHouse bulk insert for technical audit job {job.id}: {e}", exc_info=True)
             job.add_error(url="N/A", error_type="ClickHouseError", message=f"ClickHouse bulk insert failed: {str(e)}", details=str(e))

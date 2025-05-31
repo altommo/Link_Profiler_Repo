@@ -67,19 +67,25 @@ redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
 redis_pool = redis.ConnectionPool.from_url(redis_url)
 redis_client = redis.Redis(connection_pool=redis_pool)
 
-# Initialize ClickHouse Loader
-clickhouse_host = os.getenv("CLICKHOUSE_HOST", "localhost")
-clickhouse_port = int(os.getenv("CLICKHOUSE_PORT", 9000))
-clickhouse_user = os.getenv("CLICKHOUSE_USER", "default")
-clickhouse_password = os.getenv("CLICKHOUSE_PASSWORD", "")
-clickhouse_database = os.getenv("CLICKHOUSE_DATABASE", "default")
-clickhouse_loader_instance = ClickHouseLoader(
-    host=clickhouse_host,
-    port=clickhouse_port,
-    user=clickhouse_user,
-    password=clickhouse_password,
-    database=clickhouse_database
-)
+# Initialize ClickHouse Loader conditionally
+clickhouse_loader_instance: Optional[ClickHouseLoader] = None
+if os.getenv("USE_CLICKHOUSE", "false").lower() == "true":
+    logger.info("ClickHouse integration enabled. Attempting to initialize ClickHouseLoader.")
+    clickhouse_host = os.getenv("CLICKHOUSE_HOST", "localhost")
+    clickhouse_port = int(os.getenv("CLICKHOUSE_PORT", 9000))
+    clickhouse_user = os.getenv("CLICKHOUSE_USER", "default")
+    clickhouse_password = os.getenv("CLICKHOUSE_PASSWORD", "")
+    clickhouse_database = os.getenv("CLICKHOUSE_DATABASE", "default")
+    clickhouse_loader_instance = ClickHouseLoader(
+        host=clickhouse_host,
+        port=clickhouse_port,
+        user=clickhouse_user,
+        password=clickhouse_password,
+        database=clickhouse_database
+    )
+else:
+    logger.info("ClickHouse integration disabled (USE_CLICKHOUSE is not 'true').")
+
 
 # Initialize DomainService globally, but manage its lifecycle with lifespan
 # Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > Simulated
@@ -145,7 +151,7 @@ crawl_service = CrawlService(
     serp_service=serp_service_instance,
     keyword_service=keyword_service_instance,
     link_health_service=link_health_service_instance,
-    clickhouse_loader=clickhouse_loader_instance,
+    clickhouse_loader=clickhouse_loader_instance, # Pass the potentially None instance
     redis_client=redis_client,
     technical_auditor=technical_auditor_instance
 ) 
@@ -167,10 +173,12 @@ async def lifespan(app: FastAPI):
         serp_service_instance,
         keyword_service_instance,
         link_health_service_instance,
-        clickhouse_loader_instance,
         technical_auditor_instance,
     ]
 
+    # Conditionally add ClickHouseLoader to context managers
+    if clickhouse_loader_instance:
+        context_managers.append(clickhouse_loader_instance)
     # Add Playwright and KeywordScraper contexts if they are enabled
     if serp_crawler_instance:
         context_managers.append(serp_crawler_instance)
