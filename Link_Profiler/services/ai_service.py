@@ -324,3 +324,44 @@ class AIService:
             self.logger.warning(f"AI domain value analysis failed for '{domain_name}'. Returning default adjustment.")
             return {"value_adjustment": 0, "reasons": ["AI analysis unavailable."], "details": {}}
         return result
+
+    async def analyze_content_nlp(self, content: str) -> Dict[str, Any]:
+        """
+        Performs Natural Language Processing (NLP) on content to extract entities, sentiment, and topics.
+        Returns a dictionary with "entities", "sentiment", and "topics".
+        """
+        prompt = f"""
+        Perform Natural Language Processing (NLP) on the following content.
+        Extract the most important entities (people, organizations, locations, key concepts).
+        Determine the overall sentiment (positive, neutral, negative).
+        Identify the main topics discussed.
+        Provide a JSON response with the following keys:
+        - "entities": A list of up to 10 key entities (strings).
+        - "sentiment": A single string indicating overall sentiment ("positive", "neutral", "negative").
+        - "topics": A list of up to 5 main topics (strings).
+
+        Content:
+        ---
+        {content[:4000]} # Limit content length for prompt
+        ---
+        """
+        cache_key = f"ai_content_nlp:{hash(content)}"
+        result = await self._call_ai_with_cache("content_nlp_analysis", prompt, cache_key, max_tokens=700)
+        
+        if result is None:
+            self.logger.warning("AI content NLP analysis failed. Returning default empty results.")
+            return {
+                "entities": [],
+                "sentiment": "neutral",
+                "topics": []
+            }
+        
+        # Validate and clean up the response
+        result["entities"] = [str(e) for e in result.get("entities", []) if isinstance(e, str)][:10]
+        result["topics"] = [str(t) for t in result.get("topics", []) if isinstance(t, str)][:5]
+        sentiment = result.get("sentiment", "neutral").lower()
+        if sentiment not in ["positive", "neutral", "negative"]:
+            sentiment = "neutral"
+        result["sentiment"] = sentiment
+
+        return result

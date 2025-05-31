@@ -219,6 +219,9 @@ class SEOMetricsORM(Base):
     twitter_description = Column(Text, nullable=True)
     validation_issues = Column(ARRAY(String), default=[]) # Issues found by ContentValidator
     ocr_text = Column(Text, nullable=True) # New: Extracted text from images via OCR
+    nlp_entities = Column(ARRAY(String), default=[]) # New: Entities extracted via NLP
+    nlp_sentiment = Column(String, nullable=True) # New: Sentiment extracted via NLP (positive, neutral, negative)
+    nlp_topics = Column(ARRAY(String), default=[]) # New: Main topics extracted via NLP
 
     # Relationships
     url_rel = relationship("URLORM", back_populates="seo_metrics")

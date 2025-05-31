@@ -6,7 +6,7 @@ File: Link_Profiler/crawlers/web_crawler.py
 import asyncio
 import aiohttp
 import time
-from typing import List, Dict, Set, Optional, AsyncGenerator, Tuple, Union # Added Union
+from typing import List, Dict, Set, Optional, AsyncGenerator, Tuple, Union
 from urllib.parse import urljoin, urlparse, urlencode
 from urllib.robotparser import RobotFileParser
 import logging
@@ -357,6 +357,15 @@ class WebCrawler:
                                 else:
                                     seo_metrics.ocr_text = ocr_text_from_image
                                 self.logger.debug(f"Extracted OCR text from image {img_url} on {url}.")
+
+                    # New: Perform NLP content analysis if enabled
+                    if config_loader.get("ai.content_nlp_analysis_enabled", False) and self.ai_service.enabled:
+                        nlp_results = await self.ai_service.analyze_content_nlp(content_str)
+                        if nlp_results:
+                            seo_metrics.nlp_entities = nlp_results.get("entities", [])
+                            seo_metrics.nlp_sentiment = nlp_results.get("sentiment")
+                            seo_metrics.nlp_topics = nlp_results.get("topics", [])
+                            self.logger.debug(f"NLP analysis for {url}: Sentiment={nlp_results.get('sentiment')}, Topics={nlp_results.get('topics')}")
 
 
                 elif 'image' in content_type and self.config.extract_image_text and self.ai_service.enabled:

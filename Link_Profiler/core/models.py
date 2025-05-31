@@ -520,6 +520,9 @@ class SEOMetrics:
     validation_issues: List[str] = field(default_factory=list) # Issues found by ContentValidator
     ai_content_classification: Optional[str] = None # New: AI-driven content classification (e.g., "high_quality", "spam")
     ocr_text: Optional[str] = None # New: Extracted text from images via OCR
+    nlp_entities: List[str] = field(default_factory=list) # New: Entities extracted via NLP
+    nlp_sentiment: Optional[str] = None # New: Sentiment extracted via NLP (positive, neutral, negative)
+    nlp_topics: List[str] = field(default_factory=list) # New: Main topics extracted via NLP
 
     # AI-generated insights
     ai_content_score: Optional[float] = None # AI-driven content quality score (0-100)

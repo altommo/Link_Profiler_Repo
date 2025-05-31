@@ -229,9 +229,11 @@
       "technical_seo_analysis": "anthropic/claude-3-5-sonnet",
       "competitor_analysis": "openai/gpt-4",
       "content_generation": "anthropic/claude-3-5-sonnet",
-      "content_classification": "anthropic/claude-3-haiku"
+      "content_classification": "anthropic/claude-3-haiku",
+      "content_nlp_analysis": "anthropic/claude-3-haiku"
     },
-    "content_classification_enabled": false
+    "content_classification_enabled": false,
+    "content_nlp_analysis_enabled": false
   },
   "api_cache": {
     "enabled": true,
