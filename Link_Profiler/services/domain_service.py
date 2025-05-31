@@ -13,6 +13,7 @@ import aiohttp # Import aiohttp
 import os # Import os to read environment variables
 
 from Link_Profiler.core.models import Domain # Changed to absolute import
+from Link_Profiler.config.config_loader import config_loader # Import config_loader
 
 # --- Placeholder for a future Domain API Client ---
 class BaseDomainAPIClient:
@@ -203,8 +204,6 @@ class RealDomainAPIClient(BaseDomainAPIClient):
         try:
             async with session_to_use.get(endpoint, params=params, timeout=10) as response:
                 response.raise_for_status() # Raise an exception for HTTP errors
-                # real_data = await response.json()
-                # return real_data.get("available", False)
                 
                 # Fallback to simulated logic for actual return value
                 return SimulatedDomainAPIClient().get_domain_availability(domain_name)
@@ -365,19 +364,19 @@ class DomainService:
     def __init__(self, api_client: Optional[BaseDomainAPIClient] = None):
         self.logger = logging.getLogger(__name__)
         
-        # Determine which API client to use based on environment variable
-        if os.getenv("USE_ABSTRACT_API", "false").lower() == "true":
-            abstract_api_key = os.getenv("ABSTRACT_API_KEY")
+        # Determine which API client to use based on config_loader priority
+        if config_loader.get("domain_api.abstract_api.enabled"):
+            abstract_api_key = config_loader.get("domain_api.abstract_api.api_key")
             if not abstract_api_key:
-                self.logger.error("ABSTRACT_API_KEY environment variable not set. Falling back to simulated Domain API.")
+                self.logger.error("AbstractAPI enabled but API key not found in config. Falling back to simulated Domain API.")
                 self.api_client = SimulatedDomainAPIClient()
             else:
                 self.logger.info("Using AbstractDomainAPIClient for domain lookups.")
                 self.api_client = AbstractDomainAPIClient(api_key=abstract_api_key)
-        elif os.getenv("USE_REAL_DOMAIN_API", "false").lower() == "true":
-            real_api_key = os.getenv("REAL_DOMAIN_API_KEY")
+        elif config_loader.get("domain_api.real_api.enabled"):
+            real_api_key = config_loader.get("domain_api.real_api.api_key")
             if not real_api_key:
-                self.logger.error("REAL_DOMAIN_API_KEY environment variable not set. Falling back to simulated Domain API.")
+                self.logger.error("Real Domain API enabled but API key not found in config. Falling back to simulated Domain API.")
                 self.api_client = SimulatedDomainAPIClient()
             else:
                 self.logger.info("Using RealDomainAPIClient for domain lookups.")

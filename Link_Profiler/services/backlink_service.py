@@ -15,6 +15,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
 from Link_Profiler.core.models import Backlink, LinkType, SpamLevel, Domain # Assuming Domain model might be needed for context
+from Link_Profiler.config.config_loader import config_loader # Import config_loader
 
 logger = logging.getLogger(__name__)
 
@@ -362,25 +363,30 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
         # For a server application, you'd usually have a pre-generated token.json
         # or a more complex OAuth flow.
         
-        if os.path.exists(TOKEN_FILE):
-            self._creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        # Use project_root from main.py for consistent path
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        credentials_file_path = os.path.join(project_root, CREDENTIALS_FILE)
+        token_file_path = os.path.join(project_root, TOKEN_FILE)
+
+        if os.path.exists(token_file_path):
+            self._creds = Credentials.from_authorized_user_file(token_file_path, SCOPES)
         
         if not self._creds or not self._creds.valid:
             if self._creds and self._creds.expired and self._creds.refresh_token:
                 self.logger.info("Refreshing GSC access token.")
                 self._creds.refresh(Request())
             else:
-                self.logger.warning(f"GSC token.json not found or invalid. Attempting interactive flow. Ensure {CREDENTIALS_FILE} exists.")
+                self.logger.warning(f"GSC token.json not found or invalid. Attempting interactive flow. Ensure {credentials_file_path} exists.")
                 # This interactive flow is not suitable for a headless server.
                 # You would typically run this part once on a local machine to get token.json.
                 try:
                     # Use asyncio.to_thread to run the synchronous OAuth flow
-                    self._creds = await asyncio.to_thread(InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES).run_local_server, port=0)
-                    with open(TOKEN_FILE, 'w') as token:
+                    self._creds = await asyncio.to_thread(InstalledAppFlow.from_client_secrets_file(credentials_file_path, SCOPES).run_local_server, port=0)
+                    with open(token_file_path, 'w') as token:
                         token.write(self._creds.to_json())
-                    self.logger.info(f"GSC token.json generated. Please restart the application.")
+                    self.logger.info(f"GSC token.json generated at {token_file_path}. Please restart the application.")
                 except FileNotFoundError:
-                    self.logger.error(f"GSC credentials.json not found at {CREDENTIALS_FILE}. GSC API will not function.")
+                    self.logger.error(f"GSC credentials.json not found at {credentials_file_path}. GSC API will not function.")
                     self._creds = None
                 except Exception as e:
                     self.logger.error(f"Error during GSC interactive authentication flow: {e}")
@@ -468,17 +474,17 @@ class BacklinkService:
     def __init__(self, api_client: Optional[BaseBacklinkAPIClient] = None):
         self.logger = logging.getLogger(__name__)
         
-        # Determine which API client to use based on environment variable priority
-        if os.getenv("USE_GSC_API", "false").lower() == "true":
+        # Determine which API client to use based on config_loader priority
+        if config_loader.get("backlink_api.gsc_api.enabled"):
             self.logger.info("Using GSCBacklinkAPIClient for backlink lookups.")
             self.api_client = GSCBacklinkAPIClient()
-        elif os.getenv("USE_OPENLINKPROFILER_API", "false").lower() == "true":
+        elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
             self.logger.info("Using OpenLinkProfilerAPIClient for backlink lookups.")
             self.api_client = OpenLinkProfilerAPIClient()
-        elif os.getenv("USE_REAL_BACKLINK_API", "false").lower() == "true":
-            real_api_key = os.getenv("REAL_BACKLINK_API_KEY")
+        elif config_loader.get("backlink_api.real_api.enabled"):
+            real_api_key = config_loader.get("backlink_api.real_api.api_key")
             if not real_api_key:
-                self.logger.error("REAL_BACKLINK_API_KEY environment variable not set. Falling back to simulated Backlink API.")
+                self.logger.error("Real Backlink API enabled but API key not found in config. Falling back to simulated Backlink API.")
                 self.api_client = SimulatedBacklinkAPIClient()
             else:
                 self.logger.info("Using RealBacklinkAPIClient for backlink lookups.")

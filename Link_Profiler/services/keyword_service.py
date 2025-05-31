@@ -13,6 +13,7 @@ import os
 
 from Link_Profiler.core.models import KeywordSuggestion # Absolute import
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper # New import
+from Link_Profiler.config.config_loader import config_loader # Import config_loader
 
 logger = logging.getLogger(__name__)
 
@@ -189,22 +190,21 @@ class KeywordService:
     """
     def __init__(self, api_client: Optional[BaseKeywordAPIClient] = None, keyword_scraper: Optional[KeywordScraper] = None):
         self.logger = logging.getLogger(__name__)
-        self.api_client = api_client if api_client else SimulatedKeywordAPIClient()
-        self.keyword_scraper = keyword_scraper # Store the KeywordScraper instance
         
-        # Determine which API client to use based on environment variable
-        # This logic is now redundant if keyword_scraper is preferred, but kept for clarity
-        # if os.getenv("USE_REAL_KEYWORD_API", "false").lower() == "true":
-        #     real_api_key = os.getenv("REAL_KEYWORD_API_KEY")
-        #     if not real_api_key:
-        #         self.logger.error("REAL_KEYWORD_API_KEY environment variable not set. Falling back to simulated Keyword API.")
-        #         self.api_client = SimulatedKeywordAPIClient()
-        #     else:
-        #         self.logger.info("Using RealKeywordAPIClient for keyword lookups.")
-        #         self.api_client = RealKeywordAPIClient(api_key=real_api_key)
-        # else:
-        #     self.logger.info("Using SimulatedKeywordAPIClient for keyword lookups.")
-        #     self.api_client = SimulatedKeywordAPIClient()
+        # Determine which API client to use based on config_loader priority
+        if config_loader.get("keyword_api.real_api.enabled"):
+            real_api_key = config_loader.get("keyword_api.real_api.api_key")
+            if not real_api_key:
+                self.logger.error("Real Keyword API enabled but API key not found in config. Falling back to simulated Keyword API.")
+                self.api_client = SimulatedKeywordAPIClient()
+            else:
+                self.logger.info("Using RealKeywordAPIClient for keyword lookups.")
+                self.api_client = RealKeywordAPIClient(api_key=real_api_key)
+        else:
+            self.logger.info("Using SimulatedKeywordAPIClient for keyword lookups.")
+            self.api_client = SimulatedKeywordAPIClient()
+            
+        self.keyword_scraper = keyword_scraper # Store the KeywordScraper instance
 
     async def __aenter__(self):
         """Async context manager entry for KeywordService."""
@@ -226,7 +226,7 @@ class KeywordService:
         Fetches keyword suggestions for a given seed keyword.
         Prioritizes the local KeywordScraper if available, otherwise uses the API client.
         """
-        if self.keyword_scraper:
+        if self.keyword_scraper and config_loader.get("keyword_scraper.enabled"):
             self.logger.info(f"Using KeywordScraper to fetch keyword data for '{seed_keyword}'.")
             return await self.keyword_scraper.get_keyword_data(seed_keyword, num_suggestions)
         else:

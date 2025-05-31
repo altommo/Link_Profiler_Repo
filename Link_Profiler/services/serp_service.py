@@ -12,6 +12,7 @@ import aiohttp
 
 from Link_Profiler.core.models import SERPResult # Absolute import
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler # New import
+from Link_Profiler.config.config_loader import config_loader # Import config_loader
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,20 @@ class SERPService:
     """
     def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None):
         self.logger = logging.getLogger(__name__)
-        self.api_client = api_client if api_client else SimulatedSERPAPIClient()
+        
+        # Determine which API client to use based on config_loader priority
+        if config_loader.get("serp_api.real_api.enabled"):
+            real_api_key = config_loader.get("serp_api.real_api.api_key")
+            if not real_api_key:
+                self.logger.error("Real SERP API enabled but API key not found in config. Falling back to simulated SERP API.")
+                self.api_client = SimulatedSERPAPIClient()
+            else:
+                self.logger.info("Using RealSERPAPIClient for SERP lookups.")
+                self.api_client = RealSERPAPIClient(api_key=real_api_key)
+        else:
+            self.logger.info("Using SimulatedSERPAPIClient for SERP lookups.")
+            self.api_client = SimulatedSERPAPIClient()
+            
         self.serp_crawler = serp_crawler # Store the SERPCrawler instance
 
     async def __aenter__(self):
@@ -217,7 +231,7 @@ class SERPService:
         Fetches SERP data for a given keyword.
         Prioritizes the local SERPCrawler if available, otherwise uses the API client.
         """
-        if self.serp_crawler:
+        if self.serp_crawler and config_loader.get("serp_crawler.playwright.enabled"):
             self.logger.info(f"Using SERPCrawler to fetch SERP data for '{keyword}' from {search_engine}.")
             return await self.serp_crawler.get_serp_data(keyword, num_results, search_engine)
         else:
