@@ -22,12 +22,13 @@ else:
 # --- End Robust Project Root Discovery ---
 
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status # New: Import Depends, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # New: Import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
 import logging
 from urllib.parse import urlparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 import redis.asyncio as redis
 import json
@@ -46,12 +47,13 @@ from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeyw
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.ai_service import AIService
 from Link_Profiler.services.alert_service import AlertService
+from Link_Profiler.services.auth_service import AuthService # New: Import AuthService
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, Token # New: Import User, Token
 from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
@@ -62,7 +64,7 @@ from Link_Profiler.utils.logging_config import setup_logging, get_default_loggin
 from Link_Profiler.utils.data_exporter import export_to_csv
 from Link_Profiler.utils.user_agent_manager import user_agent_manager
 from Link_Profiler.utils.proxy_manager import proxy_manager
-from Link_Profiler.utils.connection_manager import ConnectionManager, connection_manager # New: Import ConnectionManager and its instance
+from Link_Profiler.utils.connection_manager import ConnectionManager, connection_manager
 
 # Initialize and load config once using the absolute path
 config_loader = ConfigLoader()
@@ -178,6 +180,9 @@ ai_service_instance = AIService()
 # New: Initialize Alert Service
 alert_service_instance = AlertService(db, connection_manager) # Pass connection_manager here
 
+# New: Initialize Auth Service
+auth_service_instance = AuthService(db)
+
 # Initialize DomainAnalyzerService (depends on DomainService)
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance, ai_service_instance)
 
@@ -202,6 +207,9 @@ crawl_service_for_lifespan = CrawlService(
 ) 
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service) # Corrected class name
 
+# OAuth2PasswordBearer for token extraction
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -217,7 +225,8 @@ async def lifespan(app: FastAPI):
         link_health_service_instance,
         technical_auditor_instance,
         ai_service_instance,
-        alert_service_instance # New: Add AlertService to lifespan
+        alert_service_instance, # New: Add AlertService to lifespan
+        auth_service_instance # New: Add AuthService to lifespan
         # Removed crawl_service_for_lifespan as it is not an async context manager itself.
         # Its internal dependencies are already managed here.
     ]
@@ -306,6 +315,18 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan # Register the lifespan context manager
 )
+
+# --- Dependency for current user authentication ---
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+    try:
+        user = await auth_service_instance.get_current_user(token)
+        return user
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 # --- Middleware for Prometheus Metrics ---
 @app.middleware("http")
@@ -710,18 +731,91 @@ class AlertRuleResponse(BaseModel):
                  rule_dict['last_triggered_at'] = None
         return cls(**rule_dict)
 
+# New: Pydantic models for User Authentication
+class UserCreate(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    email: str = Field(..., pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+    password: str = Field(..., min_length=8)
+
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    email: str
+    is_active: bool
+    is_admin: bool
+    created_at: datetime
+
+    class Config:
+        orm_mode = True # Enable ORM mode for easy conversion from User dataclass
+
+    @classmethod
+    def from_user(cls, user: User):
+        user_dict = serialize_model(user)
+        if isinstance(user_dict.get('created_at'), str):
+            try:
+                user_dict['created_at'] = datetime.fromisoformat(user_dict['created_at'])
+            except ValueError:
+                 logger.warning(f"Could not parse created_at string: {user_dict.get('created_at')}")
+                 user_dict['created_at'] = None
+        return cls(**user_dict)
+
 
 # --- API Endpoints ---
+
+@app.post("/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register_user_endpoint(user_data: UserCreate):
+    """
+    Registers a new user.
+    """
+    try:
+        user = await auth_service_instance.register_user(
+            username=user_data.username,
+            email=user_data.email,
+            password=user_data.password
+        )
+        return UserResponse.from_user(user)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error during user registration: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during registration.")
+
+@app.post("/auth/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    """
+    Authenticates a user and returns an access token.
+    """
+    user = await auth_service_instance.authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=auth_service_instance.access_token_expire_minutes)
+    access_token = auth_service_instance.create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/users/me", response_model=UserResponse)
+async def read_users_me(current_user: User = Depends(get_current_user)):
+    """
+    Retrieves the current authenticated user's information.
+    """
+    return UserResponse.from_user(current_user)
+
 
 @app.post("/crawl/start_backlink_discovery", response_model=Dict[str, str], status_code=202)
 async def start_backlink_discovery(
     request: StartCrawlRequest, 
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user) # Protected endpoint
 ):
     """
     Submits a new backlink discovery job to the queue.
     """
-    logger.info(f"Received request to submit backlink discovery for {request.target_url} to queue.")
+    logger.info(f"Received request to submit backlink discovery for {request.target_url} to queue by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='backlink_discovery').inc()
     
     # Convert StartCrawlRequest to QueueCrawlRequest
@@ -737,12 +831,13 @@ async def start_backlink_discovery(
 @app.post("/audit/link_health", response_model=Dict[str, str], status_code=202)
 async def start_link_health_audit(
     request: LinkHealthAuditRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user) # Protected endpoint
 ):
     """
     Submits a new link health audit job to the queue.
     """
-    logger.info(f"Received request to submit link health audit for {len(request.source_urls)} URLs to queue.")
+    logger.info(f"Received request to submit link health audit for {len(request.source_urls)} URLs to queue by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='link_health_audit').inc()
 
     if not request.source_urls:
@@ -765,12 +860,13 @@ async def start_link_health_audit(
 @app.post("/audit/technical_audit", response_model=Dict[str, str], status_code=202)
 async def start_technical_audit(
     request: TechnicalAuditRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user) # Protected endpoint
 ):
     """
     Submits a new technical audit job to the queue.
     """
-    logger.info(f"Received request to submit technical audit for {len(request.urls_to_audit)} URLs to queue.")
+    logger.info(f"Received request to submit technical audit for {len(request.urls_to_audit)} URLs to queue by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='technical_audit').inc()
 
     if not request.urls_to_audit:
@@ -793,13 +889,14 @@ async def start_technical_audit(
 @app.post("/audit/full_seo_audit", response_model=Dict[str, str], status_code=202) # New endpoint
 async def start_full_seo_audit(
     request: FullSEOAduitRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user) # Protected endpoint
 ):
     """
     Submits a new full SEO audit job to the queue.
     This job orchestrates technical and link health audits.
     """
-    logger.info(f"Received request to submit full SEO audit for {len(request.urls_to_audit)} URLs to queue.")
+    logger.info(f"Received request to submit full SEO audit for {len(request.urls_to_audit)} URLs to queue by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='full_seo_audit').inc()
 
     if not request.urls_to_audit:
@@ -821,12 +918,13 @@ async def start_full_seo_audit(
 @app.post("/domain/analyze_batch", response_model=Dict[str, str], status_code=202) # New endpoint
 async def start_domain_analysis_job(
     request: DomainAnalysisJobRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user) # Protected endpoint
 ):
     """
     Submits a new batch domain analysis job to the queue.
     """
-    logger.info(f"Received request to submit domain analysis for {len(request.domain_names)} domains to queue.")
+    logger.info(f"Received request to submit domain analysis for {len(request.domain_names)} domains to queue by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='domain_analysis').inc()
 
     if not request.domain_names:
@@ -851,12 +949,13 @@ async def start_domain_analysis_job(
 @app.post("/web3/crawl", response_model=Dict[str, str], status_code=202) # New endpoint
 async def start_web3_crawl(
     request: Web3CrawlRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user) # Protected endpoint
 ):
     """
     Submits a new Web3 content crawl job to the queue.
     """
-    logger.info(f"Received request to submit Web3 crawl for identifier: {request.web3_content_identifier} to queue.")
+    logger.info(f"Received request to submit Web3 crawl for identifier: {request.web3_content_identifier} to queue by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='web3_crawl').inc()
 
     queue_request = QueueCrawlRequest(
@@ -873,12 +972,13 @@ async def start_web3_crawl(
 @app.post("/social_media/crawl", response_model=Dict[str, str], status_code=202) # New endpoint
 async def start_social_media_crawl(
     request: SocialMediaCrawlRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user) # Protected endpoint
 ):
     """
     Submits a new social media content crawl job to the queue.
     """
-    logger.info(f"Received request to submit social media crawl for query: {request.social_media_query} to queue.")
+    logger.info(f"Received request to submit social media crawl for query: {request.social_media_query} to queue by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='social_media_crawl').inc()
 
     queue_request = QueueCrawlRequest(
@@ -895,7 +995,7 @@ async def start_social_media_crawl(
 
 
 @app.get("/crawl/status/{job_id}", response_model=CrawlJobResponse)
-async def get_crawl_status(job_id: str):
+async def get_crawl_status(job_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Retrieves the current status of a specific crawl job.
     """
@@ -905,19 +1005,20 @@ async def get_crawl_status(job_id: str):
     return CrawlJobResponse.from_crawl_job(job)
 
 @app.get("/crawl/all_jobs", response_model=List[CrawlJobResponse])
-async def get_all_crawl_jobs():
+async def get_all_crawl_jobs(current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Retrieves a list of all crawl jobs in the system.
     """
-    logger.info("Received request for all crawl jobs.")
+    logger.info(f"Received request for all crawl jobs by user: {current_user.username}.")
     jobs = db.get_all_crawl_jobs() # New method call
     return [CrawlJobResponse.from_crawl_job(job) for job in jobs]
 
 @app.post("/crawl/pause/{job_id}", response_model=CrawlJobResponse)
-async def pause_crawl_job(job_id: str):
+async def pause_crawl_job(job_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Pauses an in-progress crawl job.
     """
+    logger.info(f"Received request to pause job {job_id} by user: {current_user.username}.")
     try:
         job = await crawl_service_for_lifespan.pause_crawl_job(job_id) # Use the lifespan-managed instance
         # Prometheus: Update gauge for job status
@@ -932,10 +1033,11 @@ async def pause_crawl_job(job_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to pause job: {e}")
 
 @app.post("/crawl/resume/{job_id}", response_model=CrawlJobResponse)
-async def resume_crawl_job(job_id: str):
+async def resume_crawl_job(job_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Resumes a paused crawl job.
     """
+    logger.info(f"Received request to resume job {job_id} by user: {current_user.username}.")
     try:
         job = await crawl_service_for_lifespan.resume_crawl_job(job_id) # Use the lifespan-managed instance
         # Prometheus: Update gauge for job status
@@ -950,10 +1052,11 @@ async def resume_crawl_job(job_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to resume job: {e}")
 
 @app.post("/crawl/stop/{job_id}", response_model=CrawlJobResponse)
-async def stop_crawl_job(job_id: str):
+async def stop_crawl_job(job_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Stops an active or paused crawl job.
     """
+    logger.info(f"Received request to stop job {job_id} by user: {current_user.username}.")
     try:
         job = await crawl_service_for_lifespan.stop_crawl_job(job_id) # Use the lifespan-managed instance
         # Prometheus: Update gauge for job status
@@ -974,10 +1077,11 @@ async def stop_crawl_job(job_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to stop job: {e}")
 
 @app.get("/link_profile/{target_url:path}", response_model=LinkProfileResponse)
-async def get_link_profile(target_url: str):
+async def get_link_profile(target_url: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Retrieves the link profile for a given target URL.
     """
+    logger.info(f"Received request for link profile of {target_url} by user: {current_user.username}.")
     if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
         raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
 
@@ -987,10 +1091,11 @@ async def get_link_profile(target_url: str):
     return LinkProfileResponse.from_link_profile(profile)
 
 @app.get("/backlinks/{target_url:path}", response_model=List[BacklinkResponse])
-async def get_backlinks(target_url: str):
+async def get_backlinks(target_url: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Retrieves all raw backlinks found for a given target URL.
     """
+    logger.info(f"Received request for backlinks of {target_url} by user: {current_user.username}.")
     if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
         raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
 
@@ -1002,21 +1107,23 @@ async def get_backlinks(target_url: str):
     return [BacklinkResponse.from_backlink(bl) for bl in backlinks]
 
 @app.get("/debug/all_backlinks", response_model=List[BacklinkResponse])
-async def debug_get_all_backlinks():
+async def debug_get_all_backlinks(current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     DEBUG endpoint: Retrieves ALL raw backlinks from the database.
     """
-    logger.info("DEBUG endpoint: Received request for all backlinks.")
+    logger.info(f"DEBUG endpoint: Received request for all backlinks by user: {current_user.username}.")
+    if not current_user.is_admin: # Example: restrict debug endpoint to admins
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required.")
     backlinks = db.get_all_backlinks()
     logger.info(f"DEBUG endpoint: Retrieved {len(backlinks)} backlinks from DB.")
     return [BacklinkResponse.from_backlink(bl) for bl in backlinks]
 
 @app.get("/export/backlinks.csv", response_class=Response)
-async def export_all_backlinks_csv():
+async def export_all_backlinks_csv(current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Exports all backlinks from the database to a CSV file.
     """
-    logger.info("Received request to export all backlinks to CSV.")
+    logger.info(f"Received request to export all backlinks to CSV by user: {current_user.username}.")
     backlinks = db.get_all_backlinks()
     
     if not backlinks:
@@ -1043,11 +1150,11 @@ async def export_all_backlinks_csv():
     return Response(content=csv_output.getvalue(), headers=headers, media_type="text/csv")
 
 @app.get("/export/link_profiles.csv", response_class=Response)
-async def export_all_link_profiles_csv():
+async def export_all_link_profiles_csv(current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Exports all link profiles from the database to a CSV file.
     """
-    logger.info("Received request to export all link profiles to CSV.")
+    logger.info(f"Received request to export all link profiles to CSV by user: {current_user.username}.")
     link_profiles = db.get_all_link_profiles() # Assuming a get_all_link_profiles method exists
     
     if not link_profiles:
@@ -1071,11 +1178,11 @@ async def export_all_link_profiles_csv():
     return Response(content=csv_output.getvalue(), headers=headers, media_type="text/csv")
 
 @app.get("/export/crawl_jobs.csv", response_class=Response)
-async def export_all_crawl_jobs_csv():
+async def export_all_crawl_jobs_csv(current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Exports all crawl jobs from the database to a CSV file.
     """
-    logger.info("Received request to export all crawl jobs to CSV.")
+    logger.info(f"Received request to export all crawl jobs to CSV by user: {current_user.username}.")
     crawl_jobs = db.get_all_crawl_jobs()
     
     if not crawl_jobs:
@@ -1099,10 +1206,11 @@ async def export_all_crawl_jobs_csv():
 
 
 @app.get("/domain/availability/{domain_name}", response_model=Dict[str, Union[str, bool]])
-async def check_domain_availability(domain_name: str):
+async def check_domain_availability(domain_name: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Checks if a domain name is available for registration.
     """
+    logger.info(f"Received request for domain availability of {domain_name} by user: {current_user.username}.")
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
@@ -1110,10 +1218,11 @@ async def check_domain_availability(domain_name: str):
     return {"domain_name": domain_name, "is_available": is_available}
 
 @app.get("/domain/whois/{domain_name}", response_model=Dict)
-async def get_domain_whois(domain_name: str):
+async def get_domain_whois(domain_name: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Retrieves WHOIS information for a given domain name.
     """
+    logger.info(f"Received request for WHOIS of {domain_name} by user: {current_user.username}.")
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
@@ -1123,10 +1232,11 @@ async def get_domain_whois(domain_name: str):
     return whois_info
 
 @app.get("/domain/info/{domain_name}", response_model=DomainResponse)
-async def get_domain_info(domain_name: str):
+async def get_domain_info(domain_name: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Retrieves comprehensive domain information, including simulated WHOIS and availability.
     """
+    logger.info(f"Received request for domain info of {domain_name} by user: {current_user.username}.")
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
@@ -1136,10 +1246,11 @@ async def get_domain_info(domain_name: str):
     return DomainResponse.from_domain(domain_obj)
 
 @app.get("/domain/analyze/{domain_name}", response_model=DomainAnalysisResponse)
-async def analyze_domain(domain_name: str):
+async def analyze_domain(domain_name: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Analyzes a domain for its potential value, especially for expired domains.
     """
+    logger.info(f"Received request for domain analysis of {domain_name} by user: {current_user.username}.")
     if not domain_name or '.' not in domain_name:
         raise HTTPException(status_code=400, detail="Invalid domain name format.")
     
@@ -1151,10 +1262,11 @@ async def analyze_domain(domain_name: str):
     return analysis_result
 
 @app.post("/domain/find_expired_domains", response_model=FindExpiredDomainsResponse)
-async def find_expired_domains(request: FindExpiredDomainsRequest):
+async def find_expired_domains(request: FindExpiredDomainsRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Searches for valuable expired domains among a list of potential candidates.
     """
+    logger.info(f"Received request to find expired domains by user: {current_user.username}.")
     if not request.potential_domains:
         raise HTTPException(status_code=400, detail="No potential domains provided.")
     
@@ -1171,11 +1283,11 @@ async def find_expired_domains(request: FindExpiredDomainsRequest):
     )
 
 @app.post("/serp/search", response_model=Dict[str, str], status_code=202)
-async def search_serp(request: SERPSearchRequest):
+async def search_serp(request: SERPSearchRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Submits a SERP search job to the queue.
     """
-    logger.info(f"Received request to submit SERP search for keyword: {request.keyword} to queue.")
+    logger.info(f"Received request to submit SERP search for keyword: {request.keyword} to queue by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='serp_analysis').inc()
 
     queue_request = QueueCrawlRequest(
@@ -1189,11 +1301,11 @@ async def search_serp(request: SERPSearchRequest):
     return await submit_crawl_to_queue(queue_request)
 
 @app.get("/serp/results/{keyword}", response_model=List[SERPResultResponse])
-async def get_serp_results(keyword: str):
+async def get_serp_results(keyword: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Retrieves stored SERP results for a specific keyword.
     """
-    logger.info(f"Received request to get stored SERP results for keyword: {keyword}")
+    logger.info(f"Received request to get stored SERP results for keyword: {keyword} by user: {current_user.username}.")
     try:
         serp_results = db.get_serp_results_for_keyword(keyword)
         if not serp_results:
@@ -1206,11 +1318,11 @@ async def get_serp_results(keyword: str):
         raise HTTPException(status_code=500, detail=f"Failed to retrieve SERP results: {e}")
 
 @app.post("/keyword/suggest", response_model=Dict[str, str], status_code=202)
-async def suggest_keywords(request: KeywordSuggestRequest):
+async def suggest_keywords(request: KeywordSuggestRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Submits a keyword suggestion job to the queue.
     """
-    logger.info(f"Received request to submit keyword suggestions for seed: {request.seed_keyword} to queue.")
+    logger.info(f"Received request to submit keyword suggestions for seed: {request.seed_keyword} to queue by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='keyword_research').inc()
 
     queue_request = QueueCrawlRequest(
@@ -1224,11 +1336,11 @@ async def suggest_keywords(request: KeywordSuggestRequest):
     return await submit_crawl_to_queue(queue_request)
 
 @app.get("/keyword/suggestions/{seed_keyword}", response_model=List[KeywordSuggestionResponse])
-async def get_keyword_suggestions(seed_keyword: str):
+async def get_keyword_suggestions(seed_keyword: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Retrieves stored keyword suggestions for a specific seed keyword.
     """
-    logger.info(f"Received request to get stored keyword suggestions for seed: {seed_keyword}")
+    logger.info(f"Received request to get stored keyword suggestions for seed: {seed_keyword} by user: {current_user.username}.")
     try:
         suggestions = db.get_keyword_suggestions_for_seed(seed_keyword)
         if not suggestions:
@@ -1241,15 +1353,14 @@ async def get_keyword_suggestions(seed_keyword: str):
         raise HTTPException(status_code=500, detail=f"Failed to retrieve keyword suggestions: {e}")
 
 @app.post("/competitor/link_intersect", response_model=LinkIntersectResponse)
-async def get_link_intersect_analysis(request: LinkIntersectRequest):
+async def get_link_intersect_analysis(request: LinkIntersectRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Performs a link intersect analysis to find common linking domains.
     Identifies source domains that link to the primary domain AND at least one of the competitor domains.
     """
+    logger.info(f"Received request for link intersect analysis by user: {current_user.username}.")
     if not request.primary_domain or not request.competitor_domains:
         raise HTTPException(status_code=400, detail="Primary domain and at least one competitor domain are required.")
-    
-    logger.info(f"Received request for link intersect analysis: Primary={request.primary_domain}, Competitors={request.competitor_domains}")
     
     result = await backlink_service_instance.perform_link_intersect_analysis(
         primary_domain=request.primary_domain,
@@ -1259,15 +1370,14 @@ async def get_link_intersect_analysis(request: LinkIntersectRequest):
     return LinkIntersectResponse.from_link_intersect_result(result)
 
 @app.post("/competitor/keyword_analysis", response_model=CompetitiveKeywordAnalysisResponse)
-async def get_competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRequest):
+async def get_competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Performs a competitive keyword analysis to identify common keywords and keyword gaps.
     Compares keywords that the primary domain and competitor domains rank for.
     """
+    logger.info(f"Received request for competitive keyword analysis by user: {current_user.username}.")
     if not request.primary_domain or not request.competitor_domains:
         raise HTTPException(status_code=400, detail="Primary domain and at least one competitor domain are required.")
-    
-    logger.info(f"Received request for competitive keyword analysis: Primary={request.primary_domain}, Competitors={request.competitor_domains}")
     
     result = await keyword_service_instance.perform_competitive_keyword_analysis(
         primary_domain=request.primary_domain,
@@ -1278,10 +1388,11 @@ async def get_competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRe
 
 # New: Alert Rule Endpoints
 @app.post("/alerts/rules", response_model=AlertRuleResponse, status_code=201)
-async def create_alert_rule(request: AlertRuleCreateRequest):
+async def create_alert_rule(request: AlertRuleCreateRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Creates a new alert rule.
     """
+    logger.info(f"Received request to create alert rule by user: {current_user.username}.")
     rule_id = str(uuid.uuid4())
     new_rule = AlertRule(id=rule_id, **request.dict())
     try:
@@ -1292,37 +1403,40 @@ async def create_alert_rule(request: AlertRuleCreateRequest):
         logger.info(f"Created new alert rule: {new_rule.name} (ID: {new_rule.id})")
         return AlertRuleResponse.from_alert_rule(new_rule)
     except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) # Conflict if name already exists
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) # Conflict if name already exists
     except Exception as e:
         logger.error(f"Error creating alert rule: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to create alert rule: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create alert rule: {e}")
 
 @app.get("/alerts/rules/{rule_id}", response_model=AlertRuleResponse)
-async def get_alert_rule(rule_id: str):
+async def get_alert_rule(rule_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Retrieves a specific alert rule by its ID.
     """
+    logger.info(f"Received request to get alert rule {rule_id} by user: {current_user.username}.")
     rule = db.get_alert_rule(rule_id)
     if not rule:
-        raise HTTPException(status_code=404, detail="Alert rule not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert rule not found.")
     return AlertRuleResponse.from_alert_rule(rule)
 
 @app.get("/alerts/rules", response_model=List[AlertRuleResponse])
-async def list_alert_rules(active_only: bool = False):
+async def list_alert_rules(active_only: bool = False, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Lists all alert rules, optionally filtering for active ones.
     """
+    logger.info(f"Received request to list alert rules by user: {current_user.username}.")
     rules = db.get_all_alert_rules(active_only=active_only)
     return [AlertRuleResponse.from_alert_rule(rule) for rule in rules]
 
 @app.put("/alerts/rules/{rule_id}", response_model=AlertRuleResponse)
-async def update_alert_rule(rule_id: str, request: AlertRuleCreateRequest):
+async def update_alert_rule(rule_id: str, request: AlertRuleCreateRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Updates an existing alert rule.
     """
+    logger.info(f"Received request to update alert rule {rule_id} by user: {current_user.username}.")
     existing_rule = db.get_alert_rule(rule_id)
     if not existing_rule:
-        raise HTTPException(status_code=404, detail="Alert rule not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert rule not found.")
     
     updated_rule = AlertRule(id=rule_id, **request.dict())
     try:
@@ -1333,48 +1447,29 @@ async def update_alert_rule(rule_id: str, request: AlertRuleCreateRequest):
         logger.info(f"Updated alert rule: {updated_rule.name} (ID: {updated_rule.id})")
         return AlertRuleResponse.from_alert_rule(updated_rule)
     except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
         logger.error(f"Error updating alert rule {rule_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to update alert rule: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update alert rule: {e}")
 
-@app.delete("/alerts/rules/{rule_id}", status_code=204)
-async def delete_alert_rule(rule_id: str):
+@app.delete("/alerts/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_alert_rule(rule_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Deletes an alert rule by its ID.
     """
+    logger.info(f"Received request to delete alert rule {rule_id} by user: {current_user.username}.")
     try:
         deleted = db.delete_alert_rule(rule_id)
         if not deleted:
-            raise HTTPException(status_code=404, detail="Alert rule not found.")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert rule not found.")
         # After deleting, trigger a refresh of rules in the AlertService
         if alert_service_instance:
             await alert_service_instance.load_active_rules()
         logger.info(f"Deleted alert rule ID: {rule_id}")
-        return Response(status_code=204)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     except Exception as e:
         logger.error(f"Error deleting alert rule {rule_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to delete alert rule: {e}")
-
-# New: WebSocket endpoint for real-time notifications
-@app.websocket("/ws/notifications")
-async def websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time notifications and job updates.
-    Clients can connect to this endpoint to receive live data.
-    """
-    await connection_manager.connect(websocket)
-    try:
-        while True:
-            # Keep the connection alive. Clients can send messages if needed,
-            # but for now, this is primarily a server-to-client channel.
-            # A simple ping/pong or a timeout could be implemented here.
-            await websocket.receive_text() # Just receive to keep connection open, or it will close
-    except WebSocketDisconnect:
-        connection_manager.disconnect(websocket)
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}", exc_info=True)
-        connection_manager.disconnect(websocket)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete alert rule: {e}")
 
 
 @app.get("/health")
@@ -1503,12 +1598,15 @@ async def prometheus_metrics():
     return Response(content=get_metrics_text(), media_type="text/plain; version=0.0.4; charset=utf-8")
 
 @app.get("/debug/dead_letters")
-async def get_dead_letters():
+async def get_dead_letters(current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     DEBUG endpoint: Retrieves messages from the Redis dead-letter queue.
     """
+    logger.info(f"DEBUG endpoint: Received request for dead letters by user: {current_user.username}.")
+    if not current_user.is_admin: # Example: restrict debug endpoint to admins
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required.")
     if not redis_client:
-        raise HTTPException(status_code=503, detail="Redis is not available, dead-letter queue cannot be accessed.")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Redis is not available, dead-letter queue cannot be accessed.")
     
     dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name")
     try:
@@ -1519,15 +1617,18 @@ async def get_dead_letters():
         return {"dead_letter_messages": decoded_messages}
     except Exception as e:
         logger.error(f"Error retrieving dead-letter messages: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve dead-letter messages: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve dead-letter messages: {e}")
 
 @app.post("/debug/clear_dead_letters")
-async def clear_dead_letters():
+async def clear_dead_letters(current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     DEBUG endpoint: Clears all messages from the Redis dead-letter queue.
     """
+    logger.info(f"DEBUG endpoint: Received request to clear dead letters by user: {current_user.username}.")
+    if not current_user.is_admin: # Example: restrict debug endpoint to admins
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required.")
     if not redis_client:
-        raise HTTPException(status_code=503, detail="Redis is not available, dead-letter queue cannot be cleared.")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Redis is not available, dead-letter queue cannot be cleared.")
     
     dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name")
     try:
@@ -1536,15 +1637,18 @@ async def clear_dead_letters():
         return {"status": "success", "message": f"Cleared {count} messages from dead-letter queue."}
     except Exception as e:
         logger.error(f"Error clearing dead-letter messages: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to clear dead-letter messages: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to clear dead-letter messages: {e}")
 
 @app.post("/debug/reprocess_dead_letters", response_model=Dict[str, str])
-async def reprocess_dead_letters():
+async def reprocess_dead_letters(current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     DEBUG endpoint: Moves all messages from the dead-letter queue back to the main job queue for reprocessing.
     """
+    logger.info(f"DEBUG endpoint: Received request to reprocess dead letters by user: {current_user.username}.")
+    if not current_user.is_admin: # Example: restrict debug endpoint to admins
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required.")
     if not redis_client:
-        raise HTTPException(status_code=503, detail="Redis is not available, dead-letter queue cannot be reprocessed.")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Redis is not available, dead-letter queue cannot be reprocessed.")
     
     dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name")
     job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs") # Assuming default job queue name
@@ -1585,7 +1689,7 @@ async def reprocess_dead_letters():
         return {"status": "success", "message": f"Reprocessed {requeued_count} messages from dead-letter queue."}
     except Exception as e:
         logger.error(f"Error reprocessing dead-letter messages: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to reprocess dead-letter messages: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to reprocess dead-letter messages: {e}")
 
 
 # Add queue-related endpoints to the main app

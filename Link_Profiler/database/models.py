@@ -304,3 +304,17 @@ class AlertRuleORM(Base):
 
     def __repr__(self):
         return f"<AlertRule(name='{self.name}', trigger_type='{self.trigger_type}', severity='{self.severity}')>"
+
+# New: User ORM Model for Authentication
+class UserORM(Base):
+    __tablename__ = 'users'
+    id = Column(String, primary_key=True) # UUID string
+    username = Column(String, unique=True, nullable=False, index=True)
+    email = Column(String, unique=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+    def __repr__(self):
+        return f"<User(username='{self.username}', email='{self.email}')>"

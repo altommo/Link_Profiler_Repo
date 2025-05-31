@@ -728,6 +728,38 @@ class AlertRule:
         return cls(**filtered_data)
 
 
+# New: Authentication Models
+@dataclass
+class User:
+    """Represents a user in the system."""
+    username: str
+    email: str
+    hashed_password: str
+    id: Optional[str] = None # UUID for the user
+    is_active: bool = True
+    is_admin: bool = False
+    created_at: datetime = field(default_factory=datetime.now)
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'User':
+        if 'created_at' in data and isinstance(data['created_at'], str):
+            data['created_at'] = datetime.fromisoformat(data['created_at'])
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+@dataclass
+class Token:
+    """Represents a JWT token."""
+    access_token: str
+    token_type: str = "bearer"
+
+@dataclass
+class TokenData:
+    """Represents data contained within a JWT token."""
+    username: Optional[str] = None
+
+
 # Utility functions for model operations
 def serialize_model(obj) -> Dict:
     """Serialize dataclass to dictionary"""

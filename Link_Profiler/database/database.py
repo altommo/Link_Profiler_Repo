@@ -15,13 +15,13 @@ from urllib.parse import urlparse # Added import for urlparse
 
 from Link_Profiler.database.models import ( # Changed to absolute import
     Base, DomainORM, URLORM, BacklinkORM, LinkProfileORM, CrawlJobORM,
-    SEOMetricsORM, SERPResultORM, KeywordSuggestionORM, AlertRuleORM, # New: Import AlertRuleORM
+    SEOMetricsORM, SERPResultORM, KeywordSuggestionORM, AlertRuleORM, UserORM, # New: Import UserORM
     LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum,
     AlertSeverityEnum, AlertChannelEnum # New: Import Alerting Enums
 )
 from Link_Profiler.core.models import ( # Changed to absolute import
     Domain, URL, Backlink, LinkProfile, CrawlJob, SEOMetrics,
-    SERPResult, KeywordSuggestion, AlertRule, # New: Import AlertRule
+    SERPResult, KeywordSuggestion, AlertRule, User, # New: Import User
     serialize_model, CrawlError # Import CrawlError
 )
 
@@ -112,7 +112,7 @@ class Database:
         elif isinstance(orm_obj, LinkProfileORM):
             # LinkProfile dataclass expects 'referring_domains' as a set
             if 'referring_domains' in data and isinstance(data['referring_domains'], list):
-                data['referring_domains'] = set(data['referring_domains'])
+                data['referring_domains'] = set(data['refer_domains'])
             # LinkProfile dataclass expects 'backlinks' field, but ORM doesn't store it directly.
             # It's derived. So, we need to remove it from data if it's not present in ORM.
             data.pop('backlinks', None)
@@ -137,6 +137,10 @@ class Database:
             if 'notification_channels' in data and isinstance(data['notification_channels'], list):
                 data['notification_channels'] = [AlertChannelEnum(c) for c in data['notification_channels']]
             return AlertRule(**data)
+        elif isinstance(orm_obj, UserORM): # New: Handle UserORM
+            if 'created_at' in data and isinstance(data['created_at'], str):
+                data['created_at'] = datetime.fromisoformat(data['created_at'])
+            return User(**data)
         return orm_obj
 
     def _to_orm(self, dc_obj: Any):
@@ -209,6 +213,8 @@ class Database:
             data['severity'] = dc_obj.severity.value
             data['notification_channels'] = [c.value for c in dc_obj.notification_channels]
             return AlertRuleORM(**data)
+        elif isinstance(dc_obj, User): # New: Handle User
+            return UserORM(**data)
         return dc_obj
 
     def add_backlink(self, backlink: Backlink) -> None:
@@ -847,5 +853,39 @@ class Database:
             session.rollback()
             logger.error(f"Error deleting alert rule {rule_id}: {e}", exc_info=True)
             raise
+        finally:
+            session.close()
+
+    # New: User methods for Authentication
+    def create_user(self, user: User) -> User:
+        """Creates a new user in the database."""
+        session = self._get_session()
+        try:
+            orm_user = self._to_orm(user)
+            session.add(orm_user)
+            session.commit()
+            session.refresh(orm_user) # Refresh to get any auto-generated fields like ID
+            logger.info(f"Created new user: {user.username}")
+            return self._to_dataclass(orm_user)
+        except IntegrityError:
+            session.rollback()
+            logger.warning(f"User with username '{user.username}' or email '{user.email}' already exists.")
+            raise ValueError(f"User with username '{user.username}' or email '{user.email}' already exists.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error creating user {user.username}: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        """Retrieves a user by their username."""
+        session = self._get_session()
+        try:
+            orm_user = session.query(UserORM).filter_by(username=username).first()
+            return self._to_dataclass(orm_user)
+        except Exception as e:
+            logger.error(f"Error retrieving user by username '{username}': {e}", exc_info=True)
+            return None
         finally:
             session.close()
