@@ -9,11 +9,12 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from dataclasses import asdict
 import logging
-from croniter import croniter # New: Import croniter for cron scheduling
+from croniter import croniter
+import aiohttp # New: Import aiohttp for webhooks
 
 from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, serialize_model, CrawlError
-from Link_Profiler.database.database import Database # Import Database
-from Link_Profiler.config.config_loader import config_loader # Import config_loader
+from Link_Profiler.database.database import Database
+from Link_Profiler.config.config_loader import config_loader
 
 logger = logging.getLogger(__name__)
 
@@ -23,19 +24,24 @@ class JobCoordinator:
     def __init__(self, redis_url: str = "redis://localhost:6379", database: Database = None):
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
-        self.db = database # Store the database instance
+        self.db = database
         
         # Queue names
-        self.job_queue = "crawl_jobs" # Main queue for jobs ready to be processed
+        self.job_queue = "crawl_jobs"
         self.result_queue = "crawl_results" 
-        self.heartbeat_queue_sorted = "crawler_heartbeats_sorted" # Sorted set for heartbeats
-        self.scheduled_jobs_queue = "scheduled_jobs" # New: Sorted set for scheduled jobs
+        self.heartbeat_queue_sorted = "crawler_heartbeats_sorted"
+        self.scheduled_jobs_queue = "scheduled_jobs"
         
         # Job tracking (authoritative state is in DB, this is for quick in-memory lookup of active jobs)
-        self.active_jobs_cache: Dict[str, CrawlJob] = {} # Stores CrawlJob objects for quick access
-        self.satellite_crawlers: Dict[str, datetime] = {} # Stores crawler_id -> last_seen datetime
+        self.active_jobs_cache: Dict[str, CrawlJob] = {}
+        self.satellite_crawlers: Dict[str, datetime] = {}
         
-        self.scheduler_interval = config_loader.get("queue.scheduler_interval", 5) # How often to check scheduled jobs
+        self.scheduler_interval = config_loader.get("queue.scheduler_interval", 5)
+
+        # Webhook configuration
+        self.webhook_enabled = config_loader.get("notifications.webhooks.enabled", False)
+        self.webhook_urls = config_loader.get("notifications.webhooks.urls", [])
+        self._session: Optional[aiohttp.ClientSession] = None # New: aiohttp client session
 
     async def __aenter__(self):
         # Ensure Redis connection is active
@@ -44,12 +50,24 @@ class JobCoordinator:
             logger.info("JobCoordinator connected to Redis successfully.")
         except Exception as e:
             logger.error(f"JobCoordinator failed to connect to Redis: {e}", exc_info=True)
-            raise # Re-raise to prevent coordinator from starting without Redis
+            raise
+        
+        # New: Initialize aiohttp client session
+        if self.webhook_enabled and not self._session:
+            self._session = aiohttp.ClientSession()
+            logger.info("JobCoordinator aiohttp client session created for webhooks.")
+        
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.redis.close()
         logger.info("JobCoordinator Redis connection closed.")
+        
+        # New: Close aiohttp client session
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+            logger.info("JobCoordinator aiohttp client session closed.")
     
     async def submit_crawl_job(self, job: CrawlJob) -> str:
         """Submit a new crawl job to the queue (either immediate or scheduled)"""
@@ -174,7 +192,41 @@ class JobCoordinator:
         
         # Persist updated job state to DB
         self.db.update_crawl_job(job)
+
+        # New: Send webhook notification if enabled and job is completed or failed
+        if self.webhook_enabled and (job.status == CrawlStatus.COMPLETED or job.status == CrawlStatus.FAILED):
+            await self._send_webhook_notification(job)
     
+    async def _send_webhook_notification(self, job: CrawlJob):
+        """Sends a webhook notification for a job status change."""
+        if not self._session:
+            logger.warning("Webhook session not initialized. Cannot send notification.")
+            return
+
+        payload = {
+            "job_id": job.id,
+            "target_url": job.target_url,
+            "job_type": job.job_type,
+            "status": job.status.value,
+            "progress_percentage": job.progress_percentage,
+            "completed_date": job.completed_date.isoformat() if job.completed_date else None,
+            "errors_count": job.errors_count,
+            "error_log_summary": [err.message for err in job.error_log] if job.error_log else [],
+            "results_summary": job.results # Send full results for now, can be filtered later
+        }
+
+        for url in self.webhook_urls:
+            try:
+                async with self._session.post(url, json=payload, timeout=10) as response:
+                    response.raise_for_status()
+                    logger.info(f"Successfully sent webhook for job {job.id} to {url}. Status: {response.status}")
+            except aiohttp.ClientError as e:
+                logger.error(f"Failed to send webhook for job {job.id} to {url}: {e}", exc_info=True)
+            except asyncio.TimeoutError:
+                logger.warning(f"Webhook to {url} for job {job.id} timed out.")
+            except Exception as e:
+                logger.error(f"Unexpected error sending webhook for job {job.id} to {url}: {e}", exc_info=True)
+
     async def monitor_satellites(self):
         """Monitor satellite crawler health via heartbeats"""
         logger.info("Starting satellite monitoring loop.")
@@ -209,7 +261,7 @@ class JobCoordinator:
             except Exception as e:
                 logger.error(f"Error monitoring satellites: {e}", exc_info=True)
             finally:
-                await asyncio.sleep(10) # Check every 10 seconds
+                await asyncio.sleep(10)
     
     async def _process_scheduled_jobs(self):
         """
@@ -246,21 +298,21 @@ class JobCoordinator:
             except Exception as e:
                 logger.error(f"Error processing scheduled jobs: {e}", exc_info=True)
             finally:
-                await asyncio.sleep(self.scheduler_interval) # Check every X seconds
+                await asyncio.sleep(self.scheduler_interval)
     
     async def get_queue_stats(self) -> Dict:
         """Get current queue statistics"""
         pending_jobs = await self.redis.zcard(self.job_queue)
-        scheduled_jobs = await self.redis.zcard(self.scheduled_jobs_queue) # New: Get scheduled jobs count
+        scheduled_jobs = await self.redis.zcard(self.scheduled_jobs_queue)
         active_crawlers = len(self.satellite_crawlers)
         
         # Total and completed jobs should ideally come from DB for accuracy
-        total_jobs_db = len(self.db.get_all_crawl_jobs()) # This can be slow for many jobs
+        total_jobs_db = len(self.db.get_all_crawl_jobs())
         completed_jobs_db = len([j for j in self.db.get_all_crawl_jobs() if j.is_completed])
         
         return {
             "pending_jobs": pending_jobs,
-            "scheduled_jobs": scheduled_jobs, # New: Include scheduled jobs count
+            "scheduled_jobs": scheduled_jobs,
             "active_crawlers": active_crawlers,
             "total_jobs": total_jobs_db,
             "completed_jobs": completed_jobs_db
@@ -275,12 +327,12 @@ async def main():
         # Start monitoring tasks
         asyncio.create_task(coordinator.process_results())
         asyncio.create_task(coordinator.monitor_satellites())
-        asyncio.create_task(coordinator._process_scheduled_jobs()) # New: Start scheduled jobs processor
+        asyncio.create_task(coordinator._process_scheduled_jobs())
         
         logger.info("Job Coordinator started. Press Ctrl+C to exit.")
         # Keep the main task alive
         while True:
-            await asyncio.sleep(3600) # Sleep for an hour, or until interrupted
+            await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     asyncio.run(main())
