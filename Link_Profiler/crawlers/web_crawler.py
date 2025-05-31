@@ -14,6 +14,7 @@ from dataclasses import dataclass, field # Import field
 import re
 from datetime import datetime, timedelta
 import random # Import random for human-like delays
+from collections import deque # New: Import deque
 
 from Link_Profiler.core.models import ( # Changed to absolute import
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
@@ -38,38 +39,79 @@ class AdaptiveRateLimiter:
     """
     Adaptive rate limiter to respect website policies and react to server responses.
     Adjusts delay based on HTTP status codes and response times.
+    Can incorporate a history of past interactions for more informed decisions.
     """
     
-    def __init__(self, initial_delay_seconds: float = 1.0):
+    def __init__(self, initial_delay_seconds: float = 1.0, ml_rate_optimization_enabled: bool = False, rate_limiter_config: Dict = None):
         self.domain_delays: Dict[str, float] = {} # Stores current delay for each domain
         self.initial_delay = initial_delay_seconds
         self.last_request_time: Dict[str, float] = {} # Track last request time per domain
         self.logger = logging.getLogger(__name__ + ".AdaptiveRateLimiter")
 
+        self.ml_rate_optimization_enabled = ml_rate_optimization_enabled
+        self.rate_limiter_config = rate_limiter_config or {}
+        self.history_size = self.rate_limiter_config.get("history_size", 10)
+        self.success_factor = self.rate_limiter_config.get("success_factor", 0.9) # Factor to decrease delay on success
+        self.failure_factor = self.rate_limiter_config.get("failure_factor", 1.5) # Factor to increase delay on failure
+        self.min_delay = self.rate_limiter_config.get("min_delay", 0.1)
+        self.max_delay = self.rate_limiter_config.get("max_delay", 60.0)
+
+        # Stores history of (status_code, crawl_time_ms) for each domain
+        self.domain_history: Dict[str, deque[Tuple[int, int]]] = {}
+
     async def wait_if_needed(self, domain: str, last_crawl_result: Optional['CrawlResult'] = None) -> None:
         """
-        Wait if needed to respect rate limits, adapting based on last crawl result.
+        Wait if needed to respect rate limits, adapting based on last crawl result and history.
         """
         current_delay = self.domain_delays.get(domain, self.initial_delay)
 
         if last_crawl_result:
-            # Adapt delay based on last response
-            if last_crawl_result.status_code == 429:  # Too Many Requests
-                current_delay *= 2.0 # Double the delay
-                self.logger.warning(f"Adaptive Rate Limiter: Doubling delay for {domain} due to 429. New delay: {current_delay:.2f}s")
-            elif 500 <= last_crawl_result.status_code < 600:  # Server errors
-                current_delay *= 1.5 # Increase delay by 50%
-                self.logger.warning(f"Adaptive Rate Limiter: Increasing delay for {domain} due to {last_crawl_result.status_code}. New delay: {current_delay:.2f}s")
-            elif last_crawl_result.crawl_time_ms > 5000:  # Slow responses (over 5 seconds)
-                current_delay *= 1.2 # Increase delay by 20%
-                self.logger.info(f"Adaptive Rate Limiter: Increasing delay for {domain} due to slow response ({last_crawl_result.crawl_time_ms}ms). New delay: {current_delay:.2f}s")
+            # Update history for the domain
+            if domain not in self.domain_history:
+                self.domain_history[domain] = deque(maxlen=self.history_size)
+            self.domain_history[domain].append((last_crawl_result.status_code, last_crawl_result.crawl_time_ms))
+
+            if self.ml_rate_optimization_enabled:
+                # Advanced heuristic based on history (placeholder for ML model)
+                recent_history = self.domain_history[domain]
+                successful_responses = [r for r in recent_history if 200 <= r[0] < 400]
+                failed_responses = [r for r in recent_history if r[0] >= 400 or r[0] == 0] # 0 for network errors
+
+                success_ratio = len(successful_responses) / len(recent_history) if recent_history else 1.0
+                avg_response_time = sum(r[1] for r in successful_responses) / len(successful_responses) if successful_responses else 0
+
+                if last_crawl_result.status_code == 429:
+                    current_delay *= self.failure_factor * 2 # Aggressive increase for 429
+                    self.logger.warning(f"ML Rate Limiter: Doubling delay for {domain} due to 429. New delay: {current_delay:.2f}s")
+                elif last_crawl_result.status_code >= 500 or last_crawl_result.status_code == 0:
+                    current_delay *= self.failure_factor # Increase for server errors/network issues
+                    self.logger.warning(f"ML Rate Limiter: Increasing delay for {domain} due to {last_crawl_result.status_code}. New delay: {current_delay:.2f}s")
+                elif success_ratio < 0.7: # If less than 70% of recent requests were successful
+                    current_delay *= self.failure_factor # Increase due to general instability
+                    self.logger.info(f"ML Rate Limiter: Increasing delay for {domain} due to low success ratio ({success_ratio:.1f}). New delay: {current_delay:.2f}s")
+                elif avg_response_time > 3000: # If average response time is high
+                    current_delay *= (1 + (avg_response_time / 10000)) # Increase based on slowness
+                    self.logger.info(f"ML Rate Limiter: Increasing delay for {domain} due to high avg response time ({avg_response_time}ms). New delay: {current_delay:.2f}s")
+                else:
+                    current_delay = max(self.initial_delay, current_delay * self.success_factor) # Decrease on good performance
+                    self.logger.debug(f"ML Rate Limiter: Decreasing delay for {domain} due to good performance. New delay: {current_delay:.2f}s")
             else:
-                # Gradually decrease delay if responses are consistently good and fast
-                current_delay = max(self.initial_delay, current_delay * 0.9) # Decrease by 10%, but not below initial
-                self.logger.debug(f"Adaptive Rate Limiter: Decreasing delay for {domain} due to good response. New delay: {current_delay:.2f}s")
+                # Original adaptive logic if ML optimization is not enabled
+                if last_crawl_result.status_code == 429:  # Too Many Requests
+                    current_delay *= 2.0 # Double the delay
+                    self.logger.warning(f"Adaptive Rate Limiter: Doubling delay for {domain} due to 429. New delay: {current_delay:.2f}s")
+                elif 500 <= last_crawl_result.status_code < 600:  # Server errors
+                    current_delay *= 1.5 # Increase delay by 50%
+                    self.logger.warning(f"Adaptive Rate Limiter: Increasing delay for {domain} due to {last_crawl_result.status_code}. New delay: {current_delay:.2f}s")
+                elif last_crawl_result.crawl_time_ms > 5000:  # Slow responses (over 5 seconds)
+                    current_delay *= 1.2 # Increase delay by 20%
+                    self.logger.info(f"Adaptive Rate Limiter: Increasing delay for {domain} due to slow response ({last_crawl_result.crawl_time_ms}ms). New delay: {current_delay:.2f}s")
+                else:
+                    current_delay = max(self.initial_delay, current_delay * 0.9) # Decrease by 10%, but not below initial
+                    self.logger.debug(f"Adaptive Rate Limiter: Decreasing delay for {domain} due to good response. New delay: {current_delay:.2f}s")
             
             # Ensure delay doesn't go below a reasonable minimum or above a maximum
-            current_delay = max(0.1, min(current_delay, 60.0)) # Min 0.1s, Max 60s
+            current_delay = max(self.min_delay, min(current_delay, self.max_delay))
 
         self.domain_delays[domain] = current_delay
 
@@ -109,7 +151,13 @@ class WebCrawler:
         self.config = config
         self.db = db # Database instance to check job status
         self.job_id = job_id # ID of the current crawl job
-        self.rate_limiter = AdaptiveRateLimiter(self.config.delay_seconds) # Use AdaptiveRateLimiter
+        
+        # Initialize AdaptiveRateLimiter with ML optimization flag and config
+        self.rate_limiter = AdaptiveRateLimiter(
+            initial_delay_seconds=self.config.delay_seconds,
+            ml_rate_optimization_enabled=config_loader.get("anti_detection.ml_rate_optimization", False),
+            rate_limiter_config=config_loader.get("rate_limiter")
+        )
         self.robots_parser = RobotsParser() # Initialise, but session managed by __aenter__
         self.link_extractor = LinkExtractor()
         self.content_parser = ContentParser() 

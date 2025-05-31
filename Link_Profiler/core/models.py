@@ -385,6 +385,7 @@ class CrawlConfig:
     human_like_delays: bool = False # New: Add small random delays to mimic human behavior
     stealth_mode: bool = True # New: Enable Playwright stealth mode (default True for Playwright)
     browser_fingerprint_randomization: bool = False # New: Randomize browser fingerprint properties
+    ml_rate_optimization: bool = False # New: Enable machine learning-based rate optimization
 
     # New fields for proxy management
     use_proxies: bool = False # New: Whether to use proxies for crawling

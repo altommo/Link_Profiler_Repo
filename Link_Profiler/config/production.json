@@ -18,7 +18,15 @@
     "fingerprint_randomization": false,
     "human_like_delays": true,
     "request_header_randomization": true,
-    "browser_fingerprint_randomization": true
+    "browser_fingerprint_randomization": true,
+    "ml_rate_optimization": true
+  },
+  "rate_limiter": {
+    "history_size": 20,
+    "success_factor": 0.8,
+    "failure_factor": 2.0,
+    "min_delay": 0.2,
+    "max_delay": 120.0
   },
   "proxy_management": {
     "enabled": true,

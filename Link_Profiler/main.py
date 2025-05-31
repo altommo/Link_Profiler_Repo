@@ -302,6 +302,7 @@ class CrawlConfigRequest(BaseModel):
     human_like_delays: bool = Field(False, description="Whether to add small random delays to mimic human browsing behavior.")
     stealth_mode: bool = Field(True, description="Whether to enable Playwright stealth mode for browser-based crawling.")
     browser_fingerprint_randomization: bool = Field(False, description="Whether to randomize browser fingerprint properties (e.g., device scale, mobile, touch, screen dimensions, timezone, locale, color scheme) for Playwright.")
+    ml_rate_optimization: bool = Field(False, description="Whether to enable machine learning-based rate optimization for adaptive delays.")
     use_proxies: bool = Field(False, description="Whether to use proxies for crawling.")
     proxy_list: Optional[List[Dict[str, str]]] = Field(None, description="List of proxy configurations (e.g., [{'url': 'http://user:pass@ip:port', 'region': 'us-east'}]).")
     proxy_region: Optional[str] = Field(None, description="Desired proxy region for this crawl job. If not specified, any available proxy will be used.")
