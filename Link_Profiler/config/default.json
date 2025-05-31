@@ -75,7 +75,7 @@
     "enabled": false
   },
   "keyword_api": {
-    ""real_api": {
+    "real_api": {
       "enabled": false,
       "api_key": "your_real_keyword_api_key_here"
     },
