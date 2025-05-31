@@ -7,12 +7,12 @@ import json
 import uuid
 import logging
 from datetime import datetime
-from typing import List, Dict, Optional, Any # Added Any import
+from typing import List, Dict, Optional, Any
 import socket
 import sys
 import os
 
-from playwright.async_api import async_playwright, Browser # New: Import Playwright Browser
+from playwright.async_api import async_playwright, Browser
 
 # Add project root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,14 +25,14 @@ from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBa
 from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient
 from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient
 from Link_Profiler.services.link_health_service import LinkHealthService
-from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService # Import DomainAnalyzerService
-from Link_Profiler.services.ai_service import AIService # Import AIService
+from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
+from Link_Profiler.services.ai_service import AIService
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
-from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
+from Link_Profiler.config.config_loader import config_loader
 
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,10 @@ class SatelliteCrawler:
         technical_auditor_instance = TechnicalAuditor(
             lighthouse_path=config_loader.get("technical_auditor.lighthouse_path")
         )
-        ai_service_instance = AIService() # New: Initialize AIService for satellite
+        ai_service_instance = AIService()
+
+        # Initialize DomainAnalyzerService (depends on DomainService and AIService)
+        domain_analyzer_service_instance = DomainAnalyzerService(self.db, domain_service_instance, ai_service_instance)
 
         # Playwright browser instance for WebCrawler (if enabled)
         self.playwright_browser: Optional[Browser] = None
@@ -121,9 +124,9 @@ class SatelliteCrawler:
             clickhouse_loader=self.clickhouse_loader,
             redis_client=self.redis, # Pass the satellite's redis client for deduplication
             technical_auditor=technical_auditor_instance,
-            domain_analyzer_service=domain_analyzer_service, # Pass domain_analyzer_service
-            ai_service=ai_service_instance, # New: Pass AI Service
-            playwright_browser=self.playwright_browser # Pass the Playwright browser instance
+            domain_analyzer_service=domain_analyzer_service_instance, # Pass domain_analyzer_service_instance
+            ai_service=ai_service_instance,
+            playwright_browser=self.playwright_browser
         )
 
         # List of context managers to enter/exit during satellite lifespan
@@ -134,9 +137,7 @@ class SatelliteCrawler:
             keyword_service_instance,
             link_health_service_instance,
             technical_auditor_instance,
-            ai_service_instance # New: Add AI Service to satellite lifespan
-            # crawl_service is not an async context manager itself, its internal services are.
-            # self.crawl_service # Removed from here as it doesn't have __aenter__/__aexit__
+            ai_service_instance
         ]
         if self.clickhouse_loader:
             self._context_managers.append(self.clickhouse_loader)
@@ -283,15 +284,15 @@ class SatelliteCrawler:
             
             # Extract job-specific parameters from job.config
             # These parameters are needed by crawl_service.execute_predefined_job
-            initial_seed_urls = job.config.get("initial_seed_urls") # For backlink_discovery
-            keyword = job.config.get("keyword") # For serp_analysis, keyword_research
-            num_results = job.config.get("num_results") # For serp_analysis, keyword_research
-            source_urls_to_audit = job.config.get("source_urls_to_audit") # For link_health_audit
-            urls_to_audit_tech = job.config.get("urls_to_audit_tech") # For technical_audit
-            domain_names_to_analyze = job.config.get("domain_names_to_analyze") # For domain_analysis
-            min_value_score = job.config.get("min_value_score") # For domain_analysis
-            limit = job.config.get("limit") # For domain_analysis
-            urls_to_audit_full_seo = job.config.get("urls_to_audit_full_seo") # For full_seo_audit
+            initial_seed_urls = job.config.get("initial_seed_urls")
+            keyword = job.config.get("keyword")
+            num_results = job.config.get("num_results")
+            source_urls_to_audit = job.config.get("source_urls_to_audit")
+            urls_to_audit_tech = job.config.get("urls_to_audit_tech")
+            domain_names_to_analyze = job.config.get("domain_names_to_analyze")
+            min_value_score = job.config.get("min_value_score")
+            limit = job.config.get("limit")
+            urls_to_audit_full_seo = job.config.get("urls_to_audit_full_seo")
             
             # Execute the job using the shared CrawlService instance
             await self.crawl_service.execute_predefined_job(

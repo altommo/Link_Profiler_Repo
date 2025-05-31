@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 import random
 from collections import deque
 
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page # New: Import Playwright types
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
@@ -123,7 +123,7 @@ class AdaptiveRateLimiter:
             self.logger.debug(f"Waiting {wait_time:.2f}s for {domain} to respect rate limit.")
             await asyncio.sleep(wait_time)
         
-    self.last_request_time[domain] = time.time()
+        self.last_request_time[domain] = time.time()
 
 
 @dataclass
@@ -147,12 +147,12 @@ class CrawlResult:
 class WebCrawler:
     """Main web crawler class"""
     
-    def __init__(self, config: CrawlConfig, db: Database, job_id: str, ai_service: AIService, playwright_browser: Optional[Browser] = None): # Added playwright_browser
+    def __init__(self, config: CrawlConfig, db: Database, job_id: str, ai_service: AIService, playwright_browser: Optional[Browser] = None):
         self.config = config
         self.db = db
         self.job_id = job_id
         self.ai_service = ai_service
-        self.playwright_browser = playwright_browser # Store the shared Playwright Browser instance
+        self.playwright_browser = playwright_browser
         
         self.rate_limiter = AdaptiveRateLimiter(
             initial_delay_seconds=self.config.delay_seconds,
