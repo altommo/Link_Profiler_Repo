@@ -241,6 +241,7 @@ class CrawlResult:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'CrawlResult':
+        """Create a CrawlResult instance from a dictionary."""
         if 'crawl_timestamp' in data and isinstance(data['crawl_timestamp'], str):
             data['crawl_timestamp'] = datetime.fromisoformat(data['crawl_timestamp'])
         if 'links_found' in data and isinstance(data['links_found'], list):
@@ -358,6 +359,7 @@ class CrawlError:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'CrawlError':
+        """Create a CrawlError instance from a dictionary."""
         if 'timestamp' in data and isinstance(data['timestamp'], str):
             data['timestamp'] = datetime.fromisoformat(data['timestamp'])
         return cls(**data)
@@ -510,7 +512,6 @@ class CrawlConfig:
         # This prevents errors if the dict contains extra serialization metadata
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
-
         return cls(**filtered_data)
 
 
@@ -654,6 +655,7 @@ class SERPResult:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'SERPResult':
+        """Create a SERPResult instance from a dictionary."""
         if 'crawl_timestamp' in data and isinstance(data['crawl_timestamp'], str):
             data['crawl_timestamp'] = datetime.fromisoformat(data['crawl_timestamp'])
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
@@ -674,6 +676,7 @@ class KeywordSuggestion:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'KeywordSuggestion':
+        """Create a KeywordSuggestion instance from a dictionary."""
         if 'data_timestamp' in data and isinstance(data['data_timestamp'], str):
             data['data_timestamp'] = datetime.fromisoformat(data['data_timestamp'])
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
@@ -754,6 +757,7 @@ class User:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'User':
+        """Create a User instance from a dictionary."""
         if 'created_at' in data and isinstance(data['created_at'], str):
             data['created_at'] = datetime.fromisoformat(data['created_at'])
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
@@ -784,8 +788,44 @@ class DomainHistory:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'DomainHistory':
+        """Create a DomainHistory instance from a dictionary."""
         if 'snapshot_date' in data and isinstance(data['snapshot_date'], str):
             data['snapshot_date'] = datetime.fromisoformat(data['snapshot_date'])
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+@dataclass
+class LinkProspect:
+    """Represents a potential link building opportunity."""
+    url: str
+    domain: str = field(init=False)
+    score: float = 0.0 # Calculated score for prospect quality/relevance
+    reasons: List[str] = field(default_factory=list) # Reasons for the score/identification
+    contact_info: Dict[str, str] = field(default_factory=dict) # e.g., {'email': '...', 'twitter': '...'}
+    last_outreach_date: Optional[datetime] = None
+    status: str = "identified" # e.g., "identified", "contacted", "rejected", "acquired"
+    discovered_date: datetime = field(default_factory=datetime.now)
+
+    def __post_init__(self):
+        """Parse domain from URL."""
+        try:
+            parsed = urlparse(self.url)
+            self.domain = parsed.netloc.lower()
+        except Exception:
+            self.domain = "" # Handle invalid URL gracefully
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'LinkProspect':
+        """Create a LinkProspect instance from a dictionary."""
+        if 'last_outreach_date' in data and isinstance(data['last_outreach_date'], str):
+            data['last_outreach_date'] = datetime.fromisoformat(data['last_outreach_date'])
+        if 'discovered_date' in data and isinstance(data['discovered_date'], str):
+            data['discovered_date'] = datetime.fromisoformat(data['discovered_date'])
+        
+        # Remove 'domain' from data if present, as it is calculated in __post_init__
+        data.pop('domain', None)
+
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered_data)
