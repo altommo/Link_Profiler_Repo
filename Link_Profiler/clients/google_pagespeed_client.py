@@ -6,6 +6,8 @@ File: Link_Profiler/clients/google_pagespeed_client.py
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional
+from datetime import datetime # Import datetime
+import random # Import random
 import aiohttp
 
 from Link_Profiler.config.config_loader import config_loader
@@ -88,7 +90,7 @@ class PageSpeedClient:
             'strategy': strategy,
             'key': self.api_key
         }
-        # PageSpeed API expects categories as separate parameters, e.g., &category=performance&category=seo
+        # PageSpeed API expects categories as separate parameters, e.g., &category=performance&category=accessibility
         # aiohttp handles this if you pass a list of tuples or a dict where value is a list
         # For simplicity, let's assume the API accepts comma-separated or multiple params.
         # The API documentation shows `category=performance&category=accessibility`

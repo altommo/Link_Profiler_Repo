@@ -6,7 +6,8 @@ File: Link_Profiler/clients/google_trends_client.py
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta # Import datetime and timedelta
+import random # Import random
 
 from pytrends.request import TrendReq # Requires pip install pytrends
 
