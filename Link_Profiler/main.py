@@ -47,15 +47,18 @@ from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeyw
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.ai_service import AIService
 from Link_Profiler.services.alert_service import AlertService
-from Link_Profiler.services.auth_service import AuthService
 from Link_Profiler.services.report_service import ReportService
 from Link_Profiler.services.competitive_analysis_service import CompetitiveAnalysisService # New: Import CompetitiveAnalysisService
+from Link_Profiler.services.social_media_service import SocialMediaService # New: Import SocialMediaService
+from Link_Profiler.services.web3_service import Web3Service # New: Import Web3Service
+from Link_Profiler.services.link_building_service import LinkBuildingService # New: Import LinkBuildingService
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, Token, ContentGapAnalysisResult, DomainHistory
+from Link_Profiler.crawlers.social_media_crawler import SocialMediaCrawler # New: Import SocialMediaCrawler
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, Token, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob
 from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
@@ -191,6 +194,33 @@ report_service_instance = ReportService(db)
 # New: Initialize Competitive Analysis Service
 competitive_analysis_service_instance = CompetitiveAnalysisService(db, backlink_service_instance, serp_service_instance)
 
+# New: Initialize Social Media Service and Crawler
+social_media_crawler_instance = None
+if config_loader.get("social_media_crawler.enabled"):
+    logger.info("Initialising SocialMediaCrawler.")
+    social_media_crawler_instance = SocialMediaCrawler()
+social_media_service_instance = SocialMediaService(
+    social_media_crawler=social_media_crawler_instance,
+    redis_client=redis_client,
+    cache_ttl=API_CACHE_TTL
+)
+
+# New: Initialize Web3 Service
+web3_service_instance = Web3Service(
+    redis_client=redis_client,
+    cache_ttl=API_CACHE_TTL
+)
+
+# New: Initialize Link Building Service
+link_building_service_instance = LinkBuildingService(
+    database=db,
+    domain_service=domain_service_instance,
+    backlink_service=backlink_service_instance,
+    serp_service=serp_service_instance,
+    keyword_service=keyword_service_instance,
+    ai_service=ai_service_instance
+)
+
 # Initialize DomainAnalyzerService (depends on DomainService)
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance, ai_service_instance)
 
@@ -211,6 +241,10 @@ crawl_service_for_lifespan = CrawlService(
     technical_auditor=technical_auditor_instance,
     domain_analyzer_service=domain_analyzer_service, # Pass the domain_analyzer_service
     ai_service=ai_service_instance, # New: Pass AI Service
+    social_media_service=social_media_service_instance, # New: Pass SocialMediaService
+    web3_service=web3_service_instance, # New: Pass Web3Service
+    link_building_service=link_building_service_instance, # New: Pass LinkBuildingService
+    report_service=report_service_instance, # New: Pass ReportService
     playwright_browser=playwright_browser_instance # Pass the global Playwright browser instance
 ) 
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service) # Corrected class name
@@ -236,7 +270,10 @@ async def lifespan(app: FastAPI):
         alert_service_instance, # New: Add AlertService to lifespan
         auth_service_instance, # New: Add AuthService to lifespan
         report_service_instance, # New: Add ReportService to lifespan
-        competitive_analysis_service_instance # New: Add CompetitiveAnalysisService to lifespan
+        competitive_analysis_service_instance, # New: Add CompetitiveAnalysisService to lifespan
+        social_media_service_instance, # New: Add SocialMediaService
+        web3_service_instance, # New: Add Web3Service
+        link_building_service_instance # New: Add LinkBuildingService
         # Removed crawl_service_for_lifespan as it is not an async context manager itself.
         # Its internal dependencies are already managed here.
     ]
@@ -249,6 +286,8 @@ async def lifespan(app: FastAPI):
         context_managers.append(serp_crawler_instance)
     if keyword_scraper_instance:
         context_managers.append(keyword_scraper_instance)
+    if social_media_crawler_instance: # New: Add SocialMediaCrawler
+        context_managers.append(social_media_crawler_instance)
 
     # New: Conditionally launch global Playwright browser for WebCrawler
     global playwright_browser_instance
@@ -825,6 +864,140 @@ class ContentGapAnalysisResultResponse(BaseModel): # New Pydantic model for Cont
                 result_dict['analysis_date'] = None
         return cls(**result_dict)
 
+# New: Pydantic models for Link Building
+class LinkProspectResponse(BaseModel):
+    url: str
+    domain: str
+    score: float
+    reasons: List[str]
+    contact_info: Dict[str, str]
+    last_outreach_date: Optional[datetime]
+    status: str
+    discovered_date: datetime
+
+    @classmethod
+    def from_link_prospect(cls, prospect: LinkProspect):
+        prospect_dict = serialize_model(prospect)
+        if isinstance(prospect_dict.get('last_outreach_date'), str):
+            try:
+                prospect_dict['last_outreach_date'] = datetime.fromisoformat(prospect_dict['last_outreach_date'])
+            except ValueError:
+                logger.warning(f"Could not parse last_outreach_date string: {prospect_dict.get('last_outreach_date')}")
+                prospect_dict['last_outreach_date'] = None
+        if isinstance(prospect_dict.get('discovered_date'), str):
+            try:
+                prospect_dict['discovered_date'] = datetime.fromisoformat(prospect_dict['discovered_date'])
+            except ValueError:
+                logger.warning(f"Could not parse discovered_date string: {prospect_dict.get('discovered_date')}")
+                prospect_dict['discovered_date'] = None
+        return cls(**prospect_dict)
+
+class LinkProspectUpdateRequest(BaseModel):
+    status: Optional[str] = None
+    last_outreach_date: Optional[datetime] = None
+    contact_info: Optional[Dict[str, str]] = None
+    reasons: Optional[List[str]] = None
+    score: Optional[float] = None
+
+class ProspectIdentificationRequest(BaseModel):
+    target_domain: str = Field(..., description="The primary domain for which to find link building prospects.")
+    competitor_domains: List[str] = Field(..., description="A list of competitor domains to analyze for backlinks.")
+    keywords: List[str] = Field(..., description="A list of keywords to search SERPs for relevant pages.")
+    min_domain_authority: float = Field(20.0, description="Minimum domain authority for a prospect to be considered.")
+    max_spam_score: float = Field(0.3, description="Maximum spam score for a prospect to be considered.")
+    num_serp_results_to_check: int = Field(50, description="Number of SERP results to check for each keyword.")
+    num_competitor_backlinks_to_check: int = Field(100, description="Number of competitor backlinks to check for intersect analysis.")
+
+class OutreachCampaignCreateRequest(BaseModel):
+    name: str = Field(..., description="Name of the outreach campaign.")
+    target_domain: str = Field(..., description="The target domain for this campaign.")
+    description: Optional[str] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+class OutreachCampaignResponse(BaseModel):
+    id: str
+    name: str
+    target_domain: str
+    status: str
+    created_date: datetime
+    start_date: Optional[datetime]
+    end_date: Optional[datetime]
+    description: Optional[str]
+    metrics: Dict[str, Any]
+
+    @classmethod
+    def from_outreach_campaign(cls, campaign: OutreachCampaign):
+        campaign_dict = serialize_model(campaign)
+        if isinstance(campaign_dict.get('created_date'), str):
+            campaign_dict['created_date'] = datetime.fromisoformat(campaign_dict['created_date'])
+        if isinstance(campaign_dict.get('start_date'), str):
+            campaign_dict['start_date'] = datetime.fromisoformat(campaign_dict['start_date'])
+        if isinstance(campaign_dict.get('end_date'), str):
+            campaign_dict['end_date'] = datetime.fromisoformat(campaign_dict['end_date'])
+        return cls(**campaign_dict)
+
+class OutreachEventCreateRequest(BaseModel):
+    campaign_id: str
+    prospect_url: str
+    event_type: str = Field(..., description="Type of event (e.g., 'email_sent', 'reply_received', 'link_acquired').")
+    notes: Optional[str] = None
+    success: Optional[bool] = None
+
+class OutreachEventResponse(BaseModel):
+    id: str
+    campaign_id: str
+    prospect_url: str
+    event_type: str
+    event_date: datetime
+    notes: Optional[str]
+    success: Optional[bool]
+
+    @classmethod
+    def from_outreach_event(cls, event: OutreachEvent):
+        event_dict = serialize_model(event)
+        if isinstance(event_dict.get('event_date'), str):
+            event_dict['event_date'] = datetime.fromisoformat(event_dict['event_date'])
+        return cls(**event_dict)
+
+# New: Pydantic models for AI features
+class ContentGenerationRequest(BaseModel):
+    topic: str = Field(..., description="The topic for which to generate content ideas.")
+    num_ideas: int = Field(5, description="Number of content ideas to generate.")
+
+class CompetitorStrategyAnalysisRequest(BaseModel):
+    primary_domain: str = Field(..., description="The primary domain for analysis.")
+    competitor_domains: List[str] = Field(..., description="List of competitor domains.")
+
+class ReportScheduleRequest(BaseModel):
+    report_type: str = Field(..., description="Type of report (e.g., 'link_profile_pdf', 'all_backlinks_excel').")
+    target_identifier: str = Field(..., description="Identifier for the report target (e.g., URL, 'all').")
+    format: str = Field(..., description="Format of the report (e.g., 'pdf', 'excel').")
+    scheduled_at: Optional[datetime] = Field(None, description="Specific UTC datetime to run the report (ISO format).")
+    cron_schedule: Optional[str] = Field(None, description="Cron string for recurring reports (e.g., '0 0 * * *').")
+    config: Optional[Dict] = Field(None, description="Optional configuration for report generation.")
+
+class ReportJobResponse(BaseModel):
+    id: str
+    report_type: str
+    target_identifier: str
+    format: str
+    status: CrawlStatus
+    created_date: datetime
+    completed_date: Optional[datetime]
+    file_path: Optional[str]
+    error_message: Optional[str]
+
+    @classmethod
+    def from_report_job(cls, job: ReportJob):
+        job_dict = serialize_model(job)
+        job_dict['status'] = job.status.value
+        if isinstance(job_dict.get('created_date'), str):
+            job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
+        if isinstance(job_dict.get('completed_date'), str):
+            job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
+        return cls(**job_dict)
+
 
 # --- API Endpoints ---
 
@@ -1173,6 +1346,53 @@ async def get_domain_history_endpoint(
         logger.error(f"Error retrieving domain history for {domain_name}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve domain history: {e}")
 
+@app.get("/serp/history", response_model=List[SERPResultResponse]) # New endpoint
+async def get_serp_position_history_endpoint(
+    target_url: str = Query(..., description="The URL for which to track SERP history."),
+    keyword: str = Query(..., description="The keyword for which to track SERP history."),
+    num_snapshots: int = Query(12, gt=0, description="The maximum number of recent historical snapshots to retrieve."),
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Retrieves the historical SERP positions for a specific URL and keyword.
+    """
+    logger.info(f"Received request for SERP history for URL '{target_url}' and keyword '{keyword}' by user: {current_user.username}.")
+    if not target_url or not keyword:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target URL and keyword must be provided.")
+    
+    try:
+        history_data = db.get_serp_position_history(target_url, keyword, num_snapshots)
+        if not history_data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No SERP history found for URL '{target_url}' and keyword '{keyword}'.")
+        return [SERPResultResponse.from_serp_result(sr) for sr in history_data]
+    except Exception as e:
+        logger.error(f"Error retrieving SERP position history for '{target_url}' and '{keyword}': {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve SERP position history: {e}")
+
+@app.post("/keyword/semantic_suggestions", response_model=List[str]) # New endpoint
+async def get_semantic_keyword_suggestions_endpoint(
+    primary_keyword: str = Field(..., description="The primary keyword to get semantic suggestions for."),
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Generates a list of semantically related keywords using AI.
+    """
+    logger.info(f"Received request for semantic keyword suggestions for '{primary_keyword}' by user: {current_user.username}.")
+    if not primary_keyword:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary keyword must be provided.")
+    
+    if not ai_service_instance.enabled:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
+
+    try:
+        suggestions = await ai_service_instance.suggest_semantic_keywords(primary_keyword)
+        if not suggestions:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No semantic keyword suggestions found for '{primary_keyword}'.")
+        return suggestions
+    except Exception as e:
+        logger.error(f"Error generating semantic keyword suggestions for '{primary_keyword}': {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate semantic keyword suggestions: {e}")
+
 @app.post("/competitor/link_intersect", response_model=LinkIntersectResponse) # New endpoint
 async def get_link_intersect(request: LinkIntersectRequest, current_user: User = Depends(get_current_user)):
     """
@@ -1210,6 +1430,322 @@ async def get_competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRe
     except Exception as e:
         logger.error(f"Error performing competitive keyword analysis: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform competitive keyword analysis: {e}")
+
+@app.post("/link_building/prospects/identify", response_model=Dict[str, str], status_code=202) # New endpoint
+async def identify_link_prospects_job(
+    request: ProspectIdentificationRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Submits a job to identify and score link building prospects.
+    """
+    logger.info(f"Received request to identify link prospects for {request.target_domain} by user: {current_user.username}.")
+    JOBS_CREATED_TOTAL.labels(job_type='prospect_identification').inc()
+
+    queue_request = QueueCrawlRequest(
+        target_url=request.target_domain,
+        initial_seed_urls=[], # Not directly used for this job type
+        config=request.dict(), # Pass all request fields as config
+        priority=5
+    )
+    queue_request.config["job_type"] = "prospect_identification" # Explicitly set job type in config for queue processing
+
+    return await submit_crawl_to_queue(queue_request)
+
+@app.get("/link_building/prospects", response_model=List[LinkProspectResponse]) # New endpoint
+async def get_all_link_prospects_endpoint(
+    status_filter: Optional[str] = Query(None, description="Filter prospects by status (e.g., 'identified', 'contacted', 'acquired')."),
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Retrieves all identified link building prospects, optionally filtered by status.
+    """
+    logger.info(f"Received request for all link prospects (status: {status_filter}) by user: {current_user.username}.")
+    try:
+        prospects = await link_building_service_instance.get_all_prospects(status_filter=status_filter)
+        return [LinkProspectResponse.from_link_prospect(p) for p in prospects]
+    except Exception as e:
+        logger.error(f"Error retrieving link prospects: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve link prospects: {e}")
+
+@app.put("/link_building/prospects/{prospect_url:path}", response_model=LinkProspectResponse) # New endpoint
+async def update_link_prospect_endpoint(
+    prospect_url: str,
+    request: LinkProspectUpdateRequest,
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Updates the status or other details of a specific link prospect.
+    """
+    logger.info(f"Received request to update link prospect {prospect_url} by user: {current_user.username}.")
+    try:
+        updated_prospect = await link_building_service_instance.update_prospect_status(
+            url=prospect_url,
+            new_status=request.status,
+            last_outreach_date=request.last_outreach_date
+        )
+        if not updated_prospect:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link prospect not found.")
+        
+        # Manually update other fields if provided
+        if request.contact_info is not None:
+            updated_prospect.contact_info = request.contact_info
+        if request.reasons is not None:
+            updated_prospect.reasons = request.reasons
+        if request.score is not None:
+            updated_prospect.score = request.score
+        
+        db.save_link_prospect(updated_prospect) # Save the full updated object
+        return LinkProspectResponse.from_link_prospect(updated_prospect)
+    except Exception as e:
+        logger.error(f"Error updating link prospect {prospect_url}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update link prospect: {e}")
+
+@app.post("/link_building/campaigns", response_model=OutreachCampaignResponse, status_code=status.HTTP_201_CREATED) # New endpoint
+async def create_outreach_campaign_endpoint(
+    request: OutreachCampaignCreateRequest,
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Creates a new link building outreach campaign.
+    """
+    logger.info(f"Received request to create outreach campaign '{request.name}' by user: {current_user.username}.")
+    try:
+        campaign = OutreachCampaign(
+            id=str(uuid.uuid4()),
+            name=request.name,
+            target_domain=request.target_domain,
+            description=request.description,
+            start_date=request.start_date,
+            end_date=request.end_date
+        )
+        db.save_outreach_campaign(campaign)
+        return OutreachCampaignResponse.from_outreach_campaign(campaign)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating outreach campaign: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create outreach campaign: {e}")
+
+@app.get("/link_building/campaigns", response_model=List[OutreachCampaignResponse]) # New endpoint
+async def get_all_outreach_campaigns_endpoint(
+    status_filter: Optional[str] = Query(None, description="Filter campaigns by status (e.g., 'active', 'completed')."),
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Retrieves all outreach campaigns, optionally filtered by status.
+    """
+    logger.info(f"Received request for all outreach campaigns (status: {status_filter}) by user: {current_user.username}.")
+    try:
+        campaigns = db.get_all_outreach_campaigns(status_filter=status_filter)
+        return [OutreachCampaignResponse.from_outreach_campaign(c) for c in campaigns]
+    except Exception as e:
+        logger.error(f"Error retrieving outreach campaigns: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve outreach campaigns: {e}")
+
+@app.get("/link_building/campaigns/{campaign_id}", response_model=OutreachCampaignResponse) # New endpoint
+async def get_outreach_campaign_by_id_endpoint(
+    campaign_id: str,
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Retrieves a specific outreach campaign by its ID.
+    """
+    logger.info(f"Received request for outreach campaign {campaign_id} by user: {current_user.username}.")
+    try:
+        campaign = db.get_outreach_campaign(campaign_id)
+        if not campaign:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outreach campaign not found.")
+        return OutreachCampaignResponse.from_outreach_campaign(campaign)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving outreach campaign {campaign_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve outreach campaign: {e}")
+
+@app.post("/link_building/events", response_model=OutreachEventResponse, status_code=status.HTTP_201_CREATED) # New endpoint
+async def create_outreach_event_endpoint(
+    request: OutreachEventCreateRequest,
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Records a new outreach event for a prospect within a campaign.
+    """
+    logger.info(f"Received request to record outreach event for prospect {request.prospect_url} in campaign {request.campaign_id} by user: {current_user.username}.")
+    try:
+        # Basic validation: check if campaign and prospect exist
+        campaign = db.get_outreach_campaign(request.campaign_id)
+        if not campaign:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Outreach campaign {request.campaign_id} not found.")
+        prospect = db.get_link_prospect(request.prospect_url)
+        if not prospect:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Link prospect {request.prospect_url} not found.")
+
+        event = OutreachEvent(
+            id=str(uuid.uuid4()),
+            campaign_id=request.campaign_id,
+            prospect_url=request.prospect_url,
+            event_type=request.event_type,
+            notes=request.notes,
+            success=request.success
+        )
+        db.save_outreach_event(event)
+        
+        # Optionally update prospect status based on event type
+        if request.event_type == "link_acquired":
+            await link_building_service_instance.update_prospect_status(request.prospect_url, "acquired")
+        elif request.event_type == "email_sent":
+            await link_building_service_instance.update_prospect_status(request.prospect_url, "contacted", event.event_date)
+        elif request.event_type == "rejected":
+            await link_building_service_instance.update_prospect_status(request.prospect_url, "rejected")
+
+        return OutreachEventResponse.from_outreach_event(event)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating outreach event: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create outreach event: {e}")
+
+@app.get("/link_building/prospects/{prospect_url:path}/events", response_model=List[OutreachEventResponse]) # New endpoint
+async def get_outreach_events_for_prospect_endpoint(
+    prospect_url: str,
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Retrieves all outreach events for a specific link prospect.
+    """
+    logger.info(f"Received request for outreach events for prospect {prospect_url} by user: {current_user.username}.")
+    try:
+        events = db.get_outreach_events_for_prospect(prospect_url)
+        return [OutreachEventResponse.from_outreach_event(e) for e in events]
+    except Exception as e:
+        logger.error(f"Error retrieving outreach events for prospect {prospect_url}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve outreach events: {e}")
+
+@app.post("/ai/content_ideas", response_model=List[str]) # New endpoint
+async def generate_content_ideas_endpoint(
+    request: ContentGenerationRequest,
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Generates content ideas for a given topic using AI.
+    """
+    logger.info(f"Received request for content ideas for topic '{request.topic}' by user: {current_user.username}.")
+    if not request.topic:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Topic must be provided.")
+    
+    if not ai_service_instance.enabled:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
+
+    try:
+        ideas = await ai_service_instance.generate_content_ideas(request.topic, request.num_ideas)
+        if not ideas:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No content ideas generated for '{request.topic}'.")
+        return ideas
+    except Exception as e:
+        logger.error(f"Error generating content ideas for '{request.topic}': {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate content ideas: {e}")
+
+@app.post("/ai/competitor_strategy", response_model=Dict[str, Any]) # New endpoint
+async def analyze_competitor_strategy_endpoint(
+    request: CompetitorStrategyAnalysisRequest,
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Analyzes competitor strategies using AI.
+    """
+    logger.info(f"Received request for AI competitor strategy analysis for {request.primary_domain} by user: {current_user.username}.")
+    if not request.primary_domain or not request.competitor_domains:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary domain and competitor domains must be provided.")
+    
+    if not ai_service_instance.enabled:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
+
+    try:
+        analysis_result = await ai_service_instance.analyze_competitors(request.primary_domain, request.competitor_domains)
+        if not analysis_result:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AI could not perform competitor strategy analysis for {request.primary_domain}.")
+        return analysis_result
+    except Exception as e:
+        logger.error(f"Error performing AI competitor strategy analysis for {request.primary_domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform AI competitor strategy analysis: {e}")
+
+@app.post("/reports/schedule", response_model=Dict[str, str], status_code=202) # New endpoint
+async def schedule_report_generation_job(
+    request: ReportScheduleRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Schedules a report generation job to run at a specific time or on a recurring basis.
+    """
+    logger.info(f"Received request to schedule report '{request.report_type}' for '{request.target_identifier}' by user: {current_user.username}.")
+    JOBS_CREATED_TOTAL.labels(job_type='report_generation').inc()
+
+    if not request.scheduled_at and not request.cron_schedule:
+        raise HTTPException(status_code=400, detail="Either 'scheduled_at' or 'cron_schedule' must be provided for scheduling.")
+    
+    if request.cron_schedule and not request.scheduled_at:
+        raise HTTPException(status_code=400, detail="For recurring reports, 'scheduled_at' must be provided for the initial run time.")
+
+    queue_request = QueueCrawlRequest(
+        target_url=request.target_identifier, # Re-use target_url for report target
+        initial_seed_urls=[], # Not applicable
+        config=request.config if request.config else {},
+        priority=5,
+        scheduled_at=request.scheduled_at,
+        cron_schedule=request.cron_schedule
+    )
+    queue_request.config["job_type"] = "report_generation" # Explicitly set job type
+    queue_request.config["report_job_type"] = request.report_type
+    queue_request.config["report_target_identifier"] = request.target_identifier
+    queue_request.config["report_format"] = request.format
+
+    return await submit_crawl_to_queue(queue_request)
+
+@app.get("/reports/{job_id}", response_model=ReportJobResponse) # New endpoint
+async def get_report_job_status(job_id: str, current_user: User = Depends(get_current_user)):
+    """
+    Retrieves the status of a scheduled or generated report job.
+    """
+    logger.info(f"Received request for report job status {job_id} by user: {current_user.username}.")
+    try:
+        report_job = db.get_report_job(job_id)
+        if not report_job:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report job not found.")
+        return ReportJobResponse.from_report_job(report_job)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving report job status {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve report job status: {e}")
+
+@app.get("/reports/{job_id}/download") # New endpoint
+async def download_report_file(job_id: str, current_user: User = Depends(get_current_user)):
+    """
+    Downloads the generated report file for a completed report job.
+    """
+    logger.info(f"Received request to download report for job {job_id} by user: {current_user.username}.")
+    try:
+        report_job = db.get_report_job(job_id)
+        if not report_job:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report job not found.")
+        if report_job.status != CrawlStatus.COMPLETED:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Report job is not yet completed.")
+        if not report_job.file_path or not os.path.exists(report_job.file_path):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report file not found on server.")
+        
+        file_content = await asyncio.to_thread(lambda: open(report_job.file_path, "rb").read())
+        filename = os.path.basename(report_job.file_path)
+        media_type = "application/pdf" if report_job.format == "pdf" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" # For .xlsx
+        
+        return Response(content=file_content, media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading report for job {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to download report: {e}")
 
 
 @app.get("/health")
@@ -1448,3 +1984,22 @@ async def reprocess_dead_letters(current_user: User = Depends(get_current_user))
 
 # Add queue-related endpoints to the main app
 add_queue_endpoints(app, db, alert_service_instance, connection_manager)
+
+# New: WebSocket endpoint for real-time updates
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time updates on job status and alerts.
+    """
+    await connection_manager.connect(websocket)
+    try:
+        while True:
+            # Keep the connection alive. Clients can send messages, but we don't expect them.
+            # If a message is received, it can be processed or ignored.
+            # A simple ping-pong or timeout mechanism could be added for robustness.
+            await websocket.receive_text() # This will block until a message is received or connection closes
+    except WebSocketDisconnect:
+        connection_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error for {websocket.client.host}:{websocket.client.port}: {e}", exc_info=True)
+        connection_manager.disconnect(websocket)
