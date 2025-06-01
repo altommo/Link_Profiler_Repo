@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (minimal for monitoring, but might need more if dashboard grows complex)
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -12,10 +12,11 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy monitoring components
-COPY Link_Profiler/monitoring/ ./Link_Profiler/monitoring/
+# Copy the entire Link_Profiler package
+# This ensures all internal modules (core, database, config, utils etc.) are available
+COPY Link_Profiler/ ./Link_Profiler/
 
-# Set Python path
+# Set Python path to include the /app directory where the package resides
 ENV PYTHONPATH=/app
 
 # Expose monitoring port
