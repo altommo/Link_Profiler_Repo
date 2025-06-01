@@ -1,0 +1,187 @@
+# Link Profiler Configuration
+
+# Logging settings
+logging:
+  level: INFO # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  config: # Optional: Full logging configuration dictionary (Python dictConfig format)
+    version: 1
+    disable_existing_loggers: False
+    formatters:
+      standard:
+        format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: standard
+        level: INFO
+    loggers:
+      Link_Profiler:
+        handlers: [console]
+        level: INFO
+        propagate: False
+      uvicorn:
+        handlers: [console]
+        level: INFO
+        propagate: False
+      uvicorn.access:
+        handlers: [console]
+        level: INFO
+        propagate: False
+      sqlalchemy.engine:
+        handlers: [console]
+        level: WARNING # Set to INFO or DEBUG for more SQLAlchemy logging
+        propagate: False
+    root:
+      handlers: [console]
+      level: INFO
+
+# API settings
+api:
+  host: "0.0.0.0"
+  port: 8000
+
+# Database settings (PostgreSQL)
+database:
+  url: "postgresql://postgres:postgres@localhost:5432/link_profiler_db"
+
+# Redis settings (for queues and caching)
+redis:
+  url: "redis://localhost:6379/0" # Redis URL for job queue and cache
+  cache_ttl: 3600 # Default cache TTL in seconds (1 hour)
+
+# Queue system settings
+queue:
+  job_queue_name: "crawl_jobs"
+  result_queue_name: "crawl_results"
+  dead_letter_queue_name: "dead_letter_queue"
+  scheduler_interval: 5 # How often (in seconds) the coordinator checks for scheduled jobs
+
+# Crawler settings
+crawler:
+  max_depth: 3
+  max_pages: 1000
+  delay_seconds: 1.0
+  timeout_seconds: 30
+  user_agent: "LinkProfilerBot/1.0 (+http://linkprofiler.com/bot.html)"
+  respect_robots_txt: true
+  follow_redirects: true
+  extract_images: true
+  extract_pdfs: false
+  max_file_size_mb: 10
+  max_retries: 3
+  retry_delay_seconds: 5.0
+  
+# Anti-detection & Quality Assurance settings
+anti_detection:
+  user_agent_rotation: false
+  request_header_randomization: false
+  human_like_delays: false
+  stealth_mode: true # Applies to Playwright
+  browser_fingerprint_randomization: false # Applies to Playwright
+  ml_rate_optimization: false # Placeholder for future ML-driven rate limiting
+  captcha_solving_enabled: false # Placeholder for CAPTCHA solving integration
+
+quality_assurance:
+  spam_filtering: true
+  data_quality_scoring: true
+
+# Proxy management settings
+proxy:
+  use_proxies: false
+  proxy_list: [] # Example: [{'url': 'http://user:pass@ip:port', 'region': 'us-east'}]
+  proxy_retry_delay_seconds: 300 # How long to blacklist a bad proxy
+
+# Browser-based crawling settings (for SPA content, Lighthouse, SERP crawling)
+browser_crawler:
+  enabled: true
+  browser_type: "chromium" # chromium, firefox, webkit
+  headless: true # Run browser in headless mode
+
+# External API Integrations
+api_cache:
+  enabled: true
+  ttl: 3600 # Default cache TTL for API responses in seconds
+
+domain_api:
+  abstract_api:
+    enabled: false
+    api_key: "" # Your AbstractAPI key for domain validation/WHOIS
+  real_api:
+    enabled: false
+    api_key: "" # Your API key for a real domain provider (e.g., WhoisXMLAPI, DomainTools)
+
+backlink_api:
+  gsc_api:
+    enabled: false # Requires manual OAuth setup and credentials.json
+  openlinkprofiler_api:
+    enabled: false # Free API with limits
+  real_api:
+    enabled: false
+    api_key: "" # Your API key for a real backlink provider (e.g., Ahrefs, Moz, SEMrush)
+
+serp_api:
+  real_api:
+    enabled: false
+    api_key: "" # Your API key for a real SERP API (e.g., SerpApi, BrightData SERP API)
+
+serp_crawler:
+  playwright:
+    enabled: true # Use Playwright for SERP crawling
+    headless: true
+    browser_type: "chromium"
+
+keyword_api:
+  real_api:
+    enabled: false
+    api_key: "" # Your API key for a real keyword research API (e.g., Ahrefs, SEMrush)
+  metrics_api:
+    enabled: false
+    api_key: "" # Your API key for a real keyword metrics API (e.g., Google Ads API, Ahrefs)
+
+# AI Service Integration (e.g., OpenRouter, OpenAI, Anthropic)
+ai:
+  enabled: false
+  openrouter_api_key: "" # Your OpenRouter API key
+  models: # Map task types to specific models available on OpenRouter
+    content_scoring: "mistralai/mistral-7b-instruct"
+    content_classification: "mistralai/mistral-7b-instruct"
+    content_gap_analysis: "mistralai/mistral-7b-instruct"
+    keyword_research: "mistralai/mistral-7b-instruct"
+    technical_seo_analysis: "mistralai/mistral-7b-instruct"
+    competitor_analysis: "mistralai/mistral-7b-instruct"
+    content_generation: "mistralai/mistral-7b-instruct"
+    domain_value_analysis: "mistralai/mistral-7b-instruct"
+    content_nlp_analysis: "mistralai/mistral-7b-instruct"
+    topic_clustering: "mistralai/mistral-7b-instruct"
+
+# Technical Auditor (Lighthouse CLI)
+technical_auditor:
+  lighthouse_path: "lighthouse" # Path to Lighthouse CLI executable (e.g., "C:\Users\YourUser\AppData\Roaming\npm\lighthouse.cmd" on Windows)
+
+# Notifications & Alerting
+notifications:
+  webhooks:
+    enabled: true
+    urls: [] # List of webhook URLs to send job completion notifications
+  email:
+    enabled: false
+    smtp_server: ""
+    smtp_port: 587
+    smtp_username: ""
+    smtp_password: ""
+    sender_email: ""
+  slack:
+    enabled: false
+    webhook_url: "" # Slack incoming webhook URL
+
+# Monitoring settings
+monitoring:
+  monitor_port: 8001 # Port for the monitoring dashboard and Prometheus metrics
+  performance_window: 3600 # Time window in seconds for performance calculations (e.g., jobs per hour)
+  max_job_history: 50 # Max number of recent jobs to show on dashboard
+
+# Authentication settings
+auth:
+  secret_key: "YOUR_SUPER_SECRET_KEY_CHANGE_THIS_IN_PRODUCTION" # REQUIRED: Change this to a strong, random string!
+  algorithm: "HS256"
+  access_token_expire_minutes: 30 # Token expiry time in minutes
