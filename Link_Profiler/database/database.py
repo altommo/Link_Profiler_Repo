@@ -152,12 +152,25 @@ class Database:
                 data['snapshot_date'] = datetime.fromisoformat(data['snapshot_date'])
             return DomainHistory(**data)
         elif isinstance(orm_obj, DomainIntelligenceORM): # New: Handle DomainIntelligenceORM
+            # Ensure all JSONB fields are dicts and ARRAY fields are lists
+            data['technical_data_summary'] = data.get('technical_data_summary', {})
+            data['seo_metrics'] = data.get('seo_metrics', {})
+            data['social_data_summary'] = data.get('social_data_summary', {})
+            data['security_data_summary'] = data.get('security_data_summary', {})
+            data['historical_data_summary'] = data.get('historical_data_summary', {})
+            data['content_data_summary'] = data.get('content_data_summary', {})
+            data['top_social_platforms'] = data.get('top_social_platforms', [])
+            data['estimated_traffic_trend'] = data.get('estimated_traffic_trend', [])
+            data['data_sources'] = data.get('data_sources', [])
+
             if 'last_updated' in data and isinstance(data['last_updated'], str):
                 data['last_updated'] = datetime.fromisoformat(data['last_updated'])
             return DomainIntelligence(**data)
         elif isinstance(orm_obj, SocialMentionORM): # New: Handle SocialMentionORM
             if 'published_date' in data and isinstance(data['published_date'], str):
                 data['published_date'] = datetime.fromisoformat(data['published_date'])
+            # Ensure raw_data is a dict
+            data['raw_data'] = data.get('raw_data', {})
             return SocialMention(**data)
         elif isinstance(orm_obj, LinkProspectORM): # New: Handle LinkProspectORM
             if 'last_outreach_date' in data and isinstance(data['last_outreach_date'], str):
@@ -1208,6 +1221,9 @@ class Database:
                 # Update existing
                 updated_data = self._to_orm(intelligence)
                 for column in inspect(DomainIntelligenceORM).columns:
+                    # Skip primary key and relationships
+                    if column.key == 'domain_name' or column.key.endswith('_rel'):
+                        continue
                     if hasattr(updated_data, column.key):
                         setattr(orm_intelligence, column.key, getattr(updated_data, column.key))
                 logger.debug(f"Updated domain intelligence for {intelligence.domain_name}.")
@@ -1220,7 +1236,9 @@ class Database:
         except IntegrityError:
             session.rollback()
             logger.warning(f"Domain intelligence for '{intelligence.domain_name}' already exists. Skipping add.")
-            raise ValueError(f"Domain intelligence for '{intelligence.domain_name}' already exists.")
+            # This might happen if two concurrent processes try to save the same new intelligence.
+            # In a distributed system, this is fine, one will succeed, the other will hit this.
+            # No need to raise an error here, as the data is already there.
         except Exception as e:
             session.rollback()
             logger.error(f"Error saving domain intelligence for {intelligence.domain_name}: {e}", exc_info=True)
