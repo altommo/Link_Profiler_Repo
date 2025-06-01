@@ -5,23 +5,23 @@ File: Link_Profiler/database/database.py
 
 import logging
 from typing import List, Optional, Any, Dict, Set
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.inspection import inspect
-from datetime import datetime
+from datetime import datetime, timedelta
 import enum # Import enum for type checking
 from urllib.parse import urlparse # Added import for urlparse
 
 from Link_Profiler.database.models import ( # Changed to absolute import
     Base, DomainORM, URLORM, BacklinkORM, LinkProfileORM, CrawlJobORM,
-    SEOMetricsORM, SERPResultORM, KeywordSuggestionORM, AlertRuleORM, UserORM, # New: Import UserORM
+    SEOMetricsORM, SERPResultORM, KeywordSuggestionORM, AlertRuleORM, UserORM, ContentGapAnalysisResultORM, DomainHistoryORM,
     LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum,
     AlertSeverityEnum, AlertChannelEnum # New: Import Alerting Enums
 )
 from Link_Profiler.core.models import ( # Changed to absolute import
     Domain, URL, Backlink, LinkProfile, CrawlJob, SEOMetrics,
-    SERPResult, KeywordSuggestion, AlertRule, User, # New: Import User
+    SERPResult, KeywordSuggestion, AlertRule, User, ContentGapAnalysisResult, DomainHistory,
     serialize_model, CrawlError # Import CrawlError
 )
 
@@ -112,7 +112,7 @@ class Database:
         elif isinstance(orm_obj, LinkProfileORM):
             # LinkProfile dataclass expects 'referring_domains' as a set
             if 'referring_domains' in data and isinstance(data['referring_domains'], list):
-                data['referring_domains'] = set(data['refer_domains'])
+                data['referring_domains'] = set(data['referring_domains'])
             # LinkProfile dataclass expects 'backlinks' field, but ORM doesn't store it directly.
             # It's derived. So, we need to remove it from data if it's not present in ORM.
             data.pop('backlinks', None)
@@ -141,6 +141,14 @@ class Database:
             if 'created_at' in data and isinstance(data['created_at'], str):
                 data['created_at'] = datetime.fromisoformat(data['created_at'])
             return User(**data)
+        elif isinstance(orm_obj, ContentGapAnalysisResultORM): # New: Handle ContentGapAnalysisResultORM
+            if 'analysis_date' in data and isinstance(data['analysis_date'], str):
+                data['analysis_date'] = datetime.fromisoformat(data['analysis_date'])
+            return ContentGapAnalysisResult(**data)
+        elif isinstance(orm_obj, DomainHistoryORM): # New: Handle DomainHistoryORM
+            if 'snapshot_date' in data and isinstance(data['snapshot_date'], str):
+                data['snapshot_date'] = datetime.fromisoformat(data['snapshot_date'])
+            return DomainHistory(**data)
         return orm_obj
 
     def _to_orm(self, dc_obj: Any):
@@ -215,6 +223,10 @@ class Database:
             return AlertRuleORM(**data)
         elif isinstance(dc_obj, User): # New: Handle User
             return UserORM(**data)
+        elif isinstance(dc_obj, ContentGapAnalysisResult): # New: Handle ContentGapAnalysisResult
+            return ContentGapAnalysisResultORM(**data)
+        elif isinstance(dc_obj, DomainHistory): # New: Handle DomainHistory
+            return DomainHistoryORM(**data)
         return dc_obj
 
     def add_backlink(self, backlink: Backlink) -> None:
@@ -650,6 +662,31 @@ class Database:
         finally:
             session.close()
 
+    def get_serp_position_history(self, target_url: str, keyword: str, num_snapshots: int = 12) -> List[SERPResult]:
+        """
+        Retrieves the historical SERP positions for a specific URL and keyword.
+
+        Args:
+            target_url: The URL for which to track history.
+            keyword: The keyword for which to track history.
+            num_snapshots: The maximum number of recent historical snapshots to retrieve.
+
+        Returns:
+            A list of SERPResult objects, sorted by crawl_timestamp (most recent first).
+        """
+        session = self._get_session()
+        try:
+            orm_history_records = session.query(SERPResultORM).filter(
+                SERPResultORM.result_url == target_url,
+                SERPResultORM.keyword == keyword
+            ).order_by(SERPResultORM.crawl_timestamp.desc()).limit(num_snapshots).all()
+            return [self._to_dataclass(rec) for rec in orm_history_records]
+        except Exception as e:
+            logger.error(f"Error retrieving SERP position history for URL '{target_url}' and keyword '{keyword}': {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
     def add_keyword_suggestions(self, suggestions: List[KeywordSuggestion]) -> None:
         """Adds multiple keyword suggestions to the database."""
         if not suggestions:
@@ -886,6 +923,361 @@ class Database:
             return self._to_dataclass(orm_user)
         except Exception as e:
             logger.error(f"Error retrieving user by username '{username}': {e}", exc_info=True)
+            return None
+        finally:
+            session.close()
+
+    # New: Content Gap Analysis methods
+    def save_content_gap_analysis_result(self, result: ContentGapAnalysisResult) -> None:
+        """Saves or updates a content gap analysis result."""
+        session = self._get_session()
+        try:
+            orm_result = self._to_orm(result)
+            session.add(orm_result)
+            session.commit()
+            logger.debug(f"Saved content gap analysis result for {result.target_url}.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error saving content gap analysis result for {result.target_url}: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    def get_content_gap_analysis_result(self, target_url: str) -> Optional[ContentGapAnalysisResult]:
+        """Retrieves a content gap analysis result by target URL."""
+        session = self._get_session()
+        try:
+            orm_result = session.query(ContentGapAnalysisResultORM).filter_by(target_url=target_url).first()
+            return self._to_dataclass(orm_result)
+        except Exception as e:
+            logger.error(f"Error retrieving content gap analysis result for {target_url}: {e}", exc_info=True)
+            return None
+        finally:
+            session.close()
+
+    def get_backlink_counts_over_time(self, target_domain: str, time_unit: str = "month", num_units: int = 6) -> Dict[str, int]:
+        """
+        Retrieves the count of backlinks discovered over specified time units for a target domain.
+
+        Args:
+            target_domain: The domain for which to track backlink counts.
+            time_unit: The unit of time ('day', 'week', 'month', 'quarter', 'year').
+            num_units: The number of past units to retrieve data for.
+
+        Returns:
+            A dictionary where keys are time period strings (e.g., "YYYY-MM" for months)
+            and values are the count of backlinks discovered in that period.
+        """
+        session = self._get_session()
+        try:
+            results = {}
+            current_date = datetime.now()
+
+            for i in range(num_units):
+                if time_unit == "month":
+                    start_of_unit = current_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=30*i) # Approximate start of month
+                    # Adjust to actual start of month
+                    start_of_unit = start_of_unit.replace(day=1)
+                    end_of_unit = (start_of_unit + timedelta(days=32)).replace(day=1) - timedelta(days=1) # End of current month
+                    period_label = start_of_unit.strftime("%Y-%m")
+                elif time_unit == "quarter":
+                    current_quarter_month = (current_date.month - 1) // 3 * 3 + 1
+                    start_of_unit = current_date.replace(month=current_quarter_month, day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=90*i)
+                    # Adjust to actual start of quarter
+                    start_of_unit = start_of_unit.replace(month=((start_of_unit.month - 1) // 3 * 3 + 1), day=1)
+                    end_of_unit = (start_of_unit + timedelta(days=92)).replace(month=((start_of_unit.month - 1) // 3 * 3 + 1 + 3), day=1) - timedelta(days=1)
+                    period_label = f"{start_of_unit.year}-Q{(start_of_unit.month-1)//3 + 1}"
+                elif time_unit == "year":
+                    start_of_unit = current_date.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=365*i)
+                    end_of_unit = start_of_unit.replace(year=start_of_unit.year + 1) - timedelta(days=1)
+                    period_label = str(start_of_unit.year)
+                elif time_unit == "week":
+                    start_of_unit = current_date - timedelta(weeks=i)
+                    start_of_unit = start_of_unit - timedelta(days=start_of_unit.weekday()) # Monday of the week
+                    start_of_unit = start_of_unit.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_of_unit = start_of_unit + timedelta(days=6, hours=23, minutes=59, seconds=59)
+                    period_label = f"{start_of_unit.isocalendar().year}-W{start_of_unit.isocalendar().week:02d}"
+                elif time_unit == "day":
+                    start_of_unit = current_date - timedelta(days=i)
+                    start_of_unit = start_of_unit.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_of_unit = start_of_unit.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    period_label = start_of_unit.strftime("%Y-%m-%d")
+                else:
+                    raise ValueError("Invalid time_unit. Must be 'day', 'week', 'month', 'quarter', or 'year'.")
+
+                count = session.query(BacklinkORM).filter(
+                    BacklinkORM.target_domain_name == target_domain,
+                    BacklinkORM.discovered_date >= start_of_unit,
+                    BacklinkORM.discovered_date <= end_of_unit
+                ).count()
+                results[period_label] = count
+            
+            logger.info(f"Retrieved backlink counts for {target_domain} over {num_units} {time_unit}s.")
+            return results
+        except Exception as e:
+            logger.error(f"Error retrieving backlink counts for {target_domain}: {e}", exc_info=True)
+            return {}
+        finally:
+            session.close()
+
+    def save_domain_history(self, domain_history: DomainHistory) -> None:
+        """Saves a historical snapshot of domain metrics."""
+        session = self._get_session()
+        try:
+            orm_history = self._to_orm(domain_history)
+            session.add(orm_history)
+            session.commit()
+            logger.debug(f"Saved domain history for {domain_history.domain_name} on {domain_history.snapshot_date.strftime('%Y-%m-%d')}.")
+        except IntegrityError:
+            session.rollback()
+            logger.debug(f"Domain history for {domain_history.domain_name} on {domain_history.snapshot_date.strftime('%Y-%m-%d')} already exists. Skipping.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error saving domain history for {domain_history.domain_name}: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    def get_domain_history(self, domain_name: str, num_snapshots: int = 12) -> List[DomainHistory]:
+        """
+        Retrieves historical snapshots of a domain's metrics.
+
+        Args:
+            domain_name: The domain for which to retrieve history.
+            num_snapshots: The maximum number of recent historical snapshots to retrieve.
+
+        Returns:
+            A list of DomainHistory objects, sorted by snapshot_date (most recent first).
+        """
+        session = self._get_session()
+        try:
+            orm_history_records = session.query(DomainHistoryORM).filter_by(domain_name=domain_name).order_by(DomainHistoryORM.snapshot_date.desc()).limit(num_snapshots).all()
+            return [self._to_dataclass(rec) for rec in orm_history_records]
+        except Exception as e:
+            logger.error(f"Error retrieving domain history for {domain_name}: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
+    def get_crawl_performance_trends(self, time_unit: str = "month", num_units: int = 6) -> List[Dict[str, Any]]:
+        """
+        Retrieves aggregated crawl performance trends over specified time units.
+
+        Args:
+            time_unit: The unit of time ('day', 'week', 'month', 'quarter', 'year').
+            num_units: The number of past units to retrieve data for.
+
+        Returns:
+            A list of dictionaries, each representing a time period with aggregated metrics.
+        """
+        session = self._get_session()
+        try:
+            trends = []
+            current_date = datetime.now()
+
+            for i in range(num_units):
+                if time_unit == "month":
+                    start_of_unit = current_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=30*i)
+                    start_of_unit = start_of_unit.replace(day=1)
+                    end_of_unit = (start_of_unit + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+                    period_label = start_of_unit.strftime("%Y-%m")
+                elif time_unit == "quarter":
+                    current_quarter_month = (current_date.month - 1) // 3 * 3 + 1
+                    start_of_unit = current_date.replace(month=current_quarter_month, day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=90*i)
+                    start_of_unit = start_of_unit.replace(month=((start_of_unit.month - 1) // 3 * 3 + 1), day=1)
+                    end_of_unit = (start_of_unit + timedelta(days=92)).replace(month=((start_of_unit.month - 1) // 3 * 3 + 1 + 3), day=1) - timedelta(days=1)
+                    period_label = f"{start_of_unit.year}-Q{(start_of_unit.month-1)//3 + 1}"
+                elif time_unit == "year":
+                    start_of_unit = current_date.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=365*i)
+                    end_of_unit = start_of_unit.replace(year=start_of_unit.year + 1) - timedelta(days=1)
+                    period_label = str(start_of_unit.year)
+                elif time_unit == "week":
+                    start_of_unit = current_date - timedelta(weeks=i)
+                    start_of_unit = start_of_unit - timedelta(days=start_of_unit.weekday())
+                    start_of_unit = start_of_unit.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_of_unit = start_of_unit + timedelta(days=6, hours=23, minutes=59, seconds=59)
+                    period_label = f"{start_of_unit.isocalendar().year}-W{start_of_unit.isocalendar().week:02d}"
+                elif time_unit == "day":
+                    start_of_unit = current_date - timedelta(days=i)
+                    start_of_unit = start_of_unit.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_of_unit = start_of_unit.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    period_label = start_of_unit.strftime("%Y-%m-%d")
+                else:
+                    raise ValueError("Invalid time_unit. Must be 'day', 'week', 'month', 'quarter', or 'year'.")
+
+                # Query for jobs completed within the current time unit
+                jobs_in_period = session.query(CrawlJobORM).filter(
+                    CrawlJobORM.completed_date >= start_of_unit,
+                    CrawlJobORM.completed_date <= end_of_unit
+                ).all()
+
+                total_jobs = len(jobs_in_period)
+                successful_jobs = len([j for j in jobs_in_period if j.status == CrawlStatusEnum.COMPLETED])
+                failed_jobs = total_jobs - successful_jobs
+                
+                total_duration = sum(j.duration_seconds for j in jobs_in_period if j.duration_seconds is not None)
+                avg_duration = total_duration / total_jobs if total_jobs > 0 else 0.0
+                
+                success_rate = (successful_jobs / total_jobs) * 100 if total_jobs > 0 else 0.0
+                
+                total_errors = sum(j.errors_count for j in jobs_in_period)
+                
+                trends.append({
+                    "period": period_label,
+                    "total_jobs": total_jobs,
+                    "successful_jobs": successful_jobs,
+                    "failed_jobs": failed_jobs,
+                    "avg_duration_seconds": round(avg_duration, 2),
+                    "success_rate_percent": round(success_rate, 1),
+                    "total_errors": total_errors
+                })
+            
+            # Sort trends by period (oldest first)
+            trends.sort(key=lambda x: x['period'])
+            
+            logger.info(f"Retrieved crawl performance trends for {num_units} {time_unit}s.")
+            return trends
+        except Exception as e:
+            logger.error(f"Error retrieving crawl performance trends: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
+    # New: Alert Rule methods
+    def save_alert_rule(self, rule: AlertRule) -> None:
+        """Saves or updates an alert rule."""
+        session = self._get_session()
+        try:
+            orm_rule = session.query(AlertRuleORM).filter_by(id=rule.id).first()
+            if orm_rule:
+                # Update existing
+                updated_data = self._to_orm(rule)
+                for column in inspect(AlertRuleORM).columns:
+                    if hasattr(updated_data, column.key):
+                        setattr(orm_rule, column.key, getattr(updated_data, column.key))
+                logger.debug(f"Updated alert rule: {rule.name}")
+            else:
+                # Add new
+                orm_rule = self._to_orm(rule)
+                session.add(orm_rule)
+                logger.debug(f"Added alert rule: {rule.name}")
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            logger.warning(f"Alert rule with name '{rule.name}' already exists. Skipping add.")
+            raise ValueError(f"Alert rule with name '{rule.name}' already exists.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error saving alert rule {rule.name}: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    def get_alert_rule(self, rule_id: str) -> Optional[AlertRule]:
+        """Retrieves an alert rule by its ID."""
+        session = self._get_session()
+        try:
+            orm_rule = session.query(AlertRuleORM).filter_by(id=rule_id).first()
+            return self._to_dataclass(orm_rule)
+        except Exception as e:
+            logger.error(f"Error retrieving alert rule {rule_id}: {e}", exc_info=True)
+            return None
+        finally:
+            session.close()
+
+    def get_all_alert_rules(self, active_only: bool = False) -> List[AlertRule]:
+        """Retrieves all alert rules, optionally filtering for active ones."""
+        session = self._get_session()
+        try:
+            query = session.query(AlertRuleORM)
+            if active_only:
+                query = query.filter_by(is_active=True)
+            orm_rules = query.all()
+            return [self._to_dataclass(rule) for rule in orm_rules]
+        except Exception as e:
+            logger.error(f"Error retrieving all alert rules: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
+    def delete_alert_rule(self, rule_id: str) -> bool:
+        """Deletes an alert rule by its ID."""
+        session = self._get_session()
+        try:
+            orm_rule = session.query(AlertRuleORM).filter_by(id=rule_id).first()
+            if orm_rule:
+                session.delete(orm_rule)
+                session.commit()
+                logger.info(f"Deleted alert rule {rule_id}.")
+                return True
+            else:
+                logger.warning(f"Alert rule {rule_id} not found for deletion.")
+                return False
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error deleting alert rule {rule_id}: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    # New: User methods for Authentication
+    def create_user(self, user: User) -> User:
+        """Creates a new user in the database."""
+        session = self._get_session()
+        try:
+            orm_user = self._to_orm(user)
+            session.add(orm_user)
+            session.commit()
+            session.refresh(orm_user) # Refresh to get any auto-generated fields like ID
+            logger.info(f"Created new user: {user.username}")
+            return self._to_dataclass(orm_user)
+        except IntegrityError:
+            session.rollback()
+            logger.warning(f"User with username '{user.username}' or email '{user.email}' already exists.")
+            raise ValueError(f"User with username '{user.username}' or email '{user.email}' already exists.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error creating user {user.username}: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        """Retrieves a user by their username."""
+        session = self._get_session()
+        try:
+            orm_user = session.query(UserORM).filter_by(username=username).first()
+            return self._to_dataclass(orm_user)
+        except Exception as e:
+            logger.error(f"Error retrieving user by username '{username}': {e}", exc_info=True)
+            return None
+        finally:
+            session.close()
+
+    # New: Content Gap Analysis methods
+    def save_content_gap_analysis_result(self, result: ContentGapAnalysisResult) -> None:
+        """Saves or updates a content gap analysis result."""
+        session = self._get_session()
+        try:
+            orm_result = self._to_orm(result)
+            session.add(orm_result)
+            session.commit()
+            logger.debug(f"Saved content gap analysis result for {result.target_url}.")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error saving content gap analysis result for {result.target_url}: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    def get_content_gap_analysis_result(self, target_url: str) -> Optional[ContentGapAnalysisResult]:
+        """Retrieves a content gap analysis result by target URL."""
+        session = self._get_session()
+        try:
+            orm_result = session.query(ContentGapAnalysisResultORM).filter_by(target_url=target_url).first()
+            return self._to_dataclass(orm_result)
+        except Exception as e:
+            logger.error(f"Error retrieving content gap analysis result for {target_url}: {e}", exc_info=True)
             return None
         finally:
             session.close()

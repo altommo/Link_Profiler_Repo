@@ -5,13 +5,13 @@ Simple web interface to monitor queue status and satellites
 import asyncio
 import json
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict, List, Any
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import uvicorn
-import logging # Added import for logging
+import logging
 import sys
 import os
 
@@ -20,29 +20,27 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from Link_Profiler.database.database import Database # Import Database
-from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain # Import CrawlJob model and CrawlStatus, and new models
-from Link_Profiler.config.config_loader import config_loader # Import config_loader
+from Link_Profiler.database.database import Database
+from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain
+from Link_Profiler.config.config_loader import config_loader
 
 app = FastAPI(title="Link Profiler Monitor")
-templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "templates")) # Corrected and robust path to templates
+templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "templates"))
 
 class MonitoringDashboard:
     def __init__(self, redis_url: str = "redis://localhost:6379"):
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
-        self.db = Database() # Initialize database connection for job history
-        self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600) # Default to 1 hour
+        self.db = Database()
+        self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.logger = logging.getLogger(__name__)
 
     async def get_queue_metrics(self) -> Dict:
         """Get comprehensive queue metrics"""
         try:
-            # Get queue sizes
             job_queue_size = await self.redis.zcard("crawl_jobs")
             result_queue_size = await self.redis.llen("crawl_results")
             
-            # Get recent heartbeats (last 5 minutes) from the sorted set
             cutoff = (datetime.now() - timedelta(minutes=5)).timestamp()
             recent_heartbeats = await self.redis.zrangebyscore(
                 "crawler_heartbeats_sorted", 
@@ -51,7 +49,6 @@ class MonitoringDashboard:
                 withscores=True
             )
             
-            # Parse satellite information
             satellites = []
             for heartbeat_data, timestamp in recent_heartbeats:
                 try:
@@ -77,17 +74,14 @@ class MonitoringDashboard:
     async def get_job_history(self, limit: int = 50) -> List[Dict]:
         """Get recent job completion history from the database."""
         try:
-            # Fetch all jobs from the database
             all_jobs = self.db.get_all_crawl_jobs()
             
-            # Filter for completed/failed jobs and sort by completion date
             completed_jobs = sorted(
                 [job for job in all_jobs if job.is_completed],
                 key=lambda job: job.completed_date if job.completed_date else datetime.min,
                 reverse=True
             )
             
-            # Prepare data for display
             history_data = []
             for job in completed_jobs[:limit]:
                 history_data.append({
@@ -113,33 +107,26 @@ class MonitoringDashboard:
             info = await self.redis.info("memory")
             memory_usage = info.get("used_memory_human", "Unknown")
             
-            # Calculate throughput and success rate based on real data
-            cutoff_time = datetime.now() - timedelta(seconds=self.performance_window_seconds)
+            # Use the new database method for performance trends
+            trends_data = self.db.get_crawl_performance_trends(
+                time_unit="hour", # Get hourly trends for recent performance
+                num_units=int(self.performance_window_seconds / 3600) # Number of hours in window
+            )
             
-            all_jobs = self.db.get_all_crawl_jobs() # Fetch all jobs
+            total_jobs_in_window = sum(t['total_jobs'] for t in trends_data)
+            successful_jobs_in_window = sum(t['successful_jobs'] for t in trends_data)
             
-            recent_completed_jobs = [
-                job for job in all_jobs 
-                if job.is_completed and job.completed_date and job.completed_date >= cutoff_time
-            ]
-            
-            total_jobs_in_window = len(recent_completed_jobs)
-            successful_jobs_in_window = len([job for job in recent_completed_jobs if job.status == CrawlStatus.COMPLETED])
-            failed_jobs_in_window = total_jobs_in_window - successful_jobs_in_window
-
             jobs_per_hour = 0.0
             avg_job_duration = 0.0
             success_rate = 0.0
 
             if total_jobs_in_window > 0:
-                # Convert window to hours for jobs_per_hour calculation
-                window_hours = self.performance_window_seconds / 3600
-                jobs_per_hour = total_jobs_in_window / window_hours
+                jobs_per_hour = total_jobs_in_window / (self.performance_window_seconds / 3600)
                 
-                # Calculate average duration for successful jobs
-                successful_durations = [job.duration_seconds for job in recent_completed_jobs if job.status == CrawlStatus.COMPLETED and job.duration_seconds is not None]
-                if successful_durations:
-                    avg_job_duration = sum(successful_durations) / len(successful_durations)
+                total_successful_duration = sum(t['avg_duration_seconds'] * t['successful_jobs'] for t in trends_data if t['successful_jobs'] > 0)
+                total_successful_jobs_for_avg = sum(t['successful_jobs'] for t in trends_data)
+                if total_successful_jobs_for_avg > 0:
+                    avg_job_duration = total_successful_duration / total_successful_jobs_for_avg
                 
                 success_rate = (successful_jobs_in_window / total_jobs_in_window) * 100
             
@@ -147,22 +134,21 @@ class MonitoringDashboard:
             active_satellites = queue_metrics.get("active_satellites", 0)
             pending_jobs = queue_metrics.get("pending_jobs", 0)
 
-            # Calculate current load: ratio of pending jobs to active satellites
-            # If no active satellites, load is undefined or very high if jobs are pending
             current_load = 0.0
             if active_satellites > 0:
-                current_load = min(1.0, pending_jobs / (active_satellites * 10)) # Arbitrary scaling factor (e.g., 10 jobs per satellite)
+                current_load = min(1.0, pending_jobs / (active_satellites * 10))
             elif pending_jobs > 0:
-                current_load = 1.0 # High load if jobs are pending but no satellites
+                current_load = 1.0
             
             return {
                 "memory_usage": memory_usage,
                 "jobs_per_hour": round(jobs_per_hour, 2),
                 "avg_job_duration": round(avg_job_duration, 2),
                 "success_rate": round(success_rate, 1),
-                "peak_satellites": active_satellites, # Using current active as a proxy for peak for now
+                "peak_satellites": active_satellites,
                 "current_load": round(current_load, 2),
-                "performance_window_seconds": self.performance_window_seconds # Pass window size for display
+                "performance_window_seconds": self.performance_window_seconds,
+                "trends_data": trends_data # Include detailed trends for potential future use
             }
             
         except Exception as e:
@@ -182,8 +168,7 @@ class MonitoringDashboard:
             # Total Domains Analyzed & Valuable Expired Domains
             all_domains = self.db.get_all_domains()
             total_domains_analyzed = len(all_domains)
-            # Assuming 'is_valuable' might be a property or derived from spam_score/authority_score
-            valuable_expired_domains = len([d for d in all_domains if d.spam_score < 0.2 and d.authority_score > 30]) # Example heuristic
+            valuable_expired_domains = len([d for d in all_domains if d.spam_score < 0.2 and d.authority_score > 30])
 
             # Competitive Keyword Analyses
             competitive_keyword_analyses = self.db.get_count_of_competitive_keyword_analyses()
@@ -222,14 +207,14 @@ async def monitoring_home(request: Request):
     queue_metrics = await dashboard.get_queue_metrics()
     job_history = await dashboard.get_job_history(config_loader.get("monitoring.max_job_history", 50))
     performance_stats = await dashboard.get_performance_stats()
-    data_summaries = await dashboard.get_data_summaries() # New: Fetch data summaries
+    data_summaries = await dashboard.get_data_summaries()
     
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "queue_metrics": queue_metrics,
         "job_history": job_history,
         "performance_stats": performance_stats,
-        "data_summaries": data_summaries, # Pass data summaries to template
+        "data_summaries": data_summaries,
         "refresh_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
@@ -238,12 +223,12 @@ async def get_metrics_api():
     """API endpoint for metrics (for external monitoring)"""
     queue_metrics = await dashboard.get_queue_metrics()
     performance_stats = await dashboard.get_performance_stats()
-    data_summaries = await dashboard.get_data_summaries() # New: Fetch data summaries
+    data_summaries = await dashboard.get_data_summaries()
     
     return {
         **queue_metrics,
         **performance_stats,
-        **data_summaries # Include data summaries in API metrics
+        **data_summaries
     }
 
 @app.get("/api/satellites")
