@@ -6,7 +6,7 @@ File: Link_Profiler/crawlers/social_media_crawler.py
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional
-from datetime import datetime # Import datetime
+from datetime import datetime, timedelta # Import timedelta
 import aiohttp
 import random
 
