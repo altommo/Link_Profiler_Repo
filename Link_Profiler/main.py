@@ -78,14 +78,14 @@ from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient # New:
 from Link_Profiler.clients.google_trends_client import GoogleTrendsClient # New: Import GoogleTrendsClient
 from Link_Profiler.clients.whois_client import WHOISClient # New: Import WHOISClient
 from Link_Profiler.clients.dns_client import DNSClient # New: Import DNSClient
-# from Link_Profiler.clients.reddit_client import RedditClient
-# from Link_Profiler.clients.youtube_client import YouTubeClient
+from Link_Profiler.clients.reddit_client import RedditClient # New: Import RedditClient
+from Link_Profiler.clients.youtube_client import YouTubeClient # New: Import YouTubeClient
+from Link_Profiler.clients.news_api_client import NewsAPIClient # New: Import NewsAPIClient
 # from Link_Profiler.clients.wayback_machine_client import WaybackClient
 # from Link_Profiler.clients.common_crawl_client import CommonCrawlClient
 # from Link_Profiler.clients.nominatim_client import NominatimClient
 # from Link_Profiler.clients.security_trails_client import SecurityTrailsClient
 # from Link_Profiler.clients.ssl_labs_client import SSLLabsClient
-# from Link_Profiler.clients.news_api_client import NewsAPIClient
 
 
 # Initialize and load config once using the absolute path
@@ -245,6 +245,11 @@ report_service_instance = ReportService(db)
 # New: Initialize Competitive Analysis Service
 competitive_analysis_service_instance = CompetitiveAnalysisService(db, backlink_service_instance, serp_service_instance)
 
+# New: Initialize RedditClient, YouTubeClient, NewsAPIClient
+reddit_client_instance = RedditClient()
+youtube_client_instance = YouTubeClient()
+news_api_client_instance = NewsAPIClient()
+
 # New: Initialize Social Media Service and Crawler
 social_media_crawler_instance = None
 if config_loader.get("social_media_crawler.enabled"):
@@ -253,7 +258,10 @@ if config_loader.get("social_media_crawler.enabled"):
 social_media_service_instance = SocialMediaService(
     social_media_crawler=social_media_crawler_instance,
     redis_client=redis_client,
-    cache_ttl=API_CACHE_TTL
+    cache_ttl=API_CACHE_TTL,
+    reddit_client=reddit_client_instance, # New: Pass RedditClient
+    youtube_client=youtube_client_instance, # New: Pass YouTubeClient
+    news_api_client=news_api_client_instance # New: Pass NewsAPIClient
 )
 
 # New: Initialize Web3 Service
@@ -329,7 +337,10 @@ async def lifespan(app: FastAPI):
         pagespeed_client_instance, # New: Add PageSpeedClient to lifespan
         google_trends_client_instance, # New: Add GoogleTrendsClient to lifespan
         whois_client_instance, # New: Add WHOISClient to lifespan
-        dns_client_instance # New: Add DNSClient to lifespan
+        dns_client_instance, # New: Add DNSClient to lifespan
+        reddit_client_instance, # New: Add RedditClient to lifespan
+        youtube_client_instance, # New: Add YouTubeClient to lifespan
+        news_api_client_instance # New: Add NewsAPIClient to lifespan
     ]
 
     # Conditionally add ClickHouseLoader to context managers
@@ -1376,7 +1387,7 @@ async def get_link_velocity(target_domain: str, request_params: LinkVelocityRequ
         logger.error(f"Error retrieving link velocity for {target_domain}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve link velocity: {e}")
 
-@app.get("/domain/{domain_name}/history", response_model=List[DomainHistoryResponse]) # New endpoint
+@app.get("/domain/{domain_name}/history", response_model=List[DomainHistoryResponse]) # Protected endpoint
 async def get_domain_history_endpoint(
     domain_name: str, 
     num_snapshots: int = Query(12, gt=0, description="Number of historical snapshots to retrieve."), # Fixed: Use Query

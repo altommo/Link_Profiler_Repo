@@ -202,9 +202,11 @@ social_media_crawler:
   facebook_app_secret: "" # Your Facebook App Secret
   linkedin_client_id: "" # Your LinkedIn Client ID
   linkedin_client_secret: "" # Your LinkedIn Client Secret
-  reddit_client_id: "" # Your Reddit Client ID
-  reddit_client_secret: "" # Your Reddit Client Secret
-  reddit_user_agent: "LinkProfilerBot/1.0" # Custom user agent for Reddit API
+  reddit_api: # New: Reddit API (PRAW)
+    enabled: false
+    client_id: "" # Your Reddit Client ID
+    client_secret: "" # Your Reddit Client Secret
+    user_agent: "LinkProfilerBot/1.0" # Custom user agent for Reddit API
   youtube_api: # New: YouTube Data API v3
     enabled: false
     api_key: "" # Your Google Cloud API Key
