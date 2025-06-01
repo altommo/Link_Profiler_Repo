@@ -5,11 +5,12 @@ File: Link_Profiler/services/auth_service.py
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any # Added Dict, Any
+from typing import Optional, Dict, Any
 import uuid
 
 from passlib.context import CryptContext # For password hashing
 from jose import JWTError, jwt # For JWT token handling
+from fastapi import HTTPException, status # New: Import HTTPException and status
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import User, Token, TokenData
@@ -31,9 +32,11 @@ class AuthService:
         self.access_token_expire_minutes = config_loader.get("auth.access_token_expire_minutes", 30)
         self.logger = logging.getLogger(__name__)
 
-        if not self.secret_key:
-            self.logger.error("AUTH_SECRET_KEY is not configured. Authentication will not work.")
-            raise ValueError("AUTH_SECRET_KEY must be set in configuration.")
+        if not self.secret_key or self.secret_key == "YOUR_SUPER_SECRET_KEY_CHANGE_THIS_IN_PRODUCTION":
+            self.logger.error("AUTH_SECRET_KEY is not configured or is using the default placeholder. Authentication will not work securely.")
+            self.secret_key = None # Set to None to disable auth features gracefully
+            # Do NOT raise ValueError here, allow the application to start
+            # Individual methods will raise HTTPException if called without a valid key.
 
     async def __aenter__(self):
         """No specific async setup needed for this class."""
@@ -43,16 +46,27 @@ class AuthService:
         """No specific async cleanup needed for this class."""
         pass
 
+    def _check_secret_key(self):
+        """Internal helper to check if the secret key is configured."""
+        if self.secret_key is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication service is not configured. Missing secret key."
+            )
+
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Verifies a plain password against a hashed password."""
+        self._check_secret_key()
         return pwd_context.verify(plain_password, hashed_password)
 
     def get_password_hash(self, password: str) -> str:
         """Hashes a plain password."""
+        self._check_secret_key()
         return pwd_context.hash(password)
 
     def create_access_token(self, data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
         """Creates a JWT access token."""
+        self._check_secret_key()
         to_encode = data.copy()
         if expires_delta:
             expire = datetime.utcnow() + expires_delta
@@ -64,6 +78,7 @@ class AuthService:
 
     def decode_access_token(self, token: str) -> Optional[TokenData]:
         """Decodes and validates a JWT access token."""
+        self._check_secret_key()
         try:
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
             username: str = payload.get("sub")
@@ -72,10 +87,14 @@ class AuthService:
             token_data = TokenData(username=username)
         except JWTError:
             return None
+        except Exception as e:
+            self.logger.error(f"Error decoding access token: {e}", exc_info=True)
+            return None
         return token_data
 
     async def register_user(self, username: str, email: str, password: str) -> User:
         """Registers a new user."""
+        self._check_secret_key()
         hashed_password = self.get_password_hash(password)
         user_id = str(uuid.uuid4())
         new_user = User(
@@ -96,6 +115,7 @@ class AuthService:
 
     async def authenticate_user(self, username: str, password: str) -> Optional[User]:
         """Authenticates a user by username and password."""
+        self._check_secret_key()
         user = self.db.get_user_by_username(username)
         if not user:
             return None
@@ -106,13 +126,14 @@ class AuthService:
 
     async def get_current_user(self, token: str) -> User:
         """Retrieves the current authenticated user from a JWT token."""
+        self._check_secret_key()
         token_data = self.decode_access_token(token)
         if token_data is None:
-            raise ValueError("Invalid authentication credentials")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
         
         user = self.db.get_user_by_username(token_data.username)
         if user is None:
-            raise ValueError("User not found")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found", headers={"WWW-Authenticate": "Bearer"})
         if not user.is_active:
-            raise ValueError("Inactive user")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user", headers={"WWW-Authenticate": "Bearer"})
         return user
