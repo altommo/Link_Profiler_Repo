@@ -49,6 +49,7 @@ from Link_Profiler.services.ai_service import AIService
 from Link_Profiler.services.alert_service import AlertService
 from Link_Profiler.services.auth_service import AuthService
 from Link_Profiler.services.report_service import ReportService
+from Link_Profiler.services.competitive_analysis_service import CompetitiveAnalysisService # New: Import CompetitiveAnalysisService
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
@@ -187,6 +188,9 @@ auth_service_instance = AuthService(db)
 # New: Initialize Report Service
 report_service_instance = ReportService(db)
 
+# New: Initialize Competitive Analysis Service
+competitive_analysis_service_instance = CompetitiveAnalysisService(db, backlink_service_instance, serp_service_instance)
+
 # Initialize DomainAnalyzerService (depends on DomainService)
 domain_analyzer_service = DomainAnalyzerService(db, domain_service_instance, ai_service_instance)
 
@@ -231,7 +235,8 @@ async def lifespan(app: FastAPI):
         ai_service_instance,
         alert_service_instance, # New: Add AlertService to lifespan
         auth_service_instance, # New: Add AuthService to lifespan
-        report_service_instance # New: Add ReportService to lifespan
+        report_service_instance, # New: Add ReportService to lifespan
+        competitive_analysis_service_instance # New: Add CompetitiveAnalysisService to lifespan
         # Removed crawl_service_for_lifespan as it is not an async context manager itself.
         # Its internal dependencies are already managed here.
     ]
@@ -326,10 +331,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     try:
         user = await auth_service_instance.get_current_user(token)
         return user
-    except ValueError as e:
+    except HTTPException: # Re-raise HTTPException from auth_service
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_current_user: {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during authentication.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -834,6 +842,8 @@ async def register_user_endpoint(user_data: UserCreate):
         return UserResponse.from_user(user)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException: # Re-raise HTTPException from auth_service
+        raise
     except Exception as e:
         logger.error(f"Error during user registration: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during registration.")
@@ -873,7 +883,7 @@ async def start_backlink_discovery(
     """
     Submits a new backlink discovery job to the queue.
     """
-    logger.info(f"Received request to submit backlink discovery for {request.target_url} to queue by user: {current_user.username}.")
+    logger.info(f"Received request to submit backlink discovery for {request.target_url} by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='backlink_discovery').inc()
     
     # Convert StartCrawlRequest to QueueCrawlRequest
@@ -895,7 +905,7 @@ async def start_link_health_audit(
     """
     Submits a new link health audit job to the queue.
     """
-    logger.info(f"Received request to submit link health audit for {len(request.source_urls)} URLs to queue by user: {current_user.username}.")
+    logger.info(f"Received request to submit link health audit for {len(request.source_urls)} URLs by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='link_health_audit').inc()
 
     if not request.source_urls:
@@ -924,7 +934,7 @@ async def start_technical_audit(
     """
     Submits a new technical audit job to the queue.
     """
-    logger.info(f"Received request to submit technical audit for {len(request.urls_to_audit)} URLs to queue by user: {current_user.username}.")
+    logger.info(f"Received request to submit technical audit for {len(request.urls_to_audit)} URLs by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='technical_audit').inc()
 
     if not request.urls_to_audit:
@@ -954,7 +964,7 @@ async def start_full_seo_audit(
     Submits a new full SEO audit job to the queue.
     This job orchestrates technical and link health audits.
     """
-    logger.info(f"Received request to submit full SEO audit for {len(request.urls_to_audit)} URLs to queue by user: {current_user.username}.")
+    logger.info(f"Received request to submit full SEO audit for {len(request.urls_to_audit)} URLs by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='full_seo_audit').inc()
 
     if not request.urls_to_audit:
@@ -982,7 +992,7 @@ async def start_domain_analysis_job(
     """
     Submits a new batch domain analysis job to the queue.
     """
-    logger.info(f"Received request to submit domain analysis for {len(request.domain_names)} domains to queue by user: {current_user.username}.")
+    logger.info(f"Received request to submit domain analysis for {len(request.domain_names)} domains by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='domain_analysis').inc()
 
     if not request.domain_names:
@@ -1013,7 +1023,7 @@ async def start_web3_crawl(
     """
     Submits a new Web3 content crawl job to the queue.
     """
-    logger.info(f"Received request to submit Web3 crawl for identifier: {request.web3_content_identifier} to queue by user: {current_user.username}.")
+    logger.info(f"Received request to submit Web3 crawl for identifier: {request.web3_content_identifier} by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='web3_crawl').inc()
 
     queue_request = QueueCrawlRequest(
@@ -1036,7 +1046,7 @@ async def start_social_media_crawl(
     """
     Submits a new social media content crawl job to the queue.
     """
-    logger.info(f"Received request to submit social media crawl for query: {request.social_media_query} to queue by user: {current_user.username}.")
+    logger.info(f"Received request to submit social media crawl for query: {request.social_media_query} by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='social_media_crawl').inc()
 
     queue_request = QueueCrawlRequest(
@@ -1124,7 +1134,7 @@ async def get_link_velocity(target_domain: str, request_params: LinkVelocityRequ
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target domain must be provided.")
     
     try:
-        link_velocity_data = await link_health_service_instance.calculate_link_velocity(
+        link_velocity_data = db.get_backlink_counts_over_time( # Corrected to use db directly
             target_domain=target_domain,
             time_unit=request_params.time_unit,
             num_units=request_params.num_units
@@ -1152,7 +1162,7 @@ async def get_domain_history_endpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Domain name must be provided.")
     
     try:
-        history_data = await domain_service_instance.get_domain_authority_progression(
+        history_data = domain_service_instance.get_domain_authority_progression( # Corrected to use domain_service_instance
             domain_name=domain_name,
             num_snapshots=num_snapshots
         )
@@ -1162,6 +1172,44 @@ async def get_domain_history_endpoint(
     except Exception as e:
         logger.error(f"Error retrieving domain history for {domain_name}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve domain history: {e}")
+
+@app.post("/competitor/link_intersect", response_model=LinkIntersectResponse) # New endpoint
+async def get_link_intersect(request: LinkIntersectRequest, current_user: User = Depends(get_current_user)):
+    """
+    Performs a link intersect analysis to find common linking domains between a primary domain and competitors.
+    """
+    logger.info(f"Received request for link intersect analysis for {request.primary_domain} by user: {current_user.username}.")
+    if not request.primary_domain or not request.competitor_domains:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary domain and at least one competitor domain must be provided.")
+    
+    try:
+        result = await competitive_analysis_service_instance.perform_link_intersect_analysis(
+            primary_domain=request.primary_domain,
+            competitor_domains=request.competitor_domains
+        )
+        return LinkIntersectResponse.from_link_intersect_result(result)
+    except Exception as e:
+        logger.error(f"Error performing link intersect analysis: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform link intersect analysis: {e}")
+
+@app.post("/competitor/keyword_analysis", response_model=CompetitiveKeywordAnalysisResponse) # New endpoint
+async def get_competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRequest, current_user: User = Depends(get_current_user)):
+    """
+    Performs a competitive keyword analysis, identifying common keywords, keyword gaps, and unique keywords.
+    """
+    logger.info(f"Received request for competitive keyword analysis for {request.primary_domain} by user: {current_user.username}.")
+    if not request.primary_domain or not request.competitor_domains:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary domain and at least one competitor domain must be provided.")
+    
+    try:
+        result = await competitive_analysis_service_instance.perform_competitive_keyword_analysis(
+            primary_domain=request.primary_domain,
+            competitor_domains=request.competitor_domains
+        )
+        return CompetitiveKeywordAnalysisResponse.from_competitive_keyword_analysis_result(result)
+    except Exception as e:
+        logger.error(f"Error performing competitive keyword analysis: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform competitive keyword analysis: {e}")
 
 
 @app.get("/health")
@@ -1276,6 +1324,20 @@ async def health_check():
         health_status["status"] = "unhealthy"
         health_status["dependencies"]["clickhouse_loader"] = {"status": "failed_init", "error": str(e)}
         logger.error(f"Health check: ClickHouse Loader failed: {e}")
+
+    # Auth Service
+    try:
+        # Check if secret key is configured, which is a basic health check for auth
+        auth_service_instance._check_secret_key()
+        health_status["dependencies"]["auth_service"] = {"status": "enabled"}
+    except HTTPException as e:
+        health_status["status"] = "unhealthy"
+        health_status["dependencies"]["auth_service"] = {"status": "disabled", "error": e.detail}
+        logger.error(f"Health check: Auth Service failed: {e.detail}")
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["dependencies"]["auth_service"] = {"status": "failed_init", "error": str(e)}
+        logger.error(f"Health check: Auth Service failed: {e}")
 
 
     status_code = 200 if health_status["status"] == "healthy" else 503

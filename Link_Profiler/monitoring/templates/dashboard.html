@@ -50,6 +50,34 @@
         </div>
         
         <div class="card">
+            <h2>📈 Data Summaries</h2>
+            <div class="metric">
+                <h3>Total Link Profiles</h3>
+                <div class="value">{{ data_summaries.total_link_profiles or 0 }}</div>
+            </div>
+            <div class="metric">
+                <h3>Avg. LP Authority</h3>
+                <div class="value">{{ data_summaries.avg_link_profile_authority or "N/A" }}</div>
+            </div>
+            <div class="metric">
+                <h3>Domains Analyzed</h3>
+                <div class="value">{{ data_summaries.total_domains_analyzed or 0 }}</div>
+            </div>
+            <div class="metric">
+                <h3>Valuable Expired</h3>
+                <div class="value">{{ data_summaries.valuable_expired_domains or 0 }}</div>
+            </div>
+            <div class="metric">
+                <h3>Comp. Keyword Analyses</h3>
+                <div class="value">{{ data_summaries.competitive_keyword_analyses or 0 }}</div>
+            </div>
+            <div class="metric">
+                <h3>Total Backlinks Stored</h3>
+                <div class="value">{{ data_summaries.total_backlinks_stored or 0 }}</div>
+            </div>
+        </div>
+
+        <div class="card">
             <h2>🛰️ Satellite Crawlers</h2>
             {% if queue_metrics.satellites %}
                 {% for satellite in queue_metrics.satellites %}

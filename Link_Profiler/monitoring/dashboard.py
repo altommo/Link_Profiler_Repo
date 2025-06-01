@@ -178,7 +178,7 @@ class MonitoringDashboard:
 
             return {
                 "total_link_profiles": total_link_profiles,
-                "avg_link_profile_authority": avg_link_profile_authority,
+                "avg_link_profile_authority": round(avg_link_profile_authority, 2), # Round for display
                 "total_domains_analyzed": total_domains_analyzed,
                 "valuable_expired_domains": valuable_expired_domains,
                 "competitive_keyword_analyses": competitive_keyword_analyses,

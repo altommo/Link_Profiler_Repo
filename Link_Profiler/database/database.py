@@ -780,17 +780,22 @@ class Database:
         session = self._get_session()
         try:
             # Get all SERP results for URLs belonging to the target domains
-            all_serp_results = session.query(SERPResultORM).all() # This could be slow for huge tables
-            
+            # Optimised query to directly filter by domain from URL
+            results = session.query(
+                SERPResultORM.result_url,
+                SERPResultORM.keyword
+            ).all() # Fetch all and filter in Python for simplicity, or use more complex SQLAlchemy for large datasets
+
             ranked_keywords_map: Dict[str, Set[str]] = {domain: set() for domain in domains}
             
-            for result in all_serp_results:
+            for result_url, keyword in results:
                 try:
-                    result_domain = urlparse(result.result_url).netloc.lower()
+                    parsed_url = urlparse(result_url)
+                    result_domain = parsed_url.netloc.lower()
                     if result_domain in domains:
-                        ranked_keywords_map[result_domain].add(result.keyword)
+                        ranked_keywords_map[result_domain].add(keyword)
                 except Exception as e:
-                    logger.warning(f"Could not parse domain from SERP result URL '{result.result_url}': {e}")
+                    logger.warning(f"Could not parse domain from SERP result URL '{result_url}': {e}")
                     continue
             
             logger.info(f"Retrieved ranked keywords for {len(domains)} domains.")
