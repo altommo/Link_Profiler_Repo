@@ -731,7 +731,9 @@ class AlertRule:
         """Create an AlertRule instance from a dictionary."""
         if 'severity' in data and isinstance(data['severity'], str):
             data['severity'] = AlertSeverity(data['severity'])
-        if 'notification_channels' in data and isinstance(data['notification_channels'], list):
+        if 'notification_channels' in data and isinstance(data['notification_channels'], str): # Changed from list to str for single channel
+            data['notification_channels'] = [AlertChannel(c) for c in data['notification_channels'].split(',')] # Split string to list of enums
+        elif 'notification_channels' in data and isinstance(data['notification_channels'], list): # Keep existing list handling
             data['notification_channels'] = [AlertChannel(c) for c in data['notification_channels']]
         if 'created_at' in data and isinstance(data['created_at'], str):
             data['created_at'] = datetime.fromisoformat(data['created_at'])
@@ -826,6 +828,148 @@ class LinkProspect:
         # Remove 'domain' from data if present, as it is calculated in __post_init__
         data.pop('domain', None)
 
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+@dataclass
+class OutreachCampaign:
+    """Represents a link building outreach campaign."""
+    id: str
+    name: str
+    target_domain: str
+    status: str = "active" # e.g., "active", "completed", "paused"
+    created_date: datetime = field(default_factory=datetime.now)
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    description: Optional[str] = None
+    metrics: Dict[str, Any] = field(default_factory=dict) # e.g., {'emails_sent': 100, 'replies': 20, 'links_acquired': 5}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'OutreachCampaign':
+        """Create an OutreachCampaign instance from a dictionary."""
+        if 'created_date' in data and isinstance(data['created_date'], str):
+            data['created_date'] = datetime.fromisoformat(data['created_date'])
+        if 'start_date' in data and isinstance(data['start_date'], str):
+            data['start_date'] = datetime.fromisoformat(data['start_date'])
+        if 'end_date' in data and isinstance(data['end_date'], str):
+            data['end_date'] = datetime.fromisoformat(data['end_date'])
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+@dataclass
+class OutreachEvent:
+    """Represents a single event within an outreach campaign."""
+    id: str
+    campaign_id: str
+    prospect_url: str
+    event_type: str # e.g., "email_sent", "reply_received", "link_acquired", "rejected"
+    event_date: datetime = field(default_factory=datetime.now)
+    notes: Optional[str] = None
+    success: Optional[bool] = None # True if positive outcome (e.g., link acquired, positive reply)
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'OutreachEvent':
+        """Create an OutreachEvent instance from a dictionary."""
+        if 'event_date' in data and isinstance(data['event_date'], str):
+            data['event_date'] = datetime.fromisoformat(data['event_date'])
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+@dataclass
+class ReportJob:
+    """Represents a job for generating a report."""
+    id: str
+    report_type: str # e.g., "link_profile_pdf", "all_backlinks_excel"
+    target_identifier: str # e.g., a URL, or "all" for global reports
+    format: str # e.g., "pdf", "excel"
+    status: CrawlStatus = CrawlStatus.PENDING
+    created_date: datetime = field(default_factory=datetime.now)
+    started_date: Optional[datetime] = None
+    completed_date: Optional[datetime] = None
+    file_path: Optional[str] = None # Path to the generated report file
+    error_message: Optional[str] = None
+    config: Dict = field(default_factory=dict) # Any specific config for report generation
+    
+    # For scheduling
+    scheduled_at: Optional[datetime] = None
+    cron_schedule: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'ReportJob':
+        """Create a ReportJob instance from a dictionary."""
+        if 'status' in data and isinstance(data['status'], str):
+            data['status'] = CrawlStatus(data['status'])
+        if 'created_date' in data and isinstance(data['created_date'], str):
+            data['created_date'] = datetime.fromisoformat(data['created_date'])
+        if 'started_date' in data and isinstance(data['started_date'], str):
+            data['started_date'] = datetime.fromisoformat(data['started_date'])
+        if 'completed_date' in data and isinstance(data['completed_date'], str):
+            data['completed_date'] = datetime.fromisoformat(data['completed_date'])
+        if 'scheduled_at' in data and isinstance(data['scheduled_at'], str):
+            data['scheduled_at'] = datetime.fromisoformat(data['scheduled_at'])
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+@dataclass
+class DomainIntelligence:
+    """
+    Represents aggregated intelligence for a domain, combining various data points
+    beyond basic WHOIS and authority scores. This could include social signals,
+    historical data summaries, content quality assessments, etc.
+    """
+    domain_name: str
+    last_updated: datetime = field(default_factory=datetime.now)
+    # Aggregated metrics
+    total_social_mentions: int = 0
+    avg_sentiment_score: float = 0.0 # e.g., -1.0 to 1.0
+    top_social_platforms: List[str] = field(default_factory=list)
+    # Content quality insights
+    avg_content_quality_score: float = 0.0 # From AI analysis
+    content_gaps_identified: int = 0
+    # Technical SEO summary
+    avg_performance_score: float = 0.0
+    avg_accessibility_score: float = 0.0
+    broken_links_ratio: float = 0.0
+    # Other derived insights
+    estimated_traffic_trend: List[float] = field(default_factory=list) # Monthly trend
+    competitor_overlap_score: float = 0.0 # How much it overlaps with known competitors
+    # Raw data summaries (can be JSONB in ORM)
+    social_data_summary: Dict[str, Any] = field(default_factory=dict)
+    content_data_summary: Dict[str, Any] = field(default_factory=dict)
+    technical_data_summary: Dict[str, Any] = field(default_factory=dict)
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'DomainIntelligence':
+        """Create a DomainIntelligence instance from a dictionary."""
+        if 'last_updated' in data and isinstance(data['last_updated'], str):
+            data['last_updated'] = datetime.fromisoformat(data['last_updated'])
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+@dataclass
+class SocialMention:
+    """Represents a single mention of a brand/keyword on a social media platform."""
+    id: str
+    query: str # The keyword/brand name that was searched for
+    platform: str # e.g., "twitter", "reddit", "youtube", "newsapi"
+    mention_url: str # URL of the post/article
+    mention_text: str # Content of the mention (e.g., tweet text, article title/snippet)
+    author: Optional[str] = None # Author/username
+    published_date: datetime = field(default_factory=datetime.now)
+    sentiment: Optional[str] = None # e.g., "positive", "neutral", "negative"
+    engagement_score: Optional[float] = None # e.g., likes + shares + comments
+    raw_data: Dict[str, Any] = field(default_factory=dict) # Full raw data from the API/scrape
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'SocialMention':
+        """Create a SocialMention instance from a dictionary."""
+        if 'published_date' in data and isinstance(data['published_date'], str):
+            data['published_date'] = datetime.fromisoformat(data['published_date'])
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered_data)
