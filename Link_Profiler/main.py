@@ -888,7 +888,8 @@ class UserResponse(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True # Enable ORM mode for easy conversion from User dataclass
+        # Pydantic V2: 'orm_mode' has been renamed to 'from_attributes'
+        from_attributes = True 
 
     @classmethod
     def from_user(cls, user: User):
@@ -1428,7 +1429,7 @@ async def get_serp_position_history_endpoint(
 
 @app.post("/keyword/semantic_suggestions", response_model=List[str]) # New endpoint
 async def get_semantic_keyword_suggestions_endpoint(
-    primary_keyword: str = Field(..., description="The primary keyword to get semantic suggestions for."),
+    primary_keyword: str = Query(..., description="The primary keyword to get semantic suggestions for."), # Changed to Query
     current_user: User = Depends(get_current_user) # Protected endpoint
 ):
     """
