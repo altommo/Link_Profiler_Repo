@@ -115,6 +115,7 @@ domain_api:
   whois_json_api: # New: WHOIS-JSON.com API
     enabled: false
     base_url: "https://www.whois-json.com/api/v1/whois"
+    api_key: "" # WHOIS-JSON.com might require an API key for higher limits
   dns_over_https_api: # New: DNS over HTTPS (Cloudflare/Google)
     enabled: false
     cloudflare_url: "https://cloudflare-dns.com/dns-query"

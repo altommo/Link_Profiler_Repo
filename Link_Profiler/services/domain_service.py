@@ -23,6 +23,10 @@ from Link_Profiler.monitoring.prometheus_metrics import (
 from Link_Profiler.utils.user_agent_manager import user_agent_manager
 from Link_Profiler.database.database import Database
 
+# New: Import WHOISClient and DNSClient
+from Link_Profiler.clients.whois_client import WHOISClient
+from Link_Profiler.clients.dns_client import DNSClient
+
 logger = logging.getLogger(__name__)
 
 class BaseDomainAPIClient:
@@ -46,67 +50,27 @@ class BaseDomainAPIClient:
 
 class SimulatedDomainAPIClient(BaseDomainAPIClient):
     """
-    A simulated client for domain information APIs.
-    Generates dummy domain data with consistent scores for testing.
+    A purely simulated client for domain information APIs.
+    Generates dummy domain data without making external network calls.
     """
     def __init__(self):
         self.logger = logging.getLogger(__name__ + ".SimulatedDomainAPIClient")
-        self._session: Optional[aiohttp.ClientSession] = None # For simulating network calls
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
         self.logger.debug("Entering SimulatedDomainAPIClient context.")
-        if self._session is None or self._session.closed:
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-            
-            self._session = aiohttp.ClientSession(headers=headers)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for client session."""
         self.logger.debug("Exiting SimulatedDomainAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        pass
 
     async def get_domain_availability(self, domain_name: str) -> bool:
         """
         Simulates checking domain availability.
-        Uses aiohttp to simulate a network call.
         """
-        self.logger.info(f"Simulating API call for domain availability: {domain_name}")
-        
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("SimulatedDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-
-        try:
-            async with session_to_use.get(f"http://localhost:8080/simulate_domain_availability/{domain_name}") as response:
-                # We don't care about the actual response, just that the request was made
-                pass
-        except aiohttp.ClientConnectorError:
-            # This is expected if localhost:8080 is not running, simulating network activity
-            pass
-        except Exception as e:
-            self.logger.warning(f"Unexpected error during simulated domain availability check: {e}")
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
-
+        self.logger.info(f"Purely simulating domain availability for: {domain_name}")
         # Simulate availability based on domain name
         return "example" not in domain_name and "test" not in domain_name
 
@@ -114,34 +78,7 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
         """
         Simulates fetching WHOIS data.
         """
-        self.logger.info(f"Simulating API call for WHOIS data: {domain_name}")
-
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("SimulatedDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-
-        try:
-            async with session_to_use.get(f"http://localhost:8080/simulate_whois/{domain_name}") as response:
-                pass
-        except aiohttp.ClientConnectorError:
-            # This is expected if localhost:8080 is not running, simulating network activity
-            pass
-        except Exception as e:
-            self.logger.warning(f"Unexpected error during simulated WHOIS fetch: {e}")
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
-
+        self.logger.info(f"Purely simulating WHOIS data for: {domain_name}")
         # Generate dummy WHOIS data
         if "example.com" in domain_name:
             return {
@@ -305,10 +242,11 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
     A client for AbstractAPI's Domain API (or similar low-cost/free-tier service).
     Requires an API key.
     """
-    def __init__(self, api_key: str, base_url: str = "https://emailvalidation.abstractapi.com/v1/"):
+    def __init__(self, api_key: str, base_url: str, whois_base_url: str):
         self.logger = logging.getLogger(__name__ + ".AbstractDomainAPIClient")
         self.api_key = api_key
-        self.base_url = base_url
+        self.base_url = base_url # For domain validation
+        self.whois_base_url = whois_base_url # For WHOIS
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
@@ -332,12 +270,9 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
     @api_rate_limited(service="domain_api", api_client_type="abstract_api", endpoint="availability")
     async def get_domain_availability(self, domain_name: str) -> bool:
         """
-        Fetches domain availability using AbstractAPI.
-        Note: AbstractAPI has a dedicated Domain API, but the example uses email validation.
-        You would typically use their Domain API for this.
+        Fetches domain availability using AbstractAPI's Domain Validation API.
         """
-        # Example for AbstractAPI Domain API: https://www.abstractapi.com/api/domain-validation-api
-        endpoint = "https://domain-validation.abstractapi.com/v1/" # Correct endpoint for Domain API
+        endpoint = self.base_url
         params = {"api_key": self.api_key, "domain": domain_name}
         self.logger.info(f"Attempting AbstractAPI Domain API call for availability: {endpoint}?domain={domain_name}...")
 
@@ -378,8 +313,7 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
         """
         Fetches WHOIS data using AbstractAPI's WHOIS API.
         """
-        # Example for AbstractAPI WHOIS API: https://www.abstractapi.com/api/whois-api
-        endpoint = "https://whois.abstractapi.com/v1/" # Correct endpoint for WHOIS API
+        endpoint = self.whois_base_url
         params = {"api_key": self.api_key, "domain": domain_name}
         self.logger.info(f"Attempting AbstractAPI WHOIS API call for {domain_name}...")
 
@@ -429,23 +363,29 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
 class DomainService:
     """
     Service for querying domain-related information, such as availability and WHOIS data.
-    Uses a DomainAPIClient to perform actual lookups.
+    Uses various API clients to perform actual lookups.
     """
-    def __init__(self, api_client: BaseDomainAPIClient, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None):
+    def __init__(self, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None,
+                 whois_client: Optional[WHOISClient] = None, dns_client: Optional[DNSClient] = None): # New: Accept WHOISClient and DNSClient
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
         self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
         self.db = database # Store the database instance
 
-        # Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > Simulated
+        self.whois_client = whois_client
+        self.dns_client = dns_client
+
+        # Determine which DomainAPIClient to use for availability based on priority: AbstractAPI > Real (paid) > Simulated
         if config_loader.get("domain_api.abstract_api.enabled"):
             abstract_api_key = config_loader.get("domain_api.abstract_api.api_key")
-            if not abstract_api_key:
-                self.logger.warning("AbstractAPI enabled but API key not found in config. Falling back to simulated Domain API.")
+            abstract_base_url = config_loader.get("domain_api.abstract_api.base_url")
+            abstract_whois_base_url = config_loader.get("domain_api.abstract_api.whois_base_url")
+            if not abstract_api_key or not abstract_base_url or not abstract_whois_base_url:
+                self.logger.warning("AbstractAPI enabled but API key or base_urls not found in config. Falling back to simulated Domain API.")
                 self.api_client = SimulatedDomainAPIClient()
             else:
-                self.api_client = AbstractDomainAPIClient(api_key=abstract_api_key)
+                self.api_client = AbstractDomainAPIClient(api_key=abstract_api_key, base_url=abstract_base_url, whois_base_url=abstract_whois_base_url)
         elif config_loader.get("domain_api.real_api.enabled"):
             real_api_key = config_loader.get("domain_api.real_api.api_key")
             real_api_base_url = config_loader.get("domain_api.real_api.base_url")
@@ -455,19 +395,27 @@ class DomainService:
             else:
                 self.api_client = RealDomainAPIClient(api_key=real_api_key, base_url=real_api_base_url)
         else:
-            self.logger.info("No specific Domain API enabled. Using SimulatedDomainAPIClient.")
+            self.logger.info("No specific Domain API enabled. Using SimulatedDomainAPIClient for availability checks.")
             self.api_client = SimulatedDomainAPIClient()
 
     async def __aenter__(self):
         """Async context manager entry for DomainService."""
         self.logger.debug("Entering DomainService context.")
-        await self.api_client.__aenter__() # Enter the client's context
+        await self.api_client.__aenter__() # Enter the primary API client's context
+        if self.whois_client:
+            await self.whois_client.__aenter__()
+        if self.dns_client:
+            await self.dns_client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for DomainService."""
         self.logger.debug("Exiting DomainService context.")
-        await self.api_client.__aexit__(exc_type, exc_val, exc_tb) # Exit the client's context
+        await self.api_client.__aexit__(exc_type, exc_val, exc_tb) # Exit the primary API client's context
+        if self.whois_client:
+            await self.whois_client.__aexit__(exc_type, exc_val, exc_tb)
+        if self.dns_client:
+            await self.dns_client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _get_cached_response(self, cache_key: str, service_name: str, endpoint_name: str) -> Optional[Any]:
         if self.api_cache_enabled and self.redis_client:
@@ -511,6 +459,7 @@ class DomainService:
     async def get_whois_info(self, domain_name: str) -> Optional[Dict[str, Any]]:
         """
         Retrieves WHOIS information for a given domain name.
+        Prioritizes WHOISClient if enabled, otherwise uses primary domain API client.
         Uses caching.
         """
         cache_key = f"whois_info:{domain_name}"
@@ -518,14 +467,50 @@ class DomainService:
         if cached_result is not None:
             return cached_result
 
-        whois_data = await self.api_client.get_whois_data(domain_name)
+        whois_data = None
+        if self.whois_client and config_loader.get("domain_api.whois_json_api.enabled"):
+            self.logger.info(f"Using WHOISClient to fetch WHOIS data for {domain_name}.")
+            whois_data = await self.whois_client.get_domain_info(domain_name)
+        else:
+            self.logger.info(f"Using primary Domain API client to fetch WHOIS data for {domain_name}.")
+            whois_data = await self.api_client.get_whois_data(domain_name)
+
         if whois_data: # Only cache if data is actually returned
             await self._set_cached_response(cache_key, whois_data, "domain_api", "whois")
         return whois_data
 
+    async def get_dns_records(self, domain_name: str, record_type: str = 'A') -> Optional[Dict[str, Any]]:
+        """
+        Retrieves DNS records for a given domain name.
+        Uses DNSClient if enabled.
+        Uses caching.
+        """
+        cache_key = f"dns_records:{domain_name}:{record_type}"
+        cached_result = await self._get_cached_response(cache_key, "domain_api", "dns_records")
+        if cached_result is not None:
+            return cached_result
+
+        dns_data = None
+        if self.dns_client and config_loader.get("domain_api.dns_over_https_api.enabled"):
+            self.logger.info(f"Using DNSClient to fetch {record_type} records for {domain_name}.")
+            # Default to Cloudflare, can be made configurable
+            dns_data = await self.dns_client.get_dns_records(domain_name, record_type, use_cloudflare=True)
+        else:
+            self.logger.warning(f"DNSClient is not enabled. Cannot fetch DNS records for {domain_name}. Simulating.")
+            # Fallback to a simple simulation if DNSClient is not enabled
+            dns_data = {
+                "Status": 0,
+                "Question": [{"name": domain_name, "type": 1}], # Type A
+                "Answer": [{"name": domain_name, "type": 1, "TTL": 300, "data": "192.0.2.1"}] # Dummy IP
+            }
+
+        if dns_data:
+            await self._set_cached_response(cache_key, dns_data, "domain_api", "dns_records")
+        return dns_data
+
     async def get_domain_info(self, domain_name: str) -> Optional[Domain]:
         """
-        Combines WHOIS info and availability check into a Domain model.
+        Combines WHOIS info, availability check, and DNS records into a Domain model.
         Assigns consistent simulated scores if no real API is used.
         Uses caching for underlying API calls.
         Also saves a historical snapshot of the domain's metrics.
@@ -539,8 +524,12 @@ class DomainService:
 
         self.logger.info(f"Fetching fresh domain info for {domain_name}.")
         
-        is_available = await self.check_domain_availability(domain_name)
-        whois_data = await self.get_whois_info(domain_name)
+        # Fetch data concurrently
+        is_available, whois_data, dns_a_records = await asyncio.gather(
+            self.check_domain_availability(domain_name),
+            self.get_whois_info(domain_name),
+            self.get_dns_records(domain_name, 'A')
+        )
 
         if not whois_data and not is_available:
             self.logger.warning(f"Could not retrieve any info for domain {domain_name}. It might not exist or APIs failed.")
@@ -557,6 +546,14 @@ class DomainService:
             except Exception as e:
                 self.logger.warning(f"Could not parse creation_date '{creation_date_str}' for {domain_name}: {e}")
 
+        # Extract IP address from DNS A records
+        ip_address = None
+        if dns_a_records and dns_a_records.get("Answer"):
+            for answer in dns_a_records["Answer"]:
+                if answer.get("type") == 1 and "data" in answer: # Type 1 is A record
+                    ip_address = answer["data"]
+                    break
+
         # Simulate scores if not from a real source or if they are missing
         # These scores would ideally come from a dedicated domain metrics API (e.g., Moz, Ahrefs)
         # For now, generate consistent dummy scores based on domain name hash
@@ -572,7 +569,7 @@ class DomainService:
             domain_obj.spam_score = spam_score
             domain_obj.age_days = age_days
             domain_obj.country = whois_data.get("country") if whois_data else None
-            domain_obj.ip_address = whois_data.get("ip_address") if whois_data else None
+            domain_obj.ip_address = ip_address # Use fetched IP
             domain_obj.whois_data = whois_data if whois_data else {}
             domain_obj.last_crawled = datetime.now()
         else:
@@ -583,7 +580,7 @@ class DomainService:
                 spam_score=spam_score,
                 age_days=age_days,
                 country=whois_data.get("country") if whois_data else None,
-                ip_address=whois_data.get("ip_address") if whois_data else None,
+                ip_address=ip_address, # Use fetched IP
                 whois_data=whois_data if whois_data else {},
                 first_seen=creation_date,
                 last_crawled=datetime.now()

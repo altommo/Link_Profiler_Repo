@@ -14,7 +14,7 @@ import time
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if project_root and project_root not in sys.path:
-    sys.path.insert(0, project_root)
+    sys.sys.path.insert(0, project_root)
     print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
 else:
     print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
@@ -76,8 +76,8 @@ from Link_Profiler.utils.connection_manager import ConnectionManager, connection
 from Link_Profiler.clients.google_search_console_client import GSCClient
 from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient # New: Import PageSpeedClient
 from Link_Profiler.clients.google_trends_client import GoogleTrendsClient # New: Import GoogleTrendsClient
-# from Link_Profiler.clients.whois_client import WHOISClient
-# from Link_Profiler.clients.dns_client import DNSClient
+from Link_Profiler.clients.whois_client import WHOISClient # New: Import WHOISClient
+from Link_Profiler.clients.dns_client import DNSClient # New: Import DNSClient
 # from Link_Profiler.clients.reddit_client import RedditClient
 # from Link_Profiler.clients.youtube_client import YouTubeClient
 # from Link_Profiler.clients.wayback_machine_client import WaybackClient
@@ -137,27 +137,31 @@ else:
     logger.info("ClickHouse integration disabled (USE_CLICKHOUSE is not 'true').")
 
 
+# New: Initialize WHOISClient and DNSClient
+whois_client_instance = WHOISClient()
+dns_client_instance = DNSClient()
+
 # Initialize DomainService globally, but manage its lifecycle with lifespan
-# Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > Simulated
+# Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > WHOIS-JSON > Simulated
 if config_loader.get("domain_api.abstract_api.enabled"):
     abstract_api_key = config_loader.get("domain_api.abstract_api.api_key")
     abstract_base_url = config_loader.get("domain_api.abstract_api.base_url")
     abstract_whois_base_url = config_loader.get("domain_api.abstract_api.whois_base_url")
     if not abstract_api_key or not abstract_base_url or not abstract_whois_base_url:
         logger.error("AbstractAPI enabled but API key or base_urls not found in config. Falling back to simulated Domain API.")
-        domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+        domain_service_instance = DomainService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, whois_client=whois_client_instance, dns_client=dns_client_instance)
     else:
-        domain_service_instance = DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key, base_url=abstract_base_url, whois_base_url=abstract_whois_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+        domain_service_instance = DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key, base_url=abstract_base_url, whois_base_url=abstract_whois_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, whois_client=whois_client_instance, dns_client=dns_client_instance)
 elif config_loader.get("domain_api.real_api.enabled"):
     real_api_key = config_loader.get("domain_api.real_api.api_key")
     real_api_base_url = config_loader.get("domain_api.real_api.base_url")
     if not real_api_key or not real_api_base_url:
         logger.error("Real Domain API enabled but API key or base_url not found in config. Falling back to simulated Domain API.")
-        domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+        domain_service_instance = DomainService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, whois_client=whois_client_instance, dns_client=dns_client_instance)
     else:
-        domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=real_api_key, base_url=real_api_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+        domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=real_api_key, base_url=real_api_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, whois_client=whois_client_instance, dns_client=dns_client_instance)
 else:
-    domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+    domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, whois_client=whois_client_instance, dns_client=dns_client_instance)
 
 # New: Initialize GSCClient
 gsc_client_instance = GSCClient()
@@ -323,7 +327,9 @@ async def lifespan(app: FastAPI):
         link_building_service_instance, # New: Add LinkBuildingService
         gsc_client_instance, # New: Add GSCClient to lifespan
         pagespeed_client_instance, # New: Add PageSpeedClient to lifespan
-        google_trends_client_instance # New: Add GoogleTrendsClient to lifespan
+        google_trends_client_instance, # New: Add GoogleTrendsClient to lifespan
+        whois_client_instance, # New: Add WHOISClient to lifespan
+        dns_client_instance # New: Add DNSClient to lifespan
     ]
 
     # Conditionally add ClickHouseLoader to context managers
@@ -733,6 +739,7 @@ class SERPSearchRequest(BaseModel):
 
 class SERPResultResponse(BaseModel):
     keyword: str
+
     position: int
     result_url: str
     title_text: str
