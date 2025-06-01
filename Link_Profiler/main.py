@@ -48,7 +48,7 @@ from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.ai_service import AIService
 from Link_Profiler.services.alert_service import AlertService
 from Link_Profiler.services.auth_service import AuthService
-from Link_Profiler.services.report_service import ReportService # New: Import ReportService
+from Link_Profiler.services.report_service import ReportService
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
@@ -1476,7 +1476,7 @@ async def delete_alert_rule(rule_id: str, current_user: User = Depends(get_curre
         logger.error(f"Error deleting alert rule {rule_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete alert rule: {e}")
 
-# New: Report Generation Endpoint
+# New: Report Generation Endpoints
 @app.get("/reports/link_profile/{target_url:path}/pdf", response_class=Response)
 async def get_link_profile_pdf_report(target_url: str, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
@@ -1503,6 +1503,26 @@ async def get_link_profile_pdf_report(target_url: str, current_user: User = Depe
         "Content-Type": content_type
     }
     return Response(content=pdf_buffer.getvalue(), headers=headers, media_type=content_type)
+
+@app.get("/reports/link_profile/{target_url:path}/excel", response_class=Response)
+async def get_link_profile_excel_report(target_url: str, current_user: User = Depends(get_current_user)): # Protected endpoint
+    """
+    Generates and returns an Excel (XLSX) report for a specific link profile.
+    """
+    logger.info(f"Received request for Excel report of link profile {target_url} by user: {current_user.username}.")
+    if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
+
+    excel_buffer = await report_service_instance.generate_link_profile_excel_report(target_url)
+    
+    if excel_buffer is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate Excel report. Ensure 'openpyxl' is installed.")
+    
+    headers = {
+        "Content-Disposition": f"attachment; filename=link_profile_report_{urlparse(target_url).netloc}.xlsx",
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    }
+    return Response(content=excel_buffer.getvalue(), headers=headers, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.get("/health")

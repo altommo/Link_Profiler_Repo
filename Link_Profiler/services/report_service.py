@@ -23,8 +23,12 @@ except ImportError:
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import LinkProfile, Backlink, serialize_model
+from Link_Profiler.utils.data_exporter import export_to_excel, EXCEL_AVAILABLE # New: Import export_to_excel and EXCEL_AVAILABLE
 
 logger = logging.getLogger(__name__)
+
+# Helper for ReportLab units (moved outside class for global access if needed)
+inch = 72
 
 class ReportService:
     """
@@ -33,6 +37,8 @@ class ReportService:
     def __init__(self, database: Database):
         self.db = database
         self.logger = logging.getLogger(__name__)
+        self.REPORTLAB_AVAILABLE = REPORTLAB_AVAILABLE # Expose availability for external check
+        self.EXCEL_AVAILABLE = EXCEL_AVAILABLE # Expose availability for external check
 
     async def __aenter__(self):
         """No specific async setup needed for this class."""
@@ -52,7 +58,7 @@ class ReportService:
             self.logger.warning(f"Link profile not found for {target_url}. Cannot generate PDF report.")
             return None
 
-        if not REPORTLAB_AVAILABLE:
+        if not self.REPORTLAB_AVAILABLE:
             self.logger.error("ReportLab is not installed. Cannot generate PDF report. Returning simulated PDF.")
             # Simulate a PDF for demonstration if ReportLab is missing
             dummy_pdf_content = f"Simulated PDF Report for Link Profile: {target_url}\n\n" \
@@ -179,5 +185,102 @@ class ReportService:
             self.logger.error(f"Error building PDF for {target_url}: {e}", exc_info=True)
             return None
 
-# Helper for ReportLab units
-inch = 72
+    async def generate_link_profile_excel_report(self, target_url: str) -> Optional[io.BytesIO]:
+        """
+        Generates an Excel report for a given link profile.
+        Returns a BytesIO object containing the XLSX data.
+        """
+        link_profile = self.db.get_link_profile(target_url)
+        if not link_profile:
+            self.logger.warning(f"Link profile not found for {target_url}. Cannot generate Excel report.")
+            return None
+
+        if not self.EXCEL_AVAILABLE:
+            self.logger.error("openpyxl is not installed. Cannot generate Excel report. Returning None.")
+            return None
+
+        # Prepare data for Excel export
+        # Main Summary Sheet
+        summary_data = [
+            {"Metric": "Target URL", "Value": link_profile.target_url},
+            {"Metric": "Target Domain", "Value": link_profile.target_domain},
+            {"Metric": "Total Backlinks", "Value": link_profile.total_backlinks},
+            {"Metric": "Unique Referring Domains", "Value": link_profile.unique_domains},
+            {"Metric": "Dofollow Links", "Value": link_profile.dofollow_links},
+            {"Metric": "Nofollow Links", "Value": link_profile.nofollow_links},
+            {"Metric": "Authority Score", "Value": f"{link_profile.authority_score:.2f}"},
+            {"Metric": "Trust Score", "Value": f"{link_profile.trust_score:.2f}"},
+            {"Metric": "Spam Score", "Value": f"{link_profile.spam_score:.2f}"},
+            {"Metric": "Analysis Date", "Value": link_profile.analysis_date.strftime("%Y-%m-%d %H:%M:%S")}
+        ]
+
+        # Backlinks Sheet
+        backlinks_data = []
+        if link_profile.backlinks:
+            for bl in link_profile.backlinks:
+                backlinks_data.append(serialize_model(bl)) # Use serialize_model to convert Backlink to dict
+
+        # Create a new workbook and add sheets
+        workbook = openpyxl.Workbook()
+
+        # Add Summary Sheet
+        summary_sheet = workbook.active
+        summary_sheet.title = "Summary"
+        summary_sheet.append(["Metric", "Value"])
+        for row in summary_data:
+            summary_sheet.append([row["Metric"], row["Value"]])
+        
+        # Style summary header
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        for cell in summary_sheet[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+        
+        # Auto-size columns for summary
+        for col in summary_sheet.columns:
+            max_length = 0
+            column = col[0].column # Get the column number
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = (max_length + 2)
+            summary_sheet.column_dimensions[get_column_letter(column)].width = adjusted_width
+
+        # Add Backlinks Sheet
+        if backlinks_data:
+            backlinks_sheet = workbook.create_sheet("Backlinks")
+            # Infer fieldnames from the first backlink data dictionary
+            backlink_fieldnames = list(backlinks_data[0].keys()) if backlinks_data else []
+            backlinks_sheet.append(backlink_fieldnames)
+
+            # Style backlinks header
+            for cell in backlinks_sheet[1]:
+                cell.font = header_font
+                cell.fill = header_fill
+
+            for row_data in backlinks_data:
+                row_values = [row_data.get(key, '') for key in backlink_fieldnames]
+                backlinks_sheet.append(row_values)
+            
+            # Auto-size columns for backlinks
+            for col in backlinks_sheet.columns:
+                max_length = 0
+                column = col[0].column # Get the column number
+                for cell in col:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = (max_length + 2)
+                backlinks_sheet.column_dimensions[get_column_letter(column)].width = adjusted_width
+
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        buffer.seek(0)
+        self.logger.info(f"Excel report generated for link profile: {target_url}")
+        return buffer
