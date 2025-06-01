@@ -19,10 +19,11 @@ from playwright.async_api import Browser
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
     CrawlJob, ContentType, serialize_model, SEOMetrics, SpamLevel, CrawlError,
-    SERPResult, KeywordSuggestion, LinkProfile
+    SERPResult, KeywordSuggestion, LinkProfile, ContentGapAnalysisResult, LinkProspect, ReportJob # New: Import ContentGapAnalysisResult, LinkProspect, ReportJob
 )
 from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
+from Link_Profiler.crawlers.social_media_crawler import SocialMediaCrawler # New: Import SocialMediaCrawler
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.services.domain_service import DomainService
@@ -32,6 +33,10 @@ from Link_Profiler.services.keyword_service import KeywordService
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
 from Link_Profiler.services.ai_service import AIService
+from Link_Profiler.services.social_media_service import SocialMediaService # New: Import SocialMediaService
+from Link_Profiler.services.web3_service import Web3Service # New: Import Web3Service
+from Link_Profiler.services.link_building_service import LinkBuildingService # New: Import LinkBuildingService
+from Link_Profiler.services.report_service import ReportService # New: Import ReportService
 from Link_Profiler.utils.content_validator import ContentValidator
 from Link_Profiler.utils.anomaly_detector import anomaly_detector
 from Link_Profiler.config.config_loader import config_loader
@@ -59,6 +64,10 @@ class CrawlService:
         technical_auditor: TechnicalAuditor,
         domain_analyzer_service: DomainAnalyzerService,
         ai_service: AIService,
+        social_media_service: SocialMediaService, # New: Add SocialMediaService
+        web3_service: Web3Service, # New: Add Web3Service
+        link_building_service: LinkBuildingService, # New: Add LinkBuildingService
+        report_service: ReportService, # New: Add ReportService
         playwright_browser: Optional[Browser] = None
     ):
         self.db = database
@@ -74,6 +83,10 @@ class CrawlService:
         self.technical_auditor = technical_auditor
         self.domain_analyzer_service = domain_analyzer_service
         self.ai_service = ai_service
+        self.social_media_service = social_media_service # New
+        self.web3_service = web3_service # New
+        self.link_building_service = link_building_service # New
+        self.report_service = report_service # New
         self.content_validator = ContentValidator()
         self.deduplication_set_key = "processed_backlinks_dedup"
         self.dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
@@ -132,13 +145,21 @@ class CrawlService:
         limit: Optional[int] = None,
         web3_content_identifier: Optional[str] = None,
         social_media_query: Optional[str] = None,
+        content_gap_target_url: Optional[str] = None, # New: for content gap analysis
+        content_gap_competitor_urls: Optional[List[str]] = None, # New: for content gap analysis
+        link_prospect_target_domain: Optional[str] = None, # New: for link building prospect identification
+        link_prospect_competitor_domains: Optional[List[str]] = None, # New: for link building prospect identification
+        link_prospect_keywords: Optional[List[str]] = None, # New: for link building prospect identification
+        report_job_type: Optional[str] = None, # New: for report generation
+        report_target_identifier: Optional[str] = None, # New: for report generation
+        report_format: Optional[str] = None, # New: for report generation
         config: Optional[CrawlConfig] = None
     ) -> CrawlJob:
         """
         Creates a new crawl job of a specified type and starts it.
         
         Args:
-            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit', 'technical_audit', 'domain_analysis', 'full_seo_audit', 'web3_crawl', 'social_media_crawl').
+            job_type: The type of job ('backlink_discovery', 'serp_analysis', 'keyword_research', 'link_health_audit', 'technical_audit', 'domain_analysis', 'full_seo_audit', 'web3_crawl', 'social_media_crawl', 'content_gap_analysis', 'prospect_identification', 'report_generation').
             target_url: The primary URL relevant to the job (e.g., for backlink discovery).
             initial_seed_urls: Optional list of URLs to start crawling from (for backlink discovery).
             keyword: Optional keyword for SERP or keyword research jobs.
@@ -150,6 +171,14 @@ class CrawlService:
             limit: Optional limit for domain analysis results.
             web3_content_identifier: Optional identifier for Web3 content (e.g., IPFS hash, blockchain address).
             social_media_query: Optional query for social media content (e.g., hashtag, username).
+            content_gap_target_url: Target URL for content gap analysis.
+            content_gap_competitor_urls: Competitor URLs for content gap analysis.
+            link_prospect_target_domain: Target domain for link building prospect identification.
+            link_prospect_competitor_domains: Competitor domains for link building prospect identification.
+            link_prospect_keywords: Keywords for link building prospect identification.
+            report_job_type: Specific type of report to generate (e.g., "link_profile_pdf").
+            report_target_identifier: Identifier for the report target (e.g., URL, "all").
+            report_format: Format of the report (e.g., "pdf", "excel").
             config: Optional CrawlConfig object. If None, a default config is used.
         
         Returns:
@@ -169,9 +198,12 @@ class CrawlService:
 
         job = CrawlJob(
             id=job_id,
-            target_url=target_url or keyword or (urls_to_audit_tech[0] if urls_to_audit_tech else None) or \
+            target_url=target_url or keyword or \
+                       (urls_to_audit_tech[0] if urls_to_audit_tech else None) or \
                        (domain_names_to_analyze[0] if domain_names_to_analyze else None) or \
-                       web3_content_identifier or social_media_query or "N/A",
+                       web3_content_identifier or social_media_query or \
+                       content_gap_target_url or link_prospect_target_domain or \
+                       report_target_identifier or "N/A",
             job_type=job_type,
             status=CrawlStatus.PENDING,
             config=serialize_model(config)
@@ -216,6 +248,18 @@ class CrawlService:
             if not social_media_query:
                 raise ValueError("social_media_query must be provided for 'social_media_crawl' job type.")
             asyncio.create_task(self._run_social_media_crawl_job(job, social_media_query, config))
+        elif job_type == 'content_gap_analysis':
+            if not content_gap_target_url or not content_gap_competitor_urls:
+                raise ValueError("content_gap_target_url and content_gap_competitor_urls must be provided for 'content_gap_analysis' job type.")
+            asyncio.create_task(self._run_content_gap_analysis_job(job, content_gap_target_url, content_gap_competitor_urls, config))
+        elif job_type == 'prospect_identification':
+            if not link_prospect_target_domain or not link_prospect_competitor_domains or not link_prospect_keywords:
+                raise ValueError("target_domain, competitor_domains, and keywords must be provided for 'prospect_identification' job type.")
+            asyncio.create_task(self._run_prospect_identification_job(job, link_prospect_target_domain, link_prospect_competitor_domains, link_prospect_keywords, config))
+        elif job_type == 'report_generation':
+            if not report_job_type or not report_target_identifier or not report_format:
+                raise ValueError("report_job_type, report_target_identifier, and report_format must be provided for 'report_generation' job type.")
+            asyncio.create_task(self._run_report_generation_job(job, report_job_type, report_target_identifier, report_format))
         else:
             raise ValueError(f"Unknown job type: {job_type}")
         
@@ -302,6 +346,26 @@ class CrawlService:
                 if not social_media_query_from_config:
                     raise ValueError("social_media_query must be provided for 'social_media_crawl' job type.")
                 await self._run_social_media_crawl_job(job, social_media_query_from_config, config)
+            elif job.job_type == 'content_gap_analysis':
+                content_gap_target_url_from_config = job.config.get("target_url_for_content_gap")
+                content_gap_competitor_urls_from_config = job.config.get("competitor_urls_for_content_gap")
+                if not content_gap_target_url_from_config or not content_gap_competitor_urls_from_config:
+                    raise ValueError("target_url and competitor_urls must be provided for 'content_gap_analysis' job type.")
+                await self._run_content_gap_analysis_job(job, content_gap_target_url_from_config, content_gap_competitor_urls_from_config, config)
+            elif job.job_type == 'prospect_identification':
+                link_prospect_target_domain_from_config = job.config.get("link_prospect_target_domain")
+                link_prospect_competitor_domains_from_config = job.config.get("link_prospect_competitor_domains")
+                link_prospect_keywords_from_config = job.config.get("link_prospect_keywords")
+                if not link_prospect_target_domain_from_config or not link_prospect_competitor_domains_from_config or not link_prospect_keywords_from_config:
+                    raise ValueError("target_domain, competitor_domains, and keywords must be provided for 'prospect_identification' job type.")
+                await self._run_prospect_identification_job(job, link_prospect_target_domain_from_config, link_prospect_competitor_domains_from_config, link_prospect_keywords_from_config, config)
+            elif job.job_type == 'report_generation':
+                report_job_type_from_config = job.config.get("report_job_type")
+                report_target_identifier_from_config = job.config.get("report_target_identifier")
+                report_format_from_config = job.config.get("report_format")
+                if not report_job_type_from_config or not report_target_identifier_from_config or not report_format_from_config:
+                    raise ValueError("report_job_type, report_target_identifier, and report_format must be provided for 'report_generation' job type.")
+                await self._run_report_generation_job(job, report_job_type_from_config, report_target_identifier_from_config, report_format_from_config)
             else:
                 raise ValueError(f"Unknown job type: {job.job_type}")
             
@@ -973,33 +1037,17 @@ class CrawlService:
         """
         self.logger.info(f"Starting Web3 crawl logic for job {job.id} for identifier: '{web3_content_identifier}'")
         
-        # Placeholder for Web3 crawling logic
-        # In a real scenario, this would involve:
-        # - Connecting to a blockchain node (e.g., web3.py for Ethereum)
-        # - Interacting with IPFS gateways
-        # - Querying smart contracts
-        # - Fetching data from decentralised storage
+        async with self.web3_service as ws:
+            web3_data = await ws.crawl_web3_content(web3_content_identifier)
         
-        # Simulate some work
-        await asyncio.sleep(5) 
-        
-        # Simulate results
-        simulated_web3_data = {
-            "identifier": web3_content_identifier,
-            "type": "IPFS_Content" if web3_content_identifier.startswith("Qm") else "Blockchain_Transaction",
-            "extracted_data": f"Simulated data for {web3_content_identifier}. This could be text, metadata, or transaction details.",
-            "links_found_web3": ["ipfs://QmSimulatedLink1", "ethereum://0xSimulatedAddress"],
-            "status": "simulated_success"
-        }
-        
-        job.results['web3_crawl_data'] = simulated_web3_data
+        job.results['web3_crawl_data'] = serialize_model(web3_data)
         job.urls_crawled = 1 # Count the identifier as one crawled item
-        job.links_found = len(simulated_web3_data.get("links_found_web3", []))
+        job.links_found = len(web3_data.get("links_found_web3", []))
         job.progress_percentage = 100.0
-        self.logger.info(f"Web3 crawl job {job.id} completed for '{web3_content_identifier}'. Simulated data extracted.")
+        self.logger.info(f"Web3 crawl job {job.id} completed for '{web3_content_identifier}'. Data extracted.")
 
         # Example of adding an anomaly if no data was found
-        if not simulated_web3_data.get("extracted_data") and config.anomaly_detection_enabled:
+        if not web3_data.get("extracted_data") and config.anomaly_detection_enabled:
             job.anomalies_detected.append("Empty Web3 Content")
             self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
 
@@ -1010,35 +1058,135 @@ class CrawlService:
         """
         self.logger.info(f"Starting social media crawl logic for job {job.id} for query: '{social_media_query}'")
 
-        # Placeholder for social media crawling logic
-        # In a real scenario, this would involve:
-        # - Authenticating with social media APIs (Twitter API, Facebook Graph API, LinkedIn API)
-        # - Fetching posts, comments, user profiles, follower counts, etc.
-        # - Parsing structured data from API responses
+        async with self.social_media_service as sms:
+            social_media_data = await sms.crawl_social_media(social_media_query, config.get("platforms"))
         
-        # Simulate some work
-        await asyncio.sleep(random.uniform(3, 8)) # Simulate longer social media API calls
-        
-        # Simulate results
-        simulated_social_media_data = {
-            "query": social_media_query,
-            "platform": random.choice(config_loader.get("social_media_crawler.platforms", ["unknown"])),
-            "posts_found": random.randint(10, 100),
-            "users_interacted": random.randint(5, 50),
-            "extracted_sample": f"Simulated social media data for '{social_media_query}'. This could be post text, engagement metrics, etc.",
-            "status": "simulated_success"
-        }
-        
-        job.results['social_media_crawl_data'] = simulated_social_media_data
+        job.results['social_media_crawl_data'] = serialize_model(social_media_data)
         job.urls_crawled = 1 # Count the query as one crawled item
-        job.links_found = simulated_social_media_data.get("posts_found", 0) # Re-use links_found for posts found
+        job.links_found = social_media_data.get("posts_found", 0) # Re-use links_found for posts found
         job.progress_percentage = 100.0
-        self.logger.info(f"Social media crawl job {job.id} completed for '{social_media_query}'. Simulated data extracted.")
+        self.logger.info(f"Social media crawl job {job.id} completed for '{social_media_query}'. Data extracted.")
 
         # Example of adding an anomaly if no data was found
-        if simulated_social_media_data.get("posts_found", 0) == 0 and config.anomaly_detection_enabled:
+        if social_media_data.get("posts_found", 0) == 0 and config.anomaly_detection_enabled:
             job.anomalies_detected.append("No Social Media Posts Found")
             self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
+
+    async def _run_content_gap_analysis_job(self, job: CrawlJob, target_url: str, competitor_urls: List[str], config: CrawlConfig):
+        """
+        Internal method to execute a content gap analysis job.
+        """
+        self.logger.info(f"Starting content gap analysis logic for job {job.id} for {target_url}.")
+
+        if not self.ai_service.enabled:
+            job.add_error(url="N/A", error_type="AIServiceDisabled", message="AI Service is not enabled for content gap analysis.")
+            raise ValueError("AI Service is not enabled for content gap analysis.")
+
+        try:
+            content_gap_result: ContentGapAnalysisResult = await self.ai_service.analyze_content_gaps(target_url, competitor_urls)
+            self.db.save_content_gap_analysis_result(content_gap_result)
+            job.results['content_gap_analysis'] = serialize_model(content_gap_result)
+            job.urls_crawled = 1 # Count as one analysis
+            job.progress_percentage = 100.0
+            self.logger.info(f"Content gap analysis job {job.id} completed for {target_url}.")
+        except Exception as e:
+            self.logger.error(f"Error during content gap analysis for {target_url}: {e}", exc_info=True)
+            job.add_error(url=target_url, error_type="ContentGapAnalysisError", message=f"Content gap analysis failed: {str(e)}", details=str(e))
+            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="ContentGapAnalysisError").inc()
+            raise
+
+        if config.anomaly_detection_enabled:
+            if not content_gap_result.missing_topics and not content_gap_result.missing_keywords:
+                job.anomalies_detected.append("No Content Gaps Identified")
+            
+            if job.anomalies_detected:
+                self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
+
+    async def _run_prospect_identification_job(self, job: CrawlJob, target_domain: str, competitor_domains: List[str], keywords: List[str], config: CrawlConfig):
+        """
+        Internal method to execute a link building prospect identification job.
+        """
+        self.logger.info(f"Starting prospect identification logic for job {job.id} for {target_domain}.")
+
+        try:
+            prospects: List[LinkProspect] = await self.link_building_service.identify_and_score_prospects(
+                target_domain=target_domain,
+                competitor_domains=competitor_domains,
+                keywords=keywords,
+                min_domain_authority=job.config.get("min_domain_authority", 20.0),
+                max_spam_score=job.config.get("max_spam_score", 0.3),
+                num_serp_results_to_check=job.config.get("num_serp_results_to_check", 50),
+                num_competitor_backlinks_to_check=job.config.get("num_competitor_backlinks_to_check", 100)
+            )
+            job.results['identified_prospects'] = [serialize_model(p) for p in prospects]
+            job.urls_discovered = len(prospects)
+            job.progress_percentage = 100.0
+            self.logger.info(f"Prospect identification job {job.id} completed. Found {len(prospects)} prospects.")
+        except Exception as e:
+            self.logger.error(f"Error during prospect identification for {target_domain}: {e}", exc_info=True)
+            job.add_error(url=target_domain, error_type="ProspectIdentificationError", message=f"Prospect identification failed: {str(e)}", details=str(e))
+            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="ProspectIdentificationError").inc()
+            raise
+
+        if config.anomaly_detection_enabled:
+            if not prospects:
+                job.anomalies_detected.append("No Link Prospects Identified")
+            
+            if job.anomalies_detected:
+                self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
+
+    async def _run_report_generation_job(self, job: CrawlJob, report_type: str, target_identifier: str, report_format: str):
+        """
+        Internal method to execute a report generation job.
+        """
+        self.logger.info(f"Starting report generation logic for job {job.id}: Type='{report_type}', Target='{target_identifier}', Format='{report_format}'.")
+
+        report_file_path = os.path.join("reports", f"{report_type}_{target_identifier.replace('/', '_').replace(':', '')}_{datetime.now().strftime('%Y%m%d%H%M%S')}.{report_format}")
+        os.makedirs(os.path.dirname(report_file_path), exist_ok=True)
+
+        try:
+            report_buffer: Optional[bytes] = None
+            if report_type == "link_profile_pdf" and report_format == "pdf":
+                report_buffer = await self.report_service.generate_link_profile_pdf_report(target_identifier)
+            elif report_type == "link_profile_excel" and report_format == "excel":
+                report_buffer = await self.report_service.generate_link_profile_excel_report(target_identifier)
+            elif report_type == "all_backlinks_excel" and report_format == "excel":
+                all_backlinks = self.db.get_all_backlinks()
+                # Convert Backlink objects to dictionaries for export
+                all_backlinks_dicts = [serialize_model(bl) for bl in all_backlinks]
+                report_buffer = await self.report_service.generate_excel_report(all_backlinks_dicts, sheet_name="All Backlinks")
+            elif report_type == "all_link_profiles_excel" and report_format == "excel":
+                all_link_profiles = self.db.get_all_link_profiles()
+                all_link_profiles_dicts = [serialize_model(lp) for lp in all_link_profiles]
+                report_buffer = await self.report_service.generate_excel_report(all_link_profiles_dicts, sheet_name="All Link Profiles")
+            elif report_type == "all_crawl_jobs_excel" and report_format == "excel":
+                all_crawl_jobs = self.db.get_all_crawl_jobs()
+                all_crawl_jobs_dicts = [serialize_model(cj) for cj in all_crawl_jobs]
+                report_buffer = await self.report_service.generate_excel_report(all_crawl_jobs_dicts, sheet_name="All Crawl Jobs")
+            else:
+                raise ValueError(f"Unsupported report type '{report_type}' or format '{report_format}'.")
+
+            if report_buffer:
+                with open(report_file_path, 'wb') as f:
+                    f.write(report_buffer.getvalue())
+                job.results['report_file_path'] = report_file_path
+                job.progress_percentage = 100.0
+                self.logger.info(f"Report generation job {job.id} completed. Report saved to {report_file_path}.")
+            else:
+                raise ValueError("Report generation returned no data.")
+
+        except Exception as e:
+            self.logger.error(f"Error during report generation for job {job.id}: {e}", exc_info=True)
+            job.add_error(url="N/A", error_type="ReportGenerationError", message=f"Report generation failed: {str(e)}", details=str(e))
+            JOB_ERRORS_TOTAL.labels(job_type=job.job_type, error_type="ReportGenerationError").inc()
+            raise
+
+        if job.config.get("anomaly_detection_enabled", False):
+            if job.errors_count > 0:
+                job.anomalies_detected.append("Report Generation Failed")
+            
+            if job.anomalies_detected:
+                self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
 
 
     def get_job_status(self, job_id: str) -> Optional[CrawlJob]:
