@@ -143,25 +143,15 @@ dns_client_instance = DNSClient()
 
 # Initialize DomainService globally, but manage its lifecycle with lifespan
 # Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > WHOIS-JSON > Simulated
-if config_loader.get("domain_api.abstract_api.enabled"):
-    abstract_api_key = config_loader.get("domain_api.abstract_api.api_key")
-    abstract_base_url = config_loader.get("domain_api.abstract_api.base_url")
-    abstract_whois_base_url = config_loader.get("domain_api.abstract_api.whois_base_url")
-    if not abstract_api_key or not abstract_base_url or not abstract_whois_base_url:
-        logger.error("AbstractAPI enabled but API key or base_urls not found in config. Falling back to simulated Domain API.")
-        domain_service_instance = DomainService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, whois_client=whois_client_instance, dns_client=dns_client_instance)
-    else:
-        domain_service_instance = DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key, base_url=abstract_base_url, whois_base_url=abstract_whois_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, whois_client=whois_client_instance, dns_client=dns_client_instance)
-elif config_loader.get("domain_api.real_api.enabled"):
-    real_api_key = config_loader.get("domain_api.real_api.api_key")
-    real_api_base_url = config_loader.get("domain_api.real_api.base_url")
-    if not real_api_key or not real_api_base_url:
-        logger.error("Real Domain API enabled but API key or base_url not found in config. Falling back to simulated Domain API.")
-        domain_service_instance = DomainService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, whois_client=whois_client_instance, dns_client=dns_client_instance)
-    else:
-        domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=real_api_key, base_url=real_api_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, whois_client=whois_client_instance, dns_client=dns_client_instance)
-else:
-    domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, whois_client=whois_client_instance, dns_client=dns_client_instance)
+# The DomainService constructor now handles the internal assignment of api_client
+# based on the config, so we just pass the necessary dependencies.
+domain_service_instance = DomainService(
+    redis_client=redis_client, 
+    cache_ttl=API_CACHE_TTL, 
+    database=db, 
+    whois_client=whois_client_instance, 
+    dns_client=dns_client_instance
+)
 
 # New: Initialize GSCClient
 gsc_client_instance = GSCClient()
@@ -199,7 +189,7 @@ if config_loader.get("serp_crawler.playwright.enabled"):
         browser_type=config_loader.get("serp_crawler.playwright.browser_type")
     )
 serp_service_instance = SERPService(
-    api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key")) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(),
+    api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key"), base_url=config_loader.get("serp_api.real_api.base_url")) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(),
     serp_crawler=serp_crawler_instance,
     pagespeed_client=pagespeed_client_instance, # New: Pass pagespeed_client_instance
     redis_client=redis_client, # Pass redis_client for caching
@@ -215,7 +205,7 @@ if config_loader.get("keyword_scraper.enabled"):
     logger.info("Initialising KeywordScraper.")
     keyword_scraper_instance = KeywordScraper()
 keyword_service_instance = KeywordService(
-    api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key")) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(),
+    api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key"), base_url=config_loader.get("keyword_api.real_api.base_url")) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(),
     keyword_scraper=keyword_scraper_instance,
     google_trends_client=google_trends_client_instance, # New: Pass google_trends_client_instance
     redis_client=redis_client, # Pass redis_client for caching
@@ -338,9 +328,9 @@ async def lifespan(app: FastAPI):
         google_trends_client_instance, # New: Add GoogleTrendsClient to lifespan
         whois_client_instance, # New: Add WHOISClient to lifespan
         dns_client_instance, # New: Add DNSClient to lifespan
-        reddit_client_instance, # New: Add RedditClient to lifespan
-        youtube_client_instance, # New: Add YouTubeClient to lifespan
-        news_api_client_instance # New: Add NewsAPIClient to lifespan
+        reddit_client_instance, # New: Add RedditClient
+        youtube_client_instance, # New: Add YouTubeClient
+        news_api_client_instance # New: Add NewsAPIClient
     ]
 
     # Conditionally add ClickHouseLoader to context managers
@@ -612,7 +602,7 @@ class CrawlJobResponse(BaseModel):
              try:
                 job_dict['started_date'] = datetime.fromisoformat(job_dict['started_date'])
              except ValueError:
-                 logger.warning(f"Could not parse started_date string: {job_dict.get('started_date')}")
+                 logger.warning(f"Could_not parse started_date string: {job_dict.get('started_date')}")
                  job_dict['started_date'] = None
 
         if isinstance(job_dict.get('completed_date'), str):
