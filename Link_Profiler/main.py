@@ -22,7 +22,7 @@ else:
 # --- End Robust Project Root Discovery ---
 
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query # Corrected: Import Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union
@@ -54,7 +54,7 @@ from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, Token, ContentGapAnalysisResult, DomainHistory # New: Import DomainHistory
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, Token, ContentGapAnalysisResult, DomainHistory
 from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
@@ -1139,7 +1139,11 @@ async def get_link_velocity(target_domain: str, request_params: LinkVelocityRequ
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve link velocity: {e}")
 
 @app.get("/domain/{domain_name}/history", response_model=List[DomainHistoryResponse]) # New endpoint
-async def get_domain_history_endpoint(domain_name: str, num_snapshots: int = Field(12, gt=0, description="Number of historical snapshots to retrieve."), current_user: User = Depends(get_current_user)): # Protected endpoint
+async def get_domain_history_endpoint(
+    domain_name: str, 
+    num_snapshots: int = Query(12, gt=0, description="Number of historical snapshots to retrieve."), # Fixed: Use Query
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
     """
     Retrieves the historical progression of a domain's authority metrics.
     """
