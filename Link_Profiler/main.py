@@ -157,25 +157,26 @@ domain_service_instance = DomainService(
 gsc_client_instance = GSCClient()
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
+# Removed 'gsc_client' argument as BacklinkService internally handles GSCBacklinkAPIClient instantiation.
 if config_loader.get("backlink_api.gsc_api.enabled"):
-    backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+    backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
     openlinkprofiler_base_url = config_loader.get("backlink_api.openlinkprofiler_api.base_url")
     if not openlinkprofiler_base_url:
         logger.warning("OpenLinkProfiler API enabled but base_url not found in config. Falling back to simulated Backlink API.")
-        backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db) # Pass dummy gsc_client
+        backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
     else:
-        backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, api_client=OpenLinkProfilerAPIClient(base_url=openlinkprofiler_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+        backlink_service_instance = BacklinkService(api_client=OpenLinkProfilerAPIClient(base_url=openlinkprofiler_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 elif config_loader.get("backlink_api.real_api.enabled"):
     real_api_key = config_loader.get("backlink_api.real_api.api_key")
     real_api_base_url = config_loader.get("backlink_api.real_api.base_url")
     if not real_api_key or not real_api_base_url:
         logger.warning("Real Backlink API enabled but API key or base_url not found in config. Falling back to simulated Backlink API.")
-        backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db) # Pass dummy gsc_client
+        backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
     else:
-        backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, api_client=RealBacklinkAPIClient(api_key=real_api_key, base_url=real_api_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+        backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=real_api_key, base_url=real_api_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 else:
-    backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, api_client=SimulatedBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+    backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 
 # New: Initialize PageSpeedClient
 pagespeed_client_instance = PageSpeedClient()
