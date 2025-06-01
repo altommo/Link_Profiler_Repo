@@ -54,7 +54,7 @@ from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, Token, ContentGapAnalysisResult
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, Token, ContentGapAnalysisResult, DomainHistory # New: Import DomainHistory
 from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
@@ -122,13 +122,13 @@ if config_loader.get("domain_api.abstract_api.enabled"):
     abstract_api_key = config_loader.get("domain_api.abstract_api.api_key")
     if not abstract_api_key:
         logger.error("ABSTRACT_API_KEY environment variable not set. Falling back to simulated Domain API.")
-        domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
+        domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
     else:
-        domain_service_instance = DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
+        domain_service_instance = DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 elif config_loader.get("domain_api.real_api.enabled"):
-    domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=config_loader.get("domain_api.real_api.api_key")), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
+    domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=config_loader.get("domain_api.real_api.api_key")), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 else:
-    domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL)
+    domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
 if config_loader.get("backlink_api.gsc_api.enabled"):
@@ -427,6 +427,30 @@ class ContentGapAnalysisRequest(BaseModel): # New Pydantic model for Content Gap
 class TopicClusteringRequest(BaseModel): # New Pydantic model for Topic Clustering
     texts: List[str] = Field(..., description="A list of text documents to cluster.")
     num_clusters: int = Field(5, description="The desired number of topic clusters.")
+
+class LinkVelocityRequest(BaseModel): # New Pydantic model for Link Velocity Request
+    time_unit: str = Field("month", description="The unit of time ('day', 'week', 'month', 'quarter', 'year').")
+    num_units: int = Field(6, description="The number of past units to retrieve data for.")
+
+class DomainHistoryResponse(BaseModel): # New Pydantic model for DomainHistory
+    domain_name: str
+    snapshot_date: datetime
+    authority_score: float
+    trust_score: float
+    spam_score: float
+    total_backlinks: int
+    referring_domains: int
+
+    @classmethod
+    def from_domain_history(cls, history: DomainHistory):
+        history_dict = serialize_model(history)
+        if isinstance(history_dict.get('snapshot_date'), str):
+            try:
+                history_dict['snapshot_date'] = datetime.fromisoformat(history_dict['snapshot_date'])
+            except ValueError:
+                logger.warning(f"Could not parse snapshot_date string: {history_dict.get('snapshot_date')}")
+                history_dict['snapshot_date'] = None
+        return cls(**history_dict)
 
 
 class CrawlErrorResponse(BaseModel):
@@ -1090,531 +1114,50 @@ async def perform_topic_clustering_endpoint(request: TopicClusteringRequest, cur
         logger.error(f"Error performing topic clustering: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform topic clustering: {e}")
 
-
-@app.get("/crawl/status/{job_id}", response_model=CrawlJobResponse)
-async def get_crawl_status(job_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
+@app.get("/link_profile/{target_domain}/link_velocity", response_model=Dict[str, int]) # Protected endpoint
+async def get_link_velocity(target_domain: str, request_params: LinkVelocityRequest = Depends(), current_user: User = Depends(get_current_user)):
     """
-    Retrieves the current status of a specific crawl job.
+    Retrieves the link velocity (new backlinks over time) for a given target domain.
     """
-    job = db.get_crawl_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Crawl job not found.")
-    return CrawlJobResponse.from_crawl_job(job)
-
-@app.get("/crawl/all_jobs", response_model=List[CrawlJobResponse])
-async def get_all_crawl_jobs(current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Retrieves a list of all crawl jobs in the system.
-    """
-    logger.info(f"Received request for all crawl jobs by user: {current_user.username}.")
-    jobs = db.get_all_crawl_jobs() # New method call
-    return [CrawlJobResponse.from_crawl_job(job) for job in jobs]
-
-@app.post("/crawl/pause/{job_id}", response_model=CrawlJobResponse)
-async def pause_crawl_job(job_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Pauses an in-progress crawl job.
-    """
-    logger.info(f"Received request to pause job {job_id} by user: {current_user.username}.")
+    logger.info(f"Received request for link velocity of {target_domain} by user: {current_user.username}.")
+    if not target_domain:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target domain must be provided.")
+    
     try:
-        job = await crawl_service_for_lifespan.pause_crawl_job(job_id) # Use the lifespan-managed instance
-        # Prometheus: Update gauge for job status
-        if job.job_type:
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-            JOBS_PENDING.labels(job_type=job.job_type).inc() # Treat paused as pending for simplicity
-        return CrawlJobResponse.from_crawl_job(job)
+        link_velocity_data = await link_health_service_instance.calculate_link_velocity(
+            target_domain=target_domain,
+            time_unit=request_params.time_unit,
+            num_units=request_params.num_units
+        )
+        if not link_velocity_data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No link velocity data found for {target_domain} or parameters are invalid.")
+        return link_velocity_data
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error pausing crawl job {job_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to pause job: {e}")
+        logger.error(f"Error retrieving link velocity for {target_domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve link velocity: {e}")
 
-@app.post("/crawl/resume/{job_id}", response_model=CrawlJobResponse)
-async def resume_crawl_job(job_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
+@app.get("/domain/{domain_name}/history", response_model=List[DomainHistoryResponse]) # New endpoint
+async def get_domain_history_endpoint(domain_name: str, num_snapshots: int = Field(12, gt=0, description="Number of historical snapshots to retrieve."), current_user: User = Depends(get_current_user)): # Protected endpoint
     """
-    Resumes a paused crawl job.
+    Retrieves the historical progression of a domain's authority metrics.
     """
-    logger.info(f"Received request to resume job {job_id} by user: {current_user.username}.")
+    logger.info(f"Received request for domain history of {domain_name} by user: {current_user.username}.")
+    if not domain_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Domain name must be provided.")
+    
     try:
-        job = await crawl_service_for_lifespan.resume_crawl_job(job_id) # Use the lifespan-managed instance
-        # Prometheus: Update gauge for job status
-        if job.job_type:
-            JOBS_PENDING.labels(job_type=job.job_type).dec()
-            JOBS_IN_PROGRESS.labels(job_type=job.job_type).inc()
-        return CrawlJobResponse.from_crawl_job(job)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        history_data = await domain_service_instance.get_domain_authority_progression(
+            domain_name=domain_name,
+            num_snapshots=num_snapshots
+        )
+        if not history_data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No historical data found for {domain_name}.")
+        return [DomainHistoryResponse.from_domain_history(h) for h in history_data]
     except Exception as e:
-        logger.error(f"Error resuming crawl job {job_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to resume job: {e}")
-
-@app.post("/crawl/stop/{job_id}", response_model=CrawlJobResponse)
-async def stop_crawl_job(job_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Stops an active or paused crawl job.
-    """
-    logger.info(f"Received request to stop job {job_id} by user: {current_user.username}.")
-    try:
-        job = await crawl_service_for_lifespan.stop_crawl_job(job_id) # Use the lifespan-managed instance
-        # Prometheus: Update gauge for job status
-        if job.job_type:
-            if job.status == CrawlStatus.STOPPED: # Only decrement if it was actually in progress/paused
-                if job.job_type:
-                    JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
-                    # If it was pending/paused, decrement that too
-                    # This assumes a job is either IN_PROGRESS or PENDING before being STOPPED
-                    # A more robust solution would check the previous state.
-                    # For simplicity, we'll just decrement IN_PROGRESS and increment FAILED.
-                    JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc() # Treat stopped as a form of failure for metrics
-        return CrawlJobResponse.from_crawl_job(job)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error stopping crawl job {job_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to stop job: {e}")
-
-@app.get("/link_profile/{target_url:path}", response_model=LinkProfileResponse)
-async def get_link_profile(target_url: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Retrieves the link profile for a given target URL.
-    """
-    logger.info(f"Received request for link profile of {target_url} by user: {current_user.username}.")
-    if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
-        raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
-
-    profile = db.get_link_profile(target_url)
-    if not profile:
-        raise HTTPException(status_code=404, detail="Link profile not found for this URL. A crawl might not have been completed yet.")
-    return LinkProfileResponse.from_link_profile(profile)
-
-@app.get("/backlinks/{target_url:path}", response_model=List[BacklinkResponse])
-async def get_backlinks(target_url: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Retrieves all raw backlinks found for a given target URL.
-    """
-    logger.info(f"Received request for backlinks of {target_url} by user: {current_user.username}.")
-    if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
-        raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
-
-    backlinks = db.get_backlinks_for_target(target_url) 
-    
-    if not backlinks:
-        raise HTTPException(status_code=404, detail=f"No backlinks found for target URL {target_url}.")
-    
-    return [BacklinkResponse.from_backlink(bl) for bl in backlinks]
-
-@app.get("/debug/all_backlinks", response_model=List[BacklinkResponse])
-async def debug_get_all_backlinks(current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    DEBUG endpoint: Retrieves ALL raw backlinks from the database.
-    """
-    logger.info(f"DEBUG endpoint: Received request for all backlinks by user: {current_user.username}.")
-    if not current_user.is_admin: # Example: restrict debug endpoint to admins
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required.")
-    backlinks = db.get_all_backlinks()
-    logger.info(f"DEBUG endpoint: Retrieved {len(backlinks)} backlinks from DB.")
-    return [BacklinkResponse.from_backlink(bl) for bl in backlinks]
-
-@app.get("/export/backlinks.csv", response_class=Response)
-async def export_all_backlinks_csv(current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Exports all backlinks from the database to a CSV file.
-    """
-    logger.info(f"Received request to export all backlinks to CSV by user: {current_user.username}.")
-    backlinks = db.get_all_backlinks()
-    
-    if not backlinks:
-        raise HTTPException(status_code=404, detail="No backlinks found to export.")
-    
-    # Convert list of Backlink objects to list of dictionaries
-    backlink_dicts = [serialize_model(bl) for bl in backlinks]
-    
-    # Define fieldnames explicitly to ensure order and include all relevant fields
-    fieldnames = [
-        "id", "source_url", "target_url", "source_domain", "target_domain",
-        "anchor_text", "link_type", "rel_attributes", "context_text",
-        "position_on_page", "is_image_link", "alt_text", "discovered_date",
-        "last_seen_date", "authority_passed", "is_active", "spam_level",
-        "http_status", "crawl_timestamp", "source_domain_metrics"
-    ]
-    
-    csv_output = await export_to_csv(backlink_dicts, fieldnames=fieldnames)
-    
-    headers = {
-        "Content-Disposition": "attachment; filename=all_backlinks.csv",
-        "Content-Type": "text/csv"
-    }
-    return Response(content=csv_output.getvalue(), headers=headers, media_type="text/csv")
-
-@app.get("/export/link_profiles.csv", response_class=Response)
-async def export_all_link_profiles_csv(current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Exports all link profiles from the database to a CSV file.
-    """
-    logger.info(f"Received request to export all link profiles to CSV by user: {current_user.username}.")
-    link_profiles = db.get_all_link_profiles() # Assuming a get_all_link_profiles method exists
-    
-    if not link_profiles:
-        raise HTTPException(status_code=404, detail="No link profiles found to export.")
-    
-    link_profile_dicts = [serialize_model(lp) for lp in link_profiles]
-    
-    fieldnames = [
-        "target_url", "target_domain", "total_backlinks", "unique_domains",
-        "dofollow_links", "nofollow_links", "authority_score", "trust_score",
-        "spam_score", "anchor_text_distribution", "referring_domains",
-        "analysis_date"
-    ]
-    
-    csv_output = await export_to_csv(link_profile_dicts, fieldnames=fieldnames)
-    
-    headers = {
-        "Content-Disposition": "attachment; filename=all_link_profiles.csv",
-        "Content-Type": "text/csv"
-    }
-    return Response(content=csv_output.getvalue(), headers=headers, media_type="text/csv")
-
-@app.get("/export/crawl_jobs.csv", response_class=Response)
-async def export_all_crawl_jobs_csv(current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Exports all crawl jobs from the database to a CSV file.
-    """
-    logger.info(f"Received request to export all crawl jobs to CSV by user: {current_user.username}.")
-    crawl_jobs = db.get_all_crawl_jobs()
-    
-    if not crawl_jobs:
-        raise HTTPException(status_code=404, detail="No crawl jobs found to export.")
-    
-    crawl_job_dicts = [serialize_model(job) for job in crawl_jobs]
-    
-    fieldnames = [
-        "id", "target_url", "job_type", "status", "priority", "created_date",
-        "started_date", "completed_date", "progress_percentage", "urls_discovered",
-        "urls_crawled", "links_found", "errors_count", "config", "results", "error_log"
-    ]
-    
-    csv_output = await export_to_csv(crawl_job_dicts, fieldnames=fieldnames)
-    
-    headers = {
-        "Content-Disposition": "attachment; filename=all_crawl_jobs.csv",
-        "Content-Type": "text/csv"
-    }
-    return Response(content=csv_output.getvalue(), headers=headers, media_type="text/csv")
-
-
-@app.get("/domain/availability/{domain_name}", response_model=Dict[str, Union[str, bool]])
-async def check_domain_availability(domain_name: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Checks if a domain name is available for registration.
-    """
-    logger.info(f"Received request for domain availability of {domain_name} by user: {current_user.username}.")
-    if not domain_name or '.' not in domain_name:
-        raise HTTPException(status_code=400, detail="Invalid domain name format.")
-    
-    is_available = await domain_service_instance.check_domain_availability(domain_name)
-    return {"domain_name": domain_name, "is_available": is_available}
-
-@app.get("/domain/whois/{domain_name}", response_model=Dict)
-async def get_domain_whois(domain_name: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Retrieves WHOIS information for a given domain name.
-    """
-    logger.info(f"Received request for WHOIS of {domain_name} by user: {current_user.username}.")
-    if not domain_name or '.' not in domain_name:
-        raise HTTPException(status_code=400, detail="Invalid domain name format.")
-    
-    whois_info = await domain_service_instance.get_whois_info(domain_name)
-    if not whois_info:
-        raise HTTPException(status_code=404, detail="WHOIS information not found for this domain.")
-    return whois_info
-
-@app.get("/domain/info/{domain_name}", response_model=DomainResponse)
-async def get_domain_info(domain_name: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Retrieves comprehensive domain information, including simulated WHOIS and availability.
-    """
-    logger.info(f"Received request for domain info of {domain_name} by user: {current_user.username}.")
-    if not domain_name or '.' not in domain_name:
-        raise HTTPException(status_code=400, detail="Invalid domain name format.")
-    
-    domain_obj = await domain_service_instance.get_domain_info(domain_name)
-    if not domain_obj:
-        raise HTTPException(status_code=404, detail="Domain information not found.")
-    return DomainResponse.from_domain(domain_obj)
-
-@app.get("/domain/analyze/{domain_name}", response_model=DomainAnalysisResponse)
-async def analyze_domain(domain_name: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Analyzes a domain for its potential value, especially for expired domains.
-    """
-    logger.info(f"Received request for domain analysis of {domain_name} by user: {current_user.username}.")
-    if not domain_name or '.' not in domain_name:
-        raise HTTPException(status_code=400, detail="Invalid domain name format.")
-    
-    analysis_result = await domain_analyzer_service.analyze_domain_for_expiration_value(domain_name)
-    
-    if not analysis_result:
-        raise HTTPException(status_code=404, detail="Failed to perform domain analysis, domain info not found or error occurred.")
-    
-    return analysis_result
-
-@app.post("/domain/find_expired_domains", response_model=FindExpiredDomainsResponse)
-async def find_expired_domains(request: FindExpiredDomainsRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Searches for valuable expired domains among a list of potential candidates.
-    """
-    logger.info(f"Received request to find expired domains by user: {current_user.username}.")
-    if not request.potential_domains:
-        raise HTTPException(status_code=400, detail="No potential domains provided.")
-    
-    found_domains = await expired_domain_finder_service.find_valuable_expired_domains(
-        potential_domains=request.potential_domains,
-        min_value_score=request.min_value_score,
-        limit=request.limit
-    )
-    
-    return FindExpiredDomainsResponse(
-        found_domains=found_domains,
-        total_candidates_processed=len(request.potential_domains),
-        valuable_domains_found=len(found_domains)
-    )
-
-@app.post("/serp/search", response_model=Dict[str, str], status_code=202)
-async def search_serp(request: SERPSearchRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Submits a SERP search job to the queue.
-    """
-    logger.info(f"Received request to submit SERP search for keyword: {request.keyword} to queue by user: {current_user.username}.")
-    JOBS_CREATED_TOTAL.labels(job_type='serp_analysis').inc()
-
-    queue_request = QueueCrawlRequest(
-        target_url=request.keyword, # Target URL can be the keyword for this job type
-        initial_seed_urls=[], # Not applicable for SERP search
-        config={"keyword": request.keyword, "num_results": request.num_results, "search_engine": request.search_engine},
-        priority=5
-    )
-    queue_request.config["job_type"] = "serp_analysis" # Explicitly set job type in config for queue processing
-
-    return await submit_crawl_to_queue(queue_request)
-
-@app.get("/serp/results/{keyword}", response_model=List[SERPResultResponse])
-async def get_serp_results(keyword: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Retrieves stored SERP results for a specific keyword.
-    """
-    logger.info(f"Received request to get stored SERP results for keyword: {keyword} by user: {current_user.username}.")
-    try:
-        serp_results = db.get_serp_results_for_keyword(keyword)
-        if not serp_results:
-            raise HTTPException(status_code=404, detail=f"No SERP results found for keyword '{keyword}'.")
-        return [SERPResultResponse.from_serp_result(res) for res in serp_results]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error retrieving stored SERP results for '{keyword}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve SERP results: {e}")
-
-@app.post("/keyword/suggest", response_model=Dict[str, str], status_code=202)
-async def suggest_keywords(request: KeywordSuggestRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Submits a keyword suggestion job to the queue.
-    """
-    logger.info(f"Received request to submit keyword suggestions for seed: {request.seed_keyword} to queue by user: {current_user.username}.")
-    JOBS_CREATED_TOTAL.labels(job_type='keyword_research').inc()
-
-    queue_request = QueueCrawlRequest(
-        target_url=request.seed_keyword, # Target URL can be the seed_keyword for keyword jobs
-        initial_seed_urls=[], # Not applicable
-        config={"seed_keyword": request.seed_keyword, "num_suggestions": request.num_suggestions},
-        priority=5
-    )
-    queue_request.config["job_type"] = "keyword_research" # Explicitly set job type in config for queue processing
-
-    return await submit_crawl_to_queue(queue_request)
-
-@app.get("/keyword/suggestions/{seed_keyword}", response_model=List[KeywordSuggestionResponse])
-async def get_keyword_suggestions(seed_keyword: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Retrieves stored keyword suggestions for a specific seed keyword.
-    """
-    logger.info(f"Received request to get stored keyword suggestions for seed: {seed_keyword} by user: {current_user.username}.")
-    try:
-        suggestions = db.get_keyword_suggestions_for_seed(seed_keyword)
-        if not suggestions:
-            raise HTTPException(status_code=404, detail=f"No keyword suggestions found for seed '{seed_keyword}'.")
-        return [KeywordSuggestionResponse.from_keyword_suggestion(sug) for sug in suggestions]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error retrieving stored keyword suggestions for '{seed_keyword}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve keyword suggestions: {e}")
-
-@app.post("/competitor/link_intersect", response_model=LinkIntersectResponse)
-async def get_link_intersect_analysis(request: LinkIntersectRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Performs a link intersect analysis to find common linking domains.
-    Identifies source domains that link to the primary domain AND at least one of the competitor domains.
-    """
-    logger.info(f"Received request for link intersect analysis by user: {current_user.username}.")
-    if not request.primary_domain or not request.competitor_domains:
-        raise HTTPException(status_code=400, detail="Primary domain and at least one competitor domain are required.")
-    
-    result = await backlink_service_instance.perform_link_intersect_analysis(
-        primary_domain=request.primary_domain,
-        competitor_domains=request.competitor_domains
-    )
-    
-    return LinkIntersectResponse.from_link_intersect_result(result)
-
-@app.post("/competitor/keyword_analysis", response_model=CompetitiveKeywordAnalysisResponse)
-async def get_competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Performs a competitive keyword analysis to identify common keywords and keyword gaps.
-    Compares keywords that the primary domain and competitor domains rank for.
-    """
-    logger.info(f"Received request for competitive keyword analysis by user: {current_user.username}.")
-    if not request.primary_domain or not request.competitor_domains:
-        raise HTTPException(status_code=400, detail="Primary domain and at least one competitor domain are required.")
-    
-    result = await keyword_service_instance.perform_competitive_keyword_analysis(
-        primary_domain=request.primary_domain,
-        competitor_domains=request.competitor_domains
-    )
-    
-    return CompetitiveKeywordAnalysisResponse.from_competitive_keyword_analysis_result(result)
-
-# New: Alert Rule Endpoints
-@app.post("/alerts/rules", response_model=AlertRuleResponse, status_code=201)
-async def create_alert_rule(request: AlertRuleCreateRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Creates a new alert rule.
-    """
-    logger.info(f"Received request to create alert rule by user: {current_user.username}.")
-    rule_id = str(uuid.uuid4())
-    new_rule = AlertRule(id=rule_id, **request.dict())
-    try:
-        db.save_alert_rule(new_rule)
-        # After saving, trigger a refresh of rules in the AlertService
-        if alert_service_instance:
-            await alert_service_instance.load_active_rules()
-        logger.info(f"Created new alert rule: {new_rule.name} (ID: {new_rule.id})")
-        return AlertRuleResponse.from_alert_rule(new_rule)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) # Conflict if name already exists
-    except Exception as e:
-        logger.error(f"Error creating alert rule: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create alert rule: {e}")
-
-@app.get("/alerts/rules/{rule_id}", response_model=AlertRuleResponse)
-async def get_alert_rule(rule_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Retrieves a specific alert rule by its ID.
-    """
-    logger.info(f"Received request to get alert rule {rule_id} by user: {current_user.username}.")
-    rule = db.get_alert_rule(rule_id)
-    if not rule:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert rule not found.")
-    return AlertRuleResponse.from_alert_rule(rule)
-
-@app.get("/alerts/rules", response_model=List[AlertRuleResponse])
-async def list_alert_rules(active_only: bool = False, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Lists all alert rules, optionally filtering for active ones.
-    """
-    logger.info(f"Received request to list alert rules by user: {current_user.username}.")
-    rules = db.get_all_alert_rules(active_only=active_only)
-    return [AlertRuleResponse.from_alert_rule(rule) for rule in rules]
-
-@app.put("/alerts/rules/{rule_id}", response_model=AlertRuleResponse)
-async def update_alert_rule(rule_id: str, request: AlertRuleCreateRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Updates an existing alert rule.
-    """
-    logger.info(f"Received request to update alert rule {rule_id} by user: {current_user.username}.")
-    existing_rule = db.get_alert_rule(rule_id)
-    if not existing_rule:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert rule not found.")
-    
-    updated_rule = AlertRule(id=rule_id, **request.dict())
-    try:
-        db.save_alert_rule(updated_rule) # save_alert_rule handles update if ID exists
-        # After saving, trigger a refresh of rules in the AlertService
-        if alert_service_instance:
-            await alert_service_instance.load_active_rules()
-        logger.info(f"Updated alert rule: {updated_rule.name} (ID: {updated_rule.id})")
-        return AlertRuleResponse.from_alert_rule(updated_rule)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error updating alert rule {rule_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update alert rule: {e}")
-
-@app.delete("/alerts/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_alert_rule(rule_id: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Deletes an alert rule by its ID.
-    """
-    logger.info(f"Received request to delete alert rule {rule_id} by user: {current_user.username}.")
-    try:
-        deleted = db.delete_alert_rule(rule_id)
-        if not deleted:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert rule not found.")
-        # After deleting, trigger a refresh of rules in the AlertService
-        if alert_service_instance:
-            await alert_service_instance.load_active_rules()
-        logger.info(f"Deleted alert rule ID: {rule_id}")
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    except Exception as e:
-        logger.error(f"Error deleting alert rule {rule_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete alert rule: {e}")
-
-# New: Report Generation Endpoints
-@app.get("/reports/link_profile/{target_url:path}/pdf", response_class=Response)
-async def get_link_profile_pdf_report(target_url: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Generates and returns a PDF report for a specific link profile.
-    """
-    logger.info(f"Received request for PDF report of link profile {target_url} by user: {current_user.username}.")
-    if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
-
-    pdf_buffer = await report_service_instance.generate_link_profile_pdf_report(target_url)
-    
-    if pdf_buffer is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate PDF report.")
-    
-    # If ReportLab was not available, it returns a BytesIO with text content
-    # We need to check if it's a real PDF or simulated text
-    content_type = "application/pdf"
-    if not report_service_instance.REPORTLAB_AVAILABLE: # Access the class variable
-        content_type = "text/plain" # Indicate it's plain text if ReportLab is missing
-        logger.warning("Returning simulated PDF as plain text due to missing ReportLab.")
-
-    headers = {
-        "Content-Disposition": f"attachment; filename=link_profile_report_{urlparse(target_url).netloc}.pdf",
-        "Content-Type": content_type
-    }
-    return Response(content=pdf_buffer.getvalue(), headers=headers, media_type=content_type)
-
-@app.get("/reports/link_profile/{target_url:path}/excel", response_class=Response)
-async def get_link_profile_excel_report(target_url: str, current_user: User = Depends(get_current_user)): # Protected endpoint
-    """
-    Generates and returns an Excel (XLSX) report for a specific link profile.
-    """
-    logger.info(f"Received request for Excel report of link profile {target_url} by user: {current_user.username}.")
-    if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
-
-    excel_buffer = await report_service_instance.generate_link_profile_excel_report(target_url)
-    
-    if excel_buffer is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate Excel report. Ensure 'openpyxl' is installed.")
-    
-    headers = {
-        "Content-Disposition": f"attachment; filename=link_profile_report_{urlparse(target_url).netloc}.xlsx",
-        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    }
-    return Response(content=excel_buffer.getvalue(), headers=headers, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        logger.error(f"Error retrieving domain history for {domain_name}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve domain history: {e}")
 
 
 @app.get("/health")
