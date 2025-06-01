@@ -14,14 +14,14 @@ import aiohttp
 import json
 import redis.asyncio as redis
 
-from Link_Profiler.core.models import Domain, DomainHistory # New: Import DomainHistory
+from Link_Profiler.core.models import Domain, DomainHistory
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.monitoring.prometheus_metrics import (
     API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL
 )
 from Link_Profiler.utils.user_agent_manager import user_agent_manager
-from Link_Profiler.database.database import Database # Import Database
+from Link_Profiler.database.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -376,11 +376,29 @@ class DomainService:
     """
     def __init__(self, api_client: BaseDomainAPIClient, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None):
         self.logger = logging.getLogger(__name__)
-        self.api_client = api_client
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
         self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
         self.db = database # Store the database instance
+
+        # Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > Simulated
+        if config_loader.get("domain_api.abstract_api.enabled"):
+            abstract_api_key = config_loader.get("domain_api.abstract_api.api_key")
+            if not abstract_api_key:
+                self.logger.warning("AbstractAPI enabled but API key not found in config. Falling back to simulated Domain API.")
+                self.api_client = SimulatedDomainAPIClient()
+            else:
+                self.api_client = AbstractDomainAPIClient(api_key=abstract_api_key)
+        elif config_loader.get("domain_api.real_api.enabled"):
+            real_api_key = config_loader.get("domain_api.real_api.api_key")
+            if not real_api_key:
+                self.logger.warning("Real Domain API enabled but API key not found in config. Falling back to simulated Domain API.")
+                self.api_client = SimulatedDomainAPIClient()
+            else:
+                self.api_client = RealDomainAPIClient(api_key=real_api_key)
+        else:
+            self.logger.info("No specific Domain API enabled. Using SimulatedDomainAPIClient.")
+            self.api_client = SimulatedDomainAPIClient()
 
     async def __aenter__(self):
         """Async context manager entry for DomainService."""

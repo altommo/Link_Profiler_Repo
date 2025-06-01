@@ -530,6 +530,7 @@ class BacklinkService:
         
         # Determine which API client to use based on config_loader priority
         if config_loader.get("backlink_api.gsc_api.enabled"):
+            # GSC API client handles its own authentication and potential failures
             self.logger.info("Using GSCBacklinkAPIClient for backlink lookups.")
             self.api_client = GSCBacklinkAPIClient()
         elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
@@ -538,13 +539,13 @@ class BacklinkService:
         elif config_loader.get("backlink_api.real_api.enabled"):
             real_api_key = config_loader.get("backlink_api.real_api.api_key")
             if not real_api_key:
-                self.logger.error("Real Backlink API enabled but API key not found in config. Falling back to simulated Backlink API.")
+                self.logger.warning("Real Backlink API enabled but API key not found in config. Falling back to simulated Backlink API.")
                 self.api_client = SimulatedBacklinkAPIClient()
             else:
                 self.logger.info("Using RealBacklinkAPIClient for backlink lookups.")
                 self.api_client = RealBacklinkAPIClient(api_key=real_api_key)
         else:
-            self.logger.info("Using SimulatedBacklinkAPIClient for backlink lookups.")
+            self.logger.info("No specific Backlink API enabled. Using SimulatedBacklinkAPIClient.")
             self.api_client = SimulatedBacklinkAPIClient()
 
     async def __aenter__(self):
