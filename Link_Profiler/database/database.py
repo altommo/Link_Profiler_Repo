@@ -17,12 +17,12 @@ from Link_Profiler.database.models import ( # Changed to absolute import
     Base, DomainORM, URLORM, BacklinkORM, LinkProfileORM, CrawlJobORM,
     SEOMetricsORM, SERPResultORM, KeywordSuggestionORM, AlertRuleORM, UserORM, ContentGapAnalysisResultORM, DomainHistoryORM,
     LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum,
-    AlertSeverityEnum, AlertChannelEnum # New: Import Alerting Enums
+    AlertSeverityEnum, AlertChannelEnum, DomainIntelligenceORM, SocialMentionORM # New: Import Alerting Enums, DomainIntelligenceORM, SocialMentionORM
 )
 from Link_Profiler.core.models import ( # Changed to absolute import
     Domain, URL, Backlink, LinkProfile, CrawlJob, SEOMetrics,
     SERPResult, KeywordSuggestion, AlertRule, User, ContentGapAnalysisResult, DomainHistory,
-    serialize_model, CrawlError # Import CrawlError
+    serialize_model, CrawlError, DomainIntelligence, SocialMention # New: Import DomainIntelligence, SocialMention
 )
 
 logger = logging.getLogger(__name__)
@@ -149,6 +149,14 @@ class Database:
             if 'snapshot_date' in data and isinstance(data['snapshot_date'], str):
                 data['snapshot_date'] = datetime.fromisoformat(data['snapshot_date'])
             return DomainHistory(**data)
+        elif isinstance(orm_obj, DomainIntelligenceORM): # New: Handle DomainIntelligenceORM
+            if 'last_updated' in data and isinstance(data['last_updated'], str):
+                data['last_updated'] = datetime.fromisoformat(data['last_updated'])
+            return DomainIntelligence(**data)
+        elif isinstance(orm_obj, SocialMentionORM): # New: Handle SocialMentionORM
+            if 'published_date' in data and isinstance(data['published_date'], str):
+                data['published_date'] = datetime.fromisoformat(data['published_date'])
+            return SocialMention(**data)
         return orm_obj
 
     def _to_orm(self, dc_obj: Any):
@@ -227,6 +235,10 @@ class Database:
             return ContentGapAnalysisResultORM(**data)
         elif isinstance(dc_obj, DomainHistory): # New: Handle DomainHistory
             return DomainHistoryORM(**data)
+        elif isinstance(dc_obj, DomainIntelligence): # New: Handle DomainIntelligence
+            return DomainIntelligenceORM(**data)
+        elif isinstance(dc_obj, SocialMention): # New: Handle SocialMention
+            return SocialMentionORM(**data)
         return dc_obj
 
     def add_backlink(self, backlink: Backlink) -> None:
@@ -1148,141 +1160,306 @@ class Database:
         finally:
             session.close()
 
-    # New: Alert Rule methods
-    def save_alert_rule(self, rule: AlertRule) -> None:
-        """Saves or updates an alert rule."""
+    # New: Domain Intelligence methods
+    def save_domain_intelligence(self, intelligence: DomainIntelligence) -> None:
+        """Saves or updates domain intelligence data."""
         session = self._get_session()
         try:
-            orm_rule = session.query(AlertRuleORM).filter_by(id=rule.id).first()
-            if orm_rule:
+            orm_intelligence = session.query(DomainIntelligenceORM).filter_by(domain_name=intelligence.domain_name).first()
+            if orm_intelligence:
                 # Update existing
-                updated_data = self._to_orm(rule)
-                for column in inspect(AlertRuleORM).columns:
+                updated_data = self._to_orm(intelligence)
+                for column in inspect(DomainIntelligenceORM).columns:
                     if hasattr(updated_data, column.key):
-                        setattr(orm_rule, column.key, getattr(updated_data, column.key))
-                logger.debug(f"Updated alert rule: {rule.name}")
+                        setattr(orm_intelligence, column.key, getattr(updated_data, column.key))
+                logger.debug(f"Updated domain intelligence for {intelligence.domain_name}.")
             else:
                 # Add new
-                orm_rule = self._to_orm(rule)
-                session.add(orm_rule)
-                logger.debug(f"Added alert rule: {rule.name}")
+                orm_intelligence = self._to_orm(intelligence)
+                session.add(orm_intelligence)
+                logger.debug(f"Added domain intelligence for {intelligence.domain_name}.")
             session.commit()
         except IntegrityError:
             session.rollback()
-            logger.warning(f"Alert rule with name '{rule.name}' already exists. Skipping add.")
-            raise ValueError(f"Alert rule with name '{rule.name}' already exists.")
+            logger.warning(f"Domain intelligence for '{intelligence.domain_name}' already exists. Skipping add.")
+            raise ValueError(f"Domain intelligence for '{intelligence.domain_name}' already exists.")
         except Exception as e:
             session.rollback()
-            logger.error(f"Error saving alert rule {rule.name}: {e}", exc_info=True)
+            logger.error(f"Error saving domain intelligence for {intelligence.domain_name}: {e}", exc_info=True)
             raise
         finally:
             session.close()
 
-    def get_alert_rule(self, rule_id: str) -> Optional[AlertRule]:
-        """Retrieves an alert rule by its ID."""
+    def get_domain_intelligence(self, domain_name: str) -> Optional[DomainIntelligence]:
+        """Retrieves domain intelligence data by domain name."""
         session = self._get_session()
         try:
-            orm_rule = session.query(AlertRuleORM).filter_by(id=rule_id).first()
-            return self._to_dataclass(orm_rule)
+            orm_intelligence = session.query(DomainIntelligenceORM).filter_by(domain_name=domain_name).first()
+            return self._to_dataclass(orm_intelligence)
         except Exception as e:
-            logger.error(f"Error retrieving alert rule {rule_id}: {e}", exc_info=True)
+            logger.error(f"Error retrieving domain intelligence for {domain_name}: {e}", exc_info=True)
             return None
         finally:
             session.close()
 
-    def get_all_alert_rules(self, active_only: bool = False) -> List[AlertRule]:
-        """Retrieves all alert rules, optionally filtering for active ones."""
+    # New: Social Mention methods
+    def add_social_mention(self, mention: SocialMention) -> None:
+        """Adds a single social media mention to the database."""
         session = self._get_session()
         try:
-            query = session.query(AlertRuleORM)
-            if active_only:
-                query = query.filter_by(is_active=True)
-            orm_rules = query.all()
-            return [self._to_dataclass(rule) for rule in orm_rules]
+            orm_mention = self._to_orm(mention)
+            session.add(orm_mention)
+            session.commit()
+            logger.debug(f"Added social mention: '{mention.query}' on '{mention.platform}'.")
+        except IntegrityError:
+            session.rollback()
+            logger.debug(f"Social mention with URL '{mention.mention_url}' already exists. Skipping.")
         except Exception as e:
-            logger.error(f"Error retrieving all alert rules: {e}", exc_info=True)
+            session.rollback()
+            logger.error(f"Error adding social mention '{mention.id}': {e}", exc_info=True)
+        finally:
+            session.close()
+
+    def add_social_mentions(self, mentions: List[SocialMention]) -> None:
+        """Adds multiple social media mentions to the database in a single transaction."""
+        if not mentions:
+            return
+
+        session = self._get_session()
+        try:
+            orm_mentions = []
+            for mention in mentions:
+                try:
+                    orm_mentions.append(self._to_orm(mention))
+                except Exception as e:
+                    logger.error(f"Error converting social mention {mention.id} to ORM: {e}", exc_info=True)
+            
+            session.add_all(orm_mentions)
+            session.commit()
+            logger.info(f"Added {len(orm_mentions)} social mentions to the database.")
+        except IntegrityError:
+            session.rollback()
+            logger.warning(f"Some social mentions already exist. Attempting individual adds for {len(mentions)} mentions.")
+            for mention in mentions:
+                self.add_social_mention(mention) # This will log duplicates as debug
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding multiple social mentions: {e}", exc_info=True)
+        finally:
+            session.close()
+
+    def get_social_mentions_for_query(self, query: str, platform: Optional[str] = None, limit: int = 100) -> List[SocialMention]:
+        """Retrieves social media mentions for a specific query, optionally filtered by platform."""
+        session = self._get_session()
+        try:
+            q = session.query(SocialMentionORM).filter_by(query=query)
+            if platform:
+                q = q.filter_by(platform=platform)
+            orm_mentions = q.order_by(SocialMentionORM.published_date.desc()).limit(limit).all()
+            return [self._to_dataclass(m) for m in orm_mentions]
+        except Exception as e:
+            logger.error(f"Error retrieving social mentions for query '{query}': {e}", exc_info=True)
             return []
         finally:
             session.close()
 
-    def delete_alert_rule(self, rule_id: str) -> bool:
-        """Deletes an alert rule by its ID."""
+    # New: Link Prospect methods
+    def save_link_prospect(self, prospect: LinkProspect) -> None:
+        """Saves or updates a link prospect."""
         session = self._get_session()
         try:
-            orm_rule = session.query(AlertRuleORM).filter_by(id=rule_id).first()
-            if orm_rule:
-                session.delete(orm_rule)
-                session.commit()
-                logger.info(f"Deleted alert rule {rule_id}.")
-                return True
+            orm_prospect = session.query(LinkProspectORM).filter_by(url=prospect.url).first()
+            if orm_prospect:
+                # Update existing
+                updated_data = self._to_orm(prospect)
+                for column in inspect(LinkProspectORM).columns:
+                    if hasattr(updated_data, column.key):
+                        setattr(orm_prospect, column.key, getattr(updated_data, column.key))
+                logger.debug(f"Updated link prospect: {prospect.url}")
             else:
-                logger.warning(f"Alert rule {rule_id} not found for deletion.")
-                return False
+                # Add new
+                orm_prospect = self._to_orm(prospect)
+                session.add(orm_prospect)
+                logger.debug(f"Added link prospect: {prospect.url}")
+            session.commit()
         except Exception as e:
             session.rollback()
-            logger.error(f"Error deleting alert rule {rule_id}: {e}", exc_info=True)
+            logger.error(f"Error saving link prospect {prospect.url}: {e}", exc_info=True)
             raise
         finally:
             session.close()
 
-    # New: User methods for Authentication
-    def create_user(self, user: User) -> User:
-        """Creates a new user in the database."""
+    def get_link_prospect(self, url: str) -> Optional[LinkProspect]:
+        """Retrieves a link prospect by its URL."""
         session = self._get_session()
         try:
-            orm_user = self._to_orm(user)
-            session.add(orm_user)
+            orm_prospect = session.query(LinkProspectORM).filter_by(url=url).first()
+            return self._to_dataclass(orm_prospect)
+        except Exception as e:
+            logger.error(f"Error retrieving link prospect {url}: {e}", exc_info=True)
+            return None
+        finally:
+            session.close()
+
+    def get_all_link_prospects(self, status_filter: Optional[str] = None) -> List[LinkProspect]:
+        """Retrieves all link prospects, optionally filtered by status."""
+        session = self._get_session()
+        try:
+            query = session.query(LinkProspectORM)
+            if status_filter:
+                query = query.filter_by(status=status_filter)
+            orm_prospects = query.all()
+            return [self._to_dataclass(p) for p in orm_prospects]
+        except Exception as e:
+            logger.error(f"Error retrieving all link prospects: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
+    # New: Outreach Campaign methods
+    def save_outreach_campaign(self, campaign: OutreachCampaign) -> None:
+        """Saves or updates an outreach campaign."""
+        session = self._get_session()
+        try:
+            orm_campaign = session.query(OutreachCampaignORM).filter_by(id=campaign.id).first()
+            if orm_campaign:
+                # Update existing
+                updated_data = self._to_orm(campaign)
+                for column in inspect(OutreachCampaignORM).columns:
+                    if hasattr(updated_data, column.key):
+                        setattr(orm_campaign, column.key, getattr(updated_data, column.key))
+                logger.debug(f"Updated outreach campaign: {campaign.name}")
+            else:
+                # Add new
+                orm_campaign = self._to_orm(campaign)
+                session.add(orm_campaign)
+                logger.debug(f"Added outreach campaign: {campaign.name}")
             session.commit()
-            session.refresh(orm_user) # Refresh to get any auto-generated fields like ID
-            logger.info(f"Created new user: {user.username}")
-            return self._to_dataclass(orm_user)
         except IntegrityError:
             session.rollback()
-            logger.warning(f"User with username '{user.username}' or email '{user.email}' already exists.")
-            raise ValueError(f"User with username '{user.username}' or email '{user.email}' already exists.")
+            logger.warning(f"Outreach campaign with name '{campaign.name}' already exists.")
+            raise ValueError(f"Outreach campaign with name '{campaign.name}' already exists.")
         except Exception as e:
             session.rollback()
-            logger.error(f"Error creating user {user.username}: {e}", exc_info=True)
+            logger.error(f"Error saving outreach campaign {campaign.name}: {e}", exc_info=True)
             raise
         finally:
             session.close()
 
-    def get_user_by_username(self, username: str) -> Optional[User]:
-        """Retrieves a user by their username."""
+    def get_outreach_campaign(self, campaign_id: str) -> Optional[OutreachCampaign]:
+        """Retrieves an outreach campaign by its ID."""
         session = self._get_session()
         try:
-            orm_user = session.query(UserORM).filter_by(username=username).first()
-            return self._to_dataclass(orm_user)
+            orm_campaign = session.query(OutreachCampaignORM).filter_by(id=campaign_id).first()
+            return self._to_dataclass(orm_campaign)
         except Exception as e:
-            logger.error(f"Error retrieving user by username '{username}': {e}", exc_info=True)
+            logger.error(f"Error retrieving outreach campaign {campaign_id}: {e}", exc_info=True)
             return None
         finally:
             session.close()
 
-    # New: Content Gap Analysis methods
-    def save_content_gap_analysis_result(self, result: ContentGapAnalysisResult) -> None:
-        """Saves or updates a content gap analysis result."""
+    def get_all_outreach_campaigns(self, status_filter: Optional[str] = None) -> List[OutreachCampaign]:
+        """Retrieves all outreach campaigns, optionally filtered by status."""
         session = self._get_session()
         try:
-            orm_result = self._to_orm(result)
-            session.add(orm_result)
+            query = session.query(OutreachCampaignORM)
+            if status_filter:
+                query = query.filter_by(status=status_filter)
+            orm_campaigns = query.all()
+            return [self._to_dataclass(c) for c in orm_campaigns]
+        except Exception as e:
+            logger.error(f"Error retrieving all outreach campaigns: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
+    # New: Outreach Event methods
+    def save_outreach_event(self, event: OutreachEvent) -> None:
+        """Saves a new outreach event."""
+        session = self._get_session()
+        try:
+            orm_event = self._to_orm(event)
+            session.add(orm_event)
             session.commit()
-            logger.debug(f"Saved content gap analysis result for {result.target_url}.")
+            logger.debug(f"Saved outreach event {event.event_type} for prospect {event.prospect_url}.")
         except Exception as e:
             session.rollback()
-            logger.error(f"Error saving content gap analysis result for {result.target_url}: {e}", exc_info=True)
+            logger.error(f"Error saving outreach event {event.id}: {e}", exc_info=True)
             raise
         finally:
             session.close()
 
-    def get_content_gap_analysis_result(self, target_url: str) -> Optional[ContentGapAnalysisResult]:
-        """Retrieves a content gap analysis result by target URL."""
+    def get_outreach_events_for_prospect(self, prospect_url: str) -> List[OutreachEvent]:
+        """Retrieves all outreach events for a specific prospect URL."""
         session = self._get_session()
         try:
-            orm_result = session.query(ContentGapAnalysisResultORM).filter_by(target_url=target_url).first()
-            return self._to_dataclass(orm_result)
+            orm_events = session.query(OutreachEventORM).filter_by(prospect_url=prospect_url).order_by(OutreachEventORM.event_date.asc()).all()
+            return [self._to_dataclass(e) for e in orm_events]
         except Exception as e:
-            logger.error(f"Error retrieving content gap analysis result for {target_url}: {e}", exc_info=True)
+            logger.error(f"Error retrieving outreach events for prospect {prospect_url}: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
+    # New: Report Job methods
+    def save_report_job(self, job: ReportJob) -> None:
+        """Saves or updates a report job."""
+        session = self._get_session()
+        try:
+            orm_job = session.query(ReportJobORM).filter_by(id=job.id).first()
+            if orm_job:
+                # Update existing
+                updated_data = self._to_orm(job)
+                for column in inspect(ReportJobORM).columns:
+                    if hasattr(updated_data, column.key):
+                        setattr(orm_job, column.key, getattr(updated_data, column.key))
+                logger.debug(f"Updated report job {job.id}.")
+            else:
+                # Add new
+                orm_job = self._to_orm(job)
+                session.add(orm_job)
+                logger.debug(f"Added report job {job.id}.")
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error saving report job {job.id}: {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
+    def get_report_job(self, job_id: str) -> Optional[ReportJob]:
+        """Retrieves a report job by its ID."""
+        session = self._get_session()
+        try:
+            orm_job = session.query(ReportJobORM).filter_by(id=job_id).first()
+            return self._to_dataclass(orm_job)
+        except Exception as e:
+            logger.error(f"Error retrieving report job {job_id}: {e}", exc_info=True)
             return None
+        finally:
+            session.close()
+
+    def get_all_report_jobs(self) -> List[ReportJob]:
+        """Retrieves all report jobs."""
+        session = self._get_session()
+        try:
+            orm_jobs = session.query(ReportJobORM).all()
+            return [self._to_dataclass(j) for j in orm_jobs]
+        except Exception as e:
+            logger.error(f"Error retrieving all report jobs: {e}", exc_info=True)
+            return []
+        finally:
+            session.close()
+
+    def ping(self):
+        """Pings the database to check connectivity."""
+        session = self._get_session()
+        try:
+            session.execute(func.now())
+            logger.debug("Database ping successful.")
+            return True
+        except Exception as e:
+            logger.error(f"Database ping failed: {e}", exc_info=True)
+            raise
         finally:
             session.close()
