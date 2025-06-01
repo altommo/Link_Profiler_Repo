@@ -124,8 +124,9 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
     """
     A client for a real Keyword Research API (e.g., Ahrefs, SEMrush, Google Keyword Planner).
     Requires an API key.
+    This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str = "https://api.real-keyword-provider.com"):
+    def __init__(self, api_key: str, base_url: str):
         self.logger = logging.getLogger(__name__ + ".RealKeywordAPIClient")
         self.api_key = api_key
         self.base_url = base_url
@@ -135,7 +136,7 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
         """Async context manager entry for client session."""
         self.logger.info("Entering RealKeywordAPIClient context.")
         if self._session is None or self._session.closed:
-            headers = {"Authorization": f"Bearer {self.api_key}"}
+            headers = {"Authorization": f"Bearer {self.api_key}"} # Common header for API keys
             if config_loader.get("anti_detection.request_header_randomization", False):
                 headers.update(user_agent_manager.get_random_headers())
             elif config_loader.get("crawler.user_agent_rotation", False):
@@ -155,13 +156,13 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
     async def get_keyword_suggestions(self, seed_keyword: str, num_suggestions: int = 10) -> List[KeywordSuggestion]:
         """
         Fetches keyword suggestions for a given seed keyword from a real API.
-        This is a placeholder; replace with actual API call logic.
+        Replace with actual API call logic for your chosen provider.
         """
-        endpoint = f"{self.base_url}/keywords/suggestions"
+        endpoint = f"{self.base_url}/keywords/suggestions" # Hypothetical endpoint
         params = {
             "keyword": seed_keyword,
             "limit": num_suggestions,
-            "api_key": self.api_key # Some APIs use query param for key
+            "apiKey": self.api_key # Some APIs use query param for key
         }
         self.logger.info(f"Attempting real API call for keyword suggestions: {endpoint}?keyword={seed_keyword}...")
 
@@ -187,22 +188,22 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
                 data = await response.json()
                 
                 suggestions = []
-                # Placeholder for parsing actual API response
+                # --- Replace with actual parsing logic for your chosen API ---
                 # Example: assuming 'suggestions' key with list of dicts
-                for item in data.get("suggestions", []):
-                    suggestions.append(
-                        KeywordSuggestion(
-                            seed_keyword=seed_keyword,
-                            suggested_keyword=item.get("keyword"),
-                            search_volume_monthly=item.get("search_volume"),
-                            cpc_estimate=item.get("cpc"),
-                            keyword_trend=item.get("trend", []),
-                            competition_level=item.get("competition"),
-                            data_timestamp=datetime.now()
-                        )
-                    )
-                self.logger.info(f"RealKeywordAPIClient: Found {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
-                return suggestions
+                # for item in data.get("suggestions", []):
+                #     suggestions.append(
+                #         KeywordSuggestion(
+                #             seed_keyword=seed_keyword,
+                #             suggested_keyword=item.get("keyword"),
+                #             search_volume_monthly=item.get("search_volume"),
+                #             cpc_estimate=item.get("cpc"),
+                #             keyword_trend=item.get("trend", []),
+                #             competition_level=item.get("competition"),
+                #             data_timestamp=datetime.now()
+                #         )
+                #     )
+                self.logger.warning("RealKeywordAPIClient: Returning simulated data. Replace with actual API response parsing.")
+                return SimulatedKeywordAPIClient().get_keyword_suggestions(seed_keyword, num_suggestions) # Fallback to simulation
 
         except aiohttp.ClientError as e:
             self.logger.error(f"Error fetching real keyword suggestions for '{seed_keyword}': {e}. Returning empty list.")
@@ -216,10 +217,11 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
 
 class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
     """
-    A placeholder client for a real Keyword Metrics API (e.g., Ahrefs, SEMrush, Google Ads API).
+    A client for a real Keyword Metrics API (e.g., Ahrefs, SEMrush, Google Ads API).
     This client would fetch search volume, CPC, and competition level.
+    This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str = "https://api.real-keyword-metrics.com"):
+    def __init__(self, api_key: str, base_url: str):
         self.logger = logging.getLogger(__name__ + ".RealKeywordMetricsAPIClient")
         self.api_key = api_key
         self.base_url = base_url
@@ -246,11 +248,11 @@ class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
     @api_rate_limited(service="keyword_api", api_client_type="metrics_api", endpoint="get_metrics")
     async def get_keyword_metrics(self, keyword: str) -> Dict[str, Any]:
         """
-        Simulates fetching detailed metrics for a single keyword.
-        In a real scenario, this would query a paid API.
+        Fetches detailed metrics for a single keyword from a real API.
+        Replace with actual API call logic for your chosen provider.
         """
-        endpoint = f"{self.base_url}/metrics"
-        params = {"keyword": keyword, "api_key": self.api_key}
+        endpoint = f"{self.base_url}/metrics" # Hypothetical endpoint
+        params = {"keyword": keyword, "apiKey": self.api_key}
         self.logger.info(f"Attempting real API call for keyword metrics: {endpoint}?keyword={keyword}...")
 
         session_to_use = self._session
@@ -270,13 +272,16 @@ class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
         try:
             async with session_to_use.get(endpoint, params=params, timeout=10) as response:
                 response.raise_for_status()
-                # data = await response.json()
+                data = await response.json()
+                # --- Replace with actual parsing logic for your chosen API ---
+                # Example:
                 # return {
                 #     "search_volume_monthly": data.get("volume"),
                 #     "cpc_estimate": data.get("cpc"),
                 #     "competition_level": data.get("competition")
                 # }
                 
+                self.logger.warning("RealKeywordMetricsAPIClient: Returning simulated metrics. Replace with actual API response parsing.")
                 # Simulate data for now
                 domain_hash = sum(ord(c) for c in keyword.lower())
                 return {
@@ -312,12 +317,13 @@ class KeywordService:
         # Determine which API client to use based on config_loader priority
         if config_loader.get("keyword_api.real_api.enabled"):
             real_api_key = config_loader.get("keyword_api.real_api.api_key")
-            if not real_api_key:
-                self.logger.error("Real Keyword API enabled but API key not found in config. Falling back to simulated Keyword API.")
+            real_api_base_url = config_loader.get("keyword_api.real_api.base_url")
+            if not real_api_key or not real_api_base_url:
+                self.logger.error("Real Keyword API enabled but API key or base_url not found in config. Falling back to simulated Keyword API.")
                 self.api_client = SimulatedKeywordAPIClient()
             else:
                 self.logger.info("Using RealKeywordAPIClient for keyword lookups.")
-                self.api_client = RealKeywordAPIClient(api_key=real_api_key)
+                self.api_client = RealKeywordAPIClient(api_key=real_api_key, base_url=real_api_base_url)
         else:
             self.logger.info("Using SimulatedKeywordAPIClient for keyword lookups.")
             self.api_client = SimulatedKeywordAPIClient()
@@ -328,11 +334,12 @@ class KeywordService:
         self.metrics_api_client: Optional[RealKeywordMetricsAPIClient] = None
         if config_loader.get("keyword_api.metrics_api.enabled"):
             metrics_api_key = config_loader.get("keyword_api.metrics_api.api_key")
-            if not metrics_api_key:
-                self.logger.error("Real Keyword Metrics API enabled but API key not found in config. Metrics will be simulated.")
+            metrics_api_base_url = config_loader.get("keyword_api.metrics_api.base_url")
+            if not metrics_api_key or not metrics_api_base_url:
+                self.logger.error("Real Keyword Metrics API enabled but API key or base_url not found in config. Metrics will be simulated.")
             else:
                 self.logger.info("Using RealKeywordMetricsAPIClient for keyword metrics.")
-                self.metrics_api_client = RealKeywordMetricsAPIClient(api_key=metrics_api_key)
+                self.metrics_api_client = RealKeywordMetricsAPIClient(api_key=metrics_api_key, base_url=metrics_api_base_url)
 
     async def __aenter__(self):
         """Async context manager entry for KeywordService."""

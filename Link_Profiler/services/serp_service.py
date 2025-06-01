@@ -25,7 +25,7 @@ class BaseSERPAPIClient:
     Base class for a SERP API client.
     Real implementations would connect to external services like Google Search API, SerpApi, etc.
     """
-    async def get_serp_results(self, keyword: str, num_results: int = 10) -> List[SERPResult]:
+    async def get_serp_results(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
         raise NotImplementedError
 
     async def __aenter__(self):
@@ -65,11 +65,11 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
             await self._session.close()
             self._session = None
 
-    async def get_serp_results(self, keyword: str, num_results: int = 10) -> List[SERPResult]:
+    async def get_serp_results(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
         """
         Simulates fetching SERP results for a given keyword.
         """
-        self.logger.info(f"Simulating API call for SERP results for keyword: '{keyword}'")
+        self.logger.info(f"Simulating API call for SERP results for keyword: '{keyword}' from {search_engine}")
         
         session_to_use = self._session
         close_session_after_use = False
@@ -128,8 +128,9 @@ class RealSERPAPIClient(BaseSERPAPIClient):
     """
     A client for a real SERP API (e.g., SerpApi, BrightData SERP API).
     Requires an API key.
+    This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str = "https://api.real-serp-provider.com"):
+    def __init__(self, api_key: str, base_url: str):
         self.logger = logging.getLogger(__name__ + ".RealSERPAPIClient")
         self.api_key = api_key
         self.base_url = base_url
@@ -139,7 +140,7 @@ class RealSERPAPIClient(BaseSERPAPIClient):
         """Async context manager entry for client session."""
         self.logger.info("Entering RealSERPAPIClient context.")
         if self._session is None or self._session.closed:
-            headers = {"Authorization": f"Bearer {self.api_key}"}
+            headers = {"Authorization": f"Bearer {self.api_key}"} # Common header for API keys
             if config_loader.get("anti_detection.request_header_randomization", False):
                 headers.update(user_agent_manager.get_random_headers())
             elif config_loader.get("crawler.user_agent_rotation", False):
@@ -156,18 +157,22 @@ class RealSERPAPIClient(BaseSERPAPIClient):
             self._session = None
 
     @api_rate_limited(service="serp_api", api_client_type="real_api", endpoint="search")
-    async def get_serp_results(self, keyword: str, num_results: int = 10) -> List[SERPResult]:
+    async def get_serp_results(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
         """
         Fetches SERP results for a given keyword from a real API.
-        This is a placeholder; replace with actual API call logic.
+        Replace with actual API call logic for your chosen provider.
         """
-        endpoint = f"{self.base_url}/search"
+        # Example for SerpApi: https://serpapi.com/search-api
+        # Example for BrightData SERP API: https://brightdata.com/products/serp-api
+        
+        endpoint = f"{self.base_url}/search" # Hypothetical endpoint
         params = {
             "q": keyword,
             "num": num_results,
+            "engine": search_engine, # Pass search engine
             "api_key": self.api_key # Some APIs use query param for key
         }
-        self.logger.info(f"Attempting real API call for SERP results: {endpoint}?q={keyword}...")
+        self.logger.info(f"Attempting real API call for SERP results: {endpoint}?q={keyword} from {search_engine}...")
 
         session_to_use = self._session
         close_session_after_use = False
@@ -191,23 +196,23 @@ class RealSERPAPIClient(BaseSERPAPIClient):
                 data = await response.json()
                 
                 serp_results = []
-                # Placeholder for parsing actual API response
+                # --- Replace with actual parsing logic for your chosen API ---
                 # Example: assuming 'organic_results' key with list of dicts
-                for i, item in enumerate(data.get("organic_results", [])):
-                    serp_results.append(
-                        SERPResult(
-                            keyword=keyword,
-                            position=item.get("position", i + 1),
-                            result_url=item.get("link"),
-                            title_text=item.get("title"),
-                            snippet_text=item.get("snippet"),
-                            rich_features=item.get("rich_features", []), # Assuming API provides this
-                            page_load_time=item.get("page_load_time"), # Assuming API provides this
-                            crawl_timestamp=datetime.now()
-                        )
-                    )
-                self.logger.info(f"RealSERPAPIClient: Found {len(serp_results)} SERP results for '{keyword}'.")
-                return serp_results
+                # for i, item in enumerate(data.get("organic_results", [])):
+                #     serp_results.append(
+                #         SERPResult(
+                #             keyword=keyword,
+                #             position=item.get("position", i + 1),
+                #             result_url=item.get("link"),
+                #             title_text=item.get("title"),
+                #             snippet_text=item.get("snippet"),
+                #             rich_features=item.get("rich_features", []), # Assuming API provides this
+                #             page_load_time=item.get("page_load_time"), # Assuming API provides this
+                #             crawl_timestamp=datetime.now()
+                #         )
+                #     )
+                self.logger.warning("RealSERPAPIClient: Returning simulated data. Replace with actual API response parsing.")
+                return SimulatedSERPAPIClient().get_serp_results(keyword, num_results, search_engine) # Fallback to simulation
 
         except aiohttp.ClientError as e:
             self.logger.error(f"Error fetching real SERP results for '{keyword}': {e}. Returning empty list.")
@@ -233,12 +238,13 @@ class SERPService:
         # Determine which API client to use based on config_loader priority
         if config_loader.get("serp_api.real_api.enabled"):
             real_api_key = config_loader.get("serp_api.real_api.api_key")
-            if not real_api_key:
-                self.logger.error("Real SERP API enabled but API key not found in config. Falling back to simulated SERP API.")
+            real_api_base_url = config_loader.get("serp_api.real_api.base_url")
+            if not real_api_key or not real_api_base_url:
+                self.logger.error("Real SERP API enabled but API key or base_url not found in config. Falling back to simulated SERP API.")
                 self.api_client = SimulatedSERPAPIClient()
             else:
                 self.logger.info("Using RealSERPAPIClient for SERP lookups.")
-                self.api_client = RealSERPAPIClient(api_key=real_api_key)
+                self.api_client = RealSERPAPIClient(api_key=real_api_key, base_url=real_api_base_url)
         else:
             self.logger.info("Using SimulatedSERPAPIClient for SERP lookups.")
             self.api_client = SimulatedSERPAPIClient()
@@ -296,7 +302,7 @@ class SERPService:
             serp_results = await self.serp_crawler.get_serp_data(keyword, num_results, search_engine)
         else:
             self.logger.info(f"Using SERP API client to fetch SERP data for '{keyword}'.")
-            serp_results = await self.api_client.get_serp_results(keyword, num_results)
+            serp_results = await self.api_client.get_serp_results(keyword, num_results, search_engine)
         
         if serp_results:
             await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results]) # Cache as list of dicts

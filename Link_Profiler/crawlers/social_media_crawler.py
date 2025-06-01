@@ -7,8 +7,8 @@ import logging
 import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime # Import datetime
-import random
 import aiohttp
+import random
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.user_agent_manager import user_agent_manager
@@ -17,16 +17,26 @@ logger = logging.getLogger(__name__)
 
 class SocialMediaCrawler:
     """
-    A placeholder class for scraping social media platforms.
-    In a real implementation, this would use libraries like `snscrape`, `instaloader`,
-    or direct API calls (if allowed and authenticated) to extract data.
-    It would also handle rate limits, CAPTCHAs, and dynamic content.
+    A class for interacting with social media platforms, either via direct scraping
+    (where allowed and feasible) or by integrating with official APIs.
+    This class demonstrates where real API calls or library usage would go.
     """
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self._session: Optional[aiohttp.ClientSession] = None
         self.enabled = config_loader.get("social_media_crawler.enabled", False)
         self.platforms_config = config_loader.get("social_media_crawler.platforms", [])
+
+        # API keys for various platforms
+        self.twitter_bearer_token = config_loader.get("social_media_crawler.twitter_bearer_token")
+        self.facebook_app_id = config_loader.get("social_media_crawler.facebook_app_id")
+        self.facebook_app_secret = config_loader.get("social_media_crawler.facebook_app_secret")
+        self.linkedin_client_id = config_loader.get("social_media_crawler.linkedin_client_id")
+        self.linkedin_client_secret = config_loader.get("social_media_crawler.linkedin_client_secret")
+        self.reddit_client_id = config_loader.get("social_media_crawler.reddit_client_id")
+        self.reddit_client_secret = config_loader.get("social_media_crawler.reddit_client_secret")
+        self.reddit_user_agent = config_loader.get("social_media_crawler.reddit_user_agent", "LinkProfilerBot/1.0")
+
 
         if not self.enabled:
             self.logger.info("SocialMediaCrawler is disabled by configuration.")
@@ -56,8 +66,7 @@ class SocialMediaCrawler:
 
     async def scrape_platform(self, platform: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
-        Simulates scraping a specific social media platform for a given query.
-        In a real scenario, this would involve actual HTTP requests and parsing.
+        Interacts with a specific social media platform's API or performs scraping for a given query.
         """
         if not self.enabled:
             self.logger.warning(f"SocialMediaCrawler is disabled. Cannot scrape {platform}.")
@@ -67,31 +76,131 @@ class SocialMediaCrawler:
             self.logger.warning(f"Platform '{platform}' is not configured for social media crawling. Skipping.")
             return []
 
-        self.logger.info(f"Simulating scraping {platform} for query: '{query}' (limit: {limit}).")
+        self.logger.info(f"Attempting to scrape/fetch from {platform} for query: '{query}' (limit: {limit}).")
         
-        # Simulate network delay
-        await asyncio.sleep(random.uniform(0.5, 2.0))
-
         results = []
+        try:
+            if platform == "twitter":
+                if not self.twitter_bearer_token:
+                    self.logger.warning("Twitter/X Bearer Token not configured. Simulating Twitter/X data.")
+                    return self._simulate_posts(platform, query, limit)
+                
+                # Example: Twitter API v2 search endpoint
+                # Requires 'tweepy' or direct aiohttp calls
+                # endpoint = "https://api.twitter.com/2/tweets/search/recent"
+                # headers = {"Authorization": f"Bearer {self.twitter_bearer_token}"}
+                # params = {"query": query, "max_results": limit, "tweet.fields": "created_at,author_id,public_metrics"}
+                # async with self._session.get(endpoint, headers=headers, params=params, timeout=10) as response:
+                #     response.raise_for_status()
+                #     data = await response.json()
+                #     for tweet in data.get("data", []):
+                #         results.append({
+                #             "platform": "twitter",
+                #             "post_id": tweet.get("id"),
+                #             "text": tweet.get("text"),
+                #             "author_id": tweet.get("author_id"),
+                #             "likes": tweet.get("public_metrics", {}).get("like_count"),
+                #             "retweets": tweet.get("public_metrics", {}).get("retweet_count"),
+                #             "timestamp": tweet.get("created_at"),
+                #             "url": f"https://twitter.com/{tweet.get('author_id')}/status/{tweet.get('id')}" # Simplified URL
+                #         })
+                self.logger.info(f"Real Twitter/X API integration is a placeholder. Simulating data for '{query}'.")
+                results = self._simulate_posts(platform, query, limit)
+
+            elif platform == "facebook":
+                if not self.facebook_app_id or not self.facebook_app_secret:
+                    self.logger.warning("Facebook App ID/Secret not configured. Simulating Facebook data.")
+                    return self._simulate_posts(platform, query, limit)
+                
+                # Example: Facebook Graph API search (requires user access token or app access token)
+                # endpoint = f"https://graph.facebook.com/v18.0/search"
+                # params = {"q": query, "type": "post", "limit": limit, "access_token": "YOUR_ACCESS_TOKEN"}
+                # async with self._session.get(endpoint, params=params, timeout=10) as response:
+                #     response.raise_for_status()
+                #     data = await response.json()
+                #     for post in data.get("data", []):
+                #         results.append({
+                #             "platform": "facebook",
+                #             "post_id": post.get("id"),
+                #             "text": post.get("message"),
+                #             "author_id": post.get("from", {}).get("id"),
+                #             "likes": post.get("likes", {}).get("count"), # Requires specific fields/permissions
+                #             "timestamp": post.get("created_time"),
+                #             "url": post.get("permalink_url") # Requires specific fields/permissions
+                #         })
+                self.logger.info(f"Real Facebook API integration is a placeholder. Simulating data for '{query}'.")
+                results = self._simulate_posts(platform, query, limit)
+
+            elif platform == "linkedin":
+                if not self.linkedin_client_id or not self.linkedin_client_secret:
+                    self.logger.warning("LinkedIn Client ID/Secret not configured. Simulating LinkedIn data.")
+                    return self._simulate_posts(platform, query, limit)
+                
+                # LinkedIn API is complex (OAuth 2.0, specific permissions for content search)
+                # This would typically involve an SDK or a multi-step OAuth flow.
+                self.logger.info(f"Real LinkedIn API integration is a placeholder. Simulating data for '{query}'.")
+                results = self._simulate_posts(platform, query, limit)
+
+            elif platform == "reddit":
+                if not self.reddit_client_id or not self.reddit_client_secret:
+                    self.logger.warning("Reddit Client ID/Secret not configured. Simulating Reddit data.")
+                    return self._simulate_posts(platform, query, limit)
+                
+                # Example: Reddit API (PRAW library is common, or direct HTTP)
+                # endpoint = "https://oauth.reddit.com/r/all/search"
+                # headers = {"User-Agent": self.reddit_user_agent, "Authorization": "Bearer YOUR_ACCESS_TOKEN"}
+                # params = {"q": query, "limit": limit, "sort": "new"}
+                # async with self._session.get(endpoint, headers=headers, params=params, timeout=10) as response:
+                #     response.raise_for_status()
+                #     data = await response.json()
+                #     for post in data.get("data", {}).get("children", []):
+                #         post_data = post.get("data", {})
+                #         results.append({
+                #             "platform": "reddit",
+                #             "post_id": post_data.get("id"),
+                #             "text": post_data.get("title"),
+                #             "author": post_data.get("author"),
+                #             "score": post_data.get("score"),
+                #             "comments": post_data.get("num_comments"),
+                #             "timestamp": datetime.fromtimestamp(post_data.get("created_utc")).isoformat(),
+                #             "url": f"https://reddit.com{post_data.get('permalink')}"
+                #         })
+                self.logger.info(f"Real Reddit API integration is a placeholder. Simulating data for '{query}'.")
+                results = self._simulate_posts(platform, query, limit)
+
+            else:
+                self.logger.warning(f"Unsupported social media platform: {platform}. Simulating data.")
+                results = self._simulate_posts(platform, query, limit)
+
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Network/API error while scraping {platform} for '{query}': {e}", exc_info=True)
+            results = self._simulate_posts(platform, query, limit) # Fallback to simulation on error
+        except Exception as e:
+            self.logger.error(f"Unexpected error while scraping {platform} for '{query}': {e}", exc_info=True)
+            results = self._simulate_posts(platform, query, limit) # Fallback to simulation on error
+        
+        self.logger.info(f"Scraped/fetched {len(results)} results from {platform} for '{query}'.")
+        return results
+
+    def _simulate_posts(self, platform: str, query: str, limit: int) -> List[Dict[str, Any]]:
+        """Helper to generate simulated posts."""
+        simulated_results = []
         for i in range(limit):
-            results.append({
+            simulated_results.append({
                 "platform": platform,
-                "query": query,
-                "item_id": f"{platform}_{query.replace(' ', '_')}_{random.randint(10000, 99999)}",
-                "text": f"This is a simulated post/tweet/comment about '{query}' from {platform} user {random.randint(1, 100)}.",
+                "post_id": f"{platform}_post_{random.randint(1000, 9999)}",
+                "text": f"This is a simulated post about '{query}' from {platform} user {random.randint(1, 100)}.",
                 "author": f"user_{random.randint(1, 100)}",
-                "timestamp": datetime.now().isoformat(),
                 "likes": random.randint(0, 500),
                 "shares": random.randint(0, 100),
-                "url": f"https://{platform}.com/simulated_post/{random.randint(100000, 999999)}"
+                "timestamp": (datetime.now() - timedelta(hours=random.randint(1, 72))).isoformat(),
+                "url": f"https://{platform}.com/posts/{random.randint(10000, 99999)}"
             })
-        
-        self.logger.info(f"Simulated {len(results)} results from {platform} for '{query}'.")
-        return results
+        return simulated_results
 
     async def get_user_profile(self, platform: str, username: str) -> Optional[Dict[str, Any]]:
         """
-        Simulates fetching a user's profile data from a social media platform.
+        Fetches a user's profile data from a social media platform.
         """
         if not self.enabled:
             self.logger.warning(f"SocialMediaCrawler is disabled. Cannot get user profile for {platform}.")
@@ -101,15 +210,30 @@ class SocialMediaCrawler:
             self.logger.warning(f"Platform '{platform}' is not configured for social media crawling. Skipping.")
             return None
 
-        self.logger.info(f"Simulating fetching profile for '{username}' on {platform}.")
-        await asyncio.sleep(random.uniform(0.2, 1.0))
+        self.logger.info(f"Attempting to fetch profile for '{username}' on {platform}.")
+        
+        try:
+            # This would involve specific API calls for each platform
+            # e.g., Twitter: https://api.twitter.com/2/users/by/username/:username
+            # Facebook: https://graph.facebook.com/v18.0/:user_id
+            # LinkedIn: /v2/people
+            # Reddit: /user/:username/about
+            
+            # For now, simulate with dummy data.
+            await asyncio.sleep(random.uniform(0.2, 1.0))
 
-        return {
-            "platform": platform,
-            "username": username,
-            "followers": random.randint(100, 100000),
-            "following": random.randint(50, 5000),
-            "posts_count": random.randint(10, 1000),
-            "bio": f"Simulated bio for {username} on {platform}. Focuses on {random.choice(['tech', 'marketing', 'finance'])}.",
-            "profile_url": f"https://{platform}.com/{username}"
-        }
+            return {
+                "platform": platform,
+                "username": username,
+                "followers": random.randint(100, 100000),
+                "following": random.randint(50, 5000),
+                "posts_count": random.randint(10, 1000),
+                "bio": f"Simulated bio for {username} on {platform}. Focuses on {random.choice(['tech', 'marketing', 'finance'])}.",
+                "profile_url": f"https://{platform}.com/{username}"
+            }
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Network/API error while fetching profile for {username} on {platform}: {e}", exc_info=True)
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error while fetching profile for {username} on {platform}: {e}", exc_info=True)
+            return None

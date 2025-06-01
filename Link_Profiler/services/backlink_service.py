@@ -165,9 +165,9 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
 class RealBacklinkAPIClient(BaseBacklinkAPIClient):
     """
     A client for real backlink information APIs (e.g., Ahrefs, Moz, SEMrush).
-    This is a placeholder; you would implement actual API calls here.
+    This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str = "https://api.real-backlink-provider.com"):
+    def __init__(self, api_key: str, base_url: str):
         self.logger = logging.getLogger(__name__ + ".RealBacklinkAPIClient")
         self.api_key = api_key
         self.base_url = base_url
@@ -177,9 +177,7 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
         """Async context manager entry for client session."""
         self.logger.info("Entering RealBacklinkAPIClient context.")
         if self._session is None or self._session.closed:
-            # Example: Ahrefs API might use 'X-Ahrefs-Token' header
-            # Moz API might use basic auth or query params
-            headers = {"X-API-Key": self.api_key}
+            headers = {"X-API-Key": self.api_key} # Common header for API keys
             if config_loader.get("anti_detection.request_header_randomization", False):
                 headers.update(user_agent_manager.get_random_headers())
             elif config_loader.get("crawler.user_agent_rotation", False):
@@ -199,10 +197,10 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
     async def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
         """
         Fetches backlinks for a given target URL from a real API.
-        This is a placeholder; replace with actual API call logic.
+        Replace with actual API call logic for your chosen provider.
         """
-        endpoint = f"{self.base_url}/v1/backlinks"
-        params = {"target": target_url, "limit": 100} # Example parameters
+        endpoint = f"{self.base_url}/v1/backlinks" # Hypothetical endpoint
+        params = {"target": target_url, "limit": 100, "apiKey": self.api_key} # Example parameters
         self.logger.info(f"Attempting real API call for backlinks: {endpoint}?target={target_url}...")
 
         session_to_use = self._session
@@ -224,15 +222,26 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
         try:
             async with session_to_use.get(endpoint, params=params, timeout=30) as response:
                 response.raise_for_status() # Raise an exception for HTTP errors
+                data = await response.json()
                 
-                # --- Placeholder for parsing real API response into Backlink objects ---
-                # This part is highly dependent on the actual API's response structure.
-                # You would parse `await response.json()` here.
-                
+                backlinks = []
+                # --- Replace with actual parsing logic for your chosen API ---
+                # Example: assuming 'items' key with list of backlink dicts
+                # for item in data.get("items", []):
+                #     backlinks.append(
+                #         Backlink(
+                #             id=str(uuid.uuid4()),
+                #             source_url=item.get("sourceUrl"),
+                #             target_url=item.get("targetUrl"),
+                #             anchor_text=item.get("anchorText", ""),
+                #             link_type=LinkType(item.get("linkType", "follow").lower()),
+                #             context_text=item.get("contextText", ""),
+                #             discovered_date=datetime.fromisoformat(item.get("discoveredDate")),
+                #             spam_level=SpamLevel(item.get("spamLevel", "clean").lower())
+                #         )
+                #     )
                 self.logger.warning("RealBacklinkAPIClient: Returning simulated data. Replace with actual API response parsing.")
-                
                 # Return a fixed set of dummy backlinks to represent a successful API call
-                # This is distinct from SimulatedBacklinkAPIClient's random generation
                 return [
                     Backlink(
                         id=str(uuid.uuid4()), # Generate a unique ID
@@ -271,7 +280,7 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
     A client for OpenLinkProfiler.org API.
     This API is free with usage limits.
     """
-    def __init__(self, base_url: str = "http://www.openlinkprofiler.org/api/index.php"):
+    def __init__(self, base_url: str):
         self.logger = logging.getLogger(__name__ + ".OpenLinkProfilerAPIClient")
         self.base_url = base_url
         self._session: Optional[aiohttp.ClientSession] = None
@@ -534,16 +543,22 @@ class BacklinkService:
             self.logger.info("Using GSCBacklinkAPIClient for backlink lookups.")
             self.api_client = GSCBacklinkAPIClient()
         elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
-            self.logger.info("Using OpenLinkProfilerAPIClient for backlink lookups.")
-            self.api_client = OpenLinkProfilerAPIClient()
+            openlinkprofiler_base_url = config_loader.get("backlink_api.openlinkprofiler_api.base_url")
+            if not openlinkprofiler_base_url:
+                self.logger.warning("OpenLinkProfiler API enabled but base_url not found in config. Falling back to simulated Backlink API.")
+                self.api_client = SimulatedBacklinkAPIClient()
+            else:
+                self.logger.info("Using OpenLinkProfilerAPIClient for backlink lookups.")
+                self.api_client = OpenLinkProfilerAPIClient(base_url=openlinkprofiler_base_url)
         elif config_loader.get("backlink_api.real_api.enabled"):
             real_api_key = config_loader.get("backlink_api.real_api.api_key")
-            if not real_api_key:
-                self.logger.warning("Real Backlink API enabled but API key not found in config. Falling back to simulated Backlink API.")
+            real_api_base_url = config_loader.get("backlink_api.real_api.base_url")
+            if not real_api_key or not real_api_base_url:
+                self.logger.warning("Real Backlink API enabled but API key or base_url not found in config. Falling back to simulated Backlink API.")
                 self.api_client = SimulatedBacklinkAPIClient()
             else:
                 self.logger.info("Using RealBacklinkAPIClient for backlink lookups.")
-                self.api_client = RealBacklinkAPIClient(api_key=real_api_key)
+                self.api_client = RealBacklinkAPIClient(api_key=real_api_key, base_url=real_api_base_url)
         else:
             self.logger.info("No specific Backlink API enabled. Using SimulatedBacklinkAPIClient.")
             self.api_client = SimulatedBacklinkAPIClient()

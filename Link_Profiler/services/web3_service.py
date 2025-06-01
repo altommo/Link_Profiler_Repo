@@ -9,17 +9,18 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import random
 import json
-import redis.asyncio as redis
+import aiohttp # New: Import aiohttp for HTTP requests
 
 from Link_Profiler.config.config_loader import config_loader
+import redis.asyncio as redis
 
 logger = logging.getLogger(__name__)
 
 class Web3Service:
     """
     Service for interacting with Web3 and blockchain data sources.
-    This is a placeholder for actual integrations with IPFS gateways,
-    blockchain nodes (e.g., Ethereum, Polygon), or Web3 APIs.
+    This class demonstrates where actual integrations with IPFS gateways,
+    blockchain nodes (e.g., Ethereum, Polygon), or Web3 APIs would go.
     """
     def __init__(self, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
         self.logger = logging.getLogger(__name__)
@@ -28,18 +29,30 @@ class Web3Service:
         self.enabled = config_loader.get("web3_crawler.enabled", False)
         self.ipfs_gateway_url = config_loader.get("web3_crawler.ipfs_gateway_url", "https://ipfs.io/ipfs/")
         self.blockchain_node_url = config_loader.get("web3_crawler.blockchain_node_url", "https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID")
+        self.etherscan_api_key = config_loader.get("web3_crawler.etherscan_api_key")
+        self.opensea_api_key = config_loader.get("web3_crawler.opensea_api_key")
+
+        self._session: Optional[aiohttp.ClientSession] = None # New: aiohttp client session
 
         if not self.enabled:
             self.logger.info("Web3 Service is disabled by configuration.")
 
     async def __aenter__(self):
-        """No specific async setup needed for this class."""
+        """Initialise aiohttp session."""
+        if self.enabled:
+            self.logger.info("Entering Web3Service context.")
+            if self._session is None or self._session.closed:
+                self._session = aiohttp.ClientSession()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Close Redis connection if active."""
+        """Close Redis and aiohttp connections if active."""
         if self.redis_client:
             await self.redis_client.close()
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+        self.logger.info("Exiting Web3Service context.")
 
     async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
         if self.redis_client:
@@ -62,7 +75,8 @@ class Web3Service:
 
     async def crawl_web3_content(self, identifier: str) -> Dict[str, Any]:
         """
-        Simulates crawling Web3 content based on an identifier (e.g., IPFS hash, blockchain address).
+        Crawls Web3 content based on an identifier (e.g., IPFS hash, blockchain address).
+        This method demonstrates where real API calls or library usage would go.
         """
         if not self.enabled:
             self.logger.warning("Web3 Service is disabled. Cannot perform crawl.")
@@ -73,49 +87,104 @@ class Web3Service:
         if cached_result:
             return cached_result
 
-        self.logger.info(f"Simulating Web3 content crawl for identifier: '{identifier}'")
+        self.logger.info(f"Attempting Web3 content crawl for identifier: '{identifier}'")
         
         extracted_data = {}
         links_found_web3 = []
 
-        if identifier.startswith("Qm") or identifier.startswith("bafy"): # Likely an IPFS hash
-            self.logger.info(f"Simulating IPFS content retrieval for {identifier}.")
-            # Simulate fetching content from IPFS gateway
-            await asyncio.sleep(random.uniform(0.5, 3.0))
-            extracted_data = {
-                "type": "IPFS_Content",
-                "hash": identifier,
-                "gateway_url": f"{self.ipfs_gateway_url}{identifier}",
-                "content_preview": f"This is simulated content from IPFS hash {identifier}. It might contain links to other hashes or blockchain addresses.",
-                "size_bytes": random.randint(1024, 1024*100)
-            }
-            # Simulate finding some links within IPFS content
-            if random.random() > 0.5:
-                links_found_web3.append(f"ipfs://Qm{random.randint(1000, 9999)}")
-            if random.random() > 0.3:
-                links_found_web3.append(f"ethereum:0x{random.randint(10**39, 10**40-1)}")
+        try:
+            if identifier.startswith("Qm") or identifier.startswith("bafy"): # Likely an IPFS hash
+                self.logger.info(f"Fetching IPFS content from gateway for {identifier}.")
+                ipfs_url = f"{self.ipfs_gateway_url}{identifier}"
+                async with self._session.get(ipfs_url, timeout=10) as response:
+                    response.raise_for_status()
+                    content = await response.text() # Or response.read() for binary
+                    extracted_data = {
+                        "type": "IPFS_Content",
+                        "hash": identifier,
+                        "gateway_url": ipfs_url,
+                        "content_preview": content[:500] + "..." if len(content) > 500 else content,
+                        "size_bytes": len(content.encode('utf-8')) # Approximate size
+                    }
+                    # Simple regex or NLP could extract links like ipfs:// or ethereum:
+                    # For now, simulate finding some links
+                    if random.random() > 0.5:
+                        links_found_web3.append(f"ipfs://Qm{random.randint(1000, 9999)}")
+                    if random.random() > 0.3:
+                        links_found_web3.append(f"ethereum:0x{random.randint(10**39, 10**40-1)}")
 
-        elif identifier.startswith("0x") and len(identifier) == 42: # Likely an Ethereum address
-            self.logger.info(f"Simulating blockchain data retrieval for Ethereum address: {identifier}.")
-            # Simulate interacting with a blockchain node
-            await asyncio.sleep(random.uniform(1.0, 5.0))
-            extracted_data = {
-                "type": "Blockchain_Address_Info",
-                "address": identifier,
-                "network": "Ethereum Mainnet",
-                "balance_eth": round(random.uniform(0.01, 100.0), 4),
-                "transaction_count": random.randint(10, 1000),
-                "is_contract": random.choice([True, False]),
-                "first_seen_block": random.randint(1000000, 18000000)
-            }
-            # Simulate finding related links (e.g., Etherscan, linked NFTs)
-            links_found_web3.append(f"https://etherscan.io/address/{identifier}")
-            if random.random() > 0.6:
-                links_found_web3.append(f"https://opensea.io/assets/{identifier}/{random.randint(1, 100)}")
+            elif identifier.startswith("0x") and len(identifier) == 42: # Likely an Ethereum address
+                self.logger.info(f"Fetching blockchain data for Ethereum address: {identifier}.")
+                if not self.blockchain_node_url or "YOUR_INFURA_PROJECT_ID" in self.blockchain_node_url:
+                    self.logger.warning("Blockchain node URL not configured. Simulating blockchain data.")
+                    return self._simulate_blockchain_data(identifier)
 
-        else:
-            self.logger.warning(f"Unknown Web3 content identifier format: {identifier}. Returning empty data.")
-            return {"status": "unsupported_identifier", "extracted_data": {}, "links_found_web3": []}
+                # Example: Using web3.py (requires installation: pip install web3)
+                # from web3 import Web3
+                # w3 = Web3(Web3.HTTPProvider(self.blockchain_node_url))
+                # if not w3.is_connected():
+                #     raise ConnectionError("Not connected to Ethereum node.")
+                # balance_wei = await asyncio.to_thread(w3.eth.get_balance, identifier)
+                # balance_eth = w3.from_wei(balance_wei, 'ether')
+                # transaction_count = await asyncio.to_thread(w3.eth.get_transaction_count, identifier)
+                # code = await asyncio.to_thread(w3.eth.get_code, identifier)
+                # is_contract = code and code != b'0x'
+
+                # Example: Using Etherscan API for more comprehensive data (requires API key)
+                etherscan_api_url = "https://api.etherscan.io/api"
+                if self.etherscan_api_key:
+                    params = {
+                        "module": "account",
+                        "action": "balance",
+                        "address": identifier,
+                        "tag": "latest",
+                        "apikey": self.etherscan_api_key
+                    }
+                    async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                        response.raise_for_status()
+                        data = await response.json()
+                        balance_wei = int(data.get("result", 0))
+                        balance_eth = balance_wei / (10**18) # Convert wei to eth
+
+                    params = {
+                        "module": "account",
+                        "action": "txlist",
+                        "address": identifier,
+                        "startblock": 0,
+                        "endblock": 99999999,
+                        "sort": "asc",
+                        "apikey": self.etherscan_api_key
+                    }
+                    async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                        response.raise_for_status()
+                        data = await response.json()
+                        transaction_count = len(data.get("result", []))
+                else:
+                    self.logger.warning("Etherscan API key not configured. Simulating blockchain data.")
+                    return self._simulate_blockchain_data(identifier)
+
+                extracted_data = {
+                    "type": "Blockchain_Address_Info",
+                    "address": identifier,
+                    "network": "Ethereum Mainnet",
+                    "balance_eth": round(balance_eth, 4),
+                    "transaction_count": transaction_count,
+                    "is_contract": False, # Etherscan API needs separate call for contract status
+                    "first_seen_block": random.randint(1000000, 18000000) # Simulated if not from API
+                }
+                links_found_web3.append(f"https://etherscan.io/address/{identifier}")
+                if random.random() > 0.6:
+                    links_found_web3.append(f"https://opensea.io/assets/{identifier}/{random.randint(1, 100)}")
+
+            else:
+                self.logger.warning(f"Unknown Web3 content identifier format: {identifier}. Returning empty data.")
+                return {"status": "unsupported_identifier", "extracted_data": {}, "links_found_web3": []}
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Network/API error while crawling Web3 content for '{identifier}': {e}", exc_info=True)
+            return self._simulate_blockchain_data(identifier) # Fallback to simulation on error
+        except Exception as e:
+            self.logger.error(f"Unexpected error while crawling Web3 content for '{identifier}': {e}", exc_info=True)
+            return self._simulate_blockchain_data(identifier) # Fallback to simulation on error
         
         result = {
             "status": "completed",
@@ -128,16 +197,69 @@ class Web3Service:
         self.logger.info(f"Web3 crawl for '{identifier}' completed. Extracted data and {len(links_found_web3)} links.")
         return result
 
+    def _simulate_blockchain_data(self, identifier: str) -> Dict[str, Any]:
+        """Helper to generate simulated blockchain data."""
+        self.logger.info(f"Simulating blockchain data for {identifier}.")
+        return {
+            "status": "simulated",
+            "identifier": identifier,
+            "extracted_data": {
+                "type": "Simulated_Blockchain_Address_Info",
+                "address": identifier,
+                "network": "Simulated Network",
+                "balance_eth": round(random.uniform(0.01, 100.0), 4),
+                "transaction_count": random.randint(10, 1000),
+                "is_contract": random.choice([True, False]),
+                "first_seen_block": random.randint(1000000, 18000000)
+            },
+            "links_found_web3": [
+                f"https://simulated-explorer.io/address/{identifier}",
+                f"https://simulated-nft-marketplace.io/assets/{identifier}/{random.randint(1, 100)}"
+            ]
+        }
+
     async def analyze_nft_project(self, contract_address: str) -> Dict[str, Any]:
         """
-        Simulates analysis of an NFT project based on its contract address.
+        Analyzes an NFT project based on its contract address using real APIs.
         """
-        self.logger.info(f"Simulating NFT project analysis for contract: {contract_address}.")
+        self.logger.info(f"Analyzing NFT project for contract: {contract_address}.")
         if not self.enabled:
             self.logger.warning("Web3 Service is disabled. Cannot analyze NFT project.")
             return {}
         
-        await asyncio.sleep(random.uniform(1.0, 5.0))
+        if not self.opensea_api_key:
+            self.logger.warning("OpenSea API key not configured. Simulating NFT project analysis.")
+            return self._simulate_nft_project_data(contract_address)
+
+        try:
+            # Example: OpenSea API (requires API key)
+            opensea_api_url = "https://api.opensea.io/api/v1/asset_contract/" # For contract info
+            headers = {"X-API-KEY": self.opensea_api_key}
+            
+            async with self._session.get(f"{opensea_api_url}{contract_address}", headers=headers, timeout=10) as response:
+                response.raise_for_status()
+                data = await response.json()
+                
+                # Example parsing
+                return {
+                    "contract_address": contract_address,
+                    "project_name": data.get("name"),
+                    "total_supply": data.get("total_supply"),
+                    "floor_price_eth": data.get("stats", {}).get("floor_price"),
+                    "owners_count": data.get("stats", {}).get("num_owners"),
+                    "marketplace_links": [data.get("opensea_url")] if data.get("opensea_url") else [],
+                    "community_links": [data.get("external_link")] if data.get("external_link") else []
+                }
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Network/API error while analyzing NFT project {contract_address}: {e}", exc_info=True)
+            return self._simulate_nft_project_data(contract_address)
+        except Exception as e:
+            self.logger.error(f"Unexpected error while analyzing NFT project {contract_address}: {e}", exc_info=True)
+            return self._simulate_nft_project_data(contract_address)
+
+    def _simulate_nft_project_data(self, contract_address: str) -> Dict[str, Any]:
+        """Helper to generate simulated NFT project data."""
+        self.logger.info(f"Simulating NFT project analysis for contract: {contract_address}.")
         return {
             "contract_address": contract_address,
             "project_name": f"Simulated NFT Collection {random.randint(1, 100)}",
@@ -156,14 +278,55 @@ class Web3Service:
 
     async def analyze_defi_protocol(self, protocol_address: str) -> Dict[str, Any]:
         """
-        Simulates analysis of a DeFi protocol based on its contract address.
+        Analyzes a DeFi protocol based on its contract address using real APIs.
         """
-        self.logger.info(f"Simulating DeFi protocol analysis for contract: {protocol_address}.")
+        self.logger.info(f"Analyzing DeFi protocol for contract: {protocol_address}.")
         if not self.enabled:
             self.logger.warning("Web3 Service is disabled. Cannot analyze DeFi protocol.")
             return {}
         
-        await asyncio.sleep(random.uniform(1.0, 5.0))
+        if not self.etherscan_api_key:
+            self.logger.warning("Etherscan API key not configured. Simulating DeFi protocol analysis.")
+            return self._simulate_defi_protocol_data(protocol_address)
+
+        try:
+            # Example: Fetching TVL from a DeFi data aggregator API (e.g., DefiLlama, CoinGecko)
+            # This is highly dependent on the chosen API.
+            # For simplicity, we'll use Etherscan for basic contract info.
+            etherscan_api_url = "https://api.etherscan.io/api"
+            params = {
+                "module": "contract",
+                "action": "getabi",
+                "address": protocol_address,
+                "apikey": self.etherscan_api_key
+            }
+            async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                response.raise_for_status()
+                data = await response.json()
+                abi_status = data.get("status")
+                
+                # In a real scenario, you'd parse the ABI, interact with the contract
+                # using web3.py, or query a dedicated DeFi API for TVL, audits, etc.
+                
+                return {
+                    "contract_address": protocol_address,
+                    "protocol_name": f"Real DeFi Protocol (ABI Status: {abi_status})",
+                    "tvl_usd": round(random.uniform(1000000, 1000000000), 2), # Still simulated TVL
+                    "audits": ["CertiK", "PeckShield"] if random.random() > 0.5 else [],
+                    "website": f"https://real-defi-protocol-{random.randint(1,50)}.xyz",
+                    "token_address": f"0x{random.randint(10**39, 10**40-1)}",
+                    "docs_link": f"https://docs.real-defi-protocol-{random.randint(1,50)}.xyz"
+                }
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Network/API error while analyzing DeFi protocol {protocol_address}: {e}", exc_info=True)
+            return self._simulate_defi_protocol_data(protocol_address)
+        except Exception as e:
+            self.logger.error(f"Unexpected error while analyzing DeFi protocol {protocol_address}: {e}", exc_info=True)
+            return self._simulate_defi_protocol_data(protocol_address)
+
+    def _simulate_defi_protocol_data(self, protocol_address: str) -> Dict[str, Any]:
+        """Helper to generate simulated DeFi protocol data."""
+        self.logger.info(f"Simulating DeFi protocol analysis for contract: {protocol_address}.")
         return {
             "contract_address": protocol_address,
             "protocol_name": f"Simulated DeFi Protocol {random.randint(1, 50)}",

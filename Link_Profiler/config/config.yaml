@@ -109,20 +109,24 @@ domain_api:
   real_api:
     enabled: false
     api_key: "" # Your API key for a real domain provider (e.g., WhoisXMLAPI, DomainTools)
+    base_url: "https://api.example-domain-provider.com" # Example base URL for a real domain API
 
 backlink_api:
   gsc_api:
     enabled: false # Requires manual OAuth setup and credentials.json
   openlinkprofiler_api:
     enabled: false # Free API with limits
+    base_url: "http://www.openlinkprofiler.org/api/index.php" # OpenLinkProfiler API base URL
   real_api:
     enabled: false
     api_key: "" # Your API key for a real backlink provider (e.g., Ahrefs, Moz, SEMrush)
+    base_url: "https://api.example-backlink-provider.com" # Example base URL for a real backlink API
 
 serp_api:
   real_api:
     enabled: false
     api_key: "" # Your API key for a real SERP API (e.g., SerpApi, BrightData SERP API)
+    base_url: "https://api.example-serp-provider.com" # Example base URL for a real SERP API
 
 serp_crawler:
   playwright:
@@ -134,9 +138,11 @@ keyword_api:
   real_api:
     enabled: false
     api_key: "" # Your API key for a real keyword research API (e.g., Ahrefs, SEMrush)
+    base_url: "https://api.example-keyword-research.com" # Example base URL for a real keyword research API
   metrics_api:
     enabled: false
     api_key: "" # Your API key for a real keyword metrics API (e.g., Google Ads API, Ahrefs)
+    base_url: "https://api.example-keyword-metrics.com" # Example base URL for a real keyword metrics API
 
 # AI Service Integration (e.g., OpenRouter, OpenAI, Anthropic)
 ai:
@@ -157,6 +163,29 @@ ai:
 # Technical Auditor (Lighthouse CLI)
 technical_auditor:
   lighthouse_path: "lighthouse" # Path to Lighthouse CLI executable (e.g., "C:\Users\YourUser\AppData\Roaming\npm\lighthouse.cmd" on Windows)
+
+# Social Media Integration
+social_media_crawler:
+  enabled: false
+  platforms: ["twitter", "facebook", "linkedin", "reddit"] # Supported platforms
+  twitter_api_key: "" # Your Twitter/X API Key
+  twitter_api_secret: "" # Your Twitter/X API Secret
+  twitter_bearer_token: "" # Your Twitter/X Bearer Token (for v2 API)
+  facebook_app_id: "" # Your Facebook App ID
+  facebook_app_secret: "" # Your Facebook App Secret
+  linkedin_client_id: "" # Your LinkedIn Client ID
+  linkedin_client_secret: "" # Your LinkedIn Client Secret
+  reddit_client_id: "" # Your Reddit Client ID
+  reddit_client_secret: "" # Your Reddit Client Secret
+  reddit_user_agent: "LinkProfilerBot/1.0" # Custom user agent for Reddit API
+
+# Web3 Integration
+web3_crawler:
+  enabled: false
+  ipfs_gateway_url: "https://ipfs.io/ipfs/" # Default public IPFS gateway
+  blockchain_node_url: "https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID" # Example Ethereum node (replace with your Infura Project ID)
+  etherscan_api_key: "" # Your Etherscan API Key (for blockchain data)
+  opensea_api_key: "" # Your OpenSea API Key (for NFT data)
 
 # Notifications & Alerting
 notifications:

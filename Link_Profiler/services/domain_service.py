@@ -173,9 +173,9 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
 class RealDomainAPIClient(BaseDomainAPIClient):
     """
     A client for real domain information APIs.
-    You would replace the placeholder logic with actual API calls.
+    This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str = "https://api.real-domain-provider.com"):
+    def __init__(self, api_key: str, base_url: str):
         self.logger = logging.getLogger(__name__ + ".RealDomainAPIClient")
         self.api_key = api_key
         self.base_url = base_url
@@ -185,7 +185,7 @@ class RealDomainAPIClient(BaseDomainAPIClient):
         """Async context manager entry for client session."""
         self.logger.info("Entering RealDomainAPIClient context.")
         if self._session is None or self._session.closed:
-            headers = {"X-API-Key": self.api_key}
+            headers = {"X-API-Key": self.api_key} # Common header for API keys
             if config_loader.get("anti_detection.request_header_randomization", False):
                 headers.update(user_agent_manager.get_random_headers())
             elif config_loader.get("crawler.user_agent_rotation", False):
@@ -205,10 +205,10 @@ class RealDomainAPIClient(BaseDomainAPIClient):
     async def get_domain_availability(self, domain_name: str) -> bool:
         """
         Fetches domain availability from a real API.
-        This is a placeholder; replace with actual API call logic.
+        Replace with actual API call logic for your chosen provider.
         """
-        endpoint = f"{self.base_url}/v1/availability"
-        params = {"domain": domain_name}
+        endpoint = f"{self.base_url}/v1/availability" # Hypothetical endpoint
+        params = {"domain": domain_name, "apiKey": self.api_key} # Some APIs use query param for key
         self.logger.info(f"Attempting real API call for domain availability: {endpoint}?domain={domain_name}...")
 
         session_to_use = self._session
@@ -229,10 +229,12 @@ class RealDomainAPIClient(BaseDomainAPIClient):
 
         try:
             async with session_to_use.get(endpoint, params=params, timeout=10) as response:
-                response.raise_for_status()
+                response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
                 data = await response.json()
-                # Placeholder for parsing real API response
-                return data.get("available", False)
+                # --- Replace with actual parsing logic for your chosen API ---
+                # Example: return data.get("available", False)
+                self.logger.warning("RealDomainAPIClient: Returning simulated availability. Replace with actual API response parsing.")
+                return "example" not in domain_name and "test" not in domain_name # Fallback to simulation
         except aiohttp.ClientError as e:
             self.logger.error(f"Error fetching real domain availability for {domain_name}: {e}. Returning False.")
             return False
@@ -247,10 +249,10 @@ class RealDomainAPIClient(BaseDomainAPIClient):
     async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
         """
         Fetches WHOIS data from a real API.
-        This is a placeholder; replace with actual API call logic.
+        Replace with actual API call logic for your chosen provider.
         """
-        endpoint = f"{self.base_url}/v1/whois"
-        params = {"domain": domain_name}
+        endpoint = f"{self.base_url}/v1/whois" # Hypothetical endpoint
+        params = {"domain": domain_name, "apiKey": self.api_key}
         self.logger.info(f"Attempting real API call for WHOIS data: {endpoint}?domain={domain_name}...")
 
         session_to_use = self._session
@@ -272,11 +274,22 @@ class RealDomainAPIClient(BaseDomainAPIClient):
         try:
             async with session_to_use.get(endpoint, params=params, timeout=10) as response:
                 response.raise_for_status()
-                # real_data = await response.json()
-                # return real_data.get("whois_record")
-
-                # Fallback to simulated logic for actual return value
-                return await SimulatedDomainAPIClient().get_whois_data(domain_name)
+                data = await response.json()
+                # --- Replace with actual parsing logic for your chosen API ---
+                # Example:
+                # return {
+                #     "domain_name": data.get("domainName"),
+                #     "registrar": data.get("registrarName"),
+                #     "creation_date": data.get("createdDate"),
+                #     "expiration_date": data.get("expiresDate"),
+                #     "name_servers": data.get("nameServers", []),
+                #     "status": data.get("status"),
+                #     "emails": data.get("contactEmails", []),
+                #     "organization": data.get("registrantOrganization"),
+                #     "country": data.get("registrantCountry")
+                # }
+                self.logger.warning("RealDomainAPIClient: Returning simulated WHOIS data. Replace with actual API response parsing.")
+                return await SimulatedDomainAPIClient().get_whois_data(domain_name) # Fallback to simulation
         except aiohttp.ClientError as e:
             self.logger.error(f"Error fetching real WHOIS data for {domain_name}: {e}. Returning None.")
             return None
@@ -320,10 +333,13 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
     async def get_domain_availability(self, domain_name: str) -> bool:
         """
         Fetches domain availability using AbstractAPI.
+        Note: AbstractAPI has a dedicated Domain API, but the example uses email validation.
+        You would typically use their Domain API for this.
         """
-        endpoint = f"{self.base_url}"
+        # Example for AbstractAPI Domain API: https://www.abstractapi.com/api/domain-validation-api
+        endpoint = "https://domain-validation.abstractapi.com/v1/" # Correct endpoint for Domain API
         params = {"api_key": self.api_key, "domain": domain_name}
-        self.logger.info(f"Attempting AbstractAPI call for domain availability: {endpoint}?domain={domain_name}...")
+        self.logger.info(f"Attempting AbstractAPI Domain API call for availability: {endpoint}?domain={domain_name}...")
 
         session_to_use = self._session
         close_session_after_use = False
@@ -345,9 +361,8 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
             async with session_to_use.get(endpoint, params=params, timeout=10) as response:
                 response.raise_for_status()
                 data = await response.json()
-                # AbstractAPI's email validation endpoint can also check domain validity
-                # Assuming 'is_smtp_valid' or similar indicates if domain is reachable
-                return data.get("is_smtp_valid", False) # This is a simplification
+                # Example parsing for AbstractAPI Domain API
+                return data.get("is_available", False)
         except aiohttp.ClientError as e:
             self.logger.error(f"Error fetching AbstractAPI domain availability for {domain_name}: {e}. Returning False.")
             return False
@@ -361,12 +376,54 @@ class AbstractDomainAPIClient(BaseDomainAPIClient):
     @api_rate_limited(service="domain_api", api_client_type="abstract_api", endpoint="whois")
     async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
         """
-        Fetches WHOIS data using AbstractAPI.
-        Note: AbstractAPI has a separate WHOIS API. This is a placeholder.
+        Fetches WHOIS data using AbstractAPI's WHOIS API.
         """
-        self.logger.warning("AbstractAPI WHOIS endpoint not implemented. Returning simulated WHOIS data.")
-        # Fallback to simulated data if the specific AbstractAPI WHOIS endpoint is not integrated
-        return await SimulatedDomainAPIClient().get_whois_data(domain_name)
+        # Example for AbstractAPI WHOIS API: https://www.abstractapi.com/api/whois-api
+        endpoint = "https://whois.abstractapi.com/v1/" # Correct endpoint for WHOIS API
+        params = {"api_key": self.api_key, "domain": domain_name}
+        self.logger.info(f"Attempting AbstractAPI WHOIS API call for {domain_name}...")
+
+        session_to_use = self._session
+        close_session_after_use = False
+        if session_to_use is None or session_to_use.closed:
+            self.logger.warning("AbstractDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
+            
+            headers = {}
+            if config_loader.get("anti_detection.request_header_randomization", False):
+                headers.update(user_agent_manager.get_random_headers())
+            elif config_loader.get("crawler.user_agent_rotation", False):
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+
+            session_to_use = aiohttp.ClientSession(headers=headers)
+            close_session_after_use = True
+        else:
+            close_session_after_use = False
+
+        try:
+            async with session_to_use.get(endpoint, params=params, timeout=10) as response:
+                response.raise_for_status()
+                data = await response.json()
+                # Example parsing for AbstractAPI WHOIS API
+                return {
+                    "domain_name": data.get("domain_name"),
+                    "registrar": data.get("registrar_name"),
+                    "creation_date": data.get("creation_date"),
+                    "expiration_date": data.get("expiration_date"),
+                    "name_servers": data.get("name_servers", {}).get("hostnames", []),
+                    "status": data.get("status"),
+                    "emails": data.get("contact", {}).get("email", []),
+                    "organization": data.get("registrant_organization"),
+                    "country": data.get("registrant_country")
+                }
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Error fetching AbstractAPI WHOIS data for {domain_name}: {e}. Returning None.")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error in AbstractAPI WHOIS data fetch for {domain_name}: {e}. Returning None.")
+            return None
+        finally:
+            if close_session_after_use and not session_to_use.closed:
+                await session_to_use.close()
 
 
 class DomainService:
@@ -391,11 +448,12 @@ class DomainService:
                 self.api_client = AbstractDomainAPIClient(api_key=abstract_api_key)
         elif config_loader.get("domain_api.real_api.enabled"):
             real_api_key = config_loader.get("domain_api.real_api.api_key")
-            if not real_api_key:
-                self.logger.warning("Real Domain API enabled but API key not found in config. Falling back to simulated Domain API.")
+            real_api_base_url = config_loader.get("domain_api.real_api.base_url")
+            if not real_api_key or not real_api_base_url:
+                self.logger.warning("Real Domain API enabled but API key or base_url not found in config. Falling back to simulated Domain API.")
                 self.api_client = SimulatedDomainAPIClient()
             else:
-                self.api_client = RealDomainAPIClient(api_key=real_api_key)
+                self.api_client = RealDomainAPIClient(api_key=real_api_key, base_url=real_api_base_url)
         else:
             self.logger.info("No specific Domain API enabled. Using SimulatedDomainAPIClient.")
             self.api_client = SimulatedDomainAPIClient()

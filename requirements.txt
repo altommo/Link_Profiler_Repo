@@ -13,21 +13,23 @@ playwright-stealth
 pytrends
 prometheus_client
 openai
-croniter # Added croniter
-ReportJob
-
-# Queue System Dependencies
-redis>=4.5.0
-jinja2>=3.1.0
+croniter
 
 # Authentication Dependencies
-passlib[bcrypt] # Added for password hashing in auth_service
-python-jose # Added for JWT handling in auth_service
-python-multipart # Added for form data parsing in FastAPI authentication
+passlib[bcrypt]
+python-jose
+python-multipart
 
 # Reporting Dependencies
-reportlab # Added for PDF report generation in report_service
-openpyxl # Added for Excel report generation in data_exporter and report_service
+reportlab
+openpyxl
+
+# Social Media & Web3 (Hypothetical/Common Libraries)
+# tweepy # For Twitter/X API (uncomment if integrating)
+# facebook-sdk # For Facebook Graph API (uncomment if integrating)
+# linkedin-api # For LinkedIn API (uncomment if integrating)
+# praw # For Reddit API (uncomment if integrating)
+# web3 # For Ethereum/EVM blockchain interaction (uncomment if integrating)
 
 # Development Dependencies
 python-dotenv>=0.19.0
