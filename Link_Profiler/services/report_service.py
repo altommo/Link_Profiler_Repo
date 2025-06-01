@@ -21,6 +21,23 @@ except ImportError:
     logging.warning("ReportLab not installed. PDF report generation will be simulated. Install with 'pip install reportlab'.")
     REPORTLAB_AVAILABLE = False
 
+# Excel imports
+# Declare names as None to satisfy flake8's F821 when imports are conditional
+openpyxl = None
+Font = None
+PatternFill = None
+get_column_letter = None
+EXCEL_AVAILABLE = False # Initialize outside try block
+
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    EXCEL_AVAILABLE = True
+except ImportError:
+    logging.warning("openpyxl not installed. Excel export will be unavailable. Install with 'pip install openpyxl'.")
+    # EXCEL_AVAILABLE remains False
+
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import LinkProfile, Backlink, serialize_model
 from Link_Profiler.utils.data_exporter import export_to_excel, EXCEL_AVAILABLE # New: Import export_to_excel and EXCEL_AVAILABLE
