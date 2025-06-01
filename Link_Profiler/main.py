@@ -52,6 +52,7 @@ from Link_Profiler.services.competitive_analysis_service import CompetitiveAnaly
 from Link_Profiler.services.social_media_service import SocialMediaService # New: Import SocialMediaService
 from Link_Profiler.services.web3_service import Web3Service # New: Import Web3Service
 from Link_Profiler.services.link_building_service import LinkBuildingService # New: Import LinkBuildingService
+from Link_Profiler.services.auth_service import AuthService # New: Import AuthService
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
