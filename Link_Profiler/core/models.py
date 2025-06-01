@@ -336,6 +336,18 @@ class CompetitiveKeywordAnalysisResult:
 
 
 @dataclass
+class ContentGapAnalysisResult:
+    """Result of a content gap analysis."""
+    target_url: str
+    competitor_urls: List[str]
+    missing_topics: List[str] = field(default_factory=list)
+    missing_keywords: List[str] = field(default_factory=list)
+    content_format_gaps: List[str] = field(default_factory=list)
+    actionable_insights: List[str] = field(default_factory=list)
+    analysis_date: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
 class CrawlError:
     """Represents a structured error encountered during crawling."""
     timestamp: datetime = field(default_factory=datetime.now)
@@ -758,6 +770,25 @@ class Token:
 class TokenData:
     """Represents data contained within a JWT token."""
     username: Optional[str] = None
+
+@dataclass
+class DomainHistory:
+    """Represents a historical snapshot of a domain's metrics."""
+    domain_name: str
+    snapshot_date: datetime = field(default_factory=datetime.now)
+    authority_score: float = 0.0
+    trust_score: float = 0.0
+    spam_score: float = 0.0
+    total_backlinks: int = 0
+    referring_domains: int = 0
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'DomainHistory':
+        if 'snapshot_date' in data and isinstance(data['snapshot_date'], str):
+            data['snapshot_date'] = datetime.fromisoformat(data['snapshot_date'])
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
 
 
 # Utility functions for model operations

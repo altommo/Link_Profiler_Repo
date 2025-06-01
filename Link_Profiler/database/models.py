@@ -85,6 +85,7 @@ class DomainORM(Base):
     backlinks_as_source = relationship("BacklinkORM", foreign_keys="BacklinkORM.source_domain_name", back_populates="source_domain_rel", cascade="all, delete-orphan")
     backlinks_as_target = relationship("BacklinkORM", foreign_keys="BacklinkORM.target_domain_name", back_populates="target_domain_rel", cascade="all, delete-orphan")
     link_profiles = relationship("LinkProfileORM", back_populates="target_domain_rel", cascade="all, delete-orphan")
+    domain_history = relationship("DomainHistoryORM", back_populates="domain_rel", cascade="all, delete-orphan") # New: Relationship to DomainHistoryORM
 
     def __repr__(self):
         return f"<Domain(name='{self.name}', authority_score={self.authority_score})>"
@@ -318,3 +319,37 @@ class UserORM(Base):
 
     def __repr__(self):
         return f"<User(username='{self.username}', email='{self.email}')>"
+
+# New: ContentGapAnalysisResult ORM Model
+class ContentGapAnalysisResultORM(Base):
+    __tablename__ = 'content_gap_analysis_results'
+    id = Column(String, primary_key=True) # UUID string
+    target_url = Column(String, nullable=False, index=True)
+    competitor_urls = Column(ARRAY(String), default=[])
+    missing_topics = Column(ARRAY(String), default=[])
+    missing_keywords = Column(ARRAY(String), default=[])
+    content_format_gaps = Column(ARRAY(String), default=[])
+    actionable_insights = Column(ARRAY(String), default=[])
+    analysis_date = Column(DateTime, default=datetime.now)
+
+    def __repr__(self):
+        return f"<ContentGapAnalysisResult(target_url='{self.target_url}', analysis_date='{self.analysis_date}')>"
+
+# New: DomainHistory ORM Model
+class DomainHistoryORM(Base):
+    __tablename__ = 'domain_history'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    domain_name = Column(String, ForeignKey('domains.name'), nullable=False, index=True)
+    snapshot_date = Column(DateTime, default=datetime.now, nullable=False, index=True)
+    authority_score = Column(Float, default=0.0)
+    trust_score = Column(Float, default=0.0)
+    spam_score = Column(Float, default=0.0)
+    total_backlinks = Column(Integer, default=0)
+    referring_domains = Column(Integer, default=0)
+
+    domain_rel = relationship("DomainORM", back_populates="domain_history")
+
+    __table_args__ = (UniqueConstraint('domain_name', 'snapshot_date', name='_domain_snapshot_uc'),)
+
+    def __repr__(self):
+        return f"<DomainHistory(domain='{self.domain_name}', date='{self.snapshot_date.strftime('%Y-%m-%d')}', authority={self.authority_score})>"
