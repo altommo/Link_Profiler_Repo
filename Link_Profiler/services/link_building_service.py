@@ -5,7 +5,7 @@ File: Link_Profiler/services/link_building_service.py
 
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set # Added Set import
 from datetime import datetime
 from urllib.parse import urlparse
 import random
