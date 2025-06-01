@@ -17,12 +17,14 @@ from Link_Profiler.database.models import ( # Changed to absolute import
     Base, DomainORM, URLORM, BacklinkORM, LinkProfileORM, CrawlJobORM,
     SEOMetricsORM, SERPResultORM, KeywordSuggestionORM, AlertRuleORM, UserORM, ContentGapAnalysisResultORM, DomainHistoryORM,
     LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum,
-    AlertSeverityEnum, AlertChannelEnum, DomainIntelligenceORM, SocialMentionORM # New: Import Alerting Enums, DomainIntelligenceORM, SocialMentionORM
+    AlertSeverityEnum, AlertChannelEnum, DomainIntelligenceORM, SocialMentionORM, # New: Import Alerting Enums, DomainIntelligenceORM, SocialMentionORM
+    LinkProspectORM, OutreachCampaignORM, OutreachEventORM, ReportJobORM # Added missing ORM imports
 )
 from Link_Profiler.core.models import ( # Changed to absolute import
     Domain, URL, Backlink, LinkProfile, CrawlJob, SEOMetrics,
     SERPResult, KeywordSuggestion, AlertRule, User, ContentGapAnalysisResult, DomainHistory,
-    serialize_model, CrawlError, DomainIntelligence, SocialMention # New: Import DomainIntelligence, SocialMention
+    serialize_model, CrawlError, DomainIntelligence, SocialMention, # New: Import DomainIntelligence, SocialMention
+    LinkProspect, OutreachCampaign, OutreachEvent, ReportJob # Added missing dataclass imports
 )
 
 logger = logging.getLogger(__name__)
@@ -157,6 +159,34 @@ class Database:
             if 'published_date' in data and isinstance(data['published_date'], str):
                 data['published_date'] = datetime.fromisoformat(data['published_date'])
             return SocialMention(**data)
+        elif isinstance(orm_obj, LinkProspectORM): # New: Handle LinkProspectORM
+            if 'last_outreach_date' in data and isinstance(data['last_outreach_date'], str):
+                data['last_outreach_date'] = datetime.fromisoformat(data['last_outreach_date'])
+            if 'discovered_date' in data and isinstance(data['discovered_date'], str):
+                data['discovered_date'] = datetime.fromisoformat(data['discovered_date'])
+            return LinkProspect(**data)
+        elif isinstance(orm_obj, OutreachCampaignORM): # New: Handle OutreachCampaignORM
+            if 'created_date' in data and isinstance(data['created_date'], str):
+                data['created_date'] = datetime.fromisoformat(data['created_date'])
+            if 'start_date' in data and isinstance(data['start_date'], str):
+                data['start_date'] = datetime.fromisoformat(data['start_date'])
+            if 'end_date' in data and isinstance(data['end_date'], str):
+                data['end_date'] = datetime.fromisoformat(data['end_date'])
+            return OutreachCampaign(**data)
+        elif isinstance(orm_obj, OutreachEventORM): # New: Handle OutreachEventORM
+            if 'event_date' in data and isinstance(data['event_date'], str):
+                data['event_date'] = datetime.fromisoformat(data['event_date'])
+            return OutreachEvent(**data)
+        elif isinstance(orm_obj, ReportJobORM): # New: Handle ReportJobORM
+            if 'created_date' in data and isinstance(data['created_date'], str):
+                data['created_date'] = datetime.fromisoformat(data['created_date'])
+            if 'started_date' in data and isinstance(data['started_date'], str):
+                data['started_date'] = datetime.fromisoformat(data['started_date'])
+            if 'completed_date' in data and isinstance(data['completed_date'], str):
+                data['completed_date'] = datetime.fromisoformat(data['completed_date'])
+            if 'scheduled_at' in data and isinstance(data['scheduled_at'], str):
+                data['scheduled_at'] = datetime.fromisoformat(data['scheduled_at'])
+            return ReportJob(**data)
         return orm_obj
 
     def _to_orm(self, dc_obj: Any):
@@ -239,6 +269,14 @@ class Database:
             return DomainIntelligenceORM(**data)
         elif isinstance(dc_obj, SocialMention): # New: Handle SocialMention
             return SocialMentionORM(**data)
+        elif isinstance(dc_obj, LinkProspect): # New: Handle LinkProspect
+            return LinkProspectORM(**data)
+        elif isinstance(dc_obj, OutreachCampaign): # New: Handle OutreachCampaign
+            return OutreachCampaignORM(**data)
+        elif isinstance(dc_obj, OutreachEvent): # New: Handle OutreachEvent
+            return OutreachEventORM(**data)
+        elif isinstance(dc_obj, ReportJob): # New: Handle ReportJob
+            return ReportJobORM(**data)
         return dc_obj
 
     def add_backlink(self, backlink: Backlink) -> None:
