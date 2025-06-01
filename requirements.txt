@@ -10,11 +10,11 @@ google-auth-oauthlib
 clickhouse-driver
 playwright
 playwright-stealth
-pytrends # New: For Google Trends
+pytrends
 prometheus_client
 openai
 croniter
-requests # New: For simple synchronous HTTP requests in some clients
+requests
 
 # Authentication Dependencies
 passlib[bcrypt]
@@ -30,7 +30,7 @@ openpyxl
 # tweepy # For Twitter/X API (e.g., pip install tweepy)
 # facebook-sdk # For Facebook Graph API (e.g., pip install facebook-sdk)
 # linkedin-api # For LinkedIn API (no official Python SDK, often direct HTTP or community libs)
-# praw # For Reddit API (e.g., pip install praw)
+praw # For Reddit API (e.g., pip install praw)
 # web3 # For Ethereum/EVM blockchain interaction (e.g., pip install web3)
 
 # Development Dependencies
