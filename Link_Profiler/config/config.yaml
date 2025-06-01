@@ -106,14 +106,25 @@ domain_api:
   abstract_api:
     enabled: false
     api_key: "" # Your AbstractAPI key for domain validation/WHOIS
+    base_url: "https://domain-validation.abstractapi.com/v1/" # Base URL for AbstractAPI Domain Validation
+    whois_base_url: "https://whois.abstractapi.com/v1/" # Base URL for AbstractAPI WHOIS
   real_api:
     enabled: false
     api_key: "" # Your API key for a real domain provider (e.g., WhoisXMLAPI, DomainTools)
     base_url: "https://api.example-domain-provider.com" # Example base URL for a real domain API
+  whois_json_api: # New: WHOIS-JSON.com API
+    enabled: false
+    base_url: "https://www.whois-json.com/api/v1/whois"
+  dns_over_https_api: # New: DNS over HTTPS (Cloudflare/Google)
+    enabled: false
+    cloudflare_url: "https://cloudflare-dns.com/dns-query"
+    google_url: "https://dns.google/resolve"
 
 backlink_api:
   gsc_api:
     enabled: false # Requires manual OAuth setup and credentials.json
+    credentials_file: "credentials.json" # Path to your Google API credentials.json
+    token_file: "token.json" # Path to your Google API token.json
   openlinkprofiler_api:
     enabled: false # Free API with limits
     base_url: "http://www.openlinkprofiler.org/api/index.php" # OpenLinkProfiler API base URL
@@ -127,6 +138,10 @@ serp_api:
     enabled: false
     api_key: "" # Your API key for a real SERP API (e.g., SerpApi, BrightData SERP API)
     base_url: "https://api.example-serp-provider.com" # Example base URL for a real SERP API
+  pagespeed_insights_api: # New: Google PageSpeed Insights API
+    enabled: false
+    api_key: "" # Your Google Cloud API Key
+    base_url: "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
 
 serp_crawler:
   playwright:
@@ -143,6 +158,10 @@ keyword_api:
     enabled: false
     api_key: "" # Your API key for a real keyword metrics API (e.g., Google Ads API, Ahrefs)
     base_url: "https://api.example-keyword-metrics.com" # Example base URL for a real keyword metrics API
+  google_trends_api: # New: Google Trends (pytrends)
+    enabled: false
+    # pytrends is unofficial, no API key needed, but uses Google's infrastructure
+    # hl and tz can be configured in client if needed
 
 # AI Service Integration (e.g., OpenRouter, OpenAI, Anthropic)
 ai:
@@ -163,11 +182,18 @@ ai:
 # Technical Auditor (Lighthouse CLI)
 technical_auditor:
   lighthouse_path: "lighthouse" # Path to Lighthouse CLI executable (e.g., "C:\Users\YourUser\AppData\Roaming\npm\lighthouse.cmd" on Windows)
+  ssl_labs_api: # New: SSL Labs API
+    enabled: false
+    base_url: "https://api.ssllabs.com/api/v3/analyze"
+  security_trails_api: # New: SecurityTrails API
+    enabled: false
+    api_key: "" # Your SecurityTrails API Key
+    base_url: "https://api.securitytrails.com/v1"
 
 # Social Media Integration
 social_media_crawler:
   enabled: false
-  platforms: ["twitter", "facebook", "linkedin", "reddit"] # Supported platforms
+  platforms: ["twitter", "facebook", "linkedin", "reddit", "youtube"] # Supported platforms
   twitter_api_key: "" # Your Twitter/X API Key
   twitter_api_secret: "" # Your Twitter/X API Secret
   twitter_bearer_token: "" # Your Twitter/X Bearer Token (for v2 API)
@@ -178,6 +204,14 @@ social_media_crawler:
   reddit_client_id: "" # Your Reddit Client ID
   reddit_client_secret: "" # Your Reddit Client Secret
   reddit_user_agent: "LinkProfilerBot/1.0" # Custom user agent for Reddit API
+  youtube_api: # New: YouTube Data API v3
+    enabled: false
+    api_key: "" # Your Google Cloud API Key
+    base_url: "https://www.googleapis.com/youtube/v3"
+  news_api: # New: NewsAPI.org
+    enabled: false
+    api_key: "" # Your NewsAPI.org API Key
+    base_url: "https://newsapi.org/v2"
 
 # Web3 Integration
 web3_crawler:
@@ -186,6 +220,23 @@ web3_crawler:
   blockchain_node_url: "https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID" # Example Ethereum node (replace with your Infura Project ID)
   etherscan_api_key: "" # Your Etherscan API Key (for blockchain data)
   opensea_api_key: "" # Your OpenSea API Key (for NFT data)
+  # Add other Web3 API keys as needed (e.g., for Polygonscan, Covalent, etc.)
+
+# Historical Data Integration
+historical_data:
+  wayback_machine_api: # New: Wayback Machine API
+    enabled: false
+    base_url: "http://web.archive.org/cdx/search/cdx"
+  common_crawl_api: # New: Common Crawl API
+    enabled: false
+    base_url: "https://index.commoncrawl.org"
+
+# Local SEO Integration
+local_seo:
+  nominatim_api: # New: OpenStreetMap Nominatim API
+    enabled: false
+    base_url: "https://nominatim.openstreetmap.org/search"
+    user_agent: "LinkProfilerApp/1.0 (your_email@example.com)" # Required for Nominatim
 
 # Notifications & Alerting
 notifications:

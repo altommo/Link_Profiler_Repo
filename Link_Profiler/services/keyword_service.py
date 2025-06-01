@@ -18,6 +18,7 @@ from Link_Profiler.crawlers.keyword_scraper import KeywordScraper # New import
 from Link_Profiler.config.config_loader import config_loader # Import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
+from Link_Profiler.clients.google_trends_client import GoogleTrendsClient # New: Import GoogleTrendsClient
 
 logger = logging.getLogger(__name__)
 
@@ -308,7 +309,7 @@ class KeywordService:
     """
     Service for fetching Keyword Research data.
     """
-    def __init__(self, api_client: Optional[BaseKeywordAPIClient] = None, keyword_scraper: Optional[KeywordScraper] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
+    def __init__(self, api_client: Optional[BaseKeywordAPIClient] = None, keyword_scraper: Optional[KeywordScraper] = None, google_trends_client: Optional[GoogleTrendsClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600): # New: Accept google_trends_client
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
@@ -329,6 +330,7 @@ class KeywordService:
             self.api_client = SimulatedKeywordAPIClient()
             
         self.keyword_scraper = keyword_scraper # Store the KeywordScraper instance
+        self.google_trends_client = google_trends_client # New: Store GoogleTrendsClient instance
         
         # Initialize the metrics API client separately
         self.metrics_api_client: Optional[RealKeywordMetricsAPIClient] = None
@@ -349,6 +351,8 @@ class KeywordService:
             await self.keyword_scraper.__aenter__()
         if self.metrics_api_client: # Enter metrics client's context
             await self.metrics_api_client.__aenter__()
+        if self.google_trends_client: # New: Enter GoogleTrendsClient's context
+            await self.google_trends_client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -359,6 +363,8 @@ class KeywordService:
             await self.keyword_scraper.__aexit__(exc_type, exc_val, exc_tb)
         if self.metrics_api_client: # Exit metrics client's context
             await self.metrics_api_client.__aexit__(exc_type, exc_val, exc_tb)
+        if self.google_trends_client: # New: Exit GoogleTrendsClient's context
+            await self.google_trends_client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
         if self.api_cache_enabled and self.redis_client:
@@ -427,6 +433,28 @@ class KeywordService:
                     suggestion.cpc_estimate = round(random.uniform(0.5, 5.0), 2)
                 if suggestion.competition_level is None:
                     suggestion.competition_level = random.choice(["Low", "Medium", "High"])
+
+        # New: Fetch keyword trends using GoogleTrendsClient if enabled
+        if self.google_trends_client and self.google_trends_client.enabled and suggestions:
+            self.logger.info(f"Fetching Google Trends for top suggestions for '{seed_keyword}'.")
+            # Only fetch trends for the top 5 keywords to avoid hitting limits
+            keywords_for_trends = [s.suggested_keyword for s in suggestions[:5]]
+            if keywords_for_trends:
+                trends_data = await self.google_trends_client.get_keyword_trends(keywords_for_trends)
+                if trends_data and trends_data.get('interest_over_time'):
+                    # pytrends returns a DataFrame, convert to dict for easier processing
+                    interest_df = trends_data['interest_over_time']
+                    # Assuming interest_df has a 'date' column and keyword columns
+                    for suggestion in suggestions:
+                        if suggestion.suggested_keyword in interest_df.columns:
+                            # Extract the trend for this specific keyword
+                            # Convert pandas Series to list
+                            suggestion.keyword_trend = interest_df[suggestion.suggested_keyword].tolist()
+                            self.logger.debug(f"Added trend data for {suggestion.suggested_keyword}.")
+                else:
+                    self.logger.warning(f"No trend data found from Google Trends for {keywords_for_trends}.")
+            else:
+                self.logger.info("No keywords to fetch trends for.")
 
         if suggestions:
             await self._set_cached_response(cache_key, [s.to_dict() for s in suggestions]) # Cache as list of dicts

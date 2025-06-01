@@ -10,10 +10,11 @@ google-auth-oauthlib
 clickhouse-driver
 playwright
 playwright-stealth
-pytrends
+pytrends # New: For Google Trends
 prometheus_client
 openai
 croniter
+requests # New: For simple synchronous HTTP requests in some clients
 
 # Authentication Dependencies
 passlib[bcrypt]
@@ -24,12 +25,13 @@ python-multipart
 reportlab
 openpyxl
 
-# Social Media & Web3 (Hypothetical/Common Libraries)
-# tweepy # For Twitter/X API (uncomment if integrating)
-# facebook-sdk # For Facebook Graph API (uncomment if integrating)
-# linkedin-api # For LinkedIn API (uncomment if integrating)
-# praw # For Reddit API (uncomment if integrating)
-# web3 # For Ethereum/EVM blockchain interaction (uncomment if integrating)
+# Social Media & Web3 (Hypothetical/Common Libraries for real integration)
+# Uncomment and install these if you enable the corresponding real API clients in config.yaml
+# tweepy # For Twitter/X API (e.g., pip install tweepy)
+# facebook-sdk # For Facebook Graph API (e.g., pip install facebook-sdk)
+# linkedin-api # For LinkedIn API (no official Python SDK, often direct HTTP or community libs)
+# praw # For Reddit API (e.g., pip install praw)
+# web3 # For Ethereum/EVM blockchain interaction (e.g., pip install web3)
 
 # Development Dependencies
 python-dotenv>=0.19.0

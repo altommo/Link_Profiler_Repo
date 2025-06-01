@@ -12,11 +12,12 @@ import aiohttp
 import json # Import json for caching
 import redis.asyncio as redis # Import redis for caching
 
-from Link_Profiler.core.models import SERPResult # Absolute import
+from Link_Profiler.core.models import SERPResult, SEOMetrics # Absolute import
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler # New import
 from Link_Profiler.config.config_loader import config_loader # Import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
+from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient # New: Import PageSpeedClient
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +230,7 @@ class SERPService:
     """
     Service for fetching Search Engine Results Page (SERP) data.
     """
-    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
+    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None, pagespeed_client: Optional[PageSpeedClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600): # New: Accept pagespeed_client
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
@@ -250,6 +251,7 @@ class SERPService:
             self.api_client = SimulatedSERPAPIClient()
             
         self.serp_crawler = serp_crawler # Store the SERPCrawler instance
+        self.pagespeed_client = pagespeed_client # New: Store PageSpeedClient instance
 
     async def __aenter__(self):
         """Async context manager entry for SERPService."""
@@ -257,6 +259,8 @@ class SERPService:
         await self.api_client.__aenter__()
         if self.serp_crawler: # Also enter the SERPCrawler's context if it exists
             await self.serp_crawler.__aenter__()
+        if self.pagespeed_client: # New: Enter PageSpeedClient's context
+            await self.pagespeed_client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -265,6 +269,8 @@ class SERPService:
         await self.api_client.__aexit__(exc_type, exc_val, exc_tb)
         if self.serp_crawler: # Also exit the SERPCrawler's context if it exists
             await self.serp_crawler.__aexit__(exc_type, exc_val, exc_tb)
+        if self.pagespeed_client: # New: Exit PageSpeedClient's context
+            await self.pagespeed_client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
         if self.api_cache_enabled and self.redis_client:
@@ -307,3 +313,44 @@ class SERPService:
         if serp_results:
             await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results]) # Cache as list of dicts
         return serp_results
+
+    async def get_pagespeed_metrics_for_url(self, url: str, strategy: str = 'mobile') -> Optional[SEOMetrics]:
+        """
+        Fetches PageSpeed Insights metrics for a given URL and converts them to SEOMetrics.
+        """
+        if not self.pagespeed_client or not self.pagespeed_client.enabled:
+            self.logger.warning("PageSpeed Insights client is not enabled. Cannot fetch PageSpeed metrics.")
+            return None
+        
+        self.logger.info(f"Fetching PageSpeed Insights metrics for {url} ({strategy}).")
+        pagespeed_data = await self.pagespeed_client.analyze_url(url, strategy)
+
+        if not pagespeed_data:
+            self.logger.warning(f"No PageSpeed data returned for {url}.")
+            return None
+
+        # Parse PageSpeed data into SEOMetrics format
+        lighthouse_result = pagespeed_data.get("lighthouseResult", {})
+        categories = lighthouse_result.get("categories", {})
+        audits = lighthouse_result.get("audits", {})
+
+        seo_metrics = SEOMetrics(
+            url=url,
+            http_status=200, # PageSpeed API doesn't directly give HTTP status of the URL itself
+            response_time_ms=audits.get("server-response-time", {}).get("numericValue"),
+            performance_score=categories.get("performance", {}).get("score") * 100 if categories.get("performance", {}).get("score") is not None else None,
+            mobile_friendly=True, # PageSpeed API doesn't directly give a boolean, but performance score implies it
+            accessibility_score=categories.get("accessibility", {}).get("score") * 100 if categories.get("accessibility", {}).get("score") is not None else None,
+            seo_score=categories.get("seo", {}).get("score") * 100 if categories.get("seo", {}).get("score") is not None else None,
+            audit_timestamp=datetime.fromisoformat(pagespeed_data.get("analysisUTCTimestamp").replace('Z', '+00:00')) if pagespeed_data.get("analysisUTCTimestamp") else None,
+            # Populate other fields from PageSpeed data if available and relevant
+            title_length=len(audits.get("title-text", {}).get("displayValue", "")) if audits.get("title-text") else 0,
+            meta_description_length=len(audits.get("meta-description", {}).get("displayValue", "")) if audits.get("meta-description") else 0,
+            has_canonical=audits.get("canonical", {}).get("score", 1) == 1, # Score 1 means passed
+            has_robots_meta=audits.get("robots-txt", {}).get("score", 1) == 1, # Score 1 means passed
+            has_schema_markup=audits.get("structured-data", {}).get("score", 0) == 1, # Score 1 means passed
+            # Broken links are not directly provided by PageSpeed, but can be inferred from failed requests
+            # Page size is also not directly provided in a simple metric, needs to be calculated from network requests
+        )
+        seo_metrics.calculate_seo_score() # Recalculate overall SEO score based on new data
+        return seo_metrics

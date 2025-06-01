@@ -72,6 +72,22 @@ from Link_Profiler.utils.user_agent_manager import user_agent_manager
 from Link_Profiler.utils.proxy_manager import proxy_manager
 from Link_Profiler.utils.connection_manager import ConnectionManager, connection_manager
 
+# New: Import API Clients
+from Link_Profiler.clients.google_search_console_client import GSCClient
+from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient # New: Import PageSpeedClient
+from Link_Profiler.clients.google_trends_client import GoogleTrendsClient # New: Import GoogleTrendsClient
+# from Link_Profiler.clients.whois_client import WHOISClient
+# from Link_Profiler.clients.dns_client import DNSClient
+# from Link_Profiler.clients.reddit_client import RedditClient
+# from Link_Profiler.clients.youtube_client import YouTubeClient
+# from Link_Profiler.clients.wayback_machine_client import WaybackClient
+# from Link_Profiler.clients.common_crawl_client import CommonCrawlClient
+# from Link_Profiler.clients.nominatim_client import NominatimClient
+# from Link_Profiler.clients.security_trails_client import SecurityTrailsClient
+# from Link_Profiler.clients.ssl_labs_client import SSLLabsClient
+# from Link_Profiler.clients.news_api_client import NewsAPIClient
+
+
 # Initialize and load config once using the absolute path
 config_loader = ConfigLoader()
 config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
@@ -125,25 +141,50 @@ else:
 # Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > Simulated
 if config_loader.get("domain_api.abstract_api.enabled"):
     abstract_api_key = config_loader.get("domain_api.abstract_api.api_key")
-    if not abstract_api_key:
-        logger.error("ABSTRACT_API_KEY environment variable not set. Falling back to simulated Domain API.")
+    abstract_base_url = config_loader.get("domain_api.abstract_api.base_url")
+    abstract_whois_base_url = config_loader.get("domain_api.abstract_api.whois_base_url")
+    if not abstract_api_key or not abstract_base_url or not abstract_whois_base_url:
+        logger.error("AbstractAPI enabled but API key or base_urls not found in config. Falling back to simulated Domain API.")
         domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
     else:
-        domain_service_instance = DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+        domain_service_instance = DomainService(api_client=AbstractDomainAPIClient(api_key=abstract_api_key, base_url=abstract_base_url, whois_base_url=abstract_whois_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 elif config_loader.get("domain_api.real_api.enabled"):
-    domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=config_loader.get("domain_api.real_api.api_key")), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+    real_api_key = config_loader.get("domain_api.real_api.api_key")
+    real_api_base_url = config_loader.get("domain_api.real_api.base_url")
+    if not real_api_key or not real_api_base_url:
+        logger.error("Real Domain API enabled but API key or base_url not found in config. Falling back to simulated Domain API.")
+        domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+    else:
+        domain_service_instance = DomainService(api_client=RealDomainAPIClient(api_key=real_api_key, base_url=real_api_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 else:
     domain_service_instance = DomainService(api_client=SimulatedDomainAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 
+# New: Initialize GSCClient
+gsc_client_instance = GSCClient()
+
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
 if config_loader.get("backlink_api.gsc_api.enabled"):
-    backlink_service_instance = BacklinkService(api_client=GSCBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+    backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
-    backlink_service_instance = BacklinkService(api_client=OpenLinkProfilerAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+    openlinkprofiler_base_url = config_loader.get("backlink_api.openlinkprofiler_api.base_url")
+    if not openlinkprofiler_base_url:
+        logger.warning("OpenLinkProfiler API enabled but base_url not found in config. Falling back to simulated Backlink API.")
+        backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db) # Pass dummy gsc_client
+    else:
+        backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, api_client=OpenLinkProfilerAPIClient(base_url=openlinkprofiler_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 elif config_loader.get("backlink_api.real_api.enabled"):
-    backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=config_loader.get("backlink_api.real_api.api_key")), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+    real_api_key = config_loader.get("backlink_api.real_api.api_key")
+    real_api_base_url = config_loader.get("backlink_api.real_api.base_url")
+    if not real_api_key or not real_api_base_url:
+        logger.warning("Real Backlink API enabled but API key or base_url not found in config. Falling back to simulated Backlink API.")
+        backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db) # Pass dummy gsc_client
+    else:
+        backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, api_client=RealBacklinkAPIClient(api_key=real_api_key, base_url=real_api_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
 else:
-    backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+    backlink_service_instance = BacklinkService(gsc_client=gsc_client_instance, api_client=SimulatedBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+
+# New: Initialize PageSpeedClient
+pagespeed_client_instance = PageSpeedClient()
 
 # New: Initialize SERPService and SERPCrawler
 serp_crawler_instance = None
@@ -156,9 +197,13 @@ if config_loader.get("serp_crawler.playwright.enabled"):
 serp_service_instance = SERPService(
     api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key")) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(),
     serp_crawler=serp_crawler_instance,
+    pagespeed_client=pagespeed_client_instance, # New: Pass pagespeed_client_instance
     redis_client=redis_client, # Pass redis_client for caching
     cache_ttl=API_CACHE_TTL # Pass cache_ttl
 )
+
+# New: Initialize GoogleTrendsClient
+google_trends_client_instance = GoogleTrendsClient()
 
 # New: Initialize KeywordService and KeywordScraper
 keyword_scraper_instance = None
@@ -168,6 +213,7 @@ if config_loader.get("keyword_scraper.enabled"):
 keyword_service_instance = KeywordService(
     api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key")) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(),
     keyword_scraper=keyword_scraper_instance,
+    google_trends_client=google_trends_client_instance, # New: Pass google_trends_client_instance
     redis_client=redis_client, # Pass redis_client for caching
     cache_ttl=API_CACHE_TTL # Pass cache_ttl
 )
@@ -274,9 +320,10 @@ async def lifespan(app: FastAPI):
         competitive_analysis_service_instance, # New: Add CompetitiveAnalysisService to lifespan
         social_media_service_instance, # New: Add SocialMediaService
         web3_service_instance, # New: Add Web3Service
-        link_building_service_instance # New: Add LinkBuildingService
-        # Removed crawl_service_for_lifespan as it is not an async context manager itself.
-        # Its internal dependencies are already managed here.
+        link_building_service_instance, # New: Add LinkBuildingService
+        gsc_client_instance, # New: Add GSCClient to lifespan
+        pagespeed_client_instance, # New: Add PageSpeedClient to lifespan
+        google_trends_client_instance # New: Add GoogleTrendsClient to lifespan
     ]
 
     # Conditionally add ClickHouseLoader to context managers
@@ -922,10 +969,10 @@ class OutreachCampaignResponse(BaseModel):
     target_domain: str
     status: str
     created_date: datetime
-    start_date: Optional[datetime]
-    end_date: Optional[datetime]
-    description: Optional[str]
-    metrics: Dict[str, Any]
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    description: Optional[str] = None
+    metrics: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_outreach_campaign(cls, campaign: OutreachCampaign):
@@ -1543,7 +1590,7 @@ async def get_all_outreach_campaigns_endpoint(
         return [OutreachCampaignResponse.from_outreach_campaign(c) for c in campaigns]
     except Exception as e:
         logger.error(f"Error retrieving outreach campaigns: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve outreach campaigns: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve outreach campaign: {e}")
 
 @app.get("/link_building/campaigns/{campaign_id}", response_model=OutreachCampaignResponse) # New endpoint
 async def get_outreach_campaign_by_id_endpoint(
