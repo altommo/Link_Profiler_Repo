@@ -86,6 +86,7 @@ class DomainORM(Base):
     backlinks_as_target = relationship("BacklinkORM", foreign_keys="BacklinkORM.target_domain_name", back_populates="target_domain_rel", cascade="all, delete-orphan")
     link_profiles = relationship("LinkProfileORM", back_populates="target_domain_rel", cascade="all, delete-orphan")
     domain_history = relationship("DomainHistoryORM", back_populates="domain_rel", cascade="all, delete-orphan") # New: Relationship to DomainHistoryORM
+    domain_intelligence = relationship("DomainIntelligenceORM", back_populates="domain_rel", uselist=False, cascade="all, delete-orphan") # New: Relationship to DomainIntelligenceORM
 
     def __repr__(self):
         return f"<Domain(name='{self.name}', authority_score={self.authority_score})>"
@@ -278,7 +279,7 @@ class KeywordSuggestionORM(Base):
         return f"<KeywordSuggestion(seed='{self.seed_keyword}', suggested='{self.suggested_keyword}')>"
 
 
-# New: AlertRule ORM Model
+# New: Alert Rule ORM Model
 class AlertRuleORM(Base):
     __tablename__ = 'alert_rules'
     id = Column(String, primary_key=True) # UUID string
@@ -353,3 +354,114 @@ class DomainHistoryORM(Base):
 
     def __repr__(self):
         return f"<DomainHistory(domain='{self.domain_name}', date='{self.snapshot_date.strftime('%Y-%m-%d')}', authority={self.authority_score})>"
+
+# New: LinkProspect ORM Model
+class LinkProspectORM(Base):
+    __tablename__ = 'link_prospects'
+    url = Column(String, primary_key=True, index=True)
+    domain = Column(String, nullable=False)
+    score = Column(Float, default=0.0)
+    reasons = Column(ARRAY(String), default=[])
+    contact_info = Column(JSONB, default={})
+    last_outreach_date = Column(DateTime, nullable=True)
+    status = Column(String, default="identified")
+    discovered_date = Column(DateTime, default=datetime.now)
+
+    def __repr__(self):
+        return f"<LinkProspect(url='{self.url}', status='{self.status}', score={self.score})>"
+
+# New: OutreachCampaign ORM Model
+class OutreachCampaignORM(Base):
+    __tablename__ = 'outreach_campaigns'
+    id = Column(String, primary_key=True) # UUID string
+    name = Column(String, nullable=False, unique=True)
+    target_domain = Column(String, nullable=False)
+    status = Column(String, default="active")
+    created_date = Column(DateTime, default=datetime.now)
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    description = Column(Text, nullable=True)
+    metrics = Column(JSONB, default={})
+
+    events = relationship("OutreachEventORM", back_populates="campaign_rel", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<OutreachCampaign(name='{self.name}', status='{self.status}')>"
+
+# New: OutreachEvent ORM Model
+class OutreachEventORM(Base):
+    __tablename__ = 'outreach_events'
+    id = Column(String, primary_key=True) # UUID string
+    campaign_id = Column(String, ForeignKey('outreach_campaigns.id'), nullable=False)
+    prospect_url = Column(String, nullable=False) # Not a foreign key, as prospect might not be in link_prospects table
+    event_type = Column(String, nullable=False)
+    event_date = Column(DateTime, default=datetime.now)
+    notes = Column(Text, nullable=True)
+    success = Column(Boolean, nullable=True)
+
+    campaign_rel = relationship("OutreachCampaignORM", back_populates="events")
+
+    def __repr__(self):
+        return f"<OutreachEvent(type='{self.event_type}', prospect='{self.prospect_url}')>"
+
+# New: ReportJob ORM Model
+class ReportJobORM(Base):
+    __tablename__ = 'report_jobs'
+    id = Column(String, primary_key=True) # UUID string
+    report_type = Column(String, nullable=False)
+    target_identifier = Column(String, nullable=False)
+    format = Column(String, nullable=False)
+    status = Column(String, default=CrawlStatusEnum.PENDING.value)
+    created_date = Column(DateTime, default=datetime.now)
+    started_date = Column(DateTime, nullable=True)
+    completed_date = Column(DateTime, nullable=True)
+    file_path = Column(String, nullable=True)
+    error_message = Column(Text, nullable=True)
+    config = Column(JSONB, default={})
+    
+    scheduled_at = Column(DateTime, nullable=True)
+    cron_schedule = Column(String, nullable=True)
+
+    def __repr__(self):
+        return f"<ReportJob(id='{self.id}', type='{self.report_type}', status='{self.status}')>"
+
+# New: DomainIntelligence ORM Model
+class DomainIntelligenceORM(Base):
+    __tablename__ = 'domain_intelligence'
+    domain_name = Column(String, ForeignKey('domains.name'), primary_key=True, index=True)
+    last_updated = Column(DateTime, default=datetime.now, nullable=False)
+    total_social_mentions = Column(Integer, default=0)
+    avg_sentiment_score = Column(Float, default=0.0)
+    top_social_platforms = Column(ARRAY(String), default=[])
+    avg_content_quality_score = Column(Float, default=0.0)
+    content_gaps_identified = Column(Integer, default=0)
+    avg_performance_score = Column(Float, default=0.0)
+    avg_accessibility_score = Column(Float, default=0.0)
+    broken_links_ratio = Column(Float, default=0.0)
+    estimated_traffic_trend = Column(ARRAY(Float), default=[])
+    competitor_overlap_score = Column(Float, default=0.0)
+    social_data_summary = Column(JSONB, default={})
+    content_data_summary = Column(JSONB, default={})
+    technical_data_summary = Column(JSONB, default={})
+
+    domain_rel = relationship("DomainORM", back_populates="domain_intelligence")
+
+    def __repr__(self):
+        return f"<DomainIntelligence(domain='{self.domain_name}', updated='{self.last_updated.strftime('%Y-%m-%d')}')>"
+
+# New: SocialMention ORM Model
+class SocialMentionORM(Base):
+    __tablename__ = 'social_mentions'
+    id = Column(String, primary_key=True) # UUID string
+    query = Column(String, nullable=False, index=True)
+    platform = Column(String, nullable=False)
+    mention_url = Column(String, nullable=False, unique=True) # Unique constraint on URL
+    mention_text = Column(Text, nullable=False)
+    author = Column(String, nullable=True)
+    published_date = Column(DateTime, default=datetime.now)
+    sentiment = Column(String, nullable=True)
+    engagement_score = Column(Float, nullable=True)
+    raw_data = Column(JSONB, default={})
+
+    def __repr__(self):
+        return f"<SocialMention(query='{self.query}', platform='{self.platform}', url='{self.mention_url}')>"
