@@ -13,7 +13,7 @@ import redis.asyncio as redis
 import random # New: Import random for simulated video analysis
 
 from Link_Profiler.config.config_loader import config_loader
-from Link_Profiler.core.models import Domain, LinkProfile # New: Import Domain and LinkProfile models
+from Link_Profiler.core.models import Domain, LinkProfile, ContentGapAnalysisResult # New: Import ContentGapAnalysisResult
 
 logger = logging.getLogger(__name__)
 
@@ -199,30 +199,83 @@ class AIService:
         self.logger.warning(f"AI content classification failed for keyword '{target_keyword}'. Returning None.")
         return None
 
-    async def analyze_content_gaps(self, target_url: str, competitor_urls: List[str]) -> Dict[str, Any]:
+    async def analyze_content_gaps(self, target_url: str, competitor_urls: List[str]) -> ContentGapAnalysisResult:
         """
         Analyzes content gaps between a target URL and its competitors.
-        Returns a dictionary with insights.
+        Returns a ContentGapAnalysisResult object with insights.
         """
         prompt = f"""
         Perform a content gap analysis for the target URL '{target_url}' against its competitors: {', '.join(competitor_urls)}.
         Identify topics, keywords, or content formats present in competitors but missing from the target.
-        Provide a JSON response with:
-        - "missing_topics": List of missing topics.
-        - "missing_keywords": List of missing keywords.
-        - "content_format_gaps": List of content formats competitors use but target doesn't.
-        - "actionable_insights": List of suggestions to fill these gaps.
+        Provide a JSON response with the following keys:
+        - "missing_topics": List of missing topics (strings).
+        - "missing_keywords": List of missing keywords (strings).
+        - "content_format_gaps": List of content formats competitors use but target doesn't (strings).
+        - "actionable_insights": List of actionable suggestions to fill these gaps (strings).
         """
         cache_key = f"ai_content_gap:{target_url}:{hash(tuple(competitor_urls))}"
-        result = await self._call_ai_with_cache("content_gap_analysis", prompt, cache_key, max_tokens=2000)
+        result_dict = await self._call_ai_with_cache("content_gap_analysis", prompt, cache_key, max_tokens=2000)
         
+        if result_dict is None:
+            self.logger.warning(f"AI content gap analysis failed for {target_url}. Returning default empty result.")
+            return ContentGapAnalysisResult(
+                target_url=target_url,
+                competitor_urls=competitor_urls,
+                missing_topics=[],
+                missing_keywords=[],
+                content_format_gaps=[],
+                actionable_insights=["AI analysis unavailable."]
+            )
+        
+        # Ensure lists are actual lists and not None
+        result_dict["missing_topics"] = result_dict.get("missing_topics", [])
+        result_dict["missing_keywords"] = result_dict.get("missing_keywords", [])
+        result_dict["content_format_gaps"] = result_dict.get("content_format_gaps", [])
+        result_dict["actionable_insights"] = result_dict.get("actionable_insights", [])
+
+        return ContentGapAnalysisResult(
+            target_url=target_url,
+            competitor_urls=competitor_urls,
+            **result_dict
+        )
+
+    async def perform_topic_clustering(self, texts: List[str], num_clusters: int = 5) -> Dict[str, List[str]]:
+        """
+        Simulates AI-powered topic clustering for a list of texts.
+        Returns a dictionary where keys are cluster names/topics and values are lists of texts belonging to that cluster.
+        """
+        if not self.enabled or not self.openrouter_client:
+            self.logger.warning("AI service is disabled. Cannot perform topic clustering.")
+            return {"Simulated Topic 1": texts[:min(len(texts), 2)], "Simulated Topic 2": texts[min(len(texts), 2):]}
+
+        prompt = f"""
+        Perform topic clustering on the following list of texts.
+        Group them into {num_clusters} distinct topics.
+        Provide a JSON response where keys are the topic names (e.g., "SEO Strategies", "Link Building")
+        and values are lists of the original texts that belong to that topic.
+        
+        Texts:
+        {json.dumps(texts)}
+        """
+        cache_key = f"ai_topic_clustering:{hash(tuple(texts))}:{num_clusters}"
+        result = await self._call_ai_with_cache("topic_clustering", prompt, cache_key, max_tokens=2000)
+
         if result is None:
-            self.logger.warning(f"AI content gap analysis failed for {target_url}.")
+            self.logger.warning("AI topic clustering failed. Returning simulated clusters.")
+            # Fallback to a very basic simulation if AI call fails
             return {
-                "missing_topics": [], "missing_keywords": [], 
-                "content_format_gaps": [], "actionable_insights": ["AI analysis unavailable."]
+                "General Topic A": texts[:len(texts)//2],
+                "General Topic B": texts[len(texts)//2:]
             }
-        return result
+        
+        # Validate and return the result
+        # Ensure the result is a dictionary with list values
+        cleaned_result = {}
+        for key, value in result.items():
+            if isinstance(key, str) and isinstance(value, list):
+                cleaned_result[key] = [str(item) for item in value if isinstance(item, str)]
+        return cleaned_result
+
 
     async def suggest_semantic_keywords(self, primary_keyword: str) -> List[str]:
         """

@@ -54,7 +54,7 @@ from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, Token
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, Token, ContentGapAnalysisResult
 from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
@@ -419,6 +419,15 @@ class SocialMediaCrawlRequest(BaseModel): # New Pydantic model for Social Media 
     platforms: Optional[List[str]] = Field(None, description="Specific social media platforms to crawl (e.g., 'twitter', 'facebook'). If None, all configured platforms will be used.")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration.")
 
+class ContentGapAnalysisRequest(BaseModel): # New Pydantic model for Content Gap Analysis job submission
+    target_url: str = Field(..., description="The target URL for which to find content gaps.")
+    competitor_urls: List[str] = Field(..., description="A list of competitor URLs to compare against.")
+    config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration for fetching content.")
+
+class TopicClusteringRequest(BaseModel): # New Pydantic model for Topic Clustering
+    texts: List[str] = Field(..., description="A list of text documents to cluster.")
+    num_clusters: int = Field(5, description="The desired number of topic clusters.")
+
 
 class CrawlErrorResponse(BaseModel):
     timestamp: datetime
@@ -764,6 +773,26 @@ class UserResponse(BaseModel):
                  user_dict['created_at'] = None
         return cls(**user_dict)
 
+class ContentGapAnalysisResultResponse(BaseModel): # New Pydantic model for ContentGapAnalysisResult
+    target_url: str
+    competitor_urls: List[str]
+    missing_topics: List[str]
+    missing_keywords: List[str]
+    content_format_gaps: List[str]
+    actionable_insights: List[str]
+    analysis_date: datetime
+
+    @classmethod
+    def from_content_gap_analysis_result(cls, result: ContentGapAnalysisResult):
+        result_dict = serialize_model(result)
+        if isinstance(result_dict.get('analysis_date'), str):
+            try:
+                result_dict['analysis_date'] = datetime.fromisoformat(result_dict['analysis_date'])
+            except ValueError:
+                logger.warning(f"Could not parse analysis_date string: {result_dict.get('analysis_date')}")
+                result_dict['analysis_date'] = None
+        return cls(**result_dict)
+
 
 # --- API Endpoints ---
 
@@ -997,6 +1026,69 @@ async def start_social_media_crawl(
     queue_request.config["job_type"] = "social_media_crawl" # Explicitly set job type in config for queue processing
 
     return await submit_crawl_to_queue(queue_request)
+
+@app.post("/content/gap_analysis", response_model=Dict[str, str], status_code=202) # New endpoint
+async def start_content_gap_analysis(
+    request: ContentGapAnalysisRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Submits a new content gap analysis job to the queue.
+    """
+    logger.info(f"Received request to submit content gap analysis for {request.target_url} by user: {current_user.username}.")
+    JOBS_CREATED_TOTAL.labels(job_type='content_gap_analysis').inc()
+
+    if not request.target_url or not request.competitor_urls:
+        raise HTTPException(status_code=400, detail="Target URL and at least one competitor URL must be provided for content gap analysis.")
+    
+    queue_request = QueueCrawlRequest(
+        target_url=request.target_url,
+        initial_seed_urls=[], # Not directly used for this job type's initial crawl
+        config=request.config.dict() if request.config else {},
+        priority=5
+    )
+    queue_request.config["target_url_for_content_gap"] = request.target_url
+    queue_request.config["competitor_urls_for_content_gap"] = request.competitor_urls
+    queue_request.config["job_type"] = "content_gap_analysis" # Explicitly set job type in config for queue processing
+
+    return await submit_crawl_to_queue(queue_request)
+
+@app.get("/content/gap_analysis/{target_url:path}", response_model=ContentGapAnalysisResultResponse) # New endpoint
+async def get_content_gap_analysis_result(target_url: str, current_user: User = Depends(get_current_user)): # Protected endpoint
+    """
+    Retrieves the content gap analysis result for a given target URL.
+    """
+    logger.info(f"Received request for content gap analysis result for {target_url} by user: {current_user.username}.")
+    if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
+        raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
+
+    result = db.get_content_gap_analysis_result(target_url)
+    if not result:
+        raise HTTPException(status_code=404, detail="Content gap analysis result not found for this URL. A job might not have been completed yet.")
+    return ContentGapAnalysisResultResponse.from_content_gap_analysis_result(result)
+
+@app.post("/content/topic_clustering", response_model=Dict[str, List[str]]) # New endpoint
+async def perform_topic_clustering_endpoint(request: TopicClusteringRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
+    """
+    Performs topic clustering on a list of provided texts using AI.
+    """
+    logger.info(f"Received request for topic clustering by user: {current_user.username}.")
+    if not request.texts:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one text document must be provided for topic clustering.")
+    
+    if not ai_service_instance.enabled:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
+
+    try:
+        clustered_topics = await ai_service_instance.perform_topic_clustering(
+            texts=request.texts,
+            num_clusters=request.num_clusters
+        )
+        return clustered_topics
+    except Exception as e:
+        logger.error(f"Error performing topic clustering: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform topic clustering: {e}")
 
 
 @app.get("/crawl/status/{job_id}", response_model=CrawlJobResponse)
