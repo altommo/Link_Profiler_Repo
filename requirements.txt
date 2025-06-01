@@ -14,6 +14,7 @@ pytrends
 prometheus_client
 openai
 croniter # Added croniter
+ReportJob
 
 # Queue System Dependencies
 redis>=4.5.0
