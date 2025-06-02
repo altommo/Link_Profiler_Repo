@@ -4,6 +4,7 @@ Simple web interface to monitor queue status and satellites
 """
 import asyncio
 import json
+import uuid # Import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import redis.asyncio as redis
@@ -27,7 +28,7 @@ if project_root not in sys.path:
     sys.sys.path.insert(0, project_root)
 
 from Link_Profiler.database.database import Database
-from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain, serialize_model
+from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain, serialize_model, CrawlConfig # Import CrawlConfig
 from Link_Profiler.config.config_loader import ConfigLoader
 from Link_Profiler.queue_system.job_coordinator import JobCoordinator # Import JobCoordinator
 from Link_Profiler.api.queue_endpoints import QueueCrawlRequest, JobStatusResponse, get_coordinator # Import necessary models and functions
