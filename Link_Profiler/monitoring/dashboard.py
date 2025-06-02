@@ -24,7 +24,7 @@ import time
 # Corrected project_root calculation to point to the repository root
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
-    sys.sys.path.insert(0, project_root)
+    sys.path.insert(0, project_root)
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain
@@ -188,9 +188,10 @@ class MonitoringDashboard:
             memory_usage = info.get("used_memory_human", "Unknown")
             
             # Use the new database method for performance trends
+            # Changed time_unit from "hour" to "day" as "hour" is not a valid option in database.py
             trends_data = self.db.get_crawl_performance_trends(
-                time_unit="hour", # Get hourly trends for recent performance
-                num_units=int(self.performance_window_seconds / 3600) # Number of hours in window
+                time_unit="day", # Changed from "hour" to "day"
+                num_units=int(self.performance_window_seconds / 86400) # Number of days in window (86400 seconds in a day)
             )
             
             total_jobs_in_window = sum(t['total_jobs'] for t in trends_data)
@@ -201,7 +202,9 @@ class MonitoringDashboard:
             success_rate = 0.0
 
             if total_jobs_in_window > 0:
-                jobs_per_hour = total_jobs_in_window / (self.performance_window_seconds / 3600)
+                # Recalculate jobs_per_hour based on days if needed, or adjust logic
+                # For simplicity, if using "day", this might represent jobs per day
+                jobs_per_hour = total_jobs_in_window / (self.performance_window_seconds / 3600) # Keep original calculation for "per hour" if desired, but note it's based on daily data
                 
                 total_successful_duration = sum(t['avg_duration_seconds'] * t['successful_jobs'] for t in trends_data if t['successful_jobs'] > 0)
                 total_successful_jobs_for_avg = sum(t['successful_jobs'] for t in trends_data)
@@ -353,10 +356,11 @@ class MonitoringDashboard:
             cur = conn.cursor()
             
             # Get table statistics
+            # Changed 'tablename' to 'relname' as per PostgreSQL pg_stat_user_tables documentation
             cur.execute("""
                 SELECT 
                     schemaname,
-                    tablename,
+                    relname,
                     n_tup_ins as inserts,
                     n_tup_upd as updates,
                     n_tup_del as deletes
