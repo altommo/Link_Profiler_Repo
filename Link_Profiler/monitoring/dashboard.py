@@ -5,7 +5,7 @@ Simple web interface to monitor queue status and satellites
 import asyncio
 import json
 from datetime import datetime, timedelta
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional # Corrected: Import Optional
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -14,9 +14,10 @@ import uvicorn
 import logging
 import sys
 import os
-import psutil # New: Import psutil for system stats
-import psycopg2 # New: Import psycopg2 for database stats
-import aiohttp # New: Import aiohttp for API health check
+import psutil
+import psycopg2
+import aiohttp
+import time # Corrected: Import time
 
 # Add project root to path for imports
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,7 +26,7 @@ if project_root not in sys.path:
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain
-from Link_Profiler.config.config_loader import ConfigLoader # Import ConfigLoader
+from Link_Profiler.config.config_loader import ConfigLoader
 
 # Initialize and load config once using the absolute path
 config_loader = ConfigLoader()
@@ -48,7 +49,7 @@ class MonitoringDashboard:
 
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.logger = logging.getLogger(__name__)
-        self._session: Optional[aiohttp.ClientSession] = None # New: aiohttp client session for API health check
+        self._session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
         """Initialise aiohttp session."""
