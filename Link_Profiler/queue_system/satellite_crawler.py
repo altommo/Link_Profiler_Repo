@@ -5,7 +5,7 @@ import redis.asyncio as redis
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
-import json # Added: Import json
+import json
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, CrawlResult, CrawlError, LinkType, SpamLevel, URL, Domain, SEOMetrics, SERPResult, KeywordSuggestion, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlConfig, serialize_model
@@ -114,10 +114,10 @@ class SatelliteCrawler:
             database=self.db,
             redis_client=self.redis_client, # Will be set in __aenter__
             clickhouse_loader=self.clickhouse_loader,
-            config=config_loader.get("crawler"), # Pass the raw dict
-            anti_detection_config=config_loader.get("anti_detection"),
-            proxy_config=config_loader.get("proxy"),
-            quality_assurance_config=config_loader.get("quality_assurance"),
+            config=config_loader.get("crawler", {}), # Pass the raw dict, with default empty dict
+            anti_detection_config=config_loader.get("anti_detection", {}), # Default empty dict
+            proxy_config=config_loader.get("proxy", {}), # Default empty dict
+            quality_assurance_config=config_loader.get("quality_assurance", {}), # Default empty dict
             domain_analyzer_service=self.domain_analyzer_service,
             ai_service=self.ai_service,
             link_health_service=self.link_health_service,
