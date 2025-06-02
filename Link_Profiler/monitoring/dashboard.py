@@ -109,8 +109,6 @@ class MonitoringDashboard:
         except Exception as e:
             self.logger.error(f"Error getting job history: {e}", exc_info=True)
             return []
-        finally:
-            session.close()
     
     async def get_performance_stats(self) -> Dict:
         """
