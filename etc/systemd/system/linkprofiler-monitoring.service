@@ -8,6 +8,7 @@ User=root
 WorkingDirectory=/opt/Link_Profiler_Repo/Link_Profiler/monitoring
 Environment=PATH=/opt/Link_Profiler_Repo/venv/bin
 Environment=PYTHONPATH=/opt/Link_Profiler_Repo
+Environment=LP_DATABASE_URL="postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db"
 ExecStart=/opt/Link_Profiler_Repo/venv/bin/python /opt/Link_Profiler_Repo/Link_Profiler/monitoring/dashboard.py dashboard
 Restart=always
 RestartSec=10
