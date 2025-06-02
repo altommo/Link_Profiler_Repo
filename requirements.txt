@@ -17,6 +17,7 @@ croniter
 requests
 psutil # Added for system monitoring
 pyyaml # Added for YAML configuration
+jinja2 # Added for FastAPI templating
 
 # Authentication Dependencies
 passlib[bcrypt]
