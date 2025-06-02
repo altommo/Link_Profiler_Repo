@@ -11,6 +11,7 @@ from dataclasses import asdict
 import logging
 from croniter import croniter
 import aiohttp # New: Import aiohttp for webhooks
+import os # Added for os.getenv
 
 from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, serialize_model, CrawlError
 from Link_Profiler.database.database import Database
@@ -23,7 +24,8 @@ logger = logging.getLogger(__name__)
 class JobCoordinator:
     """Manages distributed crawling jobs via Redis queues"""
     
-    def __init__(self, redis_url: str = "redis://localhost:6379", database: Database = None, alert_service: Optional[AlertService] = None, connection_manager: Optional[ConnectionManager] = None): # New: Add connection_manager
+    def __init__(self, redis_url: str = None, database: Database = None, alert_service: Optional[AlertService] = None, connection_manager: Optional[ConnectionManager] = None): # New: Add connection_manager
+        redis_url = redis_url or os.getenv("REDIS_URL", "redis://:redis_secure_pass_456@127.0.0.1:6379/0")
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
         self.db = database
@@ -356,7 +358,8 @@ class JobCoordinator:
 async def main():
     logging.basicConfig(level=logging.INFO)
     # Initialize Database for standalone coordinator if needed
-    db_instance = Database() 
+    DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db')
+    db_instance = Database(db_url=DATABASE_URL) 
     alert_service_instance = AlertService(db_instance) # New: Initialize AlertService
     # For standalone, connection_manager would be None or a dummy
     async with JobCoordinator(database=db_instance, alert_service=alert_service_instance, connection_manager=None) as coordinator: # Pass AlertService and None for connection_manager
