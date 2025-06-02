@@ -274,6 +274,7 @@ class SatelliteCrawler:
             
             self.last_heartbeat_time = datetime.now()
             self.logger.debug(f"Heartbeat sent for {self.crawler_id}. Running jobs: {len(self.running_jobs)}")
+            self.logger.info(f"Heartbeat successfully sent to Redis for {self.crawler_id}.") # Added log
         except Exception as e:
             self.logger.error(f"Failed to send heartbeat for {self.crawler_id}: {e}")
 

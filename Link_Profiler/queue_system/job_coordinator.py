@@ -282,6 +282,7 @@ class JobCoordinator:
                 # Get all crawler_ids and their last heartbeat timestamps from the sorted set
                 # Only fetch those that are within the stale_timeout period
                 cutoff = (datetime.now() - timedelta(seconds=self.stale_timeout)).timestamp()
+                logger.debug(f"Monitor: Checking for active crawlers with heartbeat score >= {cutoff}") # Added log
                 
                 # Fetch members (crawler_ids) and their scores (timestamps)
                 active_crawler_ids_with_timestamps = await self.redis.zrangebyscore(
@@ -291,9 +292,14 @@ class JobCoordinator:
                     withscores=True
                 )
                 
+                logger.debug(f"Monitor: Found {len(active_crawler_ids_with_timestamps)} potential active crawlers in sorted set.") # Added log
+                if not active_crawler_ids_with_timestamps:
+                    logger.debug("Monitor: No active crawlers found in sorted set within cutoff.") # Added log
+
                 current_active_crawlers_details = {}
                 for crawler_id_bytes, timestamp in active_crawler_ids_with_timestamps:
                     crawler_id = crawler_id_bytes.decode('utf-8')
+                    logger.debug(f"Monitor: Processing crawler_id '{crawler_id}' from sorted set with timestamp {timestamp}") # Added log
                     
                     # Fetch the detailed heartbeat data for this crawler_id
                     detailed_heartbeat_json = await self.redis.get(f"crawler_details:{crawler_id}")
@@ -302,13 +308,15 @@ class JobCoordinator:
                         try:
                             detailed_heartbeat_data = json.loads(detailed_heartbeat_json)
                             current_active_crawlers_details[crawler_id] = detailed_heartbeat_data
+                            logger.debug(f"Monitor: Successfully retrieved detailed data for '{crawler_id}': {detailed_heartbeat_data}") # Added log
                         except json.JSONDecodeError:
-                            logger.warning(f"Invalid detailed heartbeat data for {crawler_id}: {detailed_heartbeat_json}")
+                            logger.warning(f"Monitor: Invalid detailed heartbeat data for {crawler_id}: {detailed_heartbeat_json}")
                     else:
-                        logger.warning(f"No detailed heartbeat data found for active crawler_id: {crawler_id}. It might have expired.")
+                        logger.warning(f"Monitor: No detailed heartbeat data found for active crawler_id: {crawler_id}. It might have expired or not been set.") # Added log
                 
                 # Update internal state with the de-duplicated, detailed information
                 self.satellite_crawlers = current_active_crawlers_details
+                logger.info(f"Monitor: Currently tracking {len(self.satellite_crawlers)} active satellites.") # Added log
                 
                 # Clean up old heartbeats from Redis sorted set (optional, but good for memory)
                 # This removes entries from the ZSET that are older than the cutoff
