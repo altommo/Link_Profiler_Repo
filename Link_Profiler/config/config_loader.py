@@ -65,6 +65,7 @@ class ConfigLoader:
                 # Attempt to convert value to appropriate type (int, float, bool, list, dict)
                 converted_value = self._convert_env_value(value)
                 
+                logger.info(f"Processing env var: {key} -> {config_path} = {converted_value}") # Added logging
                 self._set_nested_value(self._config, config_path, converted_value)
                 logger.debug(f"Overrode config setting '{config_path}' with environment variable '{key}'")
 

@@ -99,6 +99,35 @@ setup_logging(logging_config)
 
 logger = logging.getLogger(__name__) # Get logger after configuration
 
+# --- Startup Configuration Diagnostics ---
+def validate_critical_config():
+    """Validate that critical configuration values are properly loaded."""
+    critical_vars = {
+        "LP_AUTH_SECRET_KEY": "auth.secret_key",
+        "LP_DATABASE_URL": "database.url", 
+        "LP_REDIS_URL": "redis.url"
+    }
+    
+    for env_var, config_path in critical_vars.items():
+        env_value = os.getenv(env_var)
+        config_value = config_loader.get(config_path)
+        
+        # Check if env_value is set and it does not match the config_value
+        # Also check if config_value is still the placeholder for secret key
+        if env_value and (env_value != config_value or (config_path == "auth.secret_key" and config_value == "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY")):
+            logger.error(f"CRITICAL: Environment variable {env_var} not properly loaded or config still uses placeholder!")
+            logger.error(f"  Environment: {env_var}={env_value[:20]}...")
+            logger.error(f"  Config:      {config_path}={config_value[:20] if config_value else 'None'}...")
+        elif not env_value and (config_path == "auth.secret_key" and config_value == "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY"):
+             logger.warning(f"WARNING: {env_var} is not set and config still uses placeholder. Authentication will fail.")
+        elif not env_value and (config_path == "database.url" or config_path == "redis.url"):
+             logger.warning(f"WARNING: {env_var} is not set. Using default/fallback for {config_path}.")
+
+# Call validation after config loading
+validate_critical_config()
+# --- End Startup Configuration Diagnostics ---
+
+
 # Retrieve configurations using the config_loader
 REDIS_URL = config_loader.get("redis.url")
 DATABASE_URL = config_loader.get("database.url")
@@ -1815,7 +1844,12 @@ async def health_check():
     health_status = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "dependencies": {}
+        "dependencies": {},
+        "environment_variables": { # New: Report environment variable status
+            "LP_AUTH_SECRET_KEY": "SET" if os.getenv("LP_AUTH_SECRET_KEY") else "MISSING",
+            "LP_DATABASE_URL": "SET" if os.getenv("LP_DATABASE_URL") else "MISSING", 
+            "LP_REDIS_URL": "SET" if os.getenv("LP_REDIS_URL") else "MISSING"
+        }
     }
 
     # Check Redis connectivity

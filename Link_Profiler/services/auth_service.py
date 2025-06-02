@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import uuid
+import os # New: Import os for environment variable access
 
 from passlib.context import CryptContext # For password hashing
 from jose import JWTError, jwt # For JWT token handling
@@ -27,12 +28,32 @@ class AuthService:
     """
     def __init__(self, database: Database):
         self.db = database
-        self.secret_key = config_loader.get("auth.secret_key")
+        
+        # New: Add logging for loaded secret_key and fallback to environment variable
+        raw_secret = config_loader.get("auth.secret_key")
+        logger.info(f"Auth service loaded secret_key from config: {raw_secret[:10]}..." if raw_secret else "Auth service loaded secret_key: None")
+        
+        env_secret = os.getenv("LP_AUTH_SECRET_KEY")
+        if env_secret:
+            logger.info(f"Auth service found LP_AUTH_SECRET_KEY in environment: {env_secret[:10]}...")
+            # Prioritize environment variable if it's set and config still has placeholder
+            if raw_secret == "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY" or not raw_secret:
+                self.secret_key = env_secret
+                logger.info("Using LP_AUTH_SECRET_KEY from environment due to placeholder/missing config value.")
+            else:
+                self.secret_key = raw_secret # Use config value if it's not the placeholder
+                if raw_secret != env_secret:
+                    logger.warning("LP_AUTH_SECRET_KEY in environment differs from config.yaml. Using config.yaml value.")
+        else:
+            self.secret_key = raw_secret
+            logger.warning("LP_AUTH_SECRET_KEY not found in environment. Relying on config.yaml or default.")
+
+
         self.algorithm = config_loader.get("auth.algorithm", "HS256")
         self.access_token_expire_minutes = config_loader.get("auth.access_token_expire_minutes", 30)
         self.logger = logging.getLogger(__name__)
 
-        if not self.secret_key or self.secret_key == "YOUR_SUPER_SECRET_KEY_CHANGE_THIS_IN_PRODUCTION":
+        if not self.secret_key or self.secret_key == "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY":
             self.logger.error("AUTH_SECRET_KEY is not configured or is using the default placeholder. Authentication will not work securely.")
             self.secret_key = None # Set to None to disable auth features gracefully
             # Do NOT raise ValueError here, allow the application to start
@@ -48,10 +69,10 @@ class AuthService:
 
     def _check_secret_key(self):
         """Internal helper to check if the secret key is configured."""
-        if self.secret_key is None:
+        if self.secret_key is None or self.secret_key == "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY":
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Authentication service is not configured. Missing secret key."
+                detail="Authentication service is not configured. Missing or placeholder secret key."
             )
 
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:

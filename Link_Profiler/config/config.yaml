@@ -265,6 +265,6 @@ monitoring:
 
 # Authentication settings
 auth:
-  secret_key: "YOUR_SUPER_SECRET_KEY_CHANGE_THIS_IN_PRODUCTION" # REQUIRED: Change this to a strong, random string!
+  secret_key: "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY" # REQUIRED: Change this to a strong, random string!
   algorithm: "HS256"
   access_token_expire_minutes: 30 # Token expiry time in minutes
