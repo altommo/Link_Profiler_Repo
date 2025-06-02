@@ -19,10 +19,133 @@
         .refresh-info { color: #666; font-size: 12px; float: right; }
         h1 { color: #333; }
         h2 { color: #555; border-bottom: 2px solid #ddd; padding-bottom: 5px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f2f2f2; }
     </style>
     <script>
-        // Auto-refresh every 30 seconds
-        setTimeout(() => window.location.reload(), 30000);
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                
+                // Update Queue Metrics
+                document.querySelector('.card:nth-of-type(1) .metric:nth-of-type(1) .value').textContent = data.queue_metrics.pending_jobs || 0;
+                document.querySelector('.card:nth-of-type(1) .metric:nth-of-type(2) .value').textContent = data.queue_metrics.active_satellites || 0;
+                document.querySelector('.card:nth-of-type(1) .metric:nth-of-type(3) .value').textContent = data.queue_metrics.results_pending || 0;
+                document.querySelector('.card:nth-of-type(1) .metric:nth-of-type(4) .value').textContent = (data.performance_stats.success_rate || 0).toFixed(1) + '%';
+
+                // Update Data Summaries
+                document.querySelector('.card:nth-of-type(2) .metric:nth-of-type(1) .value').textContent = data.data_summaries.total_link_profiles || 0;
+                document.querySelector('.card:nth-of-type(2) .metric:nth-of-type(2) .value').textContent = (data.data_summaries.avg_link_profile_authority || 'N/A');
+                document.querySelector('.card:nth-of-type(2) .metric:nth-of-type(3) .value').textContent = data.data_summaries.total_domains_analyzed || 0;
+                document.querySelector('.card:nth-of-type(2) .metric:nth-of-type(4) .value').textContent = data.data_summaries.valuable_expired_domains || 0;
+                document.querySelector('.card:nth-of-type(2) .metric:nth-of-type(5) .value').textContent = data.data_summaries.competitive_keyword_analyses || 0;
+                document.querySelector('.card:nth-of-type(2) .metric:nth-of-type(6) .value').textContent = data.data_summaries.total_backlinks_stored || 0;
+
+                // System Stats
+                document.getElementById('system-stats').innerHTML = `
+                    <div class="metric"><span>CPU Usage:</span><span>${(data.system.cpu_percent || 0).toFixed(1)}%</span></div>
+                    <div class="metric"><span>Memory Usage:</span><span>${(data.system.memory.percent || 0).toFixed(1)}%</span></div>
+                    <div class="metric"><span>Disk Usage:</span><span>${(data.system.disk.percent || 0).toFixed(1)}%</span></div>
+                    <div class="metric"><span>Uptime:</span><span>${Math.floor((data.system.uptime || 0) / 3600)} hours</span></div>
+                `;
+                
+                // API Health
+                const apiHealthDiv = document.getElementById('api-health');
+                const healthStatus = data.api_health.status || 'unknown';
+                const healthClass = healthStatus === 'healthy' ? 'status-healthy' : 'status-unhealthy';
+                apiHealthDiv.innerHTML = `
+                    <div class="metric"><span>Status:</span><span class="${healthClass}">${healthStatus}</span></div>
+                    <div class="metric"><span>Timestamp:</span><span>${data.api_health.timestamp || 'N/A'}</span></div>
+                    <div class="metric"><span>Redis:</span><span>${data.api_health.dependencies?.redis?.status || 'Unknown'}</span></div>
+                    <div class="metric"><span>PostgreSQL:</span><span>${data.api_health.dependencies?.postgresql?.status || 'Unknown'}</span></div>
+                `;
+                
+                // Redis Stats
+                const redisStatsDiv = document.getElementById('redis-stats');
+                const redisStatus = data.redis.status || 'error';
+                const redisClass = redisStatus === 'connected' ? 'status-healthy' : 'status-unhealthy';
+                redisStatsDiv.innerHTML = `
+                    <div class="metric"><span>Status:</span><span class="${redisClass}">${redisStatus}</span></div>
+                    <div class="metric"><span>Connected Clients:</span><span>${data.redis.connected_clients || 0}</span></div>
+                    <div class="metric"><span>Memory Used:</span><span>${data.redis.used_memory_human || '0B'}</span></div>
+                    <div class="metric"><span>Keyspace Hits:</span><span>${data.redis.keyspace_hits || 0}</span></div>
+                `;
+                
+                // Database Stats
+                const dbStatsDiv = document.getElementById('database-stats');
+                const dbStatus = data.database.status || 'error';
+                const dbClass = dbStatus === 'connected' ? 'status-healthy' : 'status-unhealthy';
+                let dbHtml = `<div class="metric"><span>Status:</span><span class="${dbClass}">${dbStatus}</span></div>`;
+                if (data.database.tables && data.database.tables.length > 0) {
+                    dbHtml += '<table><tr><th>Table</th><th>Inserts</th><th>Updates</th><th>Deletes</th></tr>';
+                    data.database.tables.forEach(table => {
+                        dbHtml += `<tr><td>${table.table}</td><td>${table.inserts}</td><td>${table.updates}</td><td>${table.deletes}</td></tr>`;
+                    });
+                    dbHtml += '</table>';
+                } else if (dbStatus === 'connected') {
+                    dbHtml += '<p>No table statistics available or database is empty.</p>';
+                }
+                dbStatsDiv.innerHTML = dbHtml;
+
+                // Update Satellite Crawlers
+                const satellitesDiv = document.getElementById('satellite-crawlers');
+                if (data.queue_metrics.satellites && data.queue_metrics.satellites.length > 0) {
+                    let satelliteHtml = '';
+                    data.queue_metrics.satellites.forEach(satellite => {
+                        const offlineClass = satellite.status === 'stale' ? 'offline' : '';
+                        satelliteHtml += `
+                            <div class="satellite ${offlineClass}">
+                                <strong>${satellite.crawler_id}</strong> 
+                                (${satellite.region || 'unknown'})
+                                - Last seen: ${satellite.last_seen ? new Date(satellite.last_seen).toLocaleTimeString() : 'Never'}
+                                ${satellite.current_job ? `- Processing: ${satellite.current_job}` : ''}
+                            </div>
+                        `;
+                    });
+                    satellitesDiv.innerHTML = satelliteHtml;
+                } else {
+                    satellitesDiv.innerHTML = '<p>No active satellites detected</p>';
+                }
+
+                // Update Recent Jobs
+                const jobHistoryDiv = document.getElementById('recent-jobs');
+                if (data.job_history && data.job_history.length > 0) {
+                    let jobHtml = '';
+                    data.job_history.slice(0, 10).forEach(job => { // Limit to 10 for display
+                        jobHtml += `
+                            <div class="job-row">
+                                <span>${job.job_id.substring(0, 8)}...</span>
+                                <span class="status-${job.status}">${job.status.toUpperCase()}</span>
+                                <span>${job.urls_crawled} URLs</span>
+                                <span>${job.links_found} links</span>
+                                <span>${job.duration_seconds}s</span>
+                            </div>
+                        `;
+                    });
+                    jobHistoryDiv.innerHTML = jobHtml;
+                } else {
+                    jobHistoryDiv.innerHTML = '<p>No recent job history available.</p>';
+                }
+
+                // Update last refresh time
+                document.querySelector('.refresh-info').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+
+            } catch (error) {
+                console.error('Error loading stats:', error);
+                document.getElementById('system-stats').innerHTML = '<p class="status-error">Error loading data.</p>';
+                document.getElementById('api-health').innerHTML = '<p class="status-error">Error loading data.</p>';
+                document.getElementById('redis-stats').innerHTML = '<p class="status-error">Error loading data.</p>';
+                document.getElementById('database-stats').innerHTML = '<p class="status-error">Error loading data.</p>';
+                document.getElementById('satellite-crawlers').innerHTML = '<p class="status-error">Error loading data.</p>';
+                document.getElementById('recent-jobs').innerHTML = '<p class="status-error">Error loading data.</p>';
+            }
+        }
+        
+        // Load stats on page load and refresh every 30 seconds
+        document.addEventListener('DOMContentLoaded', loadStats);
+        setInterval(loadStats, 30000);
     </script>
 </head>
 <body>
@@ -57,7 +180,7 @@
             </div>
             <div class="metric">
                 <h3>Avg. LP Authority</h3>
-                <div class="value">{{ data_summaries.avg_link_profile_authority or "N/A" }}</div>
+                <div class="value">{{ "%.2f"|format(data_summaries.avg_link_profile_authority or 0) }}</div>
             </div>
             <div class="metric">
                 <h3>Domains Analyzed</h3>
@@ -78,34 +201,96 @@
         </div>
 
         <div class="card">
+            <h2>📊 System Resources</h2>
+            <div id="system-stats">
+                <div class="metric"><span>CPU Usage:</span><span>{{ "%.1f"|format(system.cpu_percent or 0) }}%</span></div>
+                <div class="metric"><span>Memory Usage:</span><span>{{ "%.1f"|format(system.memory.percent or 0) }}%</span></div>
+                <div class="metric"><span>Disk Usage:</span><span>{{ "%.1f"|format(system.disk.percent or 0) }}%</span></div>
+                <div class="metric"><span>Uptime:</span><span>{{ (system.uptime // 3600) if system.uptime else 0 }} hours</span></div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>🏥 API Health</h2>
+            <div id="api-health">
+                {% set health_status = api_health.status or 'unknown' %}
+                {% set health_class = 'status-healthy' if health_status == 'healthy' else 'status-unhealthy' %}
+                <div class="metric"><span>Status:</span><span class="{{ health_class }}">{{ health_status }}</span></div>
+                <div class="metric"><span>Timestamp:</span><span>{{ api_health.timestamp or 'N/A' }}</span></div>
+                <div class="metric"><span>Redis:</span><span>{{ api_health.dependencies.redis.status if api_health.dependencies and api_health.dependencies.redis else 'Unknown' }}</span></div>
+                <div class="metric"><span>PostgreSQL:</span><span>{{ api_health.dependencies.postgresql.status if api_health.dependencies and api_health.dependencies.postgresql else 'Unknown' }}</span></div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>📈 Redis Statistics</h2>
+            <div id="redis-stats">
+                {% set redis_status = redis_stats.status or 'error' %}
+                {% set redis_class = 'status-healthy' if redis_status == 'connected' else 'status-unhealthy' %}
+                <div class="metric"><span>Status:</span><span class="{{ redis_class }}">{{ redis_status }}</span></div>
+                <div class="metric"><span>Connected Clients:</span><span>{{ redis_stats.connected_clients or 0 }}</span></div>
+                <div class="metric"><span>Memory Used:</span><span>{{ redis_stats.used_memory_human or '0B' }}</span></div>
+                <div class="metric"><span>Keyspace Hits:</span><span>{{ redis_stats.keyspace_hits or 0 }}</span></div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>🗄️ Database Statistics</h2>
+            <div id="database-stats">
+                {% set db_status = database_stats.status or 'error' %}
+                {% set db_class = 'status-healthy' if db_status == 'connected' else 'status-unhealthy' %}
+                <div class="metric"><span>Status:</span><span class="{{ db_class }}">{{ db_status }}</span></div>
+                {% if database_stats.tables %}
+                <table>
+                    <tr><th>Table</th><th>Inserts</th><th>Updates</th><th>Deletes</th></tr>
+                    {% for table in database_stats.tables %}
+                    <tr>
+                        <td>{{ table.table }}</td>
+                        <td>{{ table.inserts }}</td>
+                        <td>{{ table.updates }}</td>
+                        <td>{{ table.deletes }}</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+                {% else %}
+                <p>No table statistics available or database is empty.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card">
             <h2>🛰️ Satellite Crawlers</h2>
-            {% if queue_metrics.satellites %}
-                {% for satellite in queue_metrics.satellites %}
-                <div class="satellite">
-                    <strong>{{ satellite.crawler_id }}</strong> 
-                    ({{ satellite.region or 'unknown' }})
-                    - Last seen: {{ satellite.last_seen.strftime('%H:%M:%S') if satellite.last_seen else 'Never' }}
-                    {% if satellite.current_job %}
-                    - Processing: {{ satellite.current_job }}
-                    {% endif %}
-                </div>
-                {% endfor %}
-            {% else %}
-                <p>No active satellites detected</p>
-            {% endif %}
+            <div id="satellite-crawlers">
+                {% if queue_metrics.satellites %}
+                    {% for satellite in queue_metrics.satellites %}
+                    <div class="satellite {% if satellite.status == 'stale' %}offline{% endif %}">
+                        <strong>{{ satellite.crawler_id }}</strong> 
+                        ({{ satellite.region or 'unknown' }})
+                        - Last seen: {{ satellite.last_seen.strftime('%H:%M:%S') if satellite.last_seen else 'Never' }}
+                        {% if satellite.current_job %}
+                        - Processing: {{ satellite.current_job }}
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p>No active satellites detected</p>
+                {% endif %}
+            </div>
         </div>
         
         <div class="card">
             <h2>📈 Recent Jobs</h2>
-            {% for job in job_history[:10] %}
-            <div class="job-row">
-                <span>{{ job.job_id }}</span>
-                <span class="status-{{ job.status }}">{{ job.status.upper() }}</span>
-                <span>{{ job.urls_crawled }} URLs</span>
-                <span>{{ job.links_found }} links</span>
-                <span>{{ job.duration_seconds }}s</span>
+            <div id="recent-jobs">
+                {% for job in job_history[:10] %}
+                <div class="job-row">
+                    <span>{{ job.job_id[:8] }}...</span>
+                    <span class="status-{{ job.status }}">{{ job.status.upper() }}</span>
+                    <span>{{ job.urls_crawled }} URLs</span>
+                    <span>{{ job.links_found }} links</span>
+                    <span>{{ job.duration_seconds }}s</span>
+                </div>
+                {% endfor %}
             </div>
-            {% endfor %}
         </div>
     </div>
 </body>

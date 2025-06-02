@@ -14,6 +14,9 @@ import uvicorn
 import logging
 import sys
 import os
+import psutil # New: Import psutil for system stats
+import psycopg2 # New: Import psycopg2 for database stats
+import aiohttp # New: Import aiohttp for API health check
 
 # Add project root to path for imports
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -45,6 +48,21 @@ class MonitoringDashboard:
 
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.logger = logging.getLogger(__name__)
+        self._session: Optional[aiohttp.ClientSession] = None # New: aiohttp client session for API health check
+
+    async def __aenter__(self):
+        """Initialise aiohttp session."""
+        self.logger.info("Entering MonitoringDashboard context.")
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Close aiohttp session."""
+        self.logger.info("Exiting MonitoringDashboard context. Closing aiohttp session.")
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def get_queue_metrics(self) -> Dict:
         """Get comprehensive queue metrics"""
@@ -209,32 +227,174 @@ class MonitoringDashboard:
                 "total_backlinks_stored": "N/A"
             }
 
+    async def get_system_stats(self) -> Dict:
+        """Get system resource statistics"""
+        try:
+            return {
+                "cpu_percent": psutil.cpu_percent(interval=None), # Non-blocking
+                "memory": {
+                    "total": psutil.virtual_memory().total,
+                    "available": psutil.virtual_memory().available,
+                    "percent": psutil.virtual_memory().percent,
+                    "used": psutil.virtual_memory().used
+                },
+                "disk": {
+                    "total": psutil.disk_usage('/').total,
+                    "used": psutil.disk_usage('/').used,
+                    "free": psutil.disk_usage('/').free,
+                    "percent": psutil.disk_usage('/').percent
+                },
+                "uptime": time.time() - psutil.boot_time()
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting system stats: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    async def get_api_health(self):
+        """Check API health by calling its /health endpoint"""
+        api_base_url = f"http://127.0.0.1:{config_loader.get('api.port', 8000)}"
+        try:
+            if self._session is None:
+                self.logger.warning("aiohttp session not initialized for API health check.")
+                return {"status": "error", "message": "Internal session not ready."}
+
+            async with self._session.get(f"{api_base_url}/health", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    return {"status": "error", "code": resp.status, "message": f"API returned status {resp.status}"}
+        except Exception as e:
+            self.logger.error(f"Error checking API health: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    async def get_redis_stats(self):
+        """Get Redis statistics"""
+        try:
+            info = await self.redis.info()
+            return {
+                "connected_clients": info.get("connected_clients", 0),
+                "used_memory": info.get("used_memory", 0),
+                "used_memory_human": info.get("used_memory_human", "0B"),
+                "keyspace_hits": info.get("keyspace_hits", 0),
+                "keyspace_misses": info.get("keyspace_misses", 0),
+                "status": "connected"
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting Redis stats: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    async def get_database_stats(self):
+        """Get database statistics using psycopg2"""
+        try:
+            conn = psycopg2.connect(self.db.db_url)
+            cur = conn.cursor()
+            
+            # Get table statistics
+            cur.execute("""
+                SELECT 
+                    schemaname,
+                    tablename,
+                    n_tup_ins as inserts,
+                    n_tup_upd as updates,
+                    n_tup_del as deletes
+                FROM pg_stat_user_tables;
+            """)
+            
+            tables = []
+            for row in cur.fetchall():
+                tables.append({
+                    "schema": row[0],
+                    "table": row[1],
+                    "inserts": row[2],
+                    "updates": row[3],
+                    "deletes": row[4]
+                })
+            
+            cur.close()
+            conn.close()
+            
+            return {
+                "status": "connected",
+                "tables": tables
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting database stats: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    async def get_all_dashboard_data(self) -> Dict[str, Any]:
+        """Aggregates all data needed for the dashboard."""
+        tasks = [
+            self.get_queue_metrics(),
+            self.get_job_history(config_loader.get("monitoring.max_job_history", 50)),
+            self.get_performance_stats(),
+            self.get_data_summaries(),
+            self.get_system_stats(),
+            self.get_api_health(),
+            self.get_redis_stats(),
+            self.get_database_stats()
+        ]
+        
+        # Run all data fetching tasks concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Assign results to a dictionary, handling potential errors
+        data = {
+            "queue_metrics": results[0] if not isinstance(results[0], Exception) else {"error": str(results[0])},
+            "job_history": results[1] if not isinstance(results[1], Exception) else [],
+            "performance_stats": results[2] if not isinstance(results[2], Exception) else {"error": str(results[2])},
+            "data_summaries": results[3] if not isinstance(results[3], Exception) else {"error": str(results[3])},
+            "system": results[4] if not isinstance(results[4], Exception) else {"error": str(results[4])},
+            "api_health": results[5] if not isinstance(results[5], Exception) else {"error": str(results[5])},
+            "redis": results[6] if not isinstance(results[6], Exception) else {"error": str(results[6])},
+            "database": results[7] if not isinstance(results[7], Exception) else {"error": str(results[7])},
+            "timestamp": datetime.now().isoformat()
+        }
+        return data
+
 
 # Global dashboard instance
 dashboard = MonitoringDashboard()
+
+@app.on_event("startup")
+async def startup_event():
+    await dashboard.__aenter__()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await dashboard.__aexit__(None, None, None)
+
 
 @app.get("/", response_class=HTMLResponse)
 async def monitoring_home(request: Request):
     """Main monitoring dashboard"""
     
-    # Get all metrics
-    queue_metrics = await dashboard.get_queue_metrics()
-    job_history = await dashboard.get_job_history(config_loader.get("monitoring.max_job_history", 50))
-    performance_stats = await dashboard.get_performance_stats()
-    data_summaries = await dashboard.get_data_summaries()
+    # Get all metrics for initial render
+    all_data = await dashboard.get_all_dashboard_data()
     
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
-        "queue_metrics": queue_metrics,
-        "job_history": job_history,
-        "performance_stats": performance_stats,
-        "data_summaries": data_summaries,
+        "queue_metrics": all_data["queue_metrics"],
+        "job_history": all_data["job_history"],
+        "performance_stats": all_data["performance_stats"],
+        "data_summaries": all_data["data_summaries"],
+        "system": all_data["system"], # Pass system stats
+        "api_health": all_data["api_health"], # Pass API health
+        "redis_stats": all_data["redis"], # Pass Redis stats
+        "database_stats": all_data["database"], # Pass DB stats
         "refresh_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
+
+@app.get("/api/stats")
+async def get_all_stats_api():
+    """API endpoint for dashboard statistics (used by JavaScript for refresh)"""
+    return await dashboard.get_all_dashboard_data()
 
 @app.get("/api/metrics")
 async def get_metrics_api():
     """API endpoint for metrics (for external monitoring)"""
+    # This endpoint is for Prometheus metrics, not the dashboard's aggregated data.
+    # It should ideally return Prometheus text format, but for now, it returns a subset of dashboard data.
+    # If you have a separate Prometheus metrics endpoint in main.py, this one might be redundant.
     queue_metrics = await dashboard.get_queue_metrics()
     performance_stats = await dashboard.get_performance_stats()
     data_summaries = await dashboard.get_data_summaries()
