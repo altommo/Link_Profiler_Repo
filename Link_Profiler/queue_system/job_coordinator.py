@@ -386,20 +386,20 @@ class JobCoordinator:
         """Pauses all new job processing by satellites."""
         try:
             await self.redis.set("processing_paused", "true", ex=3600) # Set for 1 hour
-            logger.info("Job processing paused.")
+            logger.info("Global job processing paused.")
             return True
         except Exception as e:
-            logger.error(f"Failed to pause job processing: {e}", exc_info=True)
+            logger.error(f"Failed to pause global job processing: {e}", exc_info=True)
             return False
 
     async def resume_job_processing(self) -> bool:
         """Resumes all new job processing by satellites."""
         try:
             await self.redis.delete("processing_paused")
-            logger.info("Job processing resumed.")
+            logger.info("Global job processing resumed.")
             return True
         except Exception as e:
-            logger.error(f"Failed to resume job processing: {e}", exc_info=True)
+            logger.error(f"Failed to resume global job processing: {e}", exc_info=True)
             return False
 
     async def cancel_job(self, job_id: str) -> bool:
@@ -442,6 +442,30 @@ class JobCoordinator:
         self.active_jobs_cache.pop(job_id, None)
 
         return True
+
+    async def send_control_command(self, crawler_id: str, command: str) -> bool:
+        """Sends a control command to a specific satellite crawler."""
+        control_key = f"crawler_control:{crawler_id}"
+        command_data = {"command": command, "timestamp": datetime.now().isoformat()}
+        try:
+            await self.redis.set(control_key, json.dumps(command_data), ex=self.stale_timeout * 3) # Command expires after a while
+            logger.info(f"Sent command '{command}' to satellite '{crawler_id}'.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send command '{command}' to satellite '{crawler_id}': {e}", exc_info=True)
+            return False
+
+    async def send_global_control_command(self, command: str) -> bool:
+        """Sends a control command to all active satellite crawlers."""
+        control_key_all = "crawler_control:all"
+        command_data = {"command": command, "timestamp": datetime.now().isoformat()}
+        try:
+            await self.redis.set(control_key_all, json.dumps(command_data), ex=self.stale_timeout * 3) # Command expires after a while
+            logger.info(f"Sent global command '{command}' to all satellites.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send global command '{command}': {e}", exc_info=True)
+            return False
 
     async def get_all_jobs_for_dashboard(self, status_filter: Optional[str] = None) -> List[CrawlJob]:
         """

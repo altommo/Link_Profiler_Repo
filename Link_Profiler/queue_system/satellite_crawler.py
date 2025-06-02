@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 import json
+import sys # Import sys for exit
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, CrawlResult, CrawlError, LinkType, SpamLevel, URL, Domain, SEOMetrics, SERPResult, KeywordSuggestion, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlConfig, serialize_model
@@ -134,6 +135,8 @@ class SatelliteCrawler:
         self.last_heartbeat_time = datetime.now()
         self.total_jobs_completed = 0 # New counter
         self.total_errors_encountered = 0 # New counter
+        self.is_locally_paused = False # New: Local pause flag
+        self.shutdown_event = asyncio.Event() # New: Event to signal graceful shutdown
 
     async def __aenter__(self):
         self.logger.info(f"SatelliteCrawler {self.crawler_id} entering context.")
@@ -252,8 +255,9 @@ class SatelliteCrawler:
                 "status": "active",
                 "running_jobs": len(self.running_jobs),
                 "timestamp": datetime.now().isoformat(),
-                "total_jobs_completed": self.total_jobs_completed, # New
-                "total_errors_encountered": self.total_errors_encountered # New
+                "total_jobs_completed": self.total_jobs_completed,
+                "total_errors_encountered": self.total_errors_encountered,
+                "is_locally_paused": self.is_locally_paused # New: Include local pause status
             }
             
             # Store detailed heartbeat data in a separate key with an expiry
@@ -274,9 +278,69 @@ class SatelliteCrawler:
             
             self.last_heartbeat_time = datetime.now()
             self.logger.debug(f"Heartbeat sent for {self.crawler_id}. Running jobs: {len(self.running_jobs)}")
-            self.logger.info(f"Heartbeat successfully sent to Redis for {self.crawler_id}.") # Added log
+            self.logger.info(f"Heartbeat successfully sent to Redis for {self.crawler_id}.")
         except Exception as e:
             self.logger.error(f"Failed to send heartbeat for {self.crawler_id}: {e}")
+
+    async def _control_command_listener(self):
+        """Listens for control commands from Redis."""
+        control_key_individual = f"crawler_control:{self.crawler_id}"
+        control_key_global = "crawler_control:all"
+        
+        while not self.shutdown_event.is_set():
+            try:
+                # Check for individual commands first
+                command_json = await self.redis_client.get(control_key_individual)
+                if command_json:
+                    await self._process_control_command(command_json.decode('utf-8'), control_key_individual)
+                    continue # Process one command at a time
+
+                # Then check for global commands
+                command_json = await self.redis_client.get(control_key_global)
+                if command_json:
+                    await self._process_control_command(command_json.decode('utf-8'), control_key_global)
+                    
+                await asyncio.sleep(5) # Check for commands every 5 seconds
+            except Exception as e:
+                self.logger.error(f"Error in control command listener: {e}", exc_info=True)
+                await asyncio.sleep(10) # Longer sleep on error
+
+    async def _process_control_command(self, command_json: str, redis_key: str):
+        """Processes a single control command."""
+        try:
+            command_data = json.loads(command_json)
+            command = command_data.get("command")
+            
+            self.logger.info(f"Received control command '{command}' from Redis key '{redis_key}'.")
+
+            if command == "PAUSE":
+                self.is_locally_paused = True
+                self.logger.info(f"Satellite {self.crawler_id} paused job processing locally.")
+            elif command == "RESUME":
+                self.is_locally_paused = False
+                self.logger.info(f"Satellite {self.crawler_id} resumed job processing locally.")
+            elif command == "SHUTDOWN":
+                self.logger.info(f"Satellite {self.crawler_id} received SHUTDOWN command. Initiating graceful exit.")
+                self.shutdown_event.set() # Signal main loop to stop
+            elif command == "RESTART":
+                self.logger.info(f"Satellite {self.crawler_id} received RESTART command. Initiating restart sequence.")
+                # For a true restart, you'd typically rely on an external process manager (e.g., Docker, systemd)
+                # to re-launch the process after it exits. Here, we just exit.
+                self.shutdown_event.set() # Signal main loop to stop
+                # Set an exit code that might be interpreted by a process manager as a restart signal
+                sys.exit(1) 
+            else:
+                self.logger.warning(f"Unknown control command received: {command}")
+            
+            # Delete the command from Redis after processing
+            await self.redis_client.delete(redis_key)
+            self.logger.debug(f"Control command deleted from Redis key '{redis_key}'.")
+
+        except json.JSONDecodeError:
+            self.logger.error(f"Invalid JSON control command received from '{redis_key}': {command_json}")
+            await self.redis_client.delete(redis_key) # Clear invalid command
+        except Exception as e:
+            self.logger.error(f"Error processing control command '{command_json}' from '{redis_key}': {e}", exc_info=True)
 
     async def _process_job(self, job_data: Dict):
         """Processes a single job."""
@@ -469,11 +533,17 @@ class SatelliteCrawler:
 
     async def _fetch_and_process_jobs(self):
         """Continuously fetches and processes jobs from the queue."""
-        while True:
+        while not self.shutdown_event.is_set():
             try:
-                # Check for pause flag
+                # Check for global pause flag
                 if await self.redis_client.exists("processing_paused"):
-                    self.logger.info("Job processing is paused. Waiting...")
+                    self.logger.info("Global job processing is paused. Waiting...")
+                    await asyncio.sleep(self.heartbeat_interval)
+                    continue
+                
+                # Check for local pause flag
+                if self.is_locally_paused:
+                    self.logger.info(f"Satellite {self.crawler_id} is locally paused. Waiting...")
                     await asyncio.sleep(self.heartbeat_interval)
                     continue
 
@@ -524,11 +594,17 @@ class SatelliteCrawler:
         # Start heartbeat task
         asyncio.create_task(self._heartbeat_loop())
         
+        # Start control command listener task
+        asyncio.create_task(self._control_command_listener())
+
         # Start job fetching and processing loop
         await self._fetch_and_process_jobs()
+        
+        # If we reach here, it means shutdown_event was set
+        self.logger.info(f"SatelliteCrawler {self.crawler_id} main loop exited gracefully.")
 
     async def _heartbeat_loop(self):
         """Runs the heartbeat in a continuous loop."""
-        while True:
+        while not self.shutdown_event.is_set():
             await self._send_heartbeat()
             await asyncio.sleep(self.heartbeat_interval)

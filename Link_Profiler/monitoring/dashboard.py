@@ -641,6 +641,40 @@ async def cancel_job_endpoint(job_id: str):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found or cannot be cancelled.")
     return {"status": "success", "message": f"Job {job_id} cancelled."}
 
+@app.post("/api/satellites/control/all/{command}", status_code=status.HTTP_200_OK)
+async def control_all_satellites_endpoint(command: str):
+    """Send a control command to all active satellites (e.g., 'PAUSE', 'RESUME', 'SHUTDOWN', 'RESTART')."""
+    if not dashboard.coordinator:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
+    
+    valid_commands = ["PAUSE", "RESUME", "SHUTDOWN", "RESTART"]
+    if command.upper() not in valid_commands:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid command. Must be one of: {', '.join(valid_commands)}")
+
+    success = await dashboard.coordinator.send_global_control_command(command.upper())
+    if not success:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send global command '{command}'.")
+    return {"status": "success", "message": f"Global command '{command}' sent to all satellites."}
+
+@app.post("/api/satellites/control/{crawler_id}/{command}", status_code=status.HTTP_200_OK)
+async def control_single_satellite_endpoint(crawler_id: str, command: str):
+    """Send a control command to a specific satellite (e.g., 'PAUSE', 'RESUME', 'SHUTDOWN', 'RESTART')."""
+    if not dashboard.coordinator:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
+    
+    valid_commands = ["PAUSE", "RESUME", "SHUTDOWN", "RESTART"]
+    if command.upper() not in valid_commands:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid command. Must be one of: {', '.join(valid_commands)}")
+
+    # Optional: Check if crawler_id is known/active before sending
+    # For now, we send it regardless, and the satellite will ignore if it's not its ID.
+    
+    success = await dashboard.coordinator.send_control_command(crawler_id, command.upper())
+    if not success:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send command '{command}' to satellite '{crawler_id}'.")
+    return {"status": "success", "message": f"Command '{command}' sent to satellite '{crawler_id}'."}
+
+
 @app.get("/api/jobs/all", response_model=List[JobStatusResponse])
 async def get_all_jobs_api(status_filter: Optional[str] = None):
     """Get all jobs for the dashboard."""

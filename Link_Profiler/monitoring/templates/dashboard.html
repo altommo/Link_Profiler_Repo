@@ -13,6 +13,7 @@
         .metric .value { font-size: 24px; font-weight: bold; color: #333; }
         .satellite { background: #f0f8f0; margin: 5px 0; padding: 10px; border-radius: 4px; border-left: 4px solid #4caf50; }
         .satellite.offline { background: #fef0f0; border-left-color: #f44336; }
+        .satellite.paused { background: #fffbe6; border-left-color: #ffc107; } /* New style for paused satellites */
         .satellite-details { font-size: 0.9em; color: #555; margin-top: 5px; } /* New style for satellite details */
         .job-row { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #eee; }
         .status-completed { color: #4caf50; font-weight: bold; }
@@ -46,8 +47,9 @@
             font-size: 16px;
         }
         .button-group button.secondary { background-color: #f44336; }
+        .button-group button.warning { background-color: #ff9800; }
         .button-group button:hover { opacity: 0.9; }
-        .job-actions button {
+        .job-actions button, .satellite-actions button {
             padding: 5px 10px;
             margin-left: 5px;
             background-color: #2196f3;
@@ -57,8 +59,9 @@
             cursor: pointer;
             font-size: 0.8em;
         }
-        .job-actions button.cancel { background-color: #f44336; }
-        .job-actions button:hover { opacity: 0.9; }
+        .job-actions button.cancel, .satellite-actions button.shutdown { background-color: #f44336; }
+        .satellite-actions button.pause { background-color: #ff9800; }
+        .job-actions button:hover, .satellite-actions button:hover { opacity: 0.9; }
     </style>
     <script>
         // IMPORTANT: Replace 'YOUR_ACCESS_TOKEN' with a valid token obtained from your /auth/token endpoint.
@@ -129,7 +132,7 @@
         }
 
         async function pauseAllJobs() {
-            if (!confirm('Are you sure you want to pause all job processing?')) return;
+            if (!confirm('Are you sure you want to pause all job processing? This will prevent satellites from picking up new jobs globally.')) return;
             try {
                 const result = await callApi('/api/jobs/pause_all', 'POST');
                 alert(result.message);
@@ -149,6 +152,54 @@
             } catch (error) {
                 alert('Error resuming jobs: ' + error.message);
                 console.error('Error resuming jobs:', error);
+            }
+        }
+
+        async function shutdownAllSatellites() {
+            if (!confirm('WARNING: Are you sure you want to SHUTDOWN ALL satellites? This will terminate their processes.')) return;
+            try {
+                const result = await callApi('/api/satellites/control/all/shutdown', 'POST');
+                alert(result.message);
+                loadStats();
+            } catch (error) {
+                alert('Error shutting down satellites: ' + error.message);
+                console.error('Error shutting down satellites:', error);
+            }
+        }
+
+        async function restartAllSatellites() {
+            if (!confirm('WARNING: Are you sure you want to RESTART ALL satellites? This will terminate their processes and rely on external process managers to restart them.')) return;
+            try {
+                const result = await callApi('/api/satellites/control/all/restart', 'POST');
+                alert(result.message);
+                loadStats();
+            } catch (error) {
+                alert('Error restarting satellites: ' + error.message);
+                console.error('Error restarting satellites:', error);
+            }
+        }
+
+        async function controlSatellite(crawlerId, command) {
+            let confirmationMessage = '';
+            if (command === 'SHUTDOWN') {
+                confirmationMessage = `Are you sure you want to SHUTDOWN satellite ${crawlerId}? This will terminate its process.`;
+            } else if (command === 'RESTART') {
+                confirmationMessage = `Are you sure you want to RESTART satellite ${crawlerId}? This will terminate its process and rely on external process managers to restart it.`;
+            } else if (command === 'PAUSE') {
+                confirmationMessage = `Are you sure you want to PAUSE satellite ${crawlerId}? It will stop picking up new jobs.`;
+            } else if (command === 'RESUME') {
+                confirmationMessage = `Are you sure you want to RESUME satellite ${crawlerId}? It will start picking up new jobs.`;
+            }
+
+            if (!confirm(confirmationMessage)) return;
+
+            try {
+                const result = await callApi(`/api/satellites/control/${crawlerId}/${command}`, 'POST');
+                alert(result.message);
+                loadStats();
+            } catch (error) {
+                alert(`Error ${command.toLowerCase()}ing satellite ${crawlerId}: ` + error.message);
+                console.error(`Error ${command.toLowerCase()}ing satellite:`, error);
             }
         }
 
@@ -280,9 +331,14 @@
                 if (data.queue_metrics.satellites && data.queue_metrics.satellites.length > 0) {
                     let satelliteHtml = '';
                     data.queue_metrics.satellites.forEach(satellite => {
-                        const offlineClass = satellite.status === 'stale' ? 'offline' : '';
+                        let statusClass = '';
+                        if (satellite.status === 'stale') {
+                            statusClass = 'offline';
+                        } else if (satellite.is_locally_paused) { /* New: Check local pause status */
+                            statusClass = 'paused';
+                        }
                         satelliteHtml += `
-                            <div class="satellite ${offlineClass}">
+                            <div class="satellite ${statusClass}">
                                 <strong>${satellite.crawler_id}</strong> 
                                 (${satellite.region || 'unknown'})
                                 - Last seen: ${satellite.last_seen ? new Date(satellite.last_seen).toLocaleTimeString() : 'Never'}
@@ -291,6 +347,12 @@
                                     <span>Jobs: ${satellite.total_jobs_completed || 0}</span>
                                     <span>Errors: ${satellite.total_errors_encountered || 0}</span>
                                     <span>Running: ${satellite.running_jobs || 0}</span>
+                                </div>
+                                <div class="satellite-actions">
+                                    <button onclick="controlSatellite('${satellite.crawler_id}', 'PAUSE')" class="pause">Pause</button>
+                                    <button onclick="controlSatellite('${satellite.crawler_id}', 'RESUME')">Resume</button>
+                                    <button onclick="controlSatellite('${satellite.crawler_id}', 'SHUTDOWN')" class="shutdown">Shutdown</button>
+                                    <button onclick="controlSatellite('${satellite.crawler_id}', 'RESTART')">Restart</button>
                                 </div>
                             </div>
                         `;
@@ -456,7 +518,7 @@
             <div id="satellite-crawlers">
                 {% if queue_metrics.satellites %}
                     {% for satellite in queue_metrics.satellites %}
-                    <div class="satellite {% if satellite.status == 'stale' %}offline{% endif %}">
+                    <div class="satellite {% if satellite.status == 'stale' %}offline{% elif satellite.is_locally_paused %}paused{% endif %}">
                         <strong>{{ satellite.crawler_id }}</strong> 
                         ({{ satellite.region or 'unknown' }})
                         - Last seen: {{ satellite.last_seen.strftime('%H:%M:%S') if satellite.last_seen else 'Never' }}
@@ -467,6 +529,12 @@
                             <span>Jobs: {{ satellite.total_jobs_completed or 0 }}</span>
                             <span>Errors: {{ satellite.total_errors_encountered or 0 }}</span>
                             <span>Running: {{ satellite.running_jobs or 0 }}</span>
+                        </div>
+                        <div class="satellite-actions">
+                            <button onclick="controlSatellite('{{ satellite.crawler_id }}', 'PAUSE')" class="pause">Pause</button>
+                            <button onclick="controlSatellite('{{ satellite.crawler_id }}', 'RESUME')">Resume</button>
+                            <button onclick="controlSatellite('{{ satellite.crawler_id }}', 'SHUTDOWN')" class="shutdown">Shutdown</button>
+                            <button onclick="controlSatellite('{{ satellite.crawler_id }}', 'RESTART')">Restart</button>
                         </div>
                     </div>
                     {% endfor %}
@@ -537,10 +605,12 @@
                 <button onclick="submitNewJob()">Submit Job</button>
             </div>
 
-            <h3>Global Job Controls</h3>
+            <h3>Global Job & Satellite Controls</h3>
             <div class="button-group">
                 <button onclick="pauseAllJobs()" class="secondary">Pause All Jobs</button>
                 <button onclick="resumeAllJobs()">Resume All Jobs</button>
+                <button onclick="shutdownAllSatellites()" class="secondary">Shutdown All Satellites</button>
+                <button onclick="restartAllSatellites()" class="warning">Restart All Satellites</button>
             </div>
 
             <h3>All Jobs</h3>
