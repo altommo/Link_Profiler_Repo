@@ -589,6 +589,7 @@ class DomainHistoryResponse(BaseModel): # New Pydantic model for DomainHistory
 class CrawlErrorResponse(BaseModel):
     timestamp: datetime
     url: str
+
     error_type: str
     message: str
     details: Optional[str]
@@ -637,11 +638,11 @@ class CrawlJobResponse(BaseModel):
                  job_dict['started_date'] = None
 
         if isinstance(job_dict.get('completed_date'), str):
-             try:
+            try:
                 job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
             except ValueError:
-                 logger.warning(f"Could not parse completed_date string: {job_dict.get('completed_date')}")
-                 job_dict['completed_date'] = None
+                logger.warning(f"Could not parse completed_date string: {job_dict.get('completed_date')}")
+                job_dict['completed_date'] = None
 
         job_dict['error_log'] = [CrawlErrorResponse.from_crawl_error(err) for err in job.error_log]
 
