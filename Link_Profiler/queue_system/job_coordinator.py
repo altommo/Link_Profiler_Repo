@@ -6,7 +6,7 @@ import redis.asyncio as redis
 import json
 import uuid
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any # Added 'Any'
 from dataclasses import asdict
 import logging
 from croniter import croniter
@@ -49,9 +49,11 @@ class JobCoordinator:
         
         # Job tracking (authoritative state is in DB, this is for quick in-memory lookup of active jobs)
         self.active_jobs_cache: Dict[str, CrawlJob] = {}
-        self.satellite_crawlers: Dict[str, datetime] = {}
+        # Changed satellite_crawlers to store the full heartbeat data, not just last_seen time
+        self.satellite_crawlers: Dict[str, Dict[str, Any]] = {} 
         
         self.scheduler_interval = config_loader.get("queue.scheduler_interval", 5)
+        self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Added stale_timeout from config
 
         # Webhook configuration (for job completion webhooks)
         self.webhook_enabled = config_loader.get("notifications.webhooks.enabled", False)
@@ -277,30 +279,39 @@ class JobCoordinator:
         logger.info("Starting satellite monitoring loop.")
         while True:
             try:
-                # Get all heartbeats from the sorted set that are recent (e.g., last 60 seconds)
-                cutoff = (datetime.now() - timedelta(seconds=60)).timestamp()
-                recent_heartbeats = await self.redis.zrangebyscore(
+                # Get all crawler_ids and their last heartbeat timestamps from the sorted set
+                # Only fetch those that are within the stale_timeout period
+                cutoff = (datetime.now() - timedelta(seconds=self.stale_timeout)).timestamp()
+                
+                # Fetch members (crawler_ids) and their scores (timestamps)
+                active_crawler_ids_with_timestamps = await self.redis.zrangebyscore(
                     self.heartbeat_queue_sorted, 
                     cutoff, 
                     "+inf", 
                     withscores=True
                 )
                 
-                current_active_crawlers = {}
-                for heartbeat_data, timestamp in recent_heartbeats:
-                    try:
-                        hb = json.loads(heartbeat_data)
-                        crawler_id = hb.get("crawler_id")
-                        if crawler_id:
-                            current_active_crawlers[crawler_id] = datetime.fromtimestamp(timestamp)
-                    except json.JSONDecodeError:
-                        logger.warning(f"Invalid heartbeat data: {heartbeat_data}")
-                        continue
+                current_active_crawlers_details = {}
+                for crawler_id_bytes, timestamp in active_crawler_ids_with_timestamps:
+                    crawler_id = crawler_id_bytes.decode('utf-8')
+                    
+                    # Fetch the detailed heartbeat data for this crawler_id
+                    detailed_heartbeat_json = await self.redis.get(f"crawler_details:{crawler_id}")
+                    
+                    if detailed_heartbeat_json:
+                        try:
+                            detailed_heartbeat_data = json.loads(detailed_heartbeat_json)
+                            current_active_crawlers_details[crawler_id] = detailed_heartbeat_data
+                        except json.JSONDecodeError:
+                            logger.warning(f"Invalid detailed heartbeat data for {crawler_id}: {detailed_heartbeat_json}")
+                    else:
+                        logger.warning(f"No detailed heartbeat data found for active crawler_id: {crawler_id}. It might have expired.")
                 
-                # Update internal state
-                self.satellite_crawlers = current_active_crawlers
+                # Update internal state with the de-duplicated, detailed information
+                self.satellite_crawlers = current_active_crawlers_details
                 
-                # Clean up old heartbeats from Redis (optional, but good for memory)
+                # Clean up old heartbeats from Redis sorted set (optional, but good for memory)
+                # This removes entries from the ZSET that are older than the cutoff
                 await self.redis.zremrangebyscore(self.heartbeat_queue_sorted, 0, cutoff)
                 
             except Exception as e:

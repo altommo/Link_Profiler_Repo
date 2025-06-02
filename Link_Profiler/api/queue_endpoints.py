@@ -72,12 +72,21 @@ class QueueCrawlRequest(BaseModel):
     scheduled_at: Optional[datetime] = Field(None, description="Specific UTC datetime to run the job (ISO format). If set, job is scheduled.")
     cron_schedule: Optional[str] = Field(None, description="Cron string for recurring jobs (e.g., '0 0 * * *'). Requires scheduled_at for first run.")
 
+class SatelliteDetails(BaseModel):
+    crawler_id: str
+    last_seen: str # ISO formatted datetime string
+    status: str # "healthy" or "stale"
+    region: str
+    running_jobs: int
+    total_jobs_completed: int # New
+    total_errors_encountered: int # New
+
 class QueueStatsResponse(BaseModel):
     pending_jobs: int
     active_crawlers: int
     total_jobs: int
     completed_jobs: int
-    satellite_crawlers: List[Dict]
+    satellite_crawlers: List[SatelliteDetails]
 
 class JobStatusResponse(BaseModel):
     job_id: str
@@ -88,6 +97,11 @@ class JobStatusResponse(BaseModel):
     created_date: str
     started_date: Optional[str] = None
     completed_date: Optional[str] = None
+
+class CrawlerHealthResponse(BaseModel):
+    total_crawlers: int
+    healthy_crawlers: int
+    crawlers: List[SatelliteDetails]
 
 # Queue endpoint functions that can be added to any FastAPI app
 async def submit_crawl_to_queue(request: QueueCrawlRequest):
@@ -167,12 +181,20 @@ async def get_queue_stats():
         
         # Format satellite crawler info
         satellite_info = []
-        for crawler_id, last_seen in coord.satellite_crawlers.items():
-            satellite_info.append({
-                "crawler_id": crawler_id,
-                "last_seen": last_seen.isoformat(),
-                "status": "healthy" if (datetime.now() - last_seen).total_seconds() < 60 else "stale"
-            })
+        for crawler_id, details in coord.satellite_crawlers.items(): # `details` is the Dict[str, Any]
+            last_seen_str = details.get("timestamp")
+            if last_seen_str:
+                last_seen_dt = datetime.fromisoformat(last_seen_str)
+                time_diff = datetime.now() - last_seen_dt
+                satellite_info.append(SatelliteDetails(
+                    crawler_id=crawler_id,
+                    last_seen=last_seen_dt.isoformat(),
+                    status="healthy" if time_diff.total_seconds() < coord.stale_timeout else "stale",
+                    region=details.get("region", "unknown"),
+                    running_jobs=details.get("running_jobs", 0),
+                    total_jobs_completed=details.get("total_jobs_completed", 0), # New
+                    total_errors_encountered=details.get("total_errors_encountered", 0) # New
+                ))
         
         return QueueStatsResponse(
             pending_jobs=stats["pending_jobs"],
@@ -191,23 +213,28 @@ async def get_crawler_health():
     try:
         coord = await get_coordinator() # Call without arguments
         
-        health_info = []
-        for crawler_id, last_seen in coord.satellite_crawlers.items():
-            # Calculate time since last heartbeat
-            time_diff = datetime.now() - last_seen
-            
-            health_info.append({
-                "crawler_id": crawler_id,
-                "last_heartbeat": last_seen.isoformat(),
-                "seconds_since_heartbeat": time_diff.total_seconds(),
-                "status": "healthy" if time_diff.total_seconds() < 60 else "stale"
-            })
+        health_info_list = []
+        for crawler_id, details in coord.satellite_crawlers.items(): # `details` is the Dict[str, Any]
+            last_heartbeat_str = details.get("timestamp")
+            if last_heartbeat_str:
+                last_heartbeat_dt = datetime.fromisoformat(last_heartbeat_str)
+                time_diff = datetime.now() - last_heartbeat_dt
+                
+                health_info_list.append(SatelliteDetails( # Use SatelliteDetails model
+                    crawler_id=crawler_id,
+                    last_seen=last_heartbeat_dt.isoformat(), # Renamed to last_seen for consistency with SatelliteDetails
+                    status="healthy" if time_diff.total_seconds() < coord.stale_timeout else "stale",
+                    region=details.get("region", "unknown"),
+                    running_jobs=details.get("running_jobs", 0),
+                    total_jobs_completed=details.get("total_jobs_completed", 0), # New
+                    total_errors_encountered=details.get("total_errors_encountered", 0) # New
+                ))
         
-        return {
-            "total_crawlers": len(health_info),
-            "healthy_crawlers": len([c for c in health_info if c["status"] == "healthy"]),
-            "crawlers": health_info
-        }
+        return CrawlerHealthResponse(
+            total_crawlers=len(health_info_list),
+            healthy_crawlers=len([c for c in health_info_list if c.status == "healthy"]),
+            crawlers=health_info_list
+        )
         
     except Exception as e:
         logger.error(f"Error getting crawler health: {e}")
@@ -236,7 +263,7 @@ def add_queue_endpoints(app, db_instance: Database, alert_service_instance: Opti
         """Get current queue and crawler statistics"""
         return await get_queue_stats()
 
-    @app.get("/queue/manage/crawler_health")
+    @app.get("/queue/manage/crawler_health", response_model=CrawlerHealthResponse)
     async def get_health_endpoint():
         """Get detailed health information for all satellite crawlers"""
         return await get_crawler_health()

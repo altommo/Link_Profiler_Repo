@@ -132,6 +132,8 @@ class SatelliteCrawler:
 
         self.running_jobs: Dict[str, asyncio.Task] = {}
         self.last_heartbeat_time = datetime.now()
+        self.total_jobs_completed = 0 # New counter
+        self.total_errors_encountered = 0 # New counter
 
     async def __aenter__(self):
         self.logger.info(f"SatelliteCrawler {self.crawler_id} entering context.")
@@ -249,7 +251,9 @@ class SatelliteCrawler:
                 "region": self.region,
                 "status": "active",
                 "running_jobs": len(self.running_jobs),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "total_jobs_completed": self.total_jobs_completed, # New
+                "total_errors_encountered": self.total_errors_encountered # New
             }
             
             # Store detailed heartbeat data in a separate key with an expiry
@@ -423,6 +427,7 @@ class SatelliteCrawler:
             # job.duration_seconds = (job.completed_date - job.started_date).total_seconds()
             self.db.update_crawl_job(job)
             self.logger.info(f"Job {job_id} finished. Status: {job.status.value}")
+            self.total_jobs_completed += 1 # Increment on successful completion
 
         except asyncio.CancelledError:
             self.logger.warning(f"Job {job_id} was cancelled.")
@@ -437,6 +442,7 @@ class SatelliteCrawler:
                 message="Job was cancelled by system shutdown or manual intervention."
             ))
             self.db.update_crawl_job(job)
+            self.total_errors_encountered += 1 # Increment on cancellation
         except Exception as e:
             self.logger.error(f"Error processing job {job_id}: {e}", exc_info=True)
             job.status = CrawlStatus.FAILED
@@ -456,6 +462,7 @@ class SatelliteCrawler:
             job_data["dead_letter_timestamp"] = datetime.now().isoformat()
             await self.redis_client.rpush(self.dead_letter_queue_name, json.dumps(job_data))
             self.logger.warning(f"Job {job_id} moved to dead-letter queue.")
+            self.total_errors_encountered += 1 # Increment on failure
         finally:
             self.running_jobs.pop(job_id, None) # Remove job from running list
 
