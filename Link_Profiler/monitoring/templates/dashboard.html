@@ -69,6 +69,29 @@
         const ACCESS_TOKEN = 'YOUR_ACCESS_TOKEN'; 
         const API_BASE_URL = ''; // Use relative path if dashboard and API are on same host/port, or full URL if different (e.g., 'http://127.0.0.1:8000')
 
+        // --- START: ACCESS TOKEN WARNING ---
+        document.addEventListener('DOMContentLoaded', () => {
+            if (ACCESS_TOKEN === 'YOUR_ACCESS_TOKEN') {
+                const warningDiv = document.createElement('div');
+                warningDiv.style.backgroundColor = '#ffe0b2'; // Light orange
+                warningDiv.style.border = '1px solid #ff9800'; // Orange border
+                warningDiv.style.padding = '15px';
+                warningDiv.style.margin = '20px auto';
+                warningDiv.style.maxWidth = '800px';
+                warningDiv.style.borderRadius = '8px';
+                warningDiv.style.textAlign = 'center';
+                warningDiv.style.fontWeight = 'bold';
+                warningDiv.style.color = '#e65100'; // Dark orange text
+                warningDiv.innerHTML = `
+                    <p>⚠️ <strong>WARNING: ACCESS TOKEN NOT CONFIGURED!</strong></p>
+                    <p>Please replace <code>'YOUR_ACCESS_TOKEN'</code> in <code>dashboard.html</code> with a valid token from your API's <code>/auth/token</code> endpoint.</p>
+                    <p>API interactions (submitting jobs, controlling satellites) will not work until this is resolved.</p>
+                `;
+                document.body.insertBefore(warningDiv, document.body.firstChild);
+            }
+        });
+        // --- END: ACCESS TOKEN WARNING ---
+
         async function callApi(endpoint, method = 'GET', body = null) {
             const headers = {
                 'Content-Type': 'application/json',
@@ -528,7 +551,7 @@
                         <div class="satellite-details">
                             <span>Jobs: {{ satellite.total_jobs_completed or 0 }}</span>
                             <span>Errors: {{ satellite.total_errors_encountered or 0 }}</span>
-                            <span>Running: {{ satellite.running_jobs or 0 }}</span>
+                            <span>Running: {{ satellite.running_jobs || 0 }}</span>
                         </div>
                         <div class="satellite-actions">
                             <button onclick="controlSatellite('{{ satellite.crawler_id }}', 'PAUSE')" class="pause">Pause</button>
@@ -560,8 +583,7 @@
         </div>
 
         <div class="card">
-            <h2>⚙️ Job Management</h2>
-            <h3>Submit New Job</h3>
+            <h2>⚙️ New Job Submission</h2>
             <div class="form-group">
                 <label for="newJobTargetUrl">Target URL:</label>
                 <input type="text" id="newJobTargetUrl" value="https://example.com" required>
@@ -604,16 +626,20 @@
             <div class="button-group">
                 <button onclick="submitNewJob()">Submit Job</button>
             </div>
+        </div>
 
-            <h3>Global Job & Satellite Controls</h3>
+        <div class="card">
+            <h2>⚙️ Global Job & Satellite Controls</h2>
             <div class="button-group">
                 <button onclick="pauseAllJobs()" class="secondary">Pause All Jobs</button>
                 <button onclick="resumeAllJobs()">Resume All Jobs</button>
                 <button onclick="shutdownAllSatellites()" class="secondary">Shutdown All Satellites</button>
                 <button onclick="restartAllSatellites()" class="warning">Restart All Satellites</button>
             </div>
+        </div>
 
-            <h3>All Jobs</h3>
+        <div class="card">
+            <h2>⚙️ All Jobs</h2>
             <table>
                 <thead>
                     <tr>
@@ -630,28 +656,6 @@
                 </thead>
                 <tbody id="jobsTableBody">
                     <!-- Jobs will be loaded here by JavaScript -->
-                    {% if all_jobs %}
-                        {% for job in all_jobs %}
-                        <tr>
-                            <td>{{ job.id[:8] }}...</td>
-                            <td>{{ job.job_type }}</td>
-                            <td>{{ job.target_url }}</td>
-                            <td class="status-{{ job.status.lower().replace(' ', '_') }}">{{ job.status.upper() }}</td>
-                            <td>{{ "%.1f"|format(job.progress_percentage) }}%</td>
-                            <td>{{ job.created_date.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-                            <td>{{ job.started_date.strftime('%Y-%m-%d %H:%M:%S') if job.started_date else 'N/A' }}</td>
-                            <td>{{ job.completed_date.strftime('%Y-%m-%d %H:%M:%S') if job.completed_date else 'N/A' }}</td>
-                            <td class="job-actions">
-                                <button onclick="viewJobDetails('{{ job.id }}')">View</button>
-                                {% if job.status not in ['COMPLETED', 'FAILED', 'CANCELLED'] %}
-                                <button class="cancel" onclick="cancelJob('{{ job.id }}')">Cancel</button>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    {% else %}
-                        <tr><td colspan="9">No jobs found.</td></tr>
-                    {% endif %}
                 </tbody>
             </table>
         </div>
