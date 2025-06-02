@@ -156,24 +156,18 @@ class SatelliteCrawler:
             await self.clickhouse_loader.__aenter__()
             self.logger.info(f"SatelliteCrawler {self.crawler_id} connected to ClickHouse.")
 
-        # Initialize other services that need async setup
-        await self.domain_analyzer_service.__aenter__()
+        # Initialize services that are asynchronous context managers
+        # Removed calls for services that do not implement __aenter__/__aexit__
         await self.ai_service.__aenter__()
-        await self.link_health_service.__aenter__()
         await self.serp_service.__aenter__()
         await self.keyword_service.__aenter__()
         await self.social_media_service.__aenter__()
         await self.web3_service.__aenter__()
-        await self.link_building_service.__aenter__()
-        await self.report_service.__aenter__()
-        # Note: web_crawler's __aenter__ is not explicitly called here,
-        # but its internal aiohttp session is managed by its own __aenter__/__aexit__
-        # which is called when it's used as a context manager.
-
-        await self.technical_auditor.__aenter__()
-        await self.serp_crawler.__aenter__()
-        await self.keyword_scraper.__aenter__()
-        await self.social_media_crawler.__aenter__()
+        await self.web_crawler.__aenter__() # This one is a context manager
+        await self.serp_crawler.__aenter__() # This one is a context manager
+        # Removed: domain_analyzer_service, link_health_service, link_building_service,
+        # report_service, technical_auditor, keyword_scraper, social_media_crawler
+        # as they do not implement __aenter__/__aexit__ based on typical patterns or previous errors.
 
         # Conditionally launch Playwright browser for WebCrawler
         if config_loader.get("browser_crawler.enabled", False):
@@ -213,22 +207,17 @@ class SatelliteCrawler:
                 except Exception as e:
                     self.logger.error(f"Error during cancellation of job {job_id}: {e}")
 
-        # Close connections and exit contexts in reverse order
-        await self.social_media_crawler.__aexit__(exc_type, exc_val, exc_tb)
-        await self.keyword_scraper.__aexit__(exc_type, exc_val, exc_tb)
+        # Close connections and exit contexts in reverse order for async context managers
+        # Removed calls for services that do not implement __aenter__/__aexit__
         await self.serp_crawler.__aexit__(exc_type, exc_val, exc_tb)
-        await self.technical_auditor.__aexit__(exc_type, exc_val, exc_tb)
-        # web_crawler's __aexit__ is not explicitly called here,
-        # but its internal aiohttp session is managed by its own __aenter__/__aexit__
-        await self.report_service.__aexit__(exc_type, exc_val, exc_tb)
-        await self.link_building_service.__aexit__(exc_type, exc_val, exc_tb)
+        await self.web_crawler.__aexit__(exc_type, exc_val, exc_tb)
         await self.web3_service.__aexit__(exc_type, exc_val, exc_tb)
         await self.social_media_service.__aexit__(exc_type, exc_val, exc_tb)
         await self.keyword_service.__aexit__(exc_type, exc_val, exc_tb)
         await self.serp_service.__aexit__(exc_type, exc_val, exc_tb)
-        await self.link_health_service.__aexit__(exc_type, exc_val, exc_tb)
         await self.ai_service.__aexit__(exc_type, exc_val, exc_tb)
-        await self.domain_analyzer_service.__aexit__(exc_type, exc_val, exc_tb)
+        # Removed: social_media_crawler, keyword_scraper, technical_auditor,
+        # report_service, link_building_service, link_health_service, domain_analyzer_service
 
         if self.clickhouse_loader:
             await self.clickhouse_loader.__aexit__(exc_type, exc_val, exc_tb)
