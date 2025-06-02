@@ -137,7 +137,7 @@ echo "API Service (Port 8000):"
 curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" https://api.yspanel.com/health
 
 echo "Monitoring Service (Port 8001):"
-curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" https://monitor.yspanel.com
+curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" https://monitor.yspanel.com/health # Changed to /health endpoint
 
 echo "=== Service Status ==="
 sudo systemctl is-active linkprofiler-api.service linkprofiler-coordinator.service linkprofiler-monitoring.service
@@ -154,7 +154,8 @@ curl -s https://api.yspanel.com/health | jq '.dependencies | keys[]'
 
 ### Force Kill and Restart (if services are stuck)
 ```bash
-# Kill all uvicorn/python processes (use with caution!)
+# Kill all uvicorn/python processes (USE WITH EXTREME CAUTION! This will kill ALL Python processes
+# matching the pattern, potentially including unrelated ones. Use only if standard restarts fail.)
 sudo pkill -f "uvicorn.*linkprofiler\|python.*Link_Profiler"
 
 # Wait a moment
@@ -164,7 +165,7 @@ sleep 5
 sudo systemctl start linkprofiler-api.service linkprofiler-coordinator.service linkprofiler-monitoring.service
 ```
 
-### Full System Reset
+### Full Application Restart
 ```bash
 # Stop all services
 sudo systemctl stop linkprofiler-api.service linkprofiler-coordinator.service linkprofiler-monitoring.service
@@ -210,4 +211,3 @@ sudo systemctl restart linkprofiler-api.service linkprofiler-coordinator.service
 
 # Check health
 curl -s https://api.yspanel.com/health | jq '.status'
-```
