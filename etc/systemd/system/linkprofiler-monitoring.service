@@ -1,0 +1,16 @@
+[Unit]
+Description=Link Profiler Monitoring Dashboard
+After=network.target linkprofiler-api.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/Link_Profiler_Repo/Link_Profiler/monitoring
+Environment=PATH=/opt/Link_Profiler_Repo/venv/bin
+Environment=PYTHONPATH=/opt/Link_Profiler_Repo
+ExecStart=/opt/Link_Profiler_Repo/venv/bin/python dashboard.py dashboard
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
