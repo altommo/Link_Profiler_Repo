@@ -139,6 +139,29 @@ class SatelliteCrawler:
         await self.redis_client.ping()
         self.logger.info(f"SatelliteCrawler {self.crawler_id} connected to Redis.")
 
+        # --- Start: Uniqueness check for crawler_id ---
+        original_crawler_id = self.crawler_id
+        # Check if the provided/generated crawler_id is already active
+        # An ID is considered active if its last heartbeat is within the stale_timeout
+        
+        # Get the current timestamp
+        now_timestamp = datetime.now().timestamp()
+        # Calculate the cutoff for stale heartbeats
+        stale_cutoff = (datetime.now() - timedelta(seconds=self.stale_timeout)).timestamp()
+
+        # Check if this crawler_id exists in the sorted set with a recent score
+        # zscore returns the score (timestamp) of the member
+        existing_score = await self.redis_client.zscore("crawler_heartbeats_sorted", self.crawler_id)
+
+        if existing_score is not None and existing_score >= stale_cutoff:
+            # The crawler_id is already present and its heartbeat is fresh
+            self.logger.warning(f"Crawler ID '{self.crawler_id}' is already active. Generating a new unique ID.")
+            # Append a short unique suffix
+            self.crawler_id = f"{original_crawler_id}-{uuid.uuid4().hex[:4]}"
+            self.logger = logging.getLogger(f"{__name__}.{self.crawler_id}") # Update logger name
+            self.logger.info(f"New unique Crawler ID generated: '{self.crawler_id}'")
+        # --- End: Uniqueness check for crawler_id ---
+
         # Initialize database connection (ping to ensure it's up)
         self.db.ping()
         self.logger.info(f"SatelliteCrawler {self.crawler_id} connected to PostgreSQL.")
@@ -228,11 +251,23 @@ class SatelliteCrawler:
                 "running_jobs": len(self.running_jobs),
                 "timestamp": datetime.now().isoformat()
             }
-            # Use a sorted set to store heartbeats, with timestamp as score
-            await self.redis_client.zadd("crawler_heartbeats_sorted", {json.dumps(heartbeat_data): datetime.now().timestamp()})
-            # Remove old heartbeats (e.g., older than 2 * stale_timeout)
-            cutoff = (datetime.now() - timedelta(seconds=self.stale_timeout * 2)).timestamp()
-            await self.redis_client.zremrangebyscore("crawler_heartbeats_sorted", "-inf", cutoff)
+            
+            # Store detailed heartbeat data in a separate key with an expiry
+            # The expiry should be longer than the stale_timeout to allow for recovery
+            await self.redis_client.set(
+                f"crawler_details:{self.crawler_id}", 
+                json.dumps(heartbeat_data), 
+                ex=self.stale_timeout * 2
+            )
+
+            # Use a sorted set to track active crawlers and their last heartbeat time
+            # The member is the crawler_id, and the score is the timestamp.
+            # This ensures only one entry per crawler_id in the sorted set.
+            await self.redis_client.zadd(
+                "crawler_heartbeats_sorted", 
+                {self.crawler_id: datetime.now().timestamp()}
+            )
+            
             self.last_heartbeat_time = datetime.now()
             self.logger.debug(f"Heartbeat sent for {self.crawler_id}. Running jobs: {len(self.running_jobs)}")
         except Exception as e:

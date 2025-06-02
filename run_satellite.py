@@ -44,15 +44,6 @@ def main():
     # This ensures environment variables (like LP_DATABASE_URL) are picked up
     config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
     
-    print(f"""
-🛰️ Starting Link Profiler Satellite Crawler
-   ID: {args.crawler_id or 'auto-generated'}
-   Region: {args.region}
-   Redis: {args.redis_url}
-   Database: {args.database_url or config_loader.get("database.url", "postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db")}
-   Log Level: {args.log_level}
-""")
-    
     async def run_crawler():
         async with SatelliteCrawler(
             redis_url=args.redis_url,
@@ -60,6 +51,15 @@ def main():
             region=args.region,
             database_url=args.database_url # Pass the database_url argument
         ) as crawler:
+            # Print final configuration after the crawler has potentially adjusted its ID
+            print(f"""
+🛰️ Starting Link Profiler Satellite Crawler
+   ID: {crawler.crawler_id}
+   Region: {crawler.region}
+   Redis: {crawler.redis_url}
+   Database: {crawler.db.db_url.split('@')[-1]}
+   Log Level: {args.log_level}
+""")
             await crawler.start()
     
     try:
