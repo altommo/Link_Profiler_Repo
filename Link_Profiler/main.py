@@ -639,7 +639,7 @@ class CrawlJobResponse(BaseModel):
         if isinstance(job_dict.get('completed_date'), str):
              try:
                 job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
-             except ValueError:
+            except ValueError:
                  logger.warning(f"Could not parse completed_date string: {job_dict.get('completed_date')}")
                  job_dict['completed_date'] = None
 
@@ -1133,6 +1133,23 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
     Retrieves the current authenticated user's information.
     """
     return UserResponse.from_user(current_user)
+
+# New: General job submission endpoint
+@app.post("/api/jobs", response_model=Dict[str, str], status_code=202)
+async def submit_job_api(
+    request: QueueCrawlRequest,
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Submits a general job to the queue. This acts as a unified entry point
+    for various job types (e.g., backlink_discovery, technical_audit, etc.)
+    by setting the 'job_type' in the config.
+    """
+    logger.info(f"Received general job submission for {request.target_url} (type: {request.config.get('job_type', 'N/A')}) by user: {current_user.username}.")
+    JOBS_CREATED_TOTAL.labels(job_type=request.config.get('job_type', 'general_job')).inc()
+    
+    # Delegate to the existing submit_crawl_to_queue function
+    return await submit_crawl_to_queue(request)
 
 
 @app.post("/crawl/start_backlink_discovery", response_model=Dict[str, str], status_code=202)
