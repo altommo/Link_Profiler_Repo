@@ -68,12 +68,23 @@
             font-weight: normal;
             margin-left: 10px;
         }
+        .confirmation-option {
+            margin-top: 10px;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+        }
+        .confirmation-option input {
+            margin-right: 5px;
+        }
     </style>
     <script>
         // IMPORTANT: Replace 'YOUR_ACCESS_TOKEN' with a valid token obtained from your /auth/token endpoint.
         // For security, in a production environment, this token should be managed securely (e.g., via a login form).
         const ACCESS_TOKEN = 'YOUR_ACCESS_TOKEN'; 
         const API_BASE_URL = ''; // Use relative path if dashboard and API are on same host/port, or full URL if different (e.g., 'http://127.0.0.1:8000')
+
+        let disableConfirmations = false; // New: Global flag to disable confirmations
 
         // --- START: ACCESS TOKEN WARNING ---
         document.addEventListener('DOMContentLoaded', () => {
@@ -94,6 +105,14 @@
                     <p>API interactions (submitting jobs, controlling satellites) will not work until this is resolved.</p>
                 `;
                 document.body.insertBefore(warningDiv, document.body.firstChild);
+            }
+
+            // Event listener for the new checkbox
+            const disableConfirmationsCheckbox = document.getElementById('disableConfirmations');
+            if (disableConfirmationsCheckbox) {
+                disableConfirmationsCheckbox.addEventListener('change', (event) => {
+                    disableConfirmations = event.target.checked;
+                });
             }
         });
         // --- END: ACCESS TOKEN WARNING ---
@@ -161,7 +180,7 @@
         }
 
         async function pauseAllJobs() {
-            if (!confirm('Are you sure you want to pause all job processing? This will prevent satellites from picking up new jobs globally.')) return;
+            if (!disableConfirmations && !confirm('Are you sure you want to pause all job processing? This will prevent satellites from picking up new jobs globally.')) return;
             try {
                 const result = await callApi('/api/jobs/pause_all', 'POST');
                 alert(result.message);
@@ -173,7 +192,7 @@
         }
 
         async function resumeAllJobs() {
-            if (!confirm('Are you sure you want to resume all job processing?')) return;
+            if (!disableConfirmations && !confirm('Are you sure you want to resume all job processing?')) return;
             try {
                 const result = await callApi('/api/jobs/resume_all', 'POST');
                 alert(result.message);
@@ -185,7 +204,7 @@
         }
 
         async function shutdownAllSatellites() {
-            if (!confirm('WARNING: Are you sure you want to SHUTDOWN ALL satellites? This will terminate their processes.')) return;
+            if (!disableConfirmations && !confirm('WARNING: Are you sure you want to SHUTDOWN ALL satellites? This will terminate their processes.')) return;
             try {
                 const result = await callApi('/api/satellites/control/all/shutdown', 'POST');
                 alert(result.message);
@@ -197,7 +216,7 @@
         }
 
         async function restartAllSatellites() {
-            if (!confirm('WARNING: Are you sure you want to RESTART ALL satellites? This will terminate their processes and rely on external process managers to restart them.')) return;
+            if (!disableConfirmations && !confirm('WARNING: Are you sure you want to RESTART ALL satellites? This will terminate their processes and rely on external process managers to restart them.')) return;
             try {
                 const result = await callApi('/api/satellites/control/all/restart', 'POST');
                 alert(result.message);
@@ -220,7 +239,7 @@
                 confirmationMessage = `Are you sure you want to RESUME satellite ${crawlerId}? It will start picking up new jobs.`;
             }
 
-            if (!confirm(confirmationMessage)) return;
+            if (!disableConfirmations && !confirm(confirmationMessage)) return;
 
             try {
                 const result = await callApi(`/api/satellites/control/${crawlerId}/${command}`, 'POST');
@@ -233,7 +252,7 @@
         }
 
         async function cancelJob(jobId) {
-            if (!confirm(`Are you sure you want to cancel job ${jobId}?`)) return;
+            if (!disableConfirmations && !confirm(`Are you sure you want to cancel job ${jobId}?`)) return;
             try {
                 const result = await callApi(`/api/jobs/${jobId}/cancel`, 'POST');
                 alert(result.message);
@@ -660,6 +679,10 @@
                 <button onclick="resumeAllJobs()">Resume All Jobs</button>
                 <button onclick="shutdownAllSatellites()" class="secondary">Shutdown All Satellites</button>
                 <button onclick="restartAllSatellites()" class="warning">Restart All Satellites</button>
+            </div>
+            <div class="confirmation-option">
+                <input type="checkbox" id="disableConfirmations">
+                <label for="disableConfirmations">Disable Confirmation Pop-ups</label>
             </div>
         </div>
 
