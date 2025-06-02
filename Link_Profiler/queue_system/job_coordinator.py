@@ -10,33 +10,42 @@ from typing import List, Dict, Optional
 from dataclasses import asdict
 import logging
 from croniter import croniter
-import aiohttp # New: Import aiohttp for webhooks
-import os # Added for os.getenv
+import aiohttp
+import os
 
 from Link_Profiler.core.models import CrawlJob, CrawlConfig, CrawlStatus, serialize_model, CrawlError
 from Link_Profiler.database.database import Database
-from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.config.config_loader import ConfigLoader # Import ConfigLoader
 from Link_Profiler.services.alert_service import AlertService
-from Link_Profiler.utils.connection_manager import ConnectionManager # Corrected import
+from Link_Profiler.utils.connection_manager import ConnectionManager
+
+# Initialize and load config once using the absolute path
+# Assuming this file is at Link_Profiler/queue_system/job_coordinator.py
+# The project root is two levels up.
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(current_dir))
+config_loader = ConfigLoader()
+config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
 
 logger = logging.getLogger(__name__)
 
 class JobCoordinator:
     """Manages distributed crawling jobs via Redis queues"""
     
-    def __init__(self, redis_url: str = None, database: Database = None, alert_service: Optional[AlertService] = None, connection_manager: Optional[ConnectionManager] = None): # New: Add connection_manager
-        redis_url = redis_url or os.getenv("REDIS_URL", "redis://:redis_secure_pass_456@127.0.0.1:6379/0")
+    def __init__(self, redis_url: str = None, database: Database = None, alert_service: Optional[AlertService] = None, connection_manager: Optional[ConnectionManager] = None):
+        # Load Redis URL from config_loader, with fallback to environment variable then hardcoded default
+        redis_url = redis_url or config_loader.get("redis.url", os.getenv("REDIS_URL", "redis://:redis_secure_pass_456@127.0.0.1:6379/0"))
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
         self.db = database
-        self.alert_service = alert_service # New: Store AlertService instance
-        self.connection_manager = connection_manager # New: Store ConnectionManager instance
+        self.alert_service = alert_service
+        self.connection_manager = connection_manager
         
         # Queue names
-        self.job_queue = "crawl_jobs"
-        self.result_queue = "crawl_results" 
-        self.heartbeat_queue_sorted = "crawler_heartbeats_sorted"
-        self.scheduled_jobs_queue = "scheduled_jobs"
+        self.job_queue = config_loader.get("queue.job_queue_name", "crawl_jobs")
+        self.result_queue = config_loader.get("queue.result_queue_name", "crawl_results")
+        self.heartbeat_queue_sorted = "crawler_heartbeats_sorted" # This is not in config, but could be
+        self.scheduled_jobs_queue = config_loader.get("queue.scheduled_jobs_queue", "scheduled_jobs") # New: Scheduled jobs queue name
         
         # Job tracking (authoritative state is in DB, this is for quick in-memory lookup of active jobs)
         self.active_jobs_cache: Dict[str, CrawlJob] = {}
@@ -47,7 +56,7 @@ class JobCoordinator:
         # Webhook configuration (for job completion webhooks)
         self.webhook_enabled = config_loader.get("notifications.webhooks.enabled", False)
         self.webhook_urls = config_loader.get("notifications.webhooks.urls", [])
-        self._session: Optional[aiohttp.ClientSession] = None # New: aiohttp client session
+        self._session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
         # Ensure Redis connection is active
@@ -358,11 +367,12 @@ class JobCoordinator:
 async def main():
     logging.basicConfig(level=logging.INFO)
     # Initialize Database for standalone coordinator if needed
-    DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db')
+    # Load DATABASE_URL from config_loader, with fallback to environment variable then hardcoded default
+    DATABASE_URL = config_loader.get("database.url", os.getenv('DATABASE_URL', 'postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db'))
     db_instance = Database(db_url=DATABASE_URL) 
-    alert_service_instance = AlertService(db_instance) # New: Initialize AlertService
+    alert_service_instance = AlertService(db_instance)
     # For standalone, connection_manager would be None or a dummy
-    async with JobCoordinator(database=db_instance, alert_service=alert_service_instance, connection_manager=None) as coordinator: # Pass AlertService and None for connection_manager
+    async with JobCoordinator(database=db_instance, alert_service=alert_service_instance, connection_manager=None) as coordinator:
         # Start monitoring tasks
         asyncio.create_task(coordinator.process_results())
         asyncio.create_task(coordinator.monitor_satellites())

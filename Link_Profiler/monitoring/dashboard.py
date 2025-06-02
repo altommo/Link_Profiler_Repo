@@ -22,24 +22,37 @@ if project_root not in sys.path:
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain
-from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.config.config_loader import ConfigLoader # Import ConfigLoader
+
+# Initialize and load config once using the absolute path
+config_loader = ConfigLoader()
+config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
 
 app = FastAPI(title="Link Profiler Monitor")
 templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "templates"))
 
 class MonitoringDashboard:
-    def __init__(self, redis_url: str = "redis://localhost:6379"):
+    def __init__(self):
+        # Load Redis URL from config_loader, with fallback to environment variable then hardcoded default
+        redis_url = config_loader.get("redis.url", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
-        self.db = Database()
+        
+        # Load Database URL from config_loader, with fallback to environment variable then hardcoded default
+        database_url = config_loader.get("database.url", os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/link_profiler_db"))
+        self.db = Database(db_url=database_url)
+
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.logger = logging.getLogger(__name__)
 
     async def get_queue_metrics(self) -> Dict:
         """Get comprehensive queue metrics"""
         try:
-            job_queue_size = await self.redis.zcard("crawl_jobs")
-            result_queue_size = await self.redis.llen("crawl_results")
+            job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs")
+            result_queue_name = config_loader.get("queue.result_queue_name", "crawl_results")
+            
+            job_queue_size = await self.redis.zcard(job_queue_name)
+            result_queue_size = await self.redis.llen(result_queue_name)
             
             cutoff = (datetime.now() - timedelta(minutes=5)).timestamp()
             recent_heartbeats = await self.redis.zrangebyscore(
@@ -128,7 +141,7 @@ class MonitoringDashboard:
                 if total_successful_jobs_for_avg > 0:
                     avg_job_duration = total_successful_duration / total_successful_jobs_for_avg
                 
-                success_rate = (successful_jobs_in_window / total_jobs_in_window) * 100
+                success_rate = (successful_jobs / total_jobs_in_window) * 100
             
             queue_metrics = await self.get_queue_metrics()
             active_satellites = queue_metrics.get("active_satellites", 0)
@@ -251,7 +264,9 @@ async def health_check():
 
 # CLI tool for queue management
 class QueueManager:
-    def __init__(self, redis_url: str = "redis://localhost:6379"):
+    def __init__(self, redis_url: str = None):
+        # Load Redis URL from config_loader, with fallback to environment variable then hardcoded default
+        redis_url = redis_url or config_loader.get("redis.url", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
     
@@ -272,8 +287,11 @@ class QueueManager:
     
     async def get_queue_sizes(self):
         """Get sizes of all queues"""
-        jobs = await self.redis.zcard("crawl_jobs")
-        results = await self.redis.llen("crawl_results")
+        job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs")
+        result_queue_name = config_loader.get("queue.result_queue_name", "crawl_results")
+        
+        jobs = await self.redis.zcard(job_queue_name)
+        results = await self.redis.llen(result_queue_name)
         # Use the sorted set for heartbeats
         heartbeats_count = await self.redis.zcard("crawler_heartbeats_sorted")
         
@@ -311,10 +329,10 @@ class QueueManager:
 
 async def cli_main():
     """CLI interface for queue management"""
-    import argparse # Import argparse here for cli_main
+    import argparse
     
     parser = argparse.ArgumentParser(description="Link Profiler Monitoring CLI")
-    parser.add_argument("--redis-url", default="redis://localhost:6379", help="Redis connection URL")
+    parser.add_argument("--redis-url", default=None, help="Redis connection URL (overrides config/env)")
     parser.add_argument("--log-level", default="INFO", help="Logging level")
     
     # Subparsers for commands
@@ -347,13 +365,13 @@ async def cli_main():
     manager = QueueManager(redis_url=args.redis_url)
     
     if args.command == "dashboard":
-        uvicorn.run(app, host="0.0.0.0", port=8001)
+        uvicorn.run(app, host="0.0.0.0", port=config_loader.get("monitoring.monitor_port", 8001))
     elif args.command == "clear-jobs":
-        await manager.clear_queue("crawl_jobs")
+        await manager.clear_queue(config_loader.get("queue.job_queue_name", "crawl_jobs"))
     elif args.command == "clear-results":
-        await manager.clear_queue("crawl_results")
+        await manager.clear_queue(config_loader.get("queue.result_queue_name", "crawl_results"))
     elif args.command == "clear-dead-letters":
-        await manager.clear_queue(os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue"))
+        await manager.clear_queue(config_loader.get("queue.dead_letter_queue_name", "dead_letter_queue"))
     elif args.command == "pause":
         await manager.pause_processing()
     elif args.command == "resume":
@@ -366,5 +384,5 @@ async def cli_main():
         parser.print_help()
 
 if __name__ == "__main__":
-    import argparse # Import argparse here for cli_main
+    import argparse
     asyncio.run(cli_main())
