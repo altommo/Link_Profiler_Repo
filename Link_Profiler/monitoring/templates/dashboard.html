@@ -414,7 +414,9 @@
                 // Update global job status indicator
                 const globalJobStatusSpan = document.getElementById('globalJobStatus');
                 if (globalJobStatusSpan && data.queue_metrics) {
-                    if (data.queue_metrics.paused_globally) {
+                    // Check if 'processing_paused' key exists in Redis (from JobCoordinator)
+                    const isGlobalPaused = await fetch('/api/jobs/is_paused').then(res => res.json()).then(data => data.is_paused).catch(() => false);
+                    if (isGlobalPaused) {
                         globalJobStatusSpan.textContent = '(PAUSED)';
                         globalJobStatusSpan.style.color = '#ff9800'; // Orange for paused
                     } else {
@@ -573,8 +575,8 @@
                         {% endif %}
                         <div class="satellite-details">
                             <span>Jobs: {{ satellite.total_jobs_completed or 0 }}</span>
-                            <span>Errors: {{ satellite.total_errors_encountered || 0 }}</span>
-                            <span>Running: {{ satellite.running_jobs || 0 }}</span>
+                            <span>Errors: {{ satellite.total_errors_encountered | default(0) }}</span>
+                            <span>Running: {{ satellite.running_jobs | default(0) }}</span>
                         </div>
                         <div class="satellite-actions">
                             <button onclick="controlSatellite('{{ satellite.crawler_id }}', 'PAUSE')" class="pause">Pause</button>
