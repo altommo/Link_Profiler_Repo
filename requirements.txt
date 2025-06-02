@@ -15,6 +15,8 @@ prometheus_client
 openai
 croniter
 requests
+psutil # Added for system monitoring
+pyyaml # Added for YAML configuration
 
 # Authentication Dependencies
 passlib[bcrypt]

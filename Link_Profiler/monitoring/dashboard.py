@@ -29,7 +29,8 @@ config_loader = ConfigLoader()
 config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
 
 app = FastAPI(title="Link Profiler Monitor")
-templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "templates"))
+# Corrected template directory path
+templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "monitoring", "templates"))
 
 class MonitoringDashboard:
     def __init__(self):

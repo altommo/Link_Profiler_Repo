@@ -1,23 +1,19 @@
-"""
-Configuration Loader - Centralized management for application settings.
-File: Link_Profiler/config/config_loader.py
-"""
-
 import os
 import json
 import logging
 from typing import Dict, Any, Optional
+import yaml # Import yaml
 
 logger = logging.getLogger(__name__)
 
 class ConfigLoader:
     """
-    Loads configuration from JSON files and environment variables.
-    Environment variables take precedence over JSON file settings.
+    Loads configuration from JSON/YAML files and environment variables.
+    Environment variables take precedence over file settings.
     """
     _instance = None
     _config: Dict[str, Any] = {}
-    _loaded = False
+    _is_loaded: bool = False
 
     def __new__(cls):
         if cls._instance is None:
@@ -26,92 +22,113 @@ class ConfigLoader:
 
     def load_config(self, config_dir: str = "Link_Profiler/config", env_var_prefix: str = ""):
         """
-        Loads configuration.
-        Order of precedence (lowest to highest):
-        1. default.json
-        2. {ENVIRONMENT}.json (e.g., development.json, production.json)
-        3. Environment variables (prefixed with env_var_prefix, e.g., APP_REDIS_URL)
+        Loads configuration from default.yaml (or default.json if yaml not found)
+        and environment variables.
+        Environment variables with the given prefix (e.g., "LP_") will override
+        settings in the config file.
         """
-        if self._loaded:
-            return self._config
+        if self._is_loaded:
+            logger.debug("Config already loaded. Skipping re-load.")
+            return
 
-        self._config = {}
+        config_file_path_yaml = os.path.join(config_dir, "config.yaml")
+        config_file_path_json = os.path.join(config_dir, "default.json") # Fallback to default.json
 
-        # 1. Load default.json
-        default_config_path = os.path.join(config_dir, "default.json")
-        if os.path.exists(default_config_path):
-            with open(default_config_path, 'r') as f:
-                self._config.update(json.load(f))
-            logger.info(f"Loaded default configuration from {default_config_path}")
+        loaded_from_file = {}
+        if os.path.exists(config_file_path_yaml):
+            try:
+                with open(config_file_path_yaml, 'r') as f:
+                    loaded_from_file = yaml.safe_load(f)
+                logger.info(f"Configuration loaded from {config_file_path_yaml}")
+            except yaml.YAMLError as e:
+                logger.error(f"Error loading YAML config from {config_file_path_yaml}: {e}")
+                loaded_from_file = {} # Fallback to empty if YAML fails
+        elif os.path.exists(config_file_path_json):
+            try:
+                with open(config_file_path_json, 'r') as f:
+                    loaded_from_file = json.load(f)
+                logger.info(f"Configuration loaded from {config_file_path_json}")
+            except json.JSONDecodeError as e:
+                logger.error(f"Error loading JSON config from {config_file_path_json}: {e}")
+                loaded_from_file = {} # Fallback to empty if JSON fails
         else:
-            logger.warning(f"Default config file not found at {default_config_path}. Proceeding with empty config.")
+            logger.warning(f"No config file found at {config_file_path_yaml} or {config_file_path_json}. Using environment variables and defaults only.")
 
-        # 2. Load environment-specific config
-        environment = os.getenv("ENVIRONMENT", "development").lower()
-        env_config_path = os.path.join(config_dir, f"{environment}.json")
-        if os.path.exists(env_config_path):
-            with open(env_config_path, 'r') as f:
-                env_config = json.load(f)
-                self._deep_update(self._config, env_config)
-            logger.info(f"Loaded {environment} configuration from {env_config_path}")
-        else:
-            logger.info(f"No specific config file found for ENVIRONMENT='{environment}' at {env_config_path}.")
+        self._config = loaded_from_file if loaded_from_file is not None else {}
 
-        # 3. Override with environment variables
+        # Override with environment variables
         for key, value in os.environ.items():
             if key.startswith(env_var_prefix):
-                # Convert env var name (e.g., APP_REDIS_URL) to config path (e.g., ["redis", "url"])
-                # Example: APP_CRAWLER_MAX_DEPTH -> ["crawler", "max_depth"]
-                # Example: APP_DATABASE_URL -> ["database", "url"]
-                config_path = [p.lower() for p in key[len(env_var_prefix):].split('_')]
+                # Convert environment variable name (e.g., LP_DATABASE_URL) to config path (database.url)
+                config_path = key[len(env_var_prefix):].lower().replace('_', '.')
                 
-                current_level = self._config
-                for i, part in enumerate(config_path):
-                    if i == len(config_path) - 1: # Last part is the actual setting
-                        try:
-                            # Attempt to convert to int, float, or bool if possible
-                            if value.lower() == 'true':
-                                current_level[part] = True
-                            elif value.lower() == 'false':
-                                current_level[part] = False
-                            elif value.isdigit():
-                                current_level[part] = int(value)
-                            elif value.replace('.', '', 1).isdigit():
-                                current_level[part] = float(value)
-                            else:
-                                current_level[part] = value
-                        except Exception:
-                            current_level[part] = value # Fallback to string
-                        logger.debug(f"Overrode config: {'.'.join(config_path)} = {current_level[part]} from env var {key}")
-                    else:
-                        if part not in current_level or not isinstance(current_level[part], dict):
-                            current_level[part] = {}
-                        current_level = current_level[part]
-        
-        self._loaded = True
-        return self._config
+                # Attempt to convert value to appropriate type (int, float, bool, list, dict)
+                converted_value = self._convert_env_value(value)
+                
+                self._set_nested_value(self._config, config_path, converted_value)
+                logger.debug(f"Overrode config setting '{config_path}' with environment variable '{key}'")
+
+        self._is_loaded = True
 
     def get(self, key_path: str, default: Any = None) -> Any:
         """
-        Retrieves a configuration value using a dot-separated path (e.g., "crawler.max_depth").
+        Retrieves a configuration value using a dot-separated key path (e.g., "database.url").
         """
-        parts = key_path.split('.')
+        keys = key_path.split('.')
         current_value = self._config
-        for part in parts:
-            if isinstance(current_value, dict) and part in current_value:
-                current_value = current_value[part]
+        for key in keys:
+            if isinstance(current_value, dict) and key in current_value:
+                current_value = current_value[key]
             else:
                 return default
         return current_value
 
+    def _set_nested_value(self, d: Dict, key_path: str, value: Any):
+        """Sets a value in a nested dictionary using a dot-separated key path."""
+        keys = key_path.split('.')
+        for i, key in enumerate(keys):
+            if i == len(keys) - 1:
+                d[key] = value
+            else:
+                if not isinstance(d.get(key), dict):
+                    d[key] = {}
+                d = d[key]
+
+    def _convert_env_value(self, value: str) -> Any:
+        """Attempts to convert environment variable string value to appropriate Python type."""
+        if value.lower() == 'true':
+            return True
+        if value.lower() == 'false':
+            return False
+        try:
+            return int(value)
+        except ValueError:
+            try:
+                return float(value)
+            except ValueError:
+                if value.startswith('[') and value.endswith(']'):
+                    try:
+                        return json.loads(value) # For list/array like "[item1, item2]"
+                    except json.JSONDecodeError:
+                        pass
+                if value.startswith('{') and value.endswith('}'):
+                    try:
+                        return json.loads(value) # For dict like "{"key": "value"}"
+                    except json.JSONDecodeError:
+                        pass
+                return value # Return as string if no other conversion works
+
     def _deep_update(self, main_dict: Dict, update_dict: Dict):
-        """Recursively updates a dictionary."""
+        """
+        Recursively updates a dictionary with values from another dictionary.
+        Existing keys in main_dict that are also in update_dict will be overwritten.
+        """
         for key, value in update_dict.items():
-            if key in main_dict and isinstance(main_dict[key], dict) and isinstance(value, dict):
-                self._deep_update(main_dict[key], value)
+            if isinstance(value, dict) and key in main_dict and isinstance(main_dict[key], dict):
+                main_dict[key] = self._deep_update(main_dict[key], value)
             else:
                 main_dict[key] = value
+        return main_dict
 
-# Initialize and load config once
+# Global instance for easy access
 config_loader = ConfigLoader()
-config_loader.load_config(env_var_prefix="LP_") # Using LP_ as prefix for Link Profiler environment variables

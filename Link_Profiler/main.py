@@ -34,6 +34,7 @@ import redis.asyncio as redis
 import json
 import uuid
 import asyncio
+import psutil # New: Import psutil for system stats
 
 from playwright.async_api import async_playwright, Browser
 
@@ -1944,6 +1945,34 @@ async def prometheus_metrics():
     Exposes Prometheus metrics.
     """
     return Response(content=get_metrics_text(), media_type="text/plain; version=0.0.4; charset=utf-8")
+
+@app.get("/status")
+async def get_system_status():
+    """
+    Provides detailed system status information.
+    """
+    return {
+        "status": "operational",
+        "timestamp": datetime.now().isoformat(),
+        "version": "1.0.0", # Placeholder for application version
+        "uptime_seconds": time.time() - psutil.boot_time(),
+        "python_version": sys.version,
+        "system_info": {
+            "hostname": os.uname().nodename,
+            "platform": sys.platform,
+            "architecture": os.uname().machine,
+            "cpu_count": psutil.cpu_count(logical=True),
+            "cpu_percent": psutil.cpu_percent(interval=None), # Non-blocking call
+            "memory_total_bytes": psutil.virtual_memory().total,
+            "memory_available_bytes": psutil.virtual_memory().available,
+            "memory_percent": psutil.virtual_memory().percent,
+            "disk_total_bytes": psutil.disk_usage('/').total,
+            "disk_used_bytes": psutil.disk_usage('/').used,
+            "disk_free_bytes": psutil.disk_usage('/').free,
+            "disk_percent": psutil.disk_usage('/').percent,
+            "network_io": psutil.net_io_counters()._asdict()
+        }
+    }
 
 @app.get("/debug/dead_letters")
 async def get_dead_letters(current_user: User = Depends(get_current_user)): # Protected endpoint
