@@ -696,6 +696,7 @@ async def get_all_jobs_api(status_filter: Optional[str] = None):
     if not dashboard.coordinator:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
     jobs = await dashboard.coordinator.get_all_jobs_for_dashboard(status_filter=status_filter)
+    logger.debug(f"Dashboard API: Retrieved {len(jobs)} jobs from DB for /api/jobs/all.") # Debugging log
     return [JobStatusResponse.from_crawl_job(job) for job in jobs]
 
 @app.get("/api/jobs/{job_id}", response_model=JobStatusResponse)

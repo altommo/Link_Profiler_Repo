@@ -113,7 +113,7 @@
             if (disableConfirmationsCheckbox) {
                 disableConfirmationsCheckbox.addEventListener('change', (event) => {
                     disableConfirmations = event.target.checked;
-                    console.log('Disable Confirmations:', disableConfirmations); // Debugging log
+                    console.log('Disable Confirmations checkbox changed. New value:', disableConfirmations); // Debugging log
                 });
             }
         });
@@ -295,6 +295,7 @@
             jobsTableBody.innerHTML = '<tr><td colspan="9">Loading jobs...</td></tr>';
             try {
                 const allJobs = await callApi('/api/jobs/all');
+                console.log('Received all jobs data:', allJobs); // Debugging log: Check the actual data received
                 let tableHtml = '';
                 if (allJobs && allJobs.length > 0) {
                     allJobs.forEach(job => {
@@ -330,6 +331,7 @@
             try {
                 const response = await fetch('/api/stats');
                 const data = await response.json();
+                console.log('Received general stats data:', data); // Debugging log
                 
                 // Update Queue Metrics
                 document.querySelector('.card:nth-of-type(1) .metric:nth-of-type(1) .value').textContent = data.queue_metrics.pending_jobs || 0;
