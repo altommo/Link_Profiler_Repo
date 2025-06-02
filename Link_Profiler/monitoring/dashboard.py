@@ -7,7 +7,8 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import redis.asyncio as redis
-from fastapi import FastAPI, Request, Response # Corrected: Import Response
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import HTMLResponse # Corrected: Import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import uvicorn
 import logging
