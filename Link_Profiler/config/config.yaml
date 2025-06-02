@@ -46,7 +46,7 @@ database:
 
 # Redis settings (for queues and caching)
 redis:
-  url: "redis://localhost:6379/0" # Redis URL for job queue and cache
+  url: "redis://:redis_secure_pass_456@127.0.0.1:6379/0" # Redis URL for job queue and cache
   cache_ttl: 3600 # Default cache TTL in seconds (1 hour)
 
 # Queue system settings
