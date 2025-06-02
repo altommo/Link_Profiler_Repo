@@ -1,0 +1,63 @@
+server {
+    listen 80;
+    listen 443 ssl http2;
+    server_name monitor.yspanel.com;
+
+    ssl_certificate /etc/letsencrypt/live/yspanel.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yspanel.com/privkey.pem;
+    ssl_trusted_certificate /etc/letsencrypt/live/yspanel.com/chain.pem;
+
+    # Redirect HTTP to HTTPS
+    if ($scheme = http) {
+        return 301 https://$host$request_uri;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8001; # Proxy to monitoring dashboard
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $server_name;
+        # WebSocket support for monitoring dashboard (if needed)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+}
+
+server {
+    listen 80;
+    listen 443 ssl http2;
+    server_name api.yspanel.com linkprofiler.yspanel.com admin.yspanel.com ws.yspanel.com status.yspanel.com yspanel.com www.yspanel.com;
+
+    ssl_certificate /etc/letsencrypt/live/yspanel.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yspanel.com/privkey.pem;
+    ssl_trusted_certificate /etc/letsencrypt/live/yspanel.com/chain.pem;
+
+    # Redirect HTTP to HTTPS
+    if ($scheme = http) {
+        return 301 https://$host$request_uri;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000; # Proxy to main API
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $server_name;
+        # WebSocket support for main API (if needed, e.g., /ws endpoint)
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+}
