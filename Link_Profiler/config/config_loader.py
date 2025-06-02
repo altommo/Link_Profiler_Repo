@@ -52,7 +52,7 @@ class ConfigLoader:
                 logger.error(f"Error loading JSON config from {config_file_path_json}: {e}")
                 loaded_from_file = {} # Fallback to empty if JSON fails
         else:
-            logger.warning(f"No config file found at {config_file_path_yaml} or {config_file_path_json}. Using environment variables and defaults only.")
+            logger.warning(f"No config file found at {config_file_path_yaml} or {config_file_path_json}. Using environment variables and defaults only. Attempted from directory: {config_dir}") # Added debug info
 
         self._config = loaded_from_file if loaded_from_file is not None else {}
 

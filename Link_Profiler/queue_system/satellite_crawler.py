@@ -58,14 +58,13 @@ class SatelliteCrawler:
         self.playwright_instance = None # To hold the Playwright context manager
         self.playwright_browser: Optional[Browser] = None # To hold the launched browser instance
 
-        # Ensure config is loaded if this is the first component to run
-        # This is crucial for standalone execution of the satellite
-        if not config_loader._is_loaded:
-            # Assuming project_root is two levels up from this file for config directory
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root_for_config = os.path.dirname(os.path.dirname(current_dir))
-            config_loader.load_config(config_dir=os.path.join(project_root_for_config, "Link_Profiler", "config"), env_var_prefix="LP_")
-            self.logger.info("SatelliteCrawler: ConfigLoader explicitly loaded configuration.")
+        # Removed: Ensure config is loaded if this is the first component to run
+        # This is now handled by run_satellite.py
+        # if not config_loader._is_loaded:
+        #     current_dir = os.path.dirname(os.path.abspath(__file__))
+        #     project_root_for_config = os.path.dirname(os.path.dirname(current_dir))
+        #     config_loader.load_config(config_dir=os.path.join(project_root_for_config, "Link_Profiler", "config"), env_var_prefix="LP_")
+        #     self.logger.info("SatelliteCrawler: ConfigLoader explicitly loaded configuration.")
 
         # Retrieve configurations
         self.job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs")
@@ -133,8 +132,8 @@ class SatelliteCrawler:
             lighthouse_path=config_loader.get("technical_auditor.lighthouse_path")
         )
         self.serp_crawler = SERPCrawler(
-            headless=config_loader.get("serp_crawler.playwright.headless"),
-            browser_type=config_loader.get("serp_crawler.playwright.browser_type")
+            headless=config_loader.get("serp_crawler.playwright.headless", True), # Added default
+            browser_type=config_loader.get("serp_crawler.playwright.browser_type", "chromium") # Added default
         )
         self.keyword_scraper = KeywordScraper()
         self.social_media_crawler = SocialMediaCrawler()
