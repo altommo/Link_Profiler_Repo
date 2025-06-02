@@ -24,7 +24,7 @@ import time
 # Corrected project_root calculation to point to the repository root
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+    sys.sys.path.insert(0, project_root)
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain
@@ -50,6 +50,7 @@ class MonitoringDashboard:
         self._session: Optional[aiohttp.ClientSession] = None
 
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
+        self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Get stale_timeout from config
 
     async def __aenter__(self):
         """Initialise aiohttp session, Redis, and Database connections."""
@@ -117,8 +118,12 @@ class MonitoringDashboard:
             job_queue_size = await self.redis.zcard(job_queue_name)
             result_queue_size = await self.redis.llen(result_queue_name)
             
-            cutoff = (datetime.now() - timedelta(minutes=5)).timestamp()
-            recent_heartbeats = await self.redis.zrangebyscore(
+            # Get all crawler_ids and their last heartbeat timestamps from the sorted set
+            # Only fetch those that are within the stale_timeout period
+            cutoff = (datetime.now() - timedelta(seconds=self.stale_timeout)).timestamp()
+            
+            # Fetch members (crawler_ids) and their scores (timestamps)
+            active_crawler_ids_with_timestamps = await self.redis.zrangebyscore(
                 "crawler_heartbeats_sorted", 
                 cutoff, 
                 "+inf", 
@@ -126,14 +131,25 @@ class MonitoringDashboard:
             )
             
             satellites = []
-            for heartbeat_data, timestamp in recent_heartbeats:
-                try:
-                    hb = json.loads(heartbeat_data)
-                    hb['last_seen'] = datetime.fromtimestamp(timestamp)
-                    satellites.append(hb)
-                except json.JSONDecodeError:
-                    self.logger.warning(f"Failed to decode heartbeat data: {heartbeat_data}")
-                    continue
+            for crawler_id_bytes, timestamp in active_crawler_ids_with_timestamps:
+                crawler_id = crawler_id_bytes.decode('utf-8')
+                
+                # Fetch the detailed heartbeat data for this crawler_id
+                detailed_heartbeat_json = await self.redis.get(f"crawler_details:{crawler_id}")
+                
+                if detailed_heartbeat_json:
+                    try:
+                        hb = json.loads(detailed_heartbeat_json)
+                        # Add status based on stale_timeout
+                        time_diff = datetime.now() - datetime.fromisoformat(hb.get("timestamp"))
+                        hb['status'] = "healthy" if time_diff.total_seconds() < self.stale_timeout else "stale"
+                        hb['last_seen'] = datetime.fromisoformat(hb.get("timestamp")) # Convert to datetime object
+                        satellites.append(hb)
+                    except json.JSONDecodeError:
+                        self.logger.warning(f"Failed to decode detailed heartbeat data for {crawler_id}: {detailed_heartbeat_json}")
+                        continue
+                else:
+                    self.logger.warning(f"No detailed heartbeat data found for active crawler_id: {crawler_id}. It might have expired.")
             
             return {
                 "pending_jobs": job_queue_size,
@@ -325,7 +341,8 @@ class MonitoringDashboard:
             return {"status": "error", "message": "Internal aiohttp session not ready."}
 
         api_port = config_loader.get('api.port', 8000)
-        api_base_url = f"http://127.0.0.1:{api_port}"
+        api_host = config_loader.get('api.host', '127.0.0.1') # Use configured API host
+        api_base_url = f"http://{api_host}:{api_port}"
         try:
             async with self._session.get(f"{api_base_url}/health", timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status == 200:
@@ -539,6 +556,7 @@ class QueueManager:
         redis_url = redis_url or config_loader.get("redis.url", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
+        self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Get stale_timeout from config
     
     async def clear_queue(self, queue_name: str):
         """Clear a specific queue"""
@@ -573,27 +591,36 @@ class QueueManager:
     async def list_satellites(self):
         """List all known satellites"""
         # Get recent heartbeats from the sorted set
-        cutoff = (datetime.now() - timedelta(minutes=5)).timestamp()
-        recent_heartbeats = await self.redis.zrangebyscore(
+        cutoff = (datetime.now() - timedelta(seconds=self.stale_timeout)).timestamp()
+        recent_crawler_ids_with_timestamps = await self.redis.zrangebyscore(
             "crawler_heartbeats_sorted", 
             cutoff, 
             "+inf", 
             withscores=True
         )
         
-        satellites = set()
-        for heartbeat_data, timestamp in recent_heartbeats:
-            try:
-                hb = json.loads(heartbeat_data)
-                satellites.add(hb.get("crawler_id", "unknown"))
-            except json.JSONDecodeError:
-                logging.warning(f"Failed to decode heartbeat data in list_satellites: {heartbeat_data}")
-                continue
-        
+        satellites = []
+        for crawler_id_bytes, timestamp in recent_crawler_ids_with_timestamps:
+            crawler_id = crawler_id_bytes.decode('utf-8')
+            detailed_heartbeat_json = await self.redis.get(f"crawler_details:{crawler_id}")
+            
+            if detailed_heartbeat_json:
+                try:
+                    hb = json.loads(detailed_heartbeat_json)
+                    satellites.append(hb)
+                except json.JSONDecodeError:
+                    logging.warning(f"Failed to decode detailed heartbeat data for {crawler_id} in list_satellites: {detailed_heartbeat_json}")
+                    continue
+            else:
+                logging.warning(f"No detailed heartbeat data found for active crawler_id: {crawler_id} in list_satellites.")
+
         print(f"Known Active Satellites ({len(satellites)}):")
         if satellites:
-            for sat in sorted(list(satellites)):
-                print(f"  - {sat}")
+            for sat in sorted(satellites, key=lambda x: x.get('crawler_id', '')):
+                last_seen_dt = datetime.fromisoformat(sat.get('timestamp'))
+                time_diff = datetime.now() - last_seen_dt
+                status = "healthy" if time_diff.total_seconds() < self.stale_timeout else "stale"
+                print(f"  - ID: {sat.get('crawler_id')}, Region: {sat.get('region')}, Status: {status}, Running Jobs: {sat.get('running_jobs')}, Last Seen: {last_seen_dt.strftime('%Y-%m-%d %H:%M:%S')}")
         else:
             print("  No active satellites detected in the last 5 minutes.")
 
