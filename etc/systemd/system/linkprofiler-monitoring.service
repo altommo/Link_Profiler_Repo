@@ -8,7 +8,7 @@ User=root
 WorkingDirectory=/opt/Link_Profiler_Repo/Link_Profiler/monitoring
 Environment=PATH=/opt/Link_Profiler_Repo/venv/bin
 Environment=PYTHONPATH=/opt/Link_Profiler_Repo
-ExecStart=/opt/Link_Profiler_Repo/venv/bin/python dashboard.py dashboard
+ExecStart=/opt/Link_Profiler_Repo/venv/bin/python /opt/Link_Profiler_Repo/Link_Profiler/monitoring/dashboard.py dashboard
 Restart=always
 RestartSec=10
 
