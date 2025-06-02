@@ -382,6 +382,98 @@ class JobCoordinator:
             "completed_jobs": completed_jobs_db
         }
 
+    async def pause_job_processing(self) -> bool:
+        """Pauses all new job processing by satellites."""
+        try:
+            await self.redis.set("processing_paused", "true", ex=3600) # Set for 1 hour
+            logger.info("Job processing paused.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to pause job processing: {e}", exc_info=True)
+            return False
+
+    async def resume_job_processing(self) -> bool:
+        """Resumes all new job processing by satellites."""
+        try:
+            await self.redis.delete("processing_paused")
+            logger.info("Job processing resumed.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to resume job processing: {e}", exc_info=True)
+            return False
+
+    async def cancel_job(self, job_id: str) -> bool:
+        """
+        Cancels a job. If running, attempts to signal cancellation.
+        If pending/scheduled, removes from Redis queues.
+        Updates job status in DB to CANCELLED.
+        """
+        job = self.db.get_crawl_job(job_id)
+        if not job:
+            logger.warning(f"Attempted to cancel non-existent job: {job_id}")
+            return False
+
+        if job.status in [CrawlStatus.COMPLETED, CrawlStatus.FAILED, CrawlStatus.CANCELLED]:
+            logger.info(f"Job {job_id} is already in a final state ({job.status.value}). Cannot cancel.")
+            return False
+
+        # 1. Update DB status
+        job.status = CrawlStatus.CANCELLED
+        job.completed_date = datetime.now()
+        job.add_error(url=job.target_url, error_type="ManualCancellation", message="Job cancelled by user/system.")
+        self.db.update_crawl_job(job)
+        logger.info(f"Job {job_id} status updated to CANCELLED in DB.")
+
+        # 2. Remove from Redis queues if pending/scheduled
+        job_message = json.dumps(serialize_model(job))
+        removed_from_job_queue = await self.redis.zrem(self.job_queue, job_message)
+        removed_from_scheduled_queue = await self.redis.zrem(self.scheduled_jobs_queue, job_message)
+        
+        if removed_from_job_queue or removed_from_scheduled_queue:
+            logger.info(f"Job {job_id} removed from Redis queues (job_queue: {removed_from_job_queue}, scheduled_queue: {removed_from_scheduled_queue}).")
+        else:
+            logger.info(f"Job {job_id} was not found in Redis job/scheduled queues (might be in progress on a satellite).")
+
+        # 3. Signal running satellite (if applicable) - this is more complex
+        # For now, rely on the satellite's heartbeat mechanism to eventually pick up the cancelled status from DB
+        # A more advanced solution would involve a dedicated Redis channel for control signals.
+        
+        # Remove from in-memory cache
+        self.active_jobs_cache.pop(job_id, None)
+
+        return True
+
+    async def get_all_jobs_for_dashboard(self, status_filter: Optional[str] = None) -> List[CrawlJob]:
+        """
+        Retrieves all crawl jobs from the database, optionally filtered by status,
+        for display on the dashboard.
+        """
+        if not self.db:
+            logger.error("Database not connected, cannot retrieve jobs for dashboard.")
+            return []
+        try:
+            all_jobs = self.db.get_all_crawl_jobs()
+            
+            if status_filter:
+                try:
+                    filter_status = CrawlStatus(status_filter.upper())
+                    filtered_jobs = [job for job in all_jobs if job.status == filter_status]
+                except ValueError:
+                    logger.warning(f"Invalid status filter '{status_filter}'. Returning all jobs.")
+                    filtered_jobs = all_jobs
+            else:
+                filtered_jobs = all_jobs
+            
+            # Sort by created date, newest first
+            sorted_jobs = sorted(filtered_jobs, key=lambda job: job.created_date, reverse=True)
+            return sorted_jobs
+        except Exception as e:
+            logger.error(f"Error retrieving all jobs for dashboard: {e}", exc_info=True)
+            return []
+        finally:
+            if self.db and hasattr(self.db, 'Session'):
+                self.db.Session.remove()
+
 # Usage example (for running coordinator as a standalone process)
 async def main():
     logging.basicConfig(level=logging.INFO)

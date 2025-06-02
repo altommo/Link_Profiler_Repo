@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import redis.asyncio as redis
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, HTTPException, status
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import uvicorn
@@ -27,8 +27,10 @@ if project_root not in sys.path:
     sys.sys.path.insert(0, project_root)
 
 from Link_Profiler.database.database import Database
-from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain
+from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain, serialize_model
 from Link_Profiler.config.config_loader import ConfigLoader
+from Link_Profiler.queue_system.job_coordinator import JobCoordinator # Import JobCoordinator
+from Link_Profiler.api.queue_endpoints import QueueCrawlRequest, JobStatusResponse, get_coordinator # Import necessary models and functions
 
 # Initialize and load config once using the absolute path
 config_loader = ConfigLoader()
@@ -48,6 +50,7 @@ class MonitoringDashboard:
         self.redis: Optional[redis.Redis] = None
         self.db: Optional[Database] = None
         self._session: Optional[aiohttp.ClientSession] = None
+        self.coordinator: Optional[JobCoordinator] = None # Add coordinator instance
 
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Get stale_timeout from config
@@ -84,6 +87,17 @@ class MonitoringDashboard:
         except Exception as e:
             self.logger.error(f"MonitoringDashboard encountered unexpected error with PostgreSQL: {e}", exc_info=True)
             self.db = None
+
+        # Initialize JobCoordinator (without alert_service and connection_manager for dashboard context)
+        # This coordinator instance is for dashboard's internal use, not the main API's coordinator.
+        # It needs a DB and Redis client.
+        if self.db and self.redis:
+            self.coordinator = JobCoordinator(redis_url=redis_url, database=self.db)
+            # No need to call __aenter__ on this coordinator as it's not running background tasks
+            # It's just used for its methods like get_all_jobs_for_dashboard, pause_job_processing etc.
+            self.logger.info("MonitoringDashboard: JobCoordinator instance created.")
+        else:
+            self.logger.warning("MonitoringDashboard: JobCoordinator could not be initialized due to missing DB or Redis connection.")
 
         return self
 
@@ -432,7 +446,8 @@ class MonitoringDashboard:
             self.get_system_stats(),
             self.get_api_health(),
             self.get_redis_stats(),
-            self.get_database_stats()
+            self.get_database_stats(),
+            self.coordinator.get_all_jobs_for_dashboard() if self.coordinator else asyncio.sleep(0) and [] # New: Fetch all jobs
         ]
         
         # Run all data fetching tasks concurrently
@@ -448,6 +463,7 @@ class MonitoringDashboard:
             "api_health": results[5] if not isinstance(results[5], Exception) else {"error": str(results[5])},
             "redis": results[6] if not isinstance(results[6], Exception) else {"error": str(results[6])},
             "database": results[7] if not isinstance(results[7], Exception) else {"error": str(results[7])},
+            "all_jobs": results[8] if not isinstance(results[8], Exception) else [], # New: All jobs data
             "timestamp": datetime.now().isoformat()
         }
         return data
@@ -482,6 +498,7 @@ async def monitoring_home(request: Request):
         "api_health": all_data["api_health"], # Pass API health
         "redis_stats": all_data["redis"], # Pass Redis stats
         "database_stats": all_data["database"], # Pass DB stats
+        "all_jobs": all_data["all_jobs"], # New: Pass all jobs to template
         "refresh_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
@@ -548,6 +565,99 @@ async def health_check():
 
     except Exception as e:
         return {"status": "unhealthy", "error": str(e), "timestamp": datetime.now().isoformat()}
+
+# New: API Endpoints for Job Management (for dashboard to interact with)
+@app.post("/api/jobs/submit", status_code=status.HTTP_202_ACCEPTED)
+async def submit_job_from_dashboard(request: QueueCrawlRequest):
+    """Submit a new crawl job from the dashboard."""
+    if not dashboard.coordinator:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
+    
+    try:
+        # Convert config dict to CrawlConfig if provided
+        crawl_config_obj = CrawlConfig.from_dict(request.config if request.config else {})
+        
+        job_id = str(uuid.uuid4())
+        job_type = request.config.get("job_type", "backlink_discovery")
+        
+        job = CrawlJob(
+            id=job_id,
+            target_url=request.target_url,
+            job_type=job_type,
+            status=CrawlStatus.PENDING,
+            priority=request.priority,
+            created_date=datetime.now(),
+            scheduled_at=request.scheduled_at,
+            cron_schedule=request.cron_schedule,
+            config=serialize_model(crawl_config_obj),
+        )
+        
+        if job_type == "backlink_discovery":
+            job.config["initial_seed_urls"] = request.initial_seed_urls
+        elif job_type == "link_health_audit":
+            job.config["source_urls_to_audit"] = request.initial_seed_urls # Re-use initial_seed_urls for this
+        elif job_type == "technical_audit":
+            job.config["urls_to_audit_tech"] = request.initial_seed_urls # Re-use initial_seed_urls for this
+        elif job_type == "full_seo_audit":
+            job.config["urls_to_audit_full_seo"] = request.initial_seed_urls # Re-use initial_seed_urls for this
+        elif job_type == "domain_analysis":
+            job.config["domain_names_to_analyze"] = request.initial_seed_urls # Re-use initial_seed_urls for this
+        # Add other job type specific config assignments as needed
+
+        await dashboard.coordinator.submit_crawl_job(job)
+        return {"job_id": job_id, "status": "submitted", "message": "Job queued for processing"}
+    except Exception as e:
+        dashboard.logger.error(f"Error submitting job from dashboard: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to submit job: {e}")
+
+@app.post("/api/jobs/pause_all", status_code=status.HTTP_200_OK)
+async def pause_all_jobs_endpoint():
+    """Pause all new job processing."""
+    if not dashboard.coordinator:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
+    success = await dashboard.coordinator.pause_job_processing()
+    if not success:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to pause job processing.")
+    return {"status": "success", "message": "All job processing paused."}
+
+@app.post("/api/jobs/resume_all", status_code=status.HTTP_200_OK)
+async def resume_all_jobs_endpoint():
+    """Resume all job processing."""
+    if not dashboard.coordinator:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
+    success = await dashboard.coordinator.resume_job_processing()
+    if not success:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to resume job processing.")
+    return {"status": "success", "message": "All job processing resumed."}
+
+@app.post("/api/jobs/{job_id}/cancel", status_code=status.HTTP_200_OK)
+async def cancel_job_endpoint(job_id: str):
+    """Cancel a specific job."""
+    if not dashboard.coordinator:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
+    success = await dashboard.coordinator.cancel_job(job_id)
+    if not success:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found or cannot be cancelled.")
+    return {"status": "success", "message": f"Job {job_id} cancelled."}
+
+@app.get("/api/jobs/all", response_model=List[JobStatusResponse])
+async def get_all_jobs_api(status_filter: Optional[str] = None):
+    """Get all jobs for the dashboard."""
+    if not dashboard.coordinator:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
+    jobs = await dashboard.coordinator.get_all_jobs_for_dashboard(status_filter=status_filter)
+    return [JobStatusResponse.from_crawl_job(job) for job in jobs]
+
+@app.get("/api/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_single_job_api(job_id: str):
+    """Get details for a single job."""
+    if not dashboard.coordinator:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
+    job = await dashboard.coordinator.get_job_status(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+    return JobStatusResponse.from_crawl_job(job)
+
 
 # CLI tool for queue management
 class QueueManager:

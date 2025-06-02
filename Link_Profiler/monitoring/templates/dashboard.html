@@ -17,14 +17,199 @@
         .job-row { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #eee; }
         .status-completed { color: #4caf50; font-weight: bold; }
         .status-failed { color: #f44336; font-weight: bold; }
+        .status-pending { color: #ff9800; font-weight: bold; }
+        .status-in_progress { color: #2196f3; font-weight: bold; }
+        .status-cancelled { color: #9e9e9e; font-weight: bold; }
         .refresh-info { color: #666; font-size: 12px; float: right; }
         h1 { color: #333; }
         h2 { color: #555; border-bottom: 2px solid #ddd; padding-bottom: 5px; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
         th { background-color: #f2f2f2; }
+        .form-group { margin-bottom: 10px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+        .form-group input[type="text"], .form-group input[type="number"], .form-group textarea, .form-group select {
+            width: calc(100% - 20px);
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .form-group textarea { min-height: 80px; resize: vertical; }
+        .button-group button {
+            padding: 10px 15px;
+            margin-right: 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .button-group button.secondary { background-color: #f44336; }
+        .button-group button:hover { opacity: 0.9; }
+        .job-actions button {
+            padding: 5px 10px;
+            margin-left: 5px;
+            background-color: #2196f3;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.8em;
+        }
+        .job-actions button.cancel { background-color: #f44336; }
+        .job-actions button:hover { opacity: 0.9; }
     </style>
     <script>
+        // IMPORTANT: Replace 'YOUR_ACCESS_TOKEN' with a valid token obtained from your /auth/token endpoint.
+        // For security, in a production environment, this token should be managed securely (e.g., via a login form).
+        const ACCESS_TOKEN = 'YOUR_ACCESS_TOKEN'; 
+        const API_BASE_URL = ''; // Use relative path if dashboard and API are on same host/port, or full URL if different (e.g., 'http://127.0.0.1:8000')
+
+        async function callApi(endpoint, method = 'GET', body = null) {
+            const headers = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${ACCESS_TOKEN}`
+            };
+            const options = { method, headers };
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+
+            const response = await fetch(`${API_BASE_URL}${endpoint}`, options);
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || `API Error: ${response.statusText}`);
+            }
+            return response.json();
+        }
+
+        async function submitNewJob() {
+            const targetUrl = document.getElementById('newJobTargetUrl').value;
+            const initialSeedUrls = document.getElementById('newJobInitialSeedUrls').value.split(',').map(s => s.trim()).filter(s => s);
+            const jobType = document.getElementById('newJobType').value;
+            const priority = parseInt(document.getElementById('newJobPriority').value);
+            const configJson = document.getElementById('newJobConfig').value;
+            const scheduledAt = document.getElementById('newJobScheduledAt').value;
+            const cronSchedule = document.getElementById('newJobCronSchedule').value;
+
+            let config = {};
+            if (configJson) {
+                try {
+                    config = JSON.parse(configJson);
+                } catch (e) {
+                    alert('Invalid JSON in Config field: ' + e.message);
+                    return;
+                }
+            }
+            config.job_type = jobType; // Ensure job_type is in config
+
+            const jobData = {
+                target_url: targetUrl,
+                initial_seed_urls: initialSeedUrls,
+                config: config,
+                priority: priority
+            };
+
+            if (scheduledAt) {
+                jobData.scheduled_at = scheduledAt;
+            }
+            if (cronSchedule) {
+                jobData.cron_schedule = cronSchedule;
+            }
+
+            try {
+                const result = await callApi('/api/jobs/submit', 'POST', jobData);
+                alert('Job submitted: ' + result.job_id);
+                loadStats(); // Refresh dashboard
+            } catch (error) {
+                alert('Error submitting job: ' + error.message);
+                console.error('Error submitting job:', error);
+            }
+        }
+
+        async function pauseAllJobs() {
+            if (!confirm('Are you sure you want to pause all job processing?')) return;
+            try {
+                const result = await callApi('/api/jobs/pause_all', 'POST');
+                alert(result.message);
+                loadStats();
+            } catch (error) {
+                alert('Error pausing jobs: ' + error.message);
+                console.error('Error pausing jobs:', error);
+            }
+        }
+
+        async function resumeAllJobs() {
+            if (!confirm('Are you sure you want to resume all job processing?')) return;
+            try {
+                const result = await callApi('/api/jobs/resume_all', 'POST');
+                alert(result.message);
+                loadStats();
+            } catch (error) {
+                alert('Error resuming jobs: ' + error.message);
+                console.error('Error resuming jobs:', error);
+            }
+        }
+
+        async function cancelJob(jobId) {
+            if (!confirm(`Are you sure you want to cancel job ${jobId}?`)) return;
+            try {
+                const result = await callApi(`/api/jobs/${jobId}/cancel`, 'POST');
+                alert(result.message);
+                loadStats();
+            } catch (error) {
+                alert(`Error cancelling job ${jobId}: ` + error.message);
+                console.error('Error cancelling job:', error);
+            }
+        }
+
+        async function viewJobDetails(jobId) {
+            try {
+                const details = await callApi(`/api/jobs/${jobId}`);
+                alert('Job Details for ' + jobId + ':\n' + JSON.stringify(details, null, 2));
+            } catch (error) {
+                alert(`Error fetching job details for ${jobId}: ` + error.message);
+                console.error('Error fetching job details:', error);
+            }
+        }
+
+        async function loadJobsTable() {
+            const jobsTableBody = document.getElementById('jobsTableBody');
+            jobsTableBody.innerHTML = '<tr><td colspan="9">Loading jobs...</td></tr>';
+            try {
+                const allJobs = await callApi('/api/jobs/all');
+                let tableHtml = '';
+                if (allJobs && allJobs.length > 0) {
+                    allJobs.forEach(job => {
+                        const statusClass = `status-${job.status.toLowerCase().replace(' ', '_')}`;
+                        tableHtml += `
+                            <tr>
+                                <td>${job.job_id.substring(0, 8)}...</td>
+                                <td>${job.job_type}</td>
+                                <td>${job.target_url}</td>
+                                <td class="${statusClass}">${job.status.toUpperCase()}</td>
+                                <td>${job.progress_percentage.toFixed(1)}%</td>
+                                <td>${new Date(job.created_date).toLocaleString()}</td>
+                                <td>${job.started_date ? new Date(job.started_date).toLocaleString() : 'N/A'}</td>
+                                <td>${job.completed_date ? new Date(job.completed_date).toLocaleString() : 'N/A'}</td>
+                                <td class="job-actions">
+                                    <button onclick="viewJobDetails('${job.job_id}')">View</button>
+                                    ${job.status !== 'COMPLETED' && job.status !== 'FAILED' && job.status !== 'CANCELLED' ? `<button class="cancel" onclick="cancelJob('${job.job_id}')">Cancel</button>` : ''}
+                                </td>
+                            </tr>
+                        `;
+                    });
+                } else {
+                    tableHtml = '<tr><td colspan="9">No jobs found.</td></tr>';
+                }
+                jobsTableBody.innerHTML = tableHtml;
+            } catch (error) {
+                jobsTableBody.innerHTML = `<tr><td colspan="9" class="status-error">Error loading jobs: ${error.message}</td></tr>`;
+                console.error('Error loading jobs table:', error);
+            }
+        }
+
         async function loadStats() {
             try {
                 const response = await fetch('/api/stats');
@@ -147,6 +332,8 @@
                 document.getElementById('satellite-crawlers').innerHTML = '<p class="status-error">Error loading data.</p>';
                 document.getElementById('recent-jobs').innerHTML = '<p class="status-error">Error loading data.</p>';
             }
+            // Always load the full jobs table after other stats
+            loadJobsTable();
         }
         
         // Load stats on page load and refresh every 30 seconds
@@ -302,6 +489,101 @@
                 </div>
                 {% endfor %}
             </div>
+        </div>
+
+        <div class="card">
+            <h2>⚙️ Job Management</h2>
+            <h3>Submit New Job</h3>
+            <div class="form-group">
+                <label for="newJobTargetUrl">Target URL:</label>
+                <input type="text" id="newJobTargetUrl" value="https://example.com" required>
+            </div>
+            <div class="form-group">
+                <label for="newJobInitialSeedUrls">Initial Seed URLs (comma-separated):</label>
+                <input type="text" id="newJobInitialSeedUrls" value="https://example.com/page1, https://example.com/page2">
+            </div>
+            <div class="form-group">
+                <label for="newJobType">Job Type:</label>
+                <select id="newJobType">
+                    <option value="backlink_discovery">Backlink Discovery</option>
+                    <option value="link_health_audit">Link Health Audit</option>
+                    <option value="technical_audit">Technical Audit</option>
+                    <option value="full_seo_audit">Full SEO Audit</option>
+                    <option value="domain_analysis">Domain Analysis</option>
+                    <option value="web3_crawl">Web3 Crawl</option>
+                    <option value="social_media_crawl">Social Media Crawl</option>
+                    <option value="content_gap_analysis">Content Gap Analysis</option>
+                    <option value="prospect_identification">Prospect Identification</option>
+                    <option value="report_generation">Report Generation</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="newJobPriority">Priority (1-10):</label>
+                <input type="number" id="newJobPriority" value="5" min="1" max="10">
+            </div>
+            <div class="form-group">
+                <label for="newJobScheduledAt">Scheduled At (ISO format, e.g., 2024-12-31T23:59:59):</label>
+                <input type="text" id="newJobScheduledAt" placeholder="Optional">
+            </div>
+            <div class="form-group">
+                <label for="newJobCronSchedule">Cron Schedule (e.g., 0 0 * * *):</label>
+                <input type="text" id="newJobCronSchedule" placeholder="Optional">
+            </div>
+            <div class="form-group">
+                <label for="newJobConfig">Additional Config (JSON):</label>
+                <textarea id="newJobConfig" placeholder='{"render_javascript": true}'></textarea>
+            </div>
+            <div class="button-group">
+                <button onclick="submitNewJob()">Submit Job</button>
+            </div>
+
+            <h3>Global Job Controls</h3>
+            <div class="button-group">
+                <button onclick="pauseAllJobs()" class="secondary">Pause All Jobs</button>
+                <button onclick="resumeAllJobs()">Resume All Jobs</button>
+            </div>
+
+            <h3>All Jobs</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Type</th>
+                        <th>Target</th>
+                        <th>Status</th>
+                        <th>Progress</th>
+                        <th>Created</th>
+                        <th>Started</th>
+                        <th>Completed</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="jobsTableBody">
+                    <!-- Jobs will be loaded here by JavaScript -->
+                    {% if all_jobs %}
+                        {% for job in all_jobs %}
+                        <tr>
+                            <td>{{ job.id[:8] }}...</td>
+                            <td>{{ job.job_type }}</td>
+                            <td>{{ job.target_url }}</td>
+                            <td class="status-{{ job.status.lower().replace(' ', '_') }}">{{ job.status.upper() }}</td>
+                            <td>{{ "%.1f"|format(job.progress_percentage) }}%</td>
+                            <td>{{ job.created_date.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                            <td>{{ job.started_date.strftime('%Y-%m-%d %H:%M:%S') if job.started_date else 'N/A' }}</td>
+                            <td>{{ job.completed_date.strftime('%Y-%m-%d %H:%M:%S') if job.completed_date else 'N/A' }}</td>
+                            <td class="job-actions">
+                                <button onclick="viewJobDetails('{{ job.id }}')">View</button>
+                                {% if job.status not in ['COMPLETED', 'FAILED', 'CANCELLED'] %}
+                                <button class="cancel" onclick="cancelJob('{{ job.id }}')">Cancel</button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="9">No jobs found.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
         </div>
     </div>
 </body>
