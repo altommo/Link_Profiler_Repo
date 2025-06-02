@@ -1042,7 +1042,12 @@ class Database:
             current_date = datetime.now()
 
             for i in range(num_units):
-                if time_unit == "month":
+                if time_unit == "hour": # Added support for "hour"
+                    start_of_unit = current_date - timedelta(hours=i)
+                    start_of_unit = start_of_unit.replace(minute=0, second=0, microsecond=0)
+                    end_of_unit = start_of_unit.replace(minute=59, second=59, microsecond=999999)
+                    period_label = start_of_unit.strftime("%Y-%m-%d %H:00")
+                elif time_unit == "month":
                     start_of_unit = current_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=30*i) # Approximate start of month
                     # Adjust to actual start of month
                     start_of_unit = start_of_unit.replace(day=1)
@@ -1071,7 +1076,7 @@ class Database:
                     end_of_unit = start_of_unit.replace(hour=23, minute=59, second=59, microsecond=999999)
                     period_label = start_of_unit.strftime("%Y-%m-%d")
                 else:
-                    raise ValueError("Invalid time_unit. Must be 'day', 'week', 'month', 'quarter', or 'year'.")
+                    raise ValueError("Invalid time_unit. Must be 'day', 'week', 'month', 'quarter', 'year', or 'hour'.") # Updated error message
 
                 count = session.query(BacklinkORM).filter(
                     BacklinkORM.target_domain_name == target_domain,
@@ -1132,7 +1137,7 @@ class Database:
         Retrieves aggregated crawl performance trends over specified time units.
 
         Args:
-            time_unit: The unit of time ('day', 'week', 'month', 'quarter', 'year').
+            time_unit: The unit of time ('day', 'week', 'month', 'quarter', 'year', 'hour').
             num_units: The number of past units to retrieve data for.
 
         Returns:
@@ -1144,7 +1149,12 @@ class Database:
             current_date = datetime.now()
 
             for i in range(num_units):
-                if time_unit == "month":
+                if time_unit == "hour": # Added support for "hour"
+                    start_of_unit = current_date - timedelta(hours=i)
+                    start_of_unit = start_of_unit.replace(minute=0, second=0, microsecond=0)
+                    end_of_unit = start_of_unit.replace(minute=59, second=59, microsecond=999999)
+                    period_label = start_of_unit.strftime("%Y-%m-%d %H:00")
+                elif time_unit == "month":
                     start_of_unit = current_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=30*i)
                     start_of_unit = start_of_unit.replace(day=1)
                     end_of_unit = (start_of_unit + timedelta(days=32)).replace(day=1) - timedelta(days=1)
@@ -1171,7 +1181,7 @@ class Database:
                     end_of_unit = start_of_unit.replace(hour=23, minute=59, second=59, microsecond=999999)
                     period_label = start_of_unit.strftime("%Y-%m-%d")
                 else:
-                    raise ValueError("Invalid time_unit. Must be 'day', 'week', 'month', 'quarter', or 'year'.")
+                    raise ValueError("Invalid time_unit. Must be 'day', 'week', 'month', 'quarter', 'year', or 'hour'.") # Updated error message
 
                 # Query for jobs completed within the current time unit
                 jobs_in_period = session.query(CrawlJobORM).filter(

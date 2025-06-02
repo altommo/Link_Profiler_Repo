@@ -174,7 +174,11 @@ class MonitoringDashboard:
         except Exception as e:
             self.logger.error(f"Error getting job history: {e}", exc_info=True)
             return []
-    
+        finally:
+            # Ensure session is closed if not handled by scoped_session automatically
+            if self.db and hasattr(self.db, 'Session'):
+                self.db.Session.remove()
+
     async def get_performance_stats(self) -> Dict:
         """
         Get system performance statistics based on historical job data.
@@ -188,10 +192,10 @@ class MonitoringDashboard:
             memory_usage = info.get("used_memory_human", "Unknown")
             
             # Use the new database method for performance trends
-            # Changed time_unit from "hour" to "day" as "hour" is not a valid option in database.py
+            # Changed time_unit to "hour" to match dashboard intent
             trends_data = self.db.get_crawl_performance_trends(
-                time_unit="day", # Changed from "hour" to "day"
-                num_units=int(self.performance_window_seconds / 86400) # Number of days in window (86400 seconds in a day)
+                time_unit="hour", # Changed from "day" to "hour"
+                num_units=int(self.performance_window_seconds / 3600) # Number of hours in window
             )
             
             total_jobs_in_window = sum(t['total_jobs'] for t in trends_data)
@@ -202,9 +206,7 @@ class MonitoringDashboard:
             success_rate = 0.0
 
             if total_jobs_in_window > 0:
-                # Recalculate jobs_per_hour based on days if needed, or adjust logic
-                # For simplicity, if using "day", this might represent jobs per day
-                jobs_per_hour = total_jobs_in_window / (self.performance_window_seconds / 3600) # Keep original calculation for "per hour" if desired, but note it's based on daily data
+                jobs_per_hour = total_jobs_in_window / (self.performance_window_seconds / 3600)
                 
                 total_successful_duration = sum(t['avg_duration_seconds'] * t['successful_jobs'] for t in trends_data if t['successful_jobs'] > 0)
                 total_successful_jobs_for_avg = sum(t['successful_jobs'] for t in trends_data)
@@ -237,6 +239,10 @@ class MonitoringDashboard:
         except Exception as e:
             self.logger.error(f"Error getting performance stats: {e}", exc_info=True)
             return {"error": str(e), "timestamp": datetime.now()}
+        finally:
+            # Ensure session is closed if not handled by scoped_session automatically
+            if self.db and hasattr(self.db, 'Session'):
+                self.db.Session.remove()
 
     async def get_data_summaries(self) -> Dict:
         """
@@ -285,6 +291,10 @@ class MonitoringDashboard:
                 "total_backlinks_stored": "N/A",
                 "error": str(e)
             }
+        finally:
+            # Ensure session is closed if not handled by scoped_session automatically
+            if self.db and hasattr(self.db, 'Session'):
+                self.db.Session.remove()
 
     async def get_system_stats(self) -> Dict:
         """Get system resource statistics"""
@@ -390,6 +400,10 @@ class MonitoringDashboard:
         except Exception as e:
             self.logger.error(f"Error getting database stats: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
+        finally:
+            # Ensure session is closed if not handled by scoped_session automatically
+            if self.db and hasattr(self.db, 'Session'):
+                self.db.Session.remove()
 
     async def get_all_dashboard_data(self) -> Dict[str, Any]:
         """Aggregates all data needed for the dashboard."""
