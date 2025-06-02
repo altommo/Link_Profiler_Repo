@@ -113,7 +113,7 @@ class Database:
             )
         elif isinstance(orm_obj, LinkProfileORM):
             # LinkProfile dataclass expects 'referring_domains' as a set
-            if 'referring_domains' in data and isinstance(data['referring_domains'], list):
+            if 'referring_domains' in data and isinstance(data['refering_domains'], list):
                 data['referring_domains'] = set(data['referring_domains'])
             # LinkProfile dataclass expects 'backlinks' field, but ORM doesn't store it directly.
             # It's derived. So, we need to remove it from data if it's not present in ORM.
