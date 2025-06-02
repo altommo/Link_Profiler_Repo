@@ -211,7 +211,7 @@ class MonitoringDashboard:
                 if total_successful_jobs_for_avg > 0:
                     avg_job_duration = total_successful_duration / total_successful_jobs_for_avg
                 
-                success_rate = (successful_jobs / total_jobs_in_window) * 100
+                success_rate = (successful_jobs_in_window / total_jobs_in_window) * 100
             
             queue_metrics = await self.get_queue_metrics()
             active_satellites = queue_metrics.get("active_satellites", 0)
