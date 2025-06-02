@@ -5,10 +5,9 @@ import redis.asyncio as redis
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
-import json # Added: Import json
 
 from Link_Profiler.database.database import Database
-from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, CrawlResult, CrawlError, LinkType, SpamLevel, URL, Domain, SEOMetrics, SERPResult, KeywordSuggestion, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlConfig, serialize_model # Added: Import CrawlConfig, serialize_model
+from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, CrawlResult, CrawlError, LinkType, SpamLevel, URL, Domain, SEOMetrics, SERPResult, KeywordSuggestion, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlConfig, serialize_model
 from Link_Profiler.crawlers.web_crawler import WebCrawler
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
@@ -31,6 +30,10 @@ from Link_Profiler.utils.content_validator import ContentValidator
 from Link_Profiler.utils.anomaly_detector import AnomalyDetector
 from Link_Profiler.utils.api_rate_limiter import APIRateLimiter
 
+# New import for Playwright browser management
+from playwright.async_api import async_playwright, Browser
+
+
 logger = logging.getLogger(__name__)
 
 class SatelliteCrawler:
@@ -51,6 +54,8 @@ class SatelliteCrawler:
         self.serp_crawler: Optional[SERPCrawler] = None
         self.keyword_scraper: Optional[KeywordScraper] = None
         self.social_media_crawler: Optional[SocialMediaCrawler] = None
+        self.playwright_instance = None # To hold the Playwright context manager
+        self.playwright_browser: Optional[Browser] = None # To hold the launched browser instance
 
         # Ensure config is loaded if this is the first component to run
         # This is crucial for standalone execution of the satellite
@@ -91,6 +96,7 @@ class SatelliteCrawler:
             self.logger.info("SatelliteCrawler: ClickHouse integration disabled.")
 
         # Initialize services that the crawler might interact with
+        # These are passed to WebCrawler, so they need to be initialized first
         self.domain_analyzer_service = DomainAnalyzerService(self.db, None, None) # Needs proper init later
         self.ai_service = AIService() # Needs proper init later
         self.link_health_service = LinkHealthService(self.db)
@@ -101,12 +107,13 @@ class SatelliteCrawler:
         self.link_building_service = LinkBuildingService(self.db, None, None, None, None, None) # Needs proper init later
         self.report_service = ReportService(self.db)
 
-        # Initialize crawlers
+        # Initialize web_crawler here, but pass playwright_browser as None initially
+        # It will be set in __aenter__ if browser_crawler is enabled
         self.web_crawler = WebCrawler(
             database=self.db,
             redis_client=self.redis_client, # Will be set in __aenter__
             clickhouse_loader=self.clickhouse_loader,
-            config=config_loader.get("crawler"),
+            config=config_loader.get("crawler"), # Pass the raw dict
             anti_detection_config=config_loader.get("anti_detection"),
             proxy_config=config_loader.get("proxy"),
             quality_assurance_config=config_loader.get("quality_assurance"),
@@ -118,7 +125,8 @@ class SatelliteCrawler:
             social_media_service=self.social_media_service,
             web3_service=self.web3_service,
             link_building_service=self.link_building_service,
-            report_service=self.report_service
+            report_service=self.report_service,
+            playwright_browser=None # Initialise as None, set in __aenter__
         )
         self.technical_auditor = TechnicalAuditor(
             lighthouse_path=config_loader.get("technical_auditor.lighthouse_path")
@@ -157,11 +165,35 @@ class SatelliteCrawler:
         await self.web3_service.__aenter__()
         await self.link_building_service.__aenter__()
         await self.report_service.__aenter__()
-        await self.web_crawler.__aenter__()
+        # Note: web_crawler's __aenter__ is not explicitly called here,
+        # but its internal aiohttp session is managed by its own __aenter__/__aexit__
+        # which is called when it's used as a context manager.
+
         await self.technical_auditor.__aenter__()
         await self.serp_crawler.__aenter__()
         await self.keyword_scraper.__aenter__()
         await self.social_media_crawler.__aenter__()
+
+        # Conditionally launch Playwright browser for WebCrawler
+        if config_loader.get("browser_crawler.enabled", False):
+            browser_type = config_loader.get("browser_crawler.browser_type", "chromium")
+            headless = config_loader.get("browser_crawler.headless", True)
+            self.logger.info(f"Satellite startup: Launching Playwright browser ({browser_type}, headless={headless})...")
+            self.playwright_instance = await async_playwright().start() # Store playwright_instance
+            if browser_type == "chromium":
+                self.playwright_browser = await self.playwright_instance.chromium.launch(headless=headless)
+            elif browser_type == "firefox":
+                self.playwright_browser = await self.playwright_instance.firefox.launch(headless=headless)
+            elif browser_type == "webkit":
+                self.playwright_browser = await self.playwright_instance.webkit.launch(headless=headless)
+            else:
+                raise ValueError(f"Unsupported browser type for WebCrawler: {browser_type}")
+            
+            # Assign the launched browser to the web_crawler instance
+            self.web_crawler.playwright_browser = self.playwright_browser
+            self.logger.info("Playwright browser launched and assigned to WebCrawler.")
+        else:
+            self.logger.info("Playwright browser for WebCrawler is disabled by configuration.")
 
         return self
 
@@ -185,7 +217,8 @@ class SatelliteCrawler:
         await self.keyword_scraper.__aexit__(exc_type, exc_val, exc_tb)
         await self.serp_crawler.__aexit__(exc_type, exc_val, exc_tb)
         await self.technical_auditor.__aexit__(exc_type, exc_val, exc_tb)
-        await self.web_crawler.__aexit__(exc_type, exc_val, exc_tb)
+        # web_crawler's __aexit__ is not explicitly called here,
+        # but its internal aiohttp session is managed by its own __aenter__/__aexit__
         await self.report_service.__aexit__(exc_type, exc_val, exc_tb)
         await self.link_building_service.__aexit__(exc_type, exc_val, exc_tb)
         await self.web3_service.__aexit__(exc_type, exc_val, exc_tb)
@@ -202,6 +235,14 @@ class SatelliteCrawler:
         if self.redis_client:
             await self.redis_client.close()
             self.logger.info(f"SatelliteCrawler {self.crawler_id} disconnected from Redis.")
+        
+        # Close Playwright browser if it was launched
+        if self.playwright_browser:
+            self.logger.info("Satellite shutdown: Closing Playwright browser.")
+            await self.playwright_browser.close()
+            if self.playwright_instance: # Also stop the playwright_instance itself
+                await self.playwright_instance.stop()
+
 
     async def _send_heartbeat(self):
         """Sends a periodic heartbeat to Redis."""
@@ -242,15 +283,34 @@ class SatelliteCrawler:
         try:
             result_data = {}
             if job_type == "backlink_discovery":
-                crawl_config = CrawlConfig.from_dict(config_dict)
-                crawl_result = await self.web_crawler.start_crawl(target_url, initial_seed_urls, crawl_config)
-                result_data = serialize_model(crawl_result)
-                job.urls_crawled = crawl_result.pages_crawled
-                job.links_found = crawl_result.total_links_found
-                job.errors_count = len(crawl_result.errors)
-                job.error_log.extend(crawl_result.errors)
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"Job {job_id} (backlink_discovery) completed successfully.")
+                # Pass job_id to web_crawler.start_crawl
+                crawl_result_generator = self.web_crawler.start_crawl(target_url, initial_seed_urls, job_id)
+                # Consume the generator to get the final crawl result summary
+                # Assuming start_crawl yields results and the last one is the summary or we aggregate
+                final_crawl_result = None
+                async for crawl_res in crawl_result_generator:
+                    # Process intermediate crawl_res if needed, e.g., save backlinks
+                    # For now, just keep the last one as the "final" summary
+                    final_crawl_result = crawl_res 
+                
+                if final_crawl_result:
+                    result_data = serialize_model(final_crawl_result)
+                    job.urls_crawled = final_crawl_result.pages_crawled
+                    job.links_found = final_crawl_result.total_links_found
+                    job.errors_count = len(final_crawl_result.errors)
+                    job.error_log.extend(final_crawl_result.errors)
+                    job.status = CrawlStatus.COMPLETED
+                    self.logger.info(f"Job {job_id} (backlink_discovery) completed successfully.")
+                else:
+                    job.status = CrawlStatus.FAILED
+                    job.error_log.append(CrawlError(
+                        timestamp=datetime.now(),
+                        url=target_url,
+                        error_type="NoCrawlResult",
+                        message="WebCrawler did not return a final crawl result."
+                    ))
+                    self.logger.error(f"Job {job_id} (backlink_discovery) failed: No final crawl result.")
+
             elif job_type == "link_health_audit":
                 source_urls_to_audit = config_dict.get("source_urls_to_audit", [])
                 audit_results = await self.link_health_service.audit_links_batch(source_urls_to_audit)

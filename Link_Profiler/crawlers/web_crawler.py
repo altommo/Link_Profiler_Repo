@@ -32,8 +32,20 @@ from Link_Profiler.utils.proxy_manager import proxy_manager
 from Link_Profiler.utils.content_validator import ContentValidator
 from Link_Profiler.utils.anomaly_detector import anomaly_detector
 from Link_Profiler.utils.ocr_processor import ocr_processor
-from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.config.config_loader import config_loader # Keep this for now, but try to remove direct usage
 from Link_Profiler.services.ai_service import AIService
+
+# New imports for WebCrawler constructor parameters
+from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
+import redis.asyncio as redis
+from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
+from Link_Profiler.services.link_health_service import LinkHealthService
+from Link_Profiler.services.serp_service import SERPService
+from Link_Profiler.services.keyword_service import KeywordService
+from Link_Profiler.services.social_media_service import SocialMediaService
+from Link_Profiler.services.web3_service import Web3Service
+from Link_Profiler.services.link_building_service import LinkBuildingService
+from Link_Profiler.services.report_service import ReportService
 
 
 class CrawlerError(Exception):
@@ -131,17 +143,47 @@ class AdaptiveRateLimiter:
 class WebCrawler:
     """Main web crawler class"""
     
-    def __init__(self, config: CrawlConfig, db: Database, job_id: str, ai_service: AIService, playwright_browser: Optional[Browser] = None):
-        self.config = config
-        self.db = db
-        self.job_id = job_id
+    def __init__(self, 
+                 database: Database, 
+                 redis_client: Optional[redis.Redis], 
+                 clickhouse_loader: Optional[ClickHouseLoader],
+                 config: Dict, # This will be the raw dict from config_loader.get("crawler")
+                 anti_detection_config: Dict, 
+                 proxy_config: Dict, 
+                 quality_assurance_config: Dict, 
+                 domain_analyzer_service: DomainAnalyzerService, 
+                 ai_service: AIService, 
+                 link_health_service: LinkHealthService, 
+                 serp_service: SERPService, 
+                 keyword_service: KeywordService, 
+                 social_media_service: SocialMediaService, 
+                 web3_service: Web3Service, 
+                 link_building_service: LinkBuildingService, 
+                 report_service: ReportService, 
+                 playwright_browser: Optional[Browser] = None):
+        
+        self.db = database
+        self.redis_client = redis_client
+        self.clickhouse_loader = clickhouse_loader
+        self.config = CrawlConfig.from_dict(config) # Convert the dict to CrawlConfig
+        self.anti_detection_config = anti_detection_config
+        self.proxy_config = proxy_config
+        self.quality_assurance_config = quality_assurance_config
+        self.domain_analyzer_service = domain_analyzer_service
         self.ai_service = ai_service
+        self.link_health_service = link_health_service
+        self.serp_service = serp_service
+        self.keyword_service = keyword_service
+        self.social_media_service = social_media_service
+        self.web3_service = web3_service
+        self.link_building_service = link_building_service
+        self.report_service = report_service
         self.playwright_browser = playwright_browser
         
         self.rate_limiter = AdaptiveRateLimiter(
             initial_delay_seconds=self.config.delay_seconds,
-            ml_rate_optimization_enabled=config_loader.get("anti_detection.ml_rate_optimization", False),
-            rate_limiter_config=config_loader.get("rate_limiter")
+            ml_rate_optimization_enabled=self.anti_detection_config.get("ml_rate_optimization", False),
+            rate_limiter_config=config_loader.get("rate_limiter") # Still uses global config_loader for rate_limiter config
         )
         self.robots_parser = RobotsParser()
         self.link_extractor = LinkExtractor()
@@ -152,10 +194,10 @@ class WebCrawler:
         self.failed_urls: Set[str] = set()
         self.logger = logging.getLogger(__name__)
 
-        if config_loader.get("proxy_management.enabled", False) and self.config.proxy_list:
+        if self.proxy_config.get("use_proxies", False) and self.config.proxy_list: # Use self.proxy_config
             proxy_manager.load_proxies(
                 self.config.proxy_list,
-                config_loader.get("proxy_management.proxy_retry_delay_seconds", 300)
+                self.proxy_config.get("proxy_retry_delay_seconds", 300) # Use self.proxy_config
             )
             self.use_proxies = True
             self.logger.info("WebCrawler initialized with proxy management enabled.")
@@ -178,7 +220,7 @@ class WebCrawler:
         )
         
         headers = self.config.custom_headers.copy() if self.config.custom_headers else {}
-        if config_loader.get("anti_detection.request_header_randomization", False):
+        if self.anti_detection_config.get("request_header_randomization", False): # Use self.anti_detection_config
             random_headers = user_agent_manager.get_random_headers()
             headers.update(random_headers)
         elif self.config.user_agent_rotation:
@@ -228,7 +270,7 @@ class WebCrawler:
         
         await self.rate_limiter.wait_if_needed(domain, last_crawl_result)
         
-        if config_loader.get("anti_detection.human_like_delays", False):
+        if self.anti_detection_config.get("human_like_delays", False): # Use self.anti_detection_config
             await asyncio.sleep(random.uniform(0.1, 0.5))
 
         current_proxy = None
@@ -258,7 +300,7 @@ class WebCrawler:
                     "extra_http_headers": self.session.headers,
                     "viewport": {"width": random.randint(1200, 1600), "height": random.randint(800, 1200)}
                 }
-                if self.config.browser_fingerprint_randomization:
+                if self.anti_detection_config.get("browser_fingerprint_randomization", False): # Use self.anti_detection_config
                     context_options.update({
                         "device_scale_factor": random.choice([1.0, 1.25, 1.5]),
                         "is_mobile": random.choice([True, False]),
@@ -282,7 +324,7 @@ class WebCrawler:
                 page = await browser_context.new_page()
                 
                 try:
-                    if config_loader.get("anti_detection.stealth_mode", True):
+                    if self.anti_detection_config.get("stealth_mode", True): # Use self.anti_detection_config
                         from playwright_stealth import stealth_async
                         await stealth_async(page)
 
@@ -359,7 +401,8 @@ class WebCrawler:
                                 self.logger.debug(f"Extracted OCR text from image {img_url} on {url}.")
 
                     # New: Perform NLP content analysis if enabled
-                    if config_loader.get("ai.content_nlp_analysis_enabled", False) and self.ai_service.enabled:
+                    # Check if AI service is enabled and if the specific feature is enabled via AI service's internal config
+                    if self.ai_service.enabled and self.ai_service.is_nlp_analysis_enabled(): # Assuming AIService has this method
                         nlp_results = await self.ai_service.analyze_content_nlp(content_str)
                         if nlp_results:
                             seo_metrics.nlp_entities = nlp_results.get("entities", [])
@@ -368,7 +411,7 @@ class WebCrawler:
                             self.logger.debug(f"NLP analysis for {url}: Sentiment={nlp_results.get('sentiment')}, Topics={nlp_results.get('topics')}")
 
                     # New: Perform video content analysis if enabled and video tags are found
-                    if self.config.extract_video_content and self.ai_service.enabled:
+                    if self.config.extract_video_content and self.ai_service.enabled and self.ai_service.is_video_analysis_enabled(): # Assuming AIService has this method
                         soup = BeautifulSoup(content_str, 'lxml')
                         video_tags = soup.find_all('video', src=True)
                         if video_tags:
@@ -393,7 +436,7 @@ class WebCrawler:
                     seo_metrics.calculate_seo_score()
                     links = [] # No links from image content itself
 
-                elif 'video' in content_type and self.config.extract_video_content and self.ai_service.enabled:
+                elif 'video' in content_type and self.config.extract_video_content and self.ai_service.enabled and self.ai_service.is_video_analysis_enabled(): # Assuming AIService has this method
                     # If the URL itself is a video and video analysis is enabled
                     self.logger.info(f"Performing video analysis on video URL: {url}")
                     video_analysis_results = await self.ai_service.analyze_video_content(url)
@@ -412,7 +455,7 @@ class WebCrawler:
                     links = []
                 
                 # Common validation and anomaly detection for all content types
-                if config_loader.get("quality_assurance.content_validation", False):
+                if self.quality_assurance_config.get("content_validation", False): # Use self.quality_assurance_config
                     # Ensure content is string for content_validator
                     content_for_validation = content.decode('utf-8', errors='ignore') if isinstance(content, bytes) else content
                     validation_issues = self.content_validator.validate_crawl_result(url, content_for_validation, status_code)
@@ -442,7 +485,7 @@ class WebCrawler:
                                     validation_issues=validation_issues
                                 )
                 
-                if self.config.anomaly_detection_enabled:
+                if self.anti_detection_config.get("anomaly_detection_enabled", False): # Use self.anti_detection_config
                     current_crawl_result = CrawlResult(
                         url=url,
                         status_code=status_code,
@@ -456,7 +499,7 @@ class WebCrawler:
                     if anomaly_flags:
                         self.logger.warning(f"Anomalies detected for {url}: {anomaly_flags}")
 
-                if config_loader.get("ai.content_classification_enabled", False) and self.ai_service.enabled:
+                if self.ai_service.enabled and self.ai_service.is_content_classification_enabled(): # Assuming AIService has this method
                     classification = await self.ai_service.classify_content(content_for_validation if 'content_for_validation' in locals() else (content.decode('utf-8', errors='ignore') if isinstance(content, bytes) else content), url)
                     if seo_metrics:
                         seo_metrics.ai_content_classification = classification
@@ -547,7 +590,7 @@ class WebCrawler:
             self.logger.error(f"Error extracting links from {source_url}: {e}")
             return []
     
-    async def crawl_for_backlinks(self, target_url: str, initial_seed_urls: List[str]) -> AsyncGenerator[CrawlResult, None]:
+    async def start_crawl(self, target_url: str, initial_seed_urls: List[str], job_id: str) -> AsyncGenerator[CrawlResult, None]: # Added job_id
         """
         Crawl web to find backlinks to target URL/domain.
         Starts with initial_seed_urls and explores up to max_depth.
@@ -565,18 +608,18 @@ class WebCrawler:
         last_crawl_result: Optional[CrawlResult] = None
 
         while not urls_to_visit.empty() and crawled_count < self.config.max_pages:
-            current_job = self.db.get_crawl_job(self.job_id)
+            current_job = self.db.get_crawl_job(job_id) # Use passed job_id
             if current_job:
                 if current_job.status == CrawlStatus.PAUSED:
-                    self.logger.info(f"Crawler for job {self.job_id} paused. Waiting to resume...")
+                    self.logger.info(f"Crawler for job {job_id} paused. Waiting to resume...")
                     while True:
                         await asyncio.sleep(5)
-                        rechecked_job = self.db.get_crawl_job(self.job_id)
+                        rechecked_job = self.db.get_crawl_job(job_id)
                         if rechecked_job and rechecked_job.status == CrawlStatus.IN_PROGRESS:
-                            self.logger.info(f"Crawler for job {self.job_id} resumed.")
+                            self.logger.info(f"Crawler for job {job_id} resumed.")
                             break
                         elif rechecked_job and rechecked_job.status == CrawlStatus.STOPPED:
-                            self.logger.info(f"Crawler for job {self.job_id} stopped during pause.")
+                            self.logger.info(f"Crawler for job {job_id} stopped during pause.")
                             return
 
             url, current_depth = await urls_to_visit.get()
