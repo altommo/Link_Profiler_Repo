@@ -5,7 +5,7 @@ Simple web interface to monitor queue status and satellites
 import asyncio
 import json
 from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional # Corrected: Import Optional
+from typing import Dict, List, Any, Optional
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -16,8 +16,9 @@ import sys
 import os
 import psutil
 import psycopg2
+from psycopg2 import OperationalError as Psycopg2OperationalError # Import specific error
 import aiohttp
-import time # Corrected: Import time
+import time
 
 # Add project root to path for imports
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,35 +39,75 @@ templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler"
 
 class MonitoringDashboard:
     def __init__(self):
-        # Load Redis URL from config_loader, with fallback to environment variable then hardcoded default
-        redis_url = config_loader.get("redis.url", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
-        self.redis_pool = redis.ConnectionPool.from_url(redis_url)
-        self.redis = redis.Redis(connection_pool=self.redis_pool)
-        
-        # Load Database URL from config_loader, with fallback to environment variable then hardcoded default
-        database_url = config_loader.get("database.url", os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/link_profiler_db"))
-        self.db = Database(db_url=database_url)
-
-        self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.logger = logging.getLogger(__name__)
+        
+        # Initialize clients as None; they will be set up in __aenter__
+        self.redis_pool: Optional[redis.ConnectionPool] = None
+        self.redis: Optional[redis.Redis] = None
+        self.db: Optional[Database] = None
         self._session: Optional[aiohttp.ClientSession] = None
 
+        self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
+
     async def __aenter__(self):
-        """Initialise aiohttp session."""
-        self.logger.info("Entering MonitoringDashboard context.")
+        """Initialise aiohttp session, Redis, and Database connections."""
+        self.logger.info("Entering MonitoringDashboard context. Initialising connections.")
+        
+        # Initialize aiohttp session
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
+
+        # Initialize Redis connection
+        redis_url = config_loader.get("redis.url", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        try:
+            self.redis_pool = redis.ConnectionPool.from_url(redis_url)
+            self.redis = redis.Redis(connection_pool=self.redis_pool)
+            await self.redis.ping()
+            self.logger.info("MonitoringDashboard connected to Redis successfully.")
+        except Exception as e:
+            self.logger.error(f"MonitoringDashboard failed to connect to Redis: {e}", exc_info=True)
+            self.redis = None # Set to None if connection fails
+            self.redis_pool = None
+
+        # Initialize Database connection
+        database_url = config_loader.get("database.url", os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/link_profiler_db"))
+        try:
+            self.db = Database(db_url=database_url)
+            self.db.ping() # Use the ping method to test connection and create tables
+            self.logger.info("MonitoringDashboard connected to PostgreSQL successfully.")
+        except Psycopg2OperationalError as e:
+            self.logger.error(f"MonitoringDashboard failed to connect to PostgreSQL: {e}", exc_info=True)
+            self.db = None # Set to None if connection fails
+        except Exception as e:
+            self.logger.error(f"MonitoringDashboard encountered unexpected error with PostgreSQL: {e}", exc_info=True)
+            self.db = None
+
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Close aiohttp session."""
-        self.logger.info("Exiting MonitoringDashboard context. Closing aiohttp session.")
+        """Close aiohttp session, Redis, and Database connections."""
+        self.logger.info("Exiting MonitoringDashboard context. Closing connections.")
+        
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
+        
+        if self.redis_pool:
+            await self.redis_pool.disconnect()
+            self.redis = None
+            self.redis_pool = None
+        
+        # SQLAlchemy scoped_session is managed by its own lifecycle,
+        # but explicit close might be needed if not using scoped_session correctly
+        # For now, rely on the session's internal management or garbage collection.
+        # If self.db has a close method, call it:
+        # if self.db and hasattr(self.db, 'close'):
+        #     self.db.close()
 
     async def get_queue_metrics(self) -> Dict:
         """Get comprehensive queue metrics"""
+        if not self.redis:
+            return {"error": "Redis not connected", "timestamp": datetime.now()}
         try:
             job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs")
             result_queue_name = config_loader.get("queue.result_queue_name", "crawl_results")
@@ -106,6 +147,8 @@ class MonitoringDashboard:
     
     async def get_job_history(self, limit: int = 50) -> List[Dict]:
         """Get recent job completion history from the database."""
+        if not self.db:
+            return []
         try:
             all_jobs = self.db.get_all_crawl_jobs()
             
@@ -135,6 +178,8 @@ class MonitoringDashboard:
         Get system performance statistics based on historical job data.
         Calculates jobs per hour, average job duration, and success rate.
         """
+        if not self.redis or not self.db:
+            return {"error": "Redis or DB not connected", "timestamp": datetime.now()}
         try:
             # Get Redis memory usage
             info = await self.redis.info("memory")
@@ -192,6 +237,13 @@ class MonitoringDashboard:
         """
         Get summary statistics for various data types stored in the database.
         """
+        if not self.db:
+            return {
+                "total_link_profiles": "N/A", "avg_link_profile_authority": "N/A",
+                "total_domains_analyzed": "N/A", "valuable_expired_domains": "N/A",
+                "competitive_keyword_analyses": "N/A", "total_backlinks_stored": "N/A",
+                "error": "Database not connected"
+            }
         try:
             # Total Link Profiles
             all_link_profiles = self.db.get_all_link_profiles()
@@ -225,7 +277,8 @@ class MonitoringDashboard:
                 "total_domains_analyzed": "N/A",
                 "valuable_expired_domains": "N/A",
                 "competitive_keyword_analyses": "N/A",
-                "total_backlinks_stored": "N/A"
+                "total_backlinks_stored": "N/A",
+                "error": str(e)
             }
 
     async def get_system_stats(self) -> Dict:
@@ -253,12 +306,12 @@ class MonitoringDashboard:
 
     async def get_api_health(self):
         """Check API health by calling its /health endpoint"""
-        api_base_url = f"http://127.0.0.1:{config_loader.get('api.port', 8000)}"
-        try:
-            if self._session is None:
-                self.logger.warning("aiohttp session not initialized for API health check.")
-                return {"status": "error", "message": "Internal session not ready."}
+        if not self._session:
+            return {"status": "error", "message": "Internal aiohttp session not ready."}
 
+        api_port = config_loader.get('api.port', 8000)
+        api_base_url = f"http://127.0.0.1:{api_port}"
+        try:
             async with self._session.get(f"{api_base_url}/health", timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status == 200:
                     return await resp.json()
@@ -270,6 +323,8 @@ class MonitoringDashboard:
 
     async def get_redis_stats(self):
         """Get Redis statistics"""
+        if not self.redis:
+            return {"status": "disconnected", "message": "Redis client not initialized."}
         try:
             info = await self.redis.info()
             return {
@@ -286,7 +341,12 @@ class MonitoringDashboard:
 
     async def get_database_stats(self):
         """Get database statistics using psycopg2"""
+        if not self.db:
+            return {"status": "disconnected", "message": "Database client not initialized."}
         try:
+            # Use self.db.ping() to check connection
+            self.db.ping()
+            
             conn = psycopg2.connect(self.db.db_url)
             cur = conn.cursor()
             
@@ -318,6 +378,9 @@ class MonitoringDashboard:
                 "status": "connected",
                 "tables": tables
             }
+        except Psycopg2OperationalError as e:
+            self.logger.error(f"Error getting database stats (connection failed): {e}", exc_info=True)
+            return {"status": "disconnected", "message": str(e)}
         except Exception as e:
             self.logger.error(f"Error getting database stats: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
@@ -419,8 +482,33 @@ async def get_satellites_api():
 async def health_check():
     """Health check endpoint"""
     try:
-        await dashboard.redis.ping()
-        return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+        # Use the dashboard's internal health check logic
+        api_health_data = await dashboard.get_api_health()
+        redis_health_data = await dashboard.get_redis_stats()
+        db_health_data = await dashboard.get_database_stats()
+
+        overall_status = "healthy"
+        dependencies = {}
+
+        if api_health_data.get("status") == "error":
+            overall_status = "unhealthy"
+        dependencies["api"] = api_health_data
+
+        if redis_health_data.get("status") != "connected":
+            overall_status = "unhealthy"
+        dependencies["redis"] = redis_health_data
+
+        if db_health_data.get("status") != "connected":
+            overall_status = "unhealthy"
+        dependencies["postgresql"] = db_health_data
+
+        status_code = 200 if overall_status == "healthy" else 503
+        return Response(content=json.dumps({
+            "status": overall_status,
+            "timestamp": datetime.now().isoformat(),
+            "dependencies": dependencies
+        }, indent=2), media_type="application/json", status_code=status_code)
+
     except Exception as e:
         return {"status": "unhealthy", "error": str(e), "timestamp": datetime.now().isoformat()}
 
