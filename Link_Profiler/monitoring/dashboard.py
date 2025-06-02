@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import redis.asyncio as redis
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import HTMLResponse # Corrected: Import HTMLResponse
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import uvicorn
 import logging
@@ -16,14 +16,15 @@ import sys
 import os
 import psutil
 import psycopg2
-from psycopg2 import OperationalError as Psycopg2OperationalError # Import specific error
+from psycopg2 import OperationalError as Psycopg2OperationalError
 import aiohttp
 import time
 
 # Add project root to path for imports
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Corrected project_root calculation to point to the repository root
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+    sys.sys.path.insert(0, project_root)
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain
@@ -31,10 +32,11 @@ from Link_Profiler.config.config_loader import ConfigLoader
 
 # Initialize and load config once using the absolute path
 config_loader = ConfigLoader()
+# The config_dir path is now correct relative to the new project_root
 config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
 
 app = FastAPI(title="Link Profiler Monitor")
-# Corrected template directory path
+# Corrected template directory path relative to the new project_root
 templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "monitoring", "templates"))
 
 class MonitoringDashboard:
@@ -577,8 +579,10 @@ class QueueManager:
         else:
             print("  No active satellites detected in the last 5 minutes.")
 
-async def cli_main():
-    """CLI interface for queue management"""
+# The cli_main function is no longer needed as a separate async function.
+# Its logic is moved directly into the __main__ block.
+
+if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Link Profiler Monitoring CLI")
@@ -615,24 +619,26 @@ async def cli_main():
     manager = QueueManager(redis_url=args.redis_url)
     
     if args.command == "dashboard":
+        # Directly run uvicorn for the dashboard command
         uvicorn.run(app, host="0.0.0.0", port=config_loader.get("monitoring.monitor_port", 8001))
-    elif args.command == "clear-jobs":
-        await manager.clear_queue(config_loader.get("queue.job_queue_name", "crawl_jobs"))
-    elif args.command == "clear-results":
-        await manager.clear_queue(config_loader.get("queue.result_queue_name", "crawl_results"))
-    elif args.command == "clear-dead-letters":
-        await manager.clear_queue(config_loader.get("queue.dead_letter_queue_name", "dead_letter_queue"))
-    elif args.command == "pause":
-        await manager.pause_processing()
-    elif args.command == "resume":
-        await manager.resume_processing()
-    elif args.command == "status":
-        await manager.get_queue_sizes()
-    elif args.command == "satellites":
-        await manager.list_satellites()
     else:
-        parser.print_help()
+        # For other async CLI commands, use asyncio.run() to manage the event loop
+        async def run_cli_command():
+            if args.command == "clear-jobs":
+                await manager.clear_queue(config_loader.get("queue.job_queue_name", "crawl_jobs"))
+            elif args.command == "clear-results":
+                await manager.clear_queue(config_loader.get("queue.result_queue_name", "crawl_results"))
+            elif args.command == "clear-dead-letters":
+                await manager.clear_queue(config_loader.get("queue.dead_letter_queue_name", "dead_letter_queue"))
+            elif args.command == "pause":
+                await manager.pause_processing()
+            elif args.command == "resume":
+                await manager.resume_processing()
+            elif args.command == "status":
+                await manager.get_queue_sizes()
+            elif args.command == "satellites":
+                await manager.list_satellites()
+            else:
+                parser.print_help() # This will print help and exit, no async needed
 
-if __name__ == "__main__":
-    import argparse
-    asyncio.run(cli_main())
+        asyncio.run(run_cli_command())
