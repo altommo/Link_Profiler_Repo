@@ -405,6 +405,18 @@
                     jobHistoryDiv.innerHTML = '<p>No recent job history available.</p>';
                 }
 
+                // Update global job status indicator
+                const globalJobStatusSpan = document.getElementById('globalJobStatus');
+                if (globalJobStatusSpan && data.queue_metrics) {
+                    if (data.queue_metrics.paused_globally) {
+                        globalJobStatusSpan.textContent = '(PAUSED)';
+                        globalJobStatusSpan.style.color = '#ff9800'; // Orange for paused
+                    } else {
+                        globalJobStatusSpan.textContent = '(ACTIVE)';
+                        globalJobStatusSpan.style.color = '#4CAF50'; // Green for active
+                    }
+                }
+
                 // Update last refresh time
                 document.querySelector('.refresh-info').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
 
@@ -416,6 +428,11 @@
                 document.getElementById('database-stats').innerHTML = '<p class="status-error">Error loading data.</p>';
                 document.getElementById('satellite-crawlers').innerHTML = '<p class="status-error">Error loading data.</p>';
                 document.getElementById('recent-jobs').innerHTML = '<p class="status-error">Error loading data.</p>';
+                const globalJobStatusSpan = document.getElementById('globalJobStatus');
+                if (globalJobStatusSpan) {
+                    globalJobStatusSpan.textContent = '(ERROR)';
+                    globalJobStatusSpan.style.color = '#f44336';
+                }
             }
             // Always load the full jobs table after other stats
             loadJobsTable();
@@ -629,7 +646,7 @@
         </div>
 
         <div class="card">
-            <h2>⚙️ Global Job & Satellite Controls</h2>
+            <h2>⚙️ Global Job & Satellite Controls <span id="globalJobStatus" style="font-size: 0.7em; font-weight: normal; margin-left: 10px;"></span></h2>
             <div class="button-group">
                 <button onclick="pauseAllJobs()" class="secondary">Pause All Jobs</button>
                 <button onclick="resumeAllJobs()">Resume All Jobs</button>
