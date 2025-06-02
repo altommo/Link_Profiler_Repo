@@ -384,7 +384,8 @@ class SatelliteCrawler:
 
             job.results = result_data
             job.completed_date = datetime.now()
-            job.duration_seconds = (job.completed_date - job.started_date).total_seconds()
+            # Removed direct assignment to job.duration_seconds
+            # job.duration_seconds = (job.completed_date - job.started_date).total_seconds()
             self.db.update_crawl_job(job)
             self.logger.info(f"Job {job_id} finished. Status: {job.status.value}")
 
@@ -392,7 +393,8 @@ class SatelliteCrawler:
             self.logger.warning(f"Job {job_id} was cancelled.")
             job.status = CrawlStatus.CANCELLED
             job.completed_date = datetime.now()
-            job.duration_seconds = (job.completed_date - job.started_date).total_seconds() if job.started_date else 0
+            # Removed direct assignment to job.duration_seconds
+            # job.duration_seconds = (job.completed_date - job.started_date).total_seconds() if job.started_date else 0
             job.error_log.append(CrawlError(
                 timestamp=datetime.now(),
                 url=target_url,
@@ -404,7 +406,8 @@ class SatelliteCrawler:
             self.logger.error(f"Error processing job {job_id}: {e}", exc_info=True)
             job.status = CrawlStatus.FAILED
             job.completed_date = datetime.now()
-            job.duration_seconds = (job.completed_date - job.started_date).total_seconds() if job.started_date else 0
+            # Removed direct assignment to job.duration_seconds
+            # job.duration_seconds = (job.completed_date - job.started_date).total_seconds() if job.started_date else 0
             job.errors_count += 1
             job.error_log.append(CrawlError(
                 timestamp=datetime.now(),
