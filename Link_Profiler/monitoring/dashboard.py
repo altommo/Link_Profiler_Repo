@@ -55,6 +55,8 @@ class MonitoringDashboard:
 
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Get stale_timeout from config
+        self.job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs") # Added for is_paused endpoint
+        self.dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name", "dead_letter_queue") # Added for is_paused endpoint
 
     async def __aenter__(self):
         """Initialise aiohttp session, Redis, and Database connections."""
@@ -630,6 +632,19 @@ async def resume_all_jobs_endpoint():
     if not success:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to resume job processing.")
     return {"status": "success", "message": "All job processing resumed."}
+
+@app.get("/api/jobs/is_paused", response_model=Dict[str, bool]) # New endpoint to check global pause status
+async def is_jobs_paused_endpoint():
+    """Check if global job processing is currently paused."""
+    if not dashboard.redis:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Redis is not available.")
+    try:
+        is_paused = await dashboard.redis.exists("processing_paused")
+        return {"is_paused": bool(is_paused)}
+    except Exception as e:
+        dashboard.logger.error(f"Error checking global pause status: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to check pause status: {e}")
+
 
 @app.post("/api/jobs/{job_id}/cancel", status_code=status.HTTP_200_OK)
 async def cancel_job_endpoint(job_id: str):
