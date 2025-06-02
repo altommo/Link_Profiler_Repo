@@ -1,17 +1,3 @@
-[Unit]
-Description=Link Profiler Monitoring Dashboard
-After=network.target linkprofiler-api.service
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/Link_Profiler_Repo/Link_Profiler/monitoring
-Environment=PATH=/opt/Link_Profiler_Repo/venv/bin
-Environment=PYTHONPATH=/opt/Link_Profiler_Repo
-Environment=LP_DATABASE_URL="postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db"
-ExecStart=/opt/Link_Profiler_Repo/venv/bin/python /opt/Link_Profiler_Repo/Link_Profiler/monitoring/dashboard.py dashboard
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
+redis-cli
+AUTH redis_secure_pass_456 # Use your actual Redis password if authentication is enabled
+DEL crawl_jobs
