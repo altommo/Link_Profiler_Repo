@@ -5,6 +5,7 @@ import redis.asyncio as redis
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
+import json # Added: Import json
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, CrawlResult, CrawlError, LinkType, SpamLevel, URL, Domain, SEOMetrics, SERPResult, KeywordSuggestion, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlConfig, serialize_model
