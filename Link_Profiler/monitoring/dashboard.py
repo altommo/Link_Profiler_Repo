@@ -7,8 +7,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import redis.asyncio as redis
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request, Response # Corrected: Import Response
 from fastapi.templating import Jinja2Templates
 import uvicorn
 import logging
@@ -231,7 +230,7 @@ class MonitoringDashboard:
             
         except Exception as e:
             self.logger.error(f"Error getting performance stats: {e}", exc_info=True)
-            return {"error": str(e)}
+            return {"error": str(e), "timestamp": datetime.now()}
 
     async def get_data_summaries(self) -> Dict:
         """
