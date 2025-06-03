@@ -494,7 +494,8 @@ from Link_Profiler.api.crawl_audit import crawl_audit_router
 from Link_Profiler.api.analytics import analytics_router
 from Link_Profiler.api.competitive_analysis import competitive_analysis_router
 from Link_Profiler.api.link_building import link_building_router
-from Link_Profiler.api.ai import ai_router # New: Import the ai router
+from Link_Profiler.api.ai import ai_router
+from Link_Profiler.api.reports import reports_router # New: Import the reports router
 from Link_Profiler.api.dependencies import get_current_user # Import get_current_user for other endpoints that need it
 
 # Register the routers with the main app
@@ -504,84 +505,9 @@ app.include_router(crawl_audit_router)
 app.include_router(analytics_router)
 app.include_router(competitive_analysis_router)
 app.include_router(link_building_router)
-app.include_router(ai_router) # New: Include the ai router
+app.include_router(ai_router)
+app.include_router(reports_router) # New: Include the reports router
 
-
-@app.post("/reports/schedule", response_model=Dict[str, str], status_code=202) # New endpoint
-async def schedule_report_generation_job(
-    request: ReportScheduleRequest,
-    background_tasks: BackgroundTasks,
-    current_user: Annotated[User, Depends(get_current_user)] # Protected endpoint
-):
-    """
-    Schedules a report generation job to run at a specific time or on a recurring basis.
-    """
-    logger.info(f"API: Received request to schedule report '{request.report_type}' for '{request.target_identifier}' by user: {current_user.username}.")
-    JOBS_CREATED_TOTAL.labels(job_type='report_generation').inc()
-
-    if not request.scheduled_at and not request.cron_schedule:
-        raise HTTPException(status_code=400, detail="Either 'scheduled_at' or 'cron_schedule' must be provided for scheduling.")
-    
-    if request.cron_schedule and not request.scheduled_at:
-        raise HTTPException(status_code=400, detail="For recurring reports, 'scheduled_at' must be provided for the initial run time.")
-
-    queue_request = QueueCrawlRequest(
-        target_url=request.target_identifier, # Re-use target_url for report target
-        initial_seed_urls=[], # Not applicable
-        config=request.config if request.config else {},
-        priority=5,
-        scheduled_at=request.scheduled_at,
-        cron_schedule=request.cron_schedule
-    )
-    queue_request.config["job_type"] = "report_generation" # Explicitly set job type
-    queue_request.config["report_job_type"] = request.report_type
-    queue_request.config["report_target_identifier"] = request.target_identifier
-    queue_request.config["report_format"] = request.format
-
-    return await submit_crawl_to_queue(queue_request)
-
-@app.get("/reports/{job_id}", response_model=ReportJobResponse) # New endpoint
-async def get_report_job_status(job_id: str, current_user: Annotated[User, Depends(get_current_user)]):
-    """
-    Retrieves the status of a scheduled or generated report job.
-    """
-    logger.info(f"API: Received request for report job status {job_id} by user: {current_user.username}.")
-    try:
-        report_job = db.get_report_job(job_id)
-        if not report_job:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report job not found.")
-        return ReportJobResponse.from_report_job(report_job)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"API: Error retrieving report job status {job_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve report job status: {e}")
-
-@app.get("/reports/{job_id}/download") # New endpoint
-async def download_report_file(job_id: str, current_user: Annotated[User, Depends(get_current_user)]):
-    """
-    Downloads the generated report file for a completed report job.
-    """
-    logger.info(f"API: Received request to download report for job {job_id} by user: {current_user.username}.")
-    try:
-        report_job = db.get_report_job(job_id)
-        if not report_job:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report job not found.")
-        if report_job.status != CrawlStatus.COMPLETED:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Report job is not yet completed.")
-        if not report_job.file_path or not os.path.exists(report_job.file_path):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report file not found on server.")
-        
-        file_content = await asyncio.to_thread(lambda: open(report_job.file_path, "rb").read())
-        filename = os.path.basename(report_job.file_path)
-        media_type = "application/pdf" if report_job.format == "pdf" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" # For .xlsx
-        
-        return Response(content=file_content, media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}"})
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"API: Error downloading report for job {job_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to download report: {e}")
 
 # --- Helper function for aggregated stats (used by /api/stats endpoint) ---
 async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
