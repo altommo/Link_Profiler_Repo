@@ -3,7 +3,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
-import asyncio # Added missing import
+import asyncio
 
 import redis.asyncio as redis
 from pydantic import BaseModel, Field
@@ -13,20 +13,20 @@ from Link_Profiler.core.models import CrawlJob, CrawlStatus, CrawlConfig, serial
 
 # Import job coordinator
 from Link_Profiler.queue_system.job_coordinator import JobCoordinator
+from Link_Profiler.config.config_loader import ConfigLoader # Import ConfigLoader
+from Link_Profiler.database.database import Database # Import Database
+from Link_Profiler.services.alert_service import AlertService # Import AlertService
+from Link_Profiler.utils.connection_manager import ConnectionManager # Import ConnectionManager
 
-# Get logger and global instances from main.py
-# These are expected to be initialized in main.py before this module is imported
-try:
-    from Link_Profiler.main import logger, redis_client, config_loader, db, alert_service_instance, connection_manager
-except ImportError:
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(level=logging.INFO)
-    # Fallback for testing or if main.py is not yet fully initialized
-    redis_client = None
-    config_loader = None
-    db = None
-    alert_service_instance = None
-    connection_manager = None
+
+logger = logging.getLogger(__name__)
+
+# Global variables to hold initialized dependencies
+_redis_client: Optional[redis.Redis] = None
+_config_loader: Optional[ConfigLoader] = None
+_db: Optional[Database] = None
+_alert_service_instance: Optional[AlertService] = None
+_connection_manager: Optional[ConnectionManager] = None
 
 # Check for croniter explicitly if it's a core dependency for queue functionality
 try:
@@ -54,6 +54,26 @@ class QueueCrawlRequest(BaseModel):
 # --- Global Job Coordinator Instance ---
 _job_coordinator: Optional[JobCoordinator] = None
 
+def set_coordinator_dependencies(
+    redis_client: redis.Redis,
+    config_loader: ConfigLoader,
+    db: Database,
+    alert_service: AlertService,
+    connection_manager: ConnectionManager
+):
+    """
+    Sets the global dependencies for the JobCoordinator.
+    This function should be called once during application startup.
+    """
+    global _redis_client, _config_loader, _db, _alert_service_instance, _connection_manager
+    _redis_client = redis_client
+    _config_loader = config_loader
+    _db = db
+    _alert_service_instance = alert_service
+    _connection_manager = connection_manager
+    logger.info("JobCoordinator dependencies set.")
+
+
 async def get_coordinator() -> JobCoordinator:
     """
     Returns the singleton JobCoordinator instance.
@@ -62,29 +82,19 @@ async def get_coordinator() -> JobCoordinator:
     global _job_coordinator
     if not QUEUE_AVAILABLE:
         logger.error("Queue system not available. Croniter might be missing.")
-        raise RuntimeError("Queue system not available. Missing dependencies.") # Changed to RuntimeError as it's a core issue
+        raise RuntimeError("Queue system not available. Missing dependencies.")
 
     if _job_coordinator is None:
-        if redis_client is None or config_loader is None or db is None or alert_service_instance is None or connection_manager is None:
+        if _redis_client is None or _config_loader is None or _db is None or _alert_service_instance is None or _connection_manager is None:
             logger.error("JobCoordinator dependencies (redis_client, config_loader, db, alert_service_instance, connection_manager) are not initialized.")
-            raise RuntimeError("JobCoordinator dependencies not available. Ensure main.py initializes them before importing queue_endpoints.")
+            raise RuntimeError("JobCoordinator dependencies not available. Ensure set_coordinator_dependencies() is called before get_coordinator().")
         
-        job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs")
-        result_queue_name = config_loader.get("queue.result_queue_name", "crawl_results")
-        dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name", "dead_letters")
-        satellite_heartbeat_prefix = config_loader.get("queue.satellite_heartbeat_prefix", "satellite_heartbeat:")
-        satellite_timeout_seconds = config_loader.get("queue.satellite_timeout_seconds", 300)
-
         _job_coordinator = JobCoordinator(
-            redis_client=redis_client,
-            db=db,
-            job_queue_name=job_queue_name,
-            result_queue_name=result_queue_name,
-            dead_letter_queue_name=dead_letter_queue_name,
-            satellite_heartbeat_prefix=satellite_heartbeat_prefix,
-            satellite_timeout_seconds=satellite_timeout_seconds,
-            alert_service=alert_service_instance,
-            connection_manager=connection_manager
+            redis_client=_redis_client,
+            config_loader=_config_loader,
+            database=_db,
+            alert_service=_alert_service_instance,
+            connection_manager=_connection_manager
         )
         # Start background tasks here, as this is the first time coordinator is accessed
         # This ensures tasks are started only once when the coordinator is first retrieved.

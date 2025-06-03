@@ -19,51 +19,41 @@ from Link_Profiler.config.config_loader import ConfigLoader # Import ConfigLoade
 from Link_Profiler.services.alert_service import AlertService
 from Link_Profiler.utils.connection_manager import ConnectionManager
 
-# Initialize and load config once using the absolute path
-# Assuming this file is at Link_Profiler/queue_system/job_coordinator.py
-# The project root is two levels up.
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(os.path.dirname(current_dir))
-config_loader = ConfigLoader()
-config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
-
 logger = logging.getLogger(__name__)
 
 class JobCoordinator:
     """Manages distributed crawling jobs via Redis queues"""
     
-    def __init__(self, redis_url: str = None, database: Database = None, alert_service: Optional[AlertService] = None, connection_manager: Optional[ConnectionManager] = None):
-        # Load Redis URL from config_loader, with fallback to environment variable then hardcoded default
-        redis_url = redis_url or config_loader.get("redis.url", os.getenv("REDIS_URL", "redis://:redis_secure_pass_456@127.0.0.1:6379/0"))
-        self.redis_pool = redis.ConnectionPool.from_url(redis_url)
-        self.redis = redis.Redis(connection_pool=self.redis_pool)
+    def __init__(self, redis_client: redis.Redis, config_loader: ConfigLoader, database: Database, alert_service: Optional[AlertService] = None, connection_manager: Optional[ConnectionManager] = None):
+        self.redis = redis_client
+        self.config_loader = config_loader
         self.db = database
         self.alert_service = alert_service
         self.connection_manager = connection_manager
         
         # Queue names
-        self.job_queue = config_loader.get("queue.job_queue_name", "crawl_jobs")
-        self.result_queue = config_loader.get("queue.result_queue_name", "crawl_results")
-        self.heartbeat_queue_sorted = config_loader.get("queue.heartbeat_queue_sorted_name", "crawler_heartbeats_sorted") # Modified: Load from config
-        self.scheduled_jobs_queue = config_loader.get("queue.scheduled_jobs_queue", "scheduled_jobs") # New: Scheduled jobs queue name
+        self.job_queue = self.config_loader.get("queue.job_queue_name", "crawl_jobs")
+        self.result_queue = self.config_loader.get("queue.result_queue_name", "crawl_results")
+        self.heartbeat_queue_sorted = self.config_loader.get("queue.heartbeat_queue_sorted_name", "crawler_heartbeats_sorted")
+        self.scheduled_jobs_queue = self.config_loader.get("queue.scheduled_jobs_queue", "scheduled_jobs")
         
         # Job tracking (authoritative state is in DB, this is for quick in-memory lookup of active jobs)
         self.active_jobs_cache: Dict[str, CrawlJob] = {}
         # Changed satellite_crawlers to store the full heartbeat data, not just last_seen time
         self.satellite_crawlers: Dict[str, Dict[str, Any]] = {} 
         
-        self.scheduler_interval = config_loader.get("queue.scheduler_interval", 5)
-        self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Added stale_timeout from config
+        self.scheduler_interval = self.config_loader.get("queue.scheduler_interval", 5)
+        self.stale_timeout = self.config_loader.get("queue.stale_timeout", 60)
 
         # New: Current desired code version for satellites and version control flag
-        self.current_code_version = config_loader.get("system.current_code_version", "unknown")
-        self.version_control_enabled = config_loader.get("system.version_control_enabled", False) # New: Load version control flag
+        self.current_code_version = self.config_loader.get("system.current_code_version", "unknown")
+        self.version_control_enabled = self.config_loader.get("system.version_control_enabled", False)
         logger.info(f"JobCoordinator: Desired satellite code version: {self.current_code_version}")
         logger.info(f"JobCoordinator: Version control enabled: {self.version_control_enabled}")
 
         # Webhook configuration (for job completion webhooks)
-        self.webhook_enabled = config_loader.get("notifications.webhooks.enabled", False)
-        self.webhook_urls = config_loader.get("notifications.webhooks.urls", [])
+        self.webhook_enabled = self.config_loader.get("notifications.webhooks.enabled", False)
+        self.webhook_urls = self.config_loader.get("notifications.webhooks.urls", [])
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
@@ -83,8 +73,9 @@ class JobCoordinator:
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.redis.close()
-        logger.info("JobCoordinator Redis connection closed.")
+        # Redis client is managed by main.py's lifespan, so no need to close here
+        # await self.redis.close() 
+        logger.info("JobCoordinator Redis connection (managed externally) is assumed to be closed.")
         
         # New: Close aiohttp client session
         if self._session and not self._session.closed:
@@ -288,7 +279,7 @@ class JobCoordinator:
                 # Get all crawler_ids and their last heartbeat timestamps from the sorted set
                 # Only fetch those that are within the stale_timeout period
                 cutoff = (datetime.now() - timedelta(seconds=self.stale_timeout)).timestamp()
-                logger.debug(f"Monitor: Checking for active crawlers with heartbeat score >= {cutoff}") # Added log
+                logger.debug(f"Monitor: Checking for active crawlers with heartbeat score >= {cutoff}")
                 
                 # Fetch members (crawler_ids) and their scores (timestamps)
                 active_crawler_ids_with_timestamps = await self.redis.zrangebyscore(
@@ -298,14 +289,14 @@ class JobCoordinator:
                     withscores=True
                 )
                 
-                logger.debug(f"Monitor: Found {len(active_crawler_ids_with_timestamps)} potential active crawlers in sorted set.") # Added log
+                logger.debug(f"Monitor: Found {len(active_crawler_ids_with_timestamps)} potential active crawlers in sorted set.")
                 if not active_crawler_ids_with_timestamps:
-                    logger.debug("Monitor: No active crawlers found in sorted set within cutoff.") # Added log
+                    logger.debug("Monitor: No active crawlers found in sorted set within cutoff.")
 
                 current_active_crawlers_details = {}
                 for crawler_id_bytes, timestamp in active_crawler_ids_with_timestamps:
                     crawler_id = crawler_id_bytes.decode('utf-8')
-                    logger.debug(f"Monitor: Processing crawler_id '{crawler_id}' from sorted set with timestamp {timestamp}") # Added log
+                    logger.debug(f"Monitor: Processing crawler_id '{crawler_id}' from sorted set with timestamp {timestamp}")
                     
                     # Fetch the detailed heartbeat data for this crawler_id
                     detailed_heartbeat_json = await self.redis.get(f"crawler_details:{crawler_id}")
@@ -317,7 +308,7 @@ class JobCoordinator:
                             # New: Check for code version mismatch ONLY if version control is enabled
                             if self.version_control_enabled:
                                 satellite_code_version = detailed_heartbeat_data.get("code_version", "unknown")
-                                logger.debug(f"Monitor: Comparing satellite '{crawler_id}' version '{satellite_code_version}' with desired '{self.current_code_version}'.") # New debug log
+                                logger.debug(f"Monitor: Comparing satellite '{crawler_id}' version '{satellite_code_version}' with desired '{self.current_code_version}'.")
                                 if satellite_code_version != self.current_code_version:
                                     logger.warning(f"Satellite '{crawler_id}' is outdated (version: {satellite_code_version}, desired: {self.current_code_version}). Sending RESTART command.")
                                     await self.send_control_command(crawler_id, "RESTART")
@@ -329,15 +320,15 @@ class JobCoordinator:
                                 detailed_heartbeat_data["is_outdated"] = False # Assume not outdated if feature is off
                                 
                             current_active_crawlers_details[crawler_id] = detailed_heartbeat_data
-                            logger.debug(f"Monitor: Successfully retrieved detailed data for '{crawler_id}': {detailed_heartbeat_data}") # Added log
+                            logger.debug(f"Monitor: Successfully retrieved detailed data for '{crawler_id}': {detailed_heartbeat_data}")
                         except json.JSONDecodeError:
                             logger.warning(f"Monitor: Invalid detailed heartbeat data for {crawler_id}: {detailed_heartbeat_json}")
                     else:
-                        logger.warning(f"Monitor: No detailed heartbeat data found for active crawler_id: {crawler_id}. It might have expired or not been set.") # Added log
+                        logger.warning(f"Monitor: No detailed heartbeat data found for active crawler_id: {crawler_id}. It might have expired or not been set.")
                 
                 # Update internal state with the de-duplicated, detailed information
                 self.satellite_crawlers = current_active_crawlers_details
-                logger.info(f"Monitor: Currently tracking {len(self.satellite_crawlers)} active satellites.") # Added log
+                logger.info(f"Monitor: Currently tracking {len(self.satellite_crawlers)} active satellites.")
                 
                 # Clean up old heartbeats from Redis sorted set (optional, but good for memory)
                 # This removes entries from the ZSET that are older than the cutoff
@@ -438,7 +429,7 @@ class JobCoordinator:
             return False
 
         if job.status in [CrawlStatus.COMPLETED, CrawlStatus.FAILED, CrawlStatus.CANCELLED]:
-            logger.info(f"Job {job_id} is already in a final state ({job.status.value}). Cannot cancel.")
+            logger.info(f"Job {job.id} is already in a final state ({job.status.value}). Cannot cancel.")
             return False
 
         # 1. Update DB status
@@ -527,11 +518,29 @@ async def main():
     logging.basicConfig(level=logging.INFO)
     # Initialize Database for standalone coordinator if needed
     # Load DATABASE_URL from config_loader, with fallback to environment variable then hardcoded default
-    DATABASE_URL = config_loader.get("database.url", os.getenv('DATABASE_URL', 'postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db'))
+    DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db')
     db_instance = Database(db_url=DATABASE_URL) 
     alert_service_instance = AlertService(db_instance)
+    
+    # Initialize config_loader for standalone use
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(current_dir))
+    config_loader_instance = ConfigLoader()
+    config_loader_instance.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
+
+    # Initialize Redis client for standalone use
+    redis_url = config_loader_instance.get("redis.url", os.getenv("REDIS_URL", "redis://:redis_secure_pass_456@127.0.0.1:6379/0"))
+    redis_pool = redis.ConnectionPool.from_url(redis_url)
+    redis_client_instance = redis.Redis(connection_pool=redis_pool)
+
     # For standalone, connection_manager would be None or a dummy
-    async with JobCoordinator(database=db_instance, alert_service=alert_service_instance, connection_manager=None) as coordinator:
+    async with JobCoordinator(
+        redis_client=redis_client_instance,
+        config_loader=config_loader_instance,
+        database=db_instance,
+        alert_service=alert_service_instance,
+        connection_manager=None
+    ) as coordinator:
         # Start monitoring tasks
         asyncio.create_task(coordinator.process_results())
         asyncio.create_task(coordinator.monitor_satellites())
