@@ -229,7 +229,8 @@ async def get_crawler_health():
         for crawler_id, details in coord.satellite_crawlers.items(): # `details` is the Dict[str, Any]
             last_heartbeat_str = details.get("timestamp")
             if last_heartbeat_str:
-                last_heartbeat_dt = datetime.fromisoformat(last_seen_str)
+                # Corrected: Use last_heartbeat_str instead of undefined last_seen_str
+                last_heartbeat_dt = datetime.fromisoformat(last_heartbeat_str)
                 time_diff = datetime.now() - last_heartbeat_dt
                 
                 health_info_list.append(SatelliteDetails( # Use SatelliteDetails model
