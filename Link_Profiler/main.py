@@ -493,7 +493,8 @@ from Link_Profiler.api.users import users_router
 from Link_Profiler.api.crawl_audit import crawl_audit_router
 from Link_Profiler.api.analytics import analytics_router
 from Link_Profiler.api.competitive_analysis import competitive_analysis_router
-from Link_Profiler.api.link_building import link_building_router # New: Import the link_building router
+from Link_Profiler.api.link_building import link_building_router
+from Link_Profiler.api.ai import ai_router # New: Import the ai router
 from Link_Profiler.api.dependencies import get_current_user # Import get_current_user for other endpoints that need it
 
 # Register the routers with the main app
@@ -502,56 +503,9 @@ app.include_router(users_router)
 app.include_router(crawl_audit_router)
 app.include_router(analytics_router)
 app.include_router(competitive_analysis_router)
-app.include_router(link_building_router) # New: Include the link_building router
+app.include_router(link_building_router)
+app.include_router(ai_router) # New: Include the ai router
 
-
-@app.post("/ai/content_ideas", response_model=List[str]) # New endpoint
-async def generate_content_ideas_endpoint(
-    request: ContentGenerationRequest,
-    current_user: Annotated[User, Depends(get_current_user)] # Protected endpoint
-):
-    """
-    Generates content ideas for a given topic using AI.
-    """
-    logger.info(f"API: Received request for content ideas for topic '{request.topic}' by user: {current_user.username}.")
-    if not request.topic:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Topic must be provided.")
-    
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-
-    try:
-        ideas = await ai_service_instance.generate_content_ideas(request.topic, request.num_ideas)
-        if not ideas:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No content ideas generated for '{request.topic}'.")
-        return ideas
-    except Exception as e:
-        logger.error(f"API: Error generating content ideas for '{request.topic}': {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate content ideas: {e}")
-
-@app.post("/ai/competitor_strategy", response_model=Dict[str, Any]) # New endpoint
-async def analyze_competitor_strategy_endpoint(
-    request: CompetitorStrategyAnalysisRequest,
-    current_user: Annotated[User, Depends(get_current_user)] # Protected endpoint
-):
-    """
-    Analyzes competitor strategies using AI.
-    """
-    logger.info(f"API: Received request for AI competitor strategy analysis for {request.primary_domain} by user: {current_user.username}.")
-    if not request.primary_domain or not request.competitor_domains:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary domain and competitor domains must be provided.")
-    
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-
-    try:
-        analysis_result = await ai_service_instance.analyze_competitors(request.primary_domain, request.competitor_domains)
-        if not analysis_result:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AI could not perform competitor strategy analysis for {request.primary_domain}.")
-        return analysis_result
-    except Exception as e:
-        logger.error(f"API: Error performing AI competitor strategy analysis for {request.primary_domain}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform AI competitor strategy analysis: {e}")
 
 @app.post("/reports/schedule", response_model=Dict[str, str], status_code=202) # New endpoint
 async def schedule_report_generation_job(
