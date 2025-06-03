@@ -21,8 +21,9 @@ except ImportError:
 # Import shared Pydantic models and dependencies
 from Link_Profiler.api.schemas import (
     JobStatusResponse, QueueStatsResponse, CrawlerHealthResponse,
-    QueueCrawlRequest # Import the request model from queue_endpoints
 )
+from Link_Profiler.api.queue_endpoints import QueueCrawlRequest # Corrected import path for QueueCrawlRequest
+
 from Link_Profiler.api.dependencies import get_current_user
 
 # Import core models
