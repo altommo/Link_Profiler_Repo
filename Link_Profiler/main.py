@@ -1,4 +1,3 @@
-// entire file content ...
 """
 API Endpoints for the Link Profiler System
 File: Link_Profiler/main.py (formerly Link_Profiler/api/main.py)
