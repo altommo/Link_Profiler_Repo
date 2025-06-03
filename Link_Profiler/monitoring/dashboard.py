@@ -478,7 +478,6 @@ class MonitoringDashboard:
             self.get_api_health(), # This now calls the main API
             self.get_redis_stats(),
             self.get_database_stats(),
-            # Removed: self._call_main_api("/api/jobs/all") if self.api_access_token else self._empty_list_awaitable()
             # The dashboard will now fetch all_jobs directly from the main API using its own public endpoint if available,
             # or the protected one if the user manually authenticates.
             # For now, we'll assume all_jobs is not part of the public stats.
@@ -797,7 +796,7 @@ if __name__ == "__main__":
     
     # Configure logging
     logging.basicConfig(
-        level=getattr(logging.Logger, args.log_level.upper()), # Corrected: Use logging.Logger
+        level=getattr(logging, args.log_level.upper()), # Corrected: Use logging.Logger
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
