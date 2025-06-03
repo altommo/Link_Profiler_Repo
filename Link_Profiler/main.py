@@ -66,13 +66,14 @@ from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
-from Link_Profiler.api.queue_endpoints import add_queue_endpoints, submit_crawl_to_queue, QueueCrawlRequest
+from Link_Profiler.api.queue_endpoints import add_queue_endpoints, submit_crawl_to_queue, QueueCrawlRequest, get_coordinator # Import get_coordinator
 from Link_Profiler.config.config_loader import ConfigLoader
 from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config
 from Link_Profiler.utils.data_exporter import export_to_csv
 from Link_Profiler.utils.user_agent_manager import user_agent_manager
 from Link_Profiler.utils.proxy_manager import proxy_manager
 from Link_Profiler.utils.connection_manager import ConnectionManager, connection_manager
+
 
 # New: Import API Clients
 from Link_Profiler.clients.google_search_console_client import GSCClient
@@ -1863,30 +1864,35 @@ async def download_report_file(job_id: str, current_user: User = Depends(get_cur
 async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
     """Aggregates various statistics for the /api/stats endpoint."""
     
+    # Get coordinator instance to access its internal state
+    coord = await get_coordinator()
+    stats_from_coordinator = await coord.get_queue_stats()
+
     # Queue Metrics
-    queue_metrics = {"error": "Redis not connected"}
-    if redis_client:
-        try:
-            job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs")
-            result_queue_name = config_loader.get("queue.result_queue_name", "crawl_results")
-            
-            pending_jobs = await redis_client.zcard(job_queue_name)
-            results_pending = await redis_client.llen(result_queue_name)
-            
-            # Active satellites (simplified for main API, just count heartbeats)
-            stale_timeout = config_loader.get("queue.stale_timeout", 60)
-            cutoff = (datetime.now() - timedelta(seconds=stale_timeout)).timestamp()
-            active_satellites = await redis_client.zcount("crawler_heartbeats_sorted", cutoff, "+inf")
-            
-            queue_metrics = {
-                "pending_jobs": pending_jobs,
-                "results_pending": results_pending,
-                "active_satellites": active_satellites,
-                "timestamp": datetime.now().isoformat()
-            }
-        except Exception as e:
-            logger.error(f"Error getting queue metrics for /api/stats: {e}", exc_info=True)
-            queue_metrics = {"error": str(e)}
+    queue_metrics = {
+        "pending_jobs": stats_from_coordinator.get("pending_jobs", 0),
+        "results_pending": stats_from_coordinator.get("results_pending", 0), # This might be missing from coord.get_queue_stats()
+        "active_satellites": stats_from_coordinator.get("active_crawlers", 0),
+        "satellites": [], # Initialize as empty list
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    # Populate detailed satellite info from coordinator's stats
+    # The coordinator's get_queue_stats returns a dictionary of satellite_crawlers
+    # We need to convert this dictionary of dictionaries into a list of dictionaries
+    # and ensure datetime objects are isoformatted for JSON serialization.
+    detailed_satellites = []
+    for crawler_id, details in stats_from_coordinator.get("satellite_crawlers", {}).items():
+        satellite_data = details.copy() # Create a mutable copy
+        if "timestamp" in satellite_data and isinstance(satellite_data["timestamp"], datetime):
+            satellite_data["timestamp"] = satellite_data["timestamp"].isoformat()
+        # Ensure last_seen is isoformatted if it's a datetime object
+        if "last_seen" in satellite_data and isinstance(satellite_data["last_seen"], datetime):
+            satellite_data["last_seen"] = satellite_data["last_seen"].isoformat()
+        detailed_satellites.append(satellite_data)
+    
+    queue_metrics["satellites"] = detailed_satellites
+
 
     # Performance Stats (simplified, as full trends are complex)
     performance_stats = {"error": "Database not connected"}

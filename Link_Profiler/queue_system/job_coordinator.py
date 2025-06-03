@@ -55,6 +55,10 @@ class JobCoordinator:
         self.scheduler_interval = config_loader.get("queue.scheduler_interval", 5)
         self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Added stale_timeout from config
 
+        # New: Current desired code version for satellites
+        self.current_code_version = config_loader.get("system.current_code_version", "unknown")
+        logger.info(f"JobCoordinator: Desired satellite code version: {self.current_code_version}")
+
         # Webhook configuration (for job completion webhooks)
         self.webhook_enabled = config_loader.get("notifications.webhooks.enabled", False)
         self.webhook_urls = config_loader.get("notifications.webhooks.urls", [])
@@ -181,7 +185,7 @@ class JobCoordinator:
             # If it's a recurring job, schedule the next run
             if job.cron_schedule:
                 try:
-                    iter = croniter(job.cron_schedule, job.completed_date)
+                    iter = croniter(job.completed_date, job.cron_schedule) # croniter expects date first, then cron string
                     next_run_time = iter.get_next(datetime)
                     
                     # Create a new job instance for the next run
@@ -275,7 +279,7 @@ class JobCoordinator:
                 logger.error(f"Unexpected error sending webhook for job {job.id} to {url}: {e}", exc_info=True)
 
     async def monitor_satellites(self):
-        """Monitor satellite crawler health via heartbeats"""
+        """Monitor satellite crawler health via heartbeats and trigger restarts for outdated versions."""
         logger.info("Starting satellite monitoring loop.")
         while True:
             try:
@@ -307,6 +311,16 @@ class JobCoordinator:
                     if detailed_heartbeat_json:
                         try:
                             detailed_heartbeat_data = json.loads(detailed_heartbeat_json)
+                            
+                            # New: Check for code version mismatch
+                            satellite_code_version = detailed_heartbeat_data.get("code_version", "unknown")
+                            if satellite_code_version != self.current_code_version:
+                                logger.warning(f"Satellite '{crawler_id}' is outdated (version: {satellite_code_version}, desired: {self.current_code_version}). Sending RESTART command.")
+                                await self.send_control_command(crawler_id, "RESTART")
+                                detailed_heartbeat_data["is_outdated"] = True # Mark as outdated for dashboard
+                            else:
+                                detailed_heartbeat_data["is_outdated"] = False # Mark as not outdated
+                                
                             current_active_crawlers_details[crawler_id] = detailed_heartbeat_data
                             logger.debug(f"Monitor: Successfully retrieved detailed data for '{crawler_id}': {detailed_heartbeat_data}") # Added log
                         except json.JSONDecodeError:
@@ -365,7 +379,9 @@ class JobCoordinator:
                 await asyncio.sleep(self.scheduler_interval)
     
     async def get_queue_stats(self) -> Dict:
-        """Get current queue statistics"""
+        """
+        Get current queue statistics and detailed satellite information.
+        """
         pending_jobs = await self.redis.zcard(self.job_queue)
         scheduled_jobs = await self.redis.zcard(self.scheduled_jobs_queue)
         active_crawlers = len(self.satellite_crawlers)
@@ -379,7 +395,8 @@ class JobCoordinator:
             "scheduled_jobs": scheduled_jobs,
             "active_crawlers": active_crawlers,
             "total_jobs": total_jobs_db,
-            "completed_jobs": completed_jobs_db
+            "completed_jobs": completed_jobs_db,
+            "satellite_crawlers": self.satellite_crawlers # Include the detailed satellite info
         }
 
     async def pause_job_processing(self) -> bool:
