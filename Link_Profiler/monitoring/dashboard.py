@@ -493,6 +493,10 @@ class MonitoringDashboard:
             if self.db and hasattr(self.db, 'Session'):
                 self.db.Session.remove()
 
+    async def _empty_list_awaitable(self) -> List[Any]:
+        """Helper async method to return an empty list."""
+        return []
+
     async def get_all_dashboard_data(self) -> Dict[str, Any]:
         """Aggregates all data needed for the dashboard."""
         tasks = [
@@ -504,8 +508,8 @@ class MonitoringDashboard:
             self.get_api_health(), # This now calls the main API
             self.get_redis_stats(),
             self.get_database_stats(),
-            # This now calls the main API's /api/jobs/all endpoint
-            self._call_main_api("/api/jobs/all") if self.api_access_token else asyncio.sleep(0) and [] 
+            # Corrected: Ensure this always returns an awaitable
+            self._call_main_api("/api/jobs/all") if self.api_access_token else self._empty_list_awaitable()
         ]
         
         # Run all data fetching tasks concurrently
