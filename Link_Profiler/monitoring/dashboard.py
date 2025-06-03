@@ -42,6 +42,9 @@ app = FastAPI(title="Link Profiler Monitor")
 # Corrected template directory path relative to the new project_root
 templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "monitoring", "templates"))
 
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
+
 class MonitoringDashboard:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
