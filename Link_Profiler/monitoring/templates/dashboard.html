@@ -367,8 +367,8 @@
                 apiHealthDiv.innerHTML = `
                     <div class="metric"><span>Status:</span><span class="${healthClass}">${healthStatus}</span></div>
                     <div class="metric"><span>Timestamp:</span><span>${data.api_health.timestamp || 'N/A'}</span></div>
-                    <div class="metric"><span>Redis:</span><span>${data.api_health.dependencies.get('redis', {}).get('status') || 'Unknown'}</span></div>
-                    <div class="metric"><span>PostgreSQL:</span><span>${data.api_health.dependencies.get('postgresql', {}).get('status') || 'Unknown'}</span></div>
+                    <div class="metric"><span>Redis:</span><span>${data.api_health.get('dependencies', {}).get('redis', {}).get('status') or 'Unknown'}</span></div>
+                    <div class="metric"><span>PostgreSQL:</span><span>${data.api_health.get('dependencies', {}).get('postgresql', {}).get('status') or 'Unknown'}</span></div>
                 `;
                 
                 // Redis Stats
@@ -563,8 +563,8 @@
                 {% set health_class = 'status-healthy' if health_status == 'healthy' else 'status-unhealthy' %}
                 <div class="metric"><span>Status:</span><span class="{{ health_class }}">{{ health_status }}</span></div>
                 <div class="metric"><span>Timestamp:</span><span>{{ api_health.timestamp or 'N/A' }}</span></div>
-                <div class="metric"><span>Redis:</span><span>{{ api_health.dependencies.get('redis', {}).get('status') or 'Unknown' }}</span></div>
-                <div class="metric"><span>PostgreSQL:</span><span>{{ api_health.dependencies.get('postgresql', {}).get('status') or 'Unknown' }}</span></div>
+                <div class="metric"><span>Redis:</span><span>{{ api_health.get('dependencies', {}).get('redis', {}).get('status') or 'Unknown' }}</span></div>
+                <div class="metric"><span>PostgreSQL:</span><span>{{ api_health.get('dependencies', {}).get('postgresql', {}).get('status') or 'Unknown' }}</span></div>
             </div>
         </div>
         
