@@ -1,0 +1,29 @@
+import logging
+from fastapi import APIRouter, Depends
+from typing import Annotated
+
+# Import the globally initialized logger from main.py
+try:
+    from Link_Profiler.main import logger
+except ImportError:
+    # Fallback for testing or if main.py is not yet fully initialized
+    logger = logging.getLogger(__name__)
+    logging.basicConfig(level=logging.INFO)
+
+# Import Pydantic models from the shared schemas file
+from Link_Profiler.api.schemas import UserResponse
+
+# Import common dependencies
+from Link_Profiler.api.dependencies import get_current_user
+
+# Import core models
+from Link_Profiler.core.models import User
+
+users_router = APIRouter(prefix="/users", tags=["Users"])
+
+@users_router.get("/me", response_model=UserResponse)
+async def read_users_me(current_user: Annotated[User, Depends(get_current_user)]):
+    """
+    Retrieves the current authenticated user's information.
+    """
+    return UserResponse.from_user(current_user)
