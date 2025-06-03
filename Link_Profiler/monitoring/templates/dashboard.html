@@ -555,9 +555,16 @@
             try {
                 const response = await fetch(`${API_BASE_URL}${endpoint}`, options);
                 if (!response.ok) {
-                    const errorData = await response.json();
+                    const errorText = await response.text(); // Get raw text to check for HTML
+                    let errorData = { detail: response.statusText };
+                    try {
+                        errorData = JSON.parse(errorText); // Try parsing as JSON
+                    } catch (e) {
+                        // If not JSON, use the raw text
+                        errorData.detail = errorText.substring(0, 200) + (errorText.length > 200 ? '...' : '');
+                    }
                     console.error(`API call failed for ${endpoint}:`, response.status, errorData); // Debugging log
-                    showAlert(`API Error (${response.status}): ${errorData.detail || response.statusText}`, 'danger');
+                    showAlert(`API Error (${response.status}): ${errorData.detail}`, 'danger');
                     throw new Error(errorData.detail || `API Error: ${response.statusText}`);
                 }
                 const responseData = await response.json();
@@ -575,55 +582,68 @@
                 const data = await callApi('/api/stats');
                 
                 // Update Queue Metrics
-                document.getElementById('pending-jobs').textContent = data.queue_metrics.pending_jobs || 0;
-                document.getElementById('active-satellites').textContent = data.queue_metrics.active_crawlers || 0;
-                document.getElementById('results-pending').textContent = data.queue_metrics.results_pending || 0;
+                document.getElementById('pending-jobs').textContent = data.queue_metrics?.pending_jobs || 0;
+                document.getElementById('active-satellites').textContent = data.queue_metrics?.active_crawlers || 0;
+                document.getElementById('results-pending').textContent = data.queue_metrics?.results_pending || 0;
 
                 // Update Performance Stats
-                document.getElementById('jobs-per-hour').textContent = data.performance_stats.jobs_per_hour || 0;
-                document.getElementById('avg-job-duration').textContent = data.performance_stats.avg_job_duration || 0;
-                document.getElementById('success-rate').textContent = (data.performance_stats.success_rate || 0).toFixed(1) + '%';
+                document.getElementById('jobs-per-hour').textContent = (data.performance_stats?.jobs_per_hour || 0).toFixed(2);
+                document.getElementById('avg-job-duration').textContent = (data.performance_stats?.avg_job_duration || 0).toFixed(2);
+                document.getElementById('success-rate').textContent = (data.performance_stats?.success_rate || 0).toFixed(1) + '%';
 
                 // Update Data Summaries
-                document.getElementById('total-link-profiles').textContent = data.data_summaries.total_link_profiles || 0;
-                document.getElementById('total-backlinks').textContent = data.data_summaries.total_backlinks_stored || 0;
-                document.getElementById('total-domains-analyzed').textContent = data.data_summaries.total_domains_analyzed || 0;
+                document.getElementById('total-link-profiles').textContent = data.data_summaries?.total_link_profiles || 0;
+                document.getElementById('total-backlinks').textContent = data.data_summaries?.total_backlinks_stored || 0;
+                document.getElementById('total-domains-analyzed').textContent = data.data_summaries?.total_domains_analyzed || 0;
 
                 // Update System Health
-                document.getElementById('cpu-usage').textContent = (data.system.cpu_percent || 0).toFixed(1);
-                document.getElementById('memory-usage').textContent = (data.system.memory.percent || 0).toFixed(1);
-                document.getElementById('disk-usage').textContent = (data.system.disk.percent || 0).toFixed(1);
-                document.getElementById('uptime').textContent = formatUptime(data.system.uptime || 0);
+                document.getElementById('cpu-usage').textContent = (data.system?.cpu_percent || 0).toFixed(1);
+                document.getElementById('memory-usage').textContent = (data.system?.memory?.percent || 0).toFixed(1);
+                document.getElementById('disk-usage').textContent = (data.system?.disk?.percent || 0).toFixed(1);
+                document.getElementById('uptime').textContent = formatUptime(data.system?.uptime || 0);
 
                 // Update API & DB Health
-                document.getElementById('api-health-status').innerHTML = `<span class="status-indicator status-${data.api_health.status === 'healthy' ? 'healthy' : 'unhealthy'}"></span>${data.api_health.status}`;
-                document.getElementById('redis-health-status').innerHTML = `<span class="status-indicator status-${data.redis.status === 'connected' ? 'healthy' : 'disconnected'}"></span>${data.redis.status}`;
-                document.getElementById('db-health-status').innerHTML = `<span class="status-indicator status-${data.database.status === 'connected' ? 'healthy' : 'disconnected'}"></span>${data.database.status}`;
+                document.getElementById('api-health-status').innerHTML = `<span class="status-indicator status-${data.api_health?.status === 'healthy' ? 'healthy' : 'unhealthy'}"></span>${data.api_health?.status || 'Unknown'}`;
+                document.getElementById('redis-health-status').innerHTML = `<span class="status-indicator status-${data.redis?.status === 'connected' ? 'healthy' : 'disconnected'}"></span>${data.redis?.status || 'Unknown'}`;
+                document.getElementById('db-health-status').innerHTML = `<span class="status-indicator status-${data.database?.status === 'connected' ? 'healthy' : 'disconnected'}"></span>${data.database?.status || 'Unknown'}`;
                 // Assuming clickhouse_loader status is nested under api_health.dependencies
-                const clickhouseStatus = data.api_health.dependencies?.clickhouse_loader?.status || 'unknown';
+                const clickhouseStatus = data.api_health?.dependencies?.clickhouse_loader?.status || 'unknown';
                 document.getElementById('clickhouse-health-status').innerHTML = `<span class="status-indicator status-${clickhouseStatus === 'connected' ? 'healthy' : 'disconnected'}"></span>${clickhouseStatus}`;
 
 
                 // Update Job History Table
                 const jobHistoryTableBody = document.getElementById('job-history-table-body');
                 jobHistoryTableBody.innerHTML = '';
-                data.job_history.forEach(job => {
-                    const row = jobHistoryTableBody.insertRow();
-                    row.innerHTML = `
-                        <td>${job.job_id.substring(0, 8)}...</td>
-                        <td class="job-status-${job.status.toLowerCase()}">${job.status}</td>
-                        <td>${job.urls_crawled}</td>
-                        <td>${job.links_found}</td>
-                        <td>${job.duration_seconds}</td>
-                        <td>${job.completed_at}</td>
-                    `;
-                });
+                if (data.job_history && Array.isArray(data.job_history)) { // Added check for array
+                    data.job_history.forEach(job => {
+                        const row = jobHistoryTableBody.insertRow();
+                        const jobId = job.job_id || 'N/A';
+                        const targetUrl = job.target_url || 'N/A';
+                        const status = job.status || 'N/A';
+                        const urlsCrawled = job.urls_crawled || 0;
+                        const linksFound = job.links_found || 0;
+                        const durationSeconds = job.duration_seconds !== undefined && job.duration_seconds !== null ? job.duration_seconds.toFixed(2) : 'N/A';
+                        const completedAt = job.completed_at ? new Date(job.completed_at).toLocaleString() : 'N/A';
+
+                        row.innerHTML = `
+                            <td>${jobId.substring(0, 8)}...</td>
+                            <td class="job-status-${status.toLowerCase()}">${status}</td>
+                            <td>${urlsCrawled}</td>
+                            <td>${linksFound}</td>
+                            <td>${durationSeconds}</td>
+                            <td>${completedAt}</td>
+                        `;
+                    });
+                } else {
+                    jobHistoryTableBody.innerHTML = '<tr><td colspan="6" class="text-center">No job history found or data is malformed.</td></tr>';
+                }
+
 
                 // Update All Jobs Table (Jobs Tab)
                 loadJobsTable(data.all_jobs);
 
                 // Update Satellites Table (Satellites Tab)
-                loadSatellitesTable(data.queue_metrics.satellites);
+                loadSatellitesTable(data.queue_metrics?.satellites); // Added optional chaining
 
                 // Update global pause status
                 checkGlobalPauseStatus();
@@ -637,6 +657,7 @@
         }
 
         function formatUptime(seconds) {
+            if (typeof seconds !== 'number' || isNaN(seconds)) return 'N/A';
             const days = Math.floor(seconds / (3600 * 24));
             seconds %= (3600 * 24);
             const hours = Math.floor(seconds / 3600);
@@ -648,33 +669,49 @@
 
         async function loadJobsTable(jobs = null) {
             const jobStatusFilter = document.getElementById('jobStatusFilter').value;
-            let filteredJobs = jobs;
+            let fetchedJobs = jobs;
 
-            if (!filteredJobs) {
-                // If jobs not passed from loadStats, fetch them
-                filteredJobs = await callApi(`/api/jobs/all?status_filter=${jobStatusFilter}`);
+            if (!fetchedJobs || !Array.isArray(fetchedJobs)) { // Added check for array
+                // If jobs not passed from loadStats or is not an array, fetch them
+                try {
+                    fetchedJobs = await callApi(`/api/jobs/all?status_filter=${jobStatusFilter}`);
+                } catch (error) {
+                    console.error('Error fetching all jobs:', error);
+                    fetchedJobs = []; // Fallback to empty array on error
+                }
             } else if (jobStatusFilter) {
                 // If jobs passed, but filter is active, filter them
-                filteredJobs = filteredJobs.filter(job => job.status === jobStatusFilter);
+                fetchedJobs = fetchedJobs.filter(job => job.status === jobStatusFilter);
             }
 
             const allJobsTableBody = document.getElementById('all-jobs-table-body');
             allJobsTableBody.innerHTML = '';
-            if (filteredJobs && filteredJobs.length > 0) {
-                filteredJobs.forEach(job => {
+            if (fetchedJobs && fetchedJobs.length > 0) {
+                fetchedJobs.forEach(job => {
                     const row = allJobsTableBody.insertRow();
+                    const jobId = job.id || 'N/A';
+                    const targetUrl = job.target_url || 'N/A';
+                    const jobType = job.job_type || 'N/A';
+                    const status = job.status || 'N/A';
+                    const progressPercentage = job.progress_percentage !== undefined && job.progress_percentage !== null ? job.progress_percentage.toFixed(1) : 'N/A';
+                    const urlsCrawled = job.urls_crawled || 0;
+                    const linksFound = job.links_found || 0;
+                    const errorsCount = job.errors_count || 0;
+                    const createdDate = job.created_date ? new Date(job.created_date).toLocaleString() : 'N/A';
+                    const isDisabled = job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED';
+
                     row.innerHTML = `
-                        <td><a href="#" onclick="showJobDetails('${job.id}')">${job.id.substring(0, 8)}...</a></td>
-                        <td>${job.target_url.substring(0, 40)}...</td>
-                        <td>${job.job_type}</td>
-                        <td class="job-status-${job.status.toLowerCase()}">${job.status}</td>
-                        <td>${job.progress_percentage.toFixed(1)}</td>
-                        <td>${job.urls_crawled}</td>
-                        <td>${job.links_found}</td>
-                        <td>${job.errors_count}</td>
-                        <td>${new Date(job.created_date).toLocaleString()}</td>
+                        <td><a href="#" onclick="showJobDetails('${escapeForTemplateLiteralAttribute(jobId)}')">${jobId.substring(0, 8)}...</a></td>
+                        <td>${targetUrl.substring(0, 40)}...</td>
+                        <td>${jobType}</td>
+                        <td class="job-status-${status.toLowerCase()}">${status}</td>
+                        <td>${progressPercentage}</td>
+                        <td>${urlsCrawled}</td>
+                        <td>${linksFound}</td>
+                        <td>${errorsCount}</td>
+                        <td>${createdDate}</td>
                         <td>
-                            <button class="btn btn-sm btn-danger" onclick="cancelJob('${job.id}')" ${job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED' ? 'disabled' : ''}><i class="fas fa-times"></i> Cancel</button>
+                            <button class="btn btn-sm btn-danger" onclick="cancelJob('${escapeForTemplateLiteralAttribute(jobId)}')" ${isDisabled ? 'disabled' : ''}><i class="fas fa-times"></i> Cancel</button>
                         </td>
                     `;
                 });
@@ -685,34 +722,52 @@
 
         async function loadSatellitesTable(satellites = null) {
             let fetchedSatellites = satellites;
-            if (!fetchedSatellites) {
-                const metrics = await callApi('/api/satellites');
-                fetchedSatellites = metrics.satellites;
+            if (!fetchedSatellites || !Array.isArray(fetchedSatellites)) { // Added check for array
+                try {
+                    const metrics = await callApi('/api/satellites');
+                    fetchedSatellites = metrics.satellites || []; // Ensure it's an array
+                } catch (error) {
+                    console.error('Error fetching satellites:', error);
+                    fetchedSatellites = []; // Fallback to empty array on error
+                }
             }
 
             const satellitesTableBody = document.getElementById('satellites-table-body');
             satellitesTableBody.innerHTML = '';
             if (fetchedSatellites && fetchedSatellites.length > 0) {
                 fetchedSatellites.forEach(sat => {
-                    const statusClass = `status-${sat.status.toLowerCase()}`;
+                    const crawlerId = sat.crawler_id || 'N/A';
+                    const region = sat.region || 'N/A';
+                    const status = sat.status || 'N/A';
+                    const statusClass = `status-${status.toLowerCase()}`;
+                    const codeVersion = sat.code_version || 'N/A';
+                    const runningJobs = sat.running_jobs || 0;
+                    const totalJobsCompleted = sat.total_jobs_completed || 0;
+                    const totalErrorsEncountered = sat.total_errors_encountered || 0;
+                    const lastSeen = sat.last_seen ? new Date(sat.last_seen).toLocaleString() : 'N/A';
+                    const uptimeSeconds = sat.uptime_seconds || 0;
+                    const cpuUsage = sat.cpu_usage !== undefined && sat.cpu_usage !== null ? sat.cpu_usage.toFixed(1) : 'N/A';
+                    const memoryUsage = sat.memory_usage !== undefined && sat.memory_usage !== null ? sat.memory_usage.toFixed(1) : 'N/A';
+                    const isOutdated = sat.is_outdated ? '(Outdated)' : '';
+
                     const row = satellitesTableBody.insertRow();
                     row.innerHTML = `
-                        <td>${sat.crawler_id}</td>
-                        <td>${sat.region}</td>
-                        <td><span class="status-indicator ${statusClass}"></span>${sat.status} ${sat.is_outdated ? '(Outdated)' : ''}</td>
-                        <td>${sat.code_version || 'N/A'}</td>
-                        <td>${sat.running_jobs}</td>
-                        <td>${sat.total_jobs_completed}</td>
-                        <td>${sat.total_errors_encountered}</td>
-                        <td>${new Date(sat.last_seen).toLocaleString()}</td>
-                        <td>${formatUptime(sat.uptime_seconds)}</td>
-                        <td>${sat.cpu_usage.toFixed(1)}</td>
-                        <td>${sat.memory_usage.toFixed(1)}</td>
+                        <td>${crawlerId}</td>
+                        <td>${region}</td>
+                        <td><span class="status-indicator ${statusClass}"></span>${status} ${isOutdated}</td>
+                        <td>${codeVersion}</td>
+                        <td>${runningJobs}</td>
+                        <td>${totalJobsCompleted}</td>
+                        <td>${totalErrorsEncountered}</td>
+                        <td>${lastSeen}</td>
+                        <td>${formatUptime(uptimeSeconds)}</td>
+                        <td>${cpuUsage}</td>
+                        <td>${memoryUsage}</td>
                         <td>
-                            <button class="btn btn-sm btn-warning" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(sat.crawler_id)}', 'PAUSE')"><i class="fas fa-pause"></i></button>
-                            <button class="btn btn-sm btn-success" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(sat.crawler_id)}', 'RESUME')"><i class="fas fa-play"></i></button>
-                            <button class="btn btn-sm btn-danger" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(sat.crawler_id)}', 'SHUTDOWN')"><i class="fas fa-power-off"></i></button>
-                            <button class="btn btn-sm btn-info" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(sat.crawler_id)}', 'RESTART')"><i class="fas fa-sync-alt"></i></button>
+                            <button class="btn btn-sm btn-warning" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(crawlerId)}', 'PAUSE')"><i class="fas fa-pause"></i></button>
+                            <button class="btn btn-sm btn-success" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(crawlerId)}', 'RESUME')"><i class="fas fa-play"></i></button>
+                            <button class="btn btn-sm btn-danger" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(crawlerId)}', 'SHUTDOWN')"><i class="fas fa-power-off"></i></button>
+                            <button class="btn btn-sm btn-info" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(crawler_id)}', 'RESTART')"><i class="fas fa-sync-alt"></i></button>
                         </td>
                     `;
                 });
@@ -897,21 +952,21 @@
         async function showJobDetails(jobId) {
             try {
                 const job = await callApi(`/api/jobs/${jobId}`);
-                document.getElementById('detail-job-id').textContent = job.id;
-                document.getElementById('detail-target-url').textContent = job.target_url;
-                document.getElementById('detail-job-type').textContent = job.job_type;
-                document.getElementById('detail-status').className = `job-status-${job.status.toLowerCase()}`;
-                document.getElementById('detail-status').textContent = job.status;
-                document.getElementById('detail-progress').textContent = job.progress_percentage.toFixed(1);
-                document.getElementById('detail-urls-crawled').textContent = job.urls_crawled;
-                document.getElementById('detail-links-found').textContent = job.links_found;
-                document.getElementById('detail-errors-count').textContent = job.errors_count;
-                document.getElementById('detail-created-date').textContent = new Date(job.created_date).toLocaleString();
+                document.getElementById('detail-job-id').textContent = job.id || 'N/A';
+                document.getElementById('detail-target-url').textContent = job.target_url || 'N/A';
+                document.getElementById('detail-job-type').textContent = job.job_type || 'N/A';
+                document.getElementById('detail-status').className = `job-status-${(job.status || 'N/A').toLowerCase()}`;
+                document.getElementById('detail-status').textContent = job.status || 'N/A';
+                document.getElementById('detail-progress').textContent = (job.progress_percentage !== undefined && job.progress_percentage !== null ? job.progress_percentage.toFixed(1) : 'N/A');
+                document.getElementById('detail-urls-crawled').textContent = job.urls_crawled || 0;
+                document.getElementById('detail-links-found').textContent = job.links_found || 0;
+                document.getElementById('detail-errors-count').textContent = job.errors_count || 0;
+                document.getElementById('detail-created-date').textContent = job.created_date ? new Date(job.created_date).toLocaleString() : 'N/A';
                 document.getElementById('detail-started-date').textContent = job.started_date ? new Date(job.started_date).toLocaleString() : 'N/A';
                 document.getElementById('detail-completed-date').textContent = job.completed_date ? new Date(job.completed_date).toLocaleString() : 'N/A';
                 
-                document.getElementById('detail-error-log').textContent = job.error_log.length > 0 ? JSON.stringify(job.error_log, null, 2) : 'No errors.';
-                document.getElementById('detail-results-summary').textContent = JSON.stringify(job.results, null, 2);
+                document.getElementById('detail-error-log').textContent = (job.error_log && job.error_log.length > 0) ? JSON.stringify(job.error_log, null, 2) : 'No errors.';
+                document.getElementById('detail-results-summary').textContent = job.results ? JSON.stringify(job.results, null, 2) : 'No results.';
 
                 const jobDetailsModal = new bootstrap.Modal(document.getElementById('jobDetailsModal'));
                 jobDetailsModal.show();
