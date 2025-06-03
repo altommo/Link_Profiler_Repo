@@ -35,6 +35,7 @@ import json
 import uuid
 import asyncio
 import psutil # New: Import psutil for system stats
+import psycopg2 # New: Import psycopg2 for database stats
 
 from playwright.async_api import async_playwright, Browser
 
@@ -1854,6 +1855,222 @@ async def download_report_file(job_id: str, current_user: User = Depends(get_cur
     except Exception as e:
         logger.error(f"API: Error downloading report for job {job_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to download report: {e}")
+
+# --- Helper function for aggregated stats (used by /api/stats endpoint) ---
+async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
+    """Aggregates various statistics for the /api/stats endpoint."""
+    
+    # Queue Metrics
+    queue_metrics = {"error": "Redis not connected"}
+    if redis_client:
+        try:
+            job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs")
+            result_queue_name = config_loader.get("queue.result_queue_name", "crawl_results")
+            
+            pending_jobs = await redis_client.zcard(job_queue_name)
+            results_pending = await redis_client.llen(result_queue_name)
+            
+            # Active satellites (simplified for main API, just count heartbeats)
+            stale_timeout = config_loader.get("queue.stale_timeout", 60)
+            cutoff = (datetime.now() - timedelta(seconds=stale_timeout)).timestamp()
+            active_satellites = await redis_client.zcount("crawler_heartbeats_sorted", cutoff, "+inf")
+            
+            queue_metrics = {
+                "pending_jobs": pending_jobs,
+                "results_pending": results_pending,
+                "active_satellites": active_satellites,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Error getting queue metrics for /api/stats: {e}", exc_info=True)
+            queue_metrics = {"error": str(e)}
+
+    # Performance Stats (simplified, as full trends are complex)
+    performance_stats = {"error": "Database not connected"}
+    if db:
+        try:
+            # Get total jobs and successful jobs from DB for a simple success rate
+            all_jobs = db.get_all_crawl_jobs() # This might be slow for very large datasets
+            total_jobs = len(all_jobs)
+            successful_jobs = sum(1 for job in all_jobs if job.status == CrawlStatus.COMPLETED)
+            
+            success_rate = (successful_jobs / total_jobs * 100) if total_jobs > 0 else 0.0
+            
+            performance_stats = {
+                "total_jobs_processed": total_jobs,
+                "successful_jobs": successful_jobs,
+                "success_rate": round(success_rate, 1),
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Error getting performance stats for /api/stats: {e}", exc_info=True)
+            performance_stats = {"error": str(e)}
+        finally:
+            if db and hasattr(db, 'Session'):
+                db.Session.remove()
+
+    # Data Summaries
+    data_summaries = {"error": "Database not connected"}
+    if db:
+        try:
+            total_link_profiles = len(db.get_all_link_profiles())
+            total_domains_analyzed = len(db.get_all_domains())
+            competitive_keyword_analyses = db.get_count_of_competitive_keyword_analyses()
+            total_backlinks_stored = len(db.get_all_backlinks())
+
+            data_summaries = {
+                "total_link_profiles": total_link_profiles,
+                "total_domains_analyzed": total_domains_analyzed,
+                "competitive_keyword_analyses": competitive_keyword_analyses,
+                "total_backlinks_stored": total_backlinks_stored,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Error getting data summaries for /api/stats: {e}", exc_info=True)
+            data_summaries = {"error": str(e)}
+        finally:
+            if db and hasattr(db, 'Session'):
+                db.Session.remove()
+
+    # System Stats (reusing logic from /status endpoint)
+    system_stats = {}
+    try:
+        system_stats = {
+            "cpu_percent": psutil.cpu_percent(interval=None),
+            "memory_percent": psutil.virtual_memory().percent,
+            "disk_percent": psutil.disk_usage('/').percent,
+            "uptime_seconds": time.time() - psutil.boot_time()
+        }
+    except Exception as e:
+        logger.error(f"Error getting system stats for /api/stats: {e}", exc_info=True)
+        system_stats = {"error": str(e)}
+
+    # API Health (reusing logic from /health endpoint)
+    api_health = {}
+    try:
+        # Call the internal health_check function directly
+        health_response = await health_check()
+        api_health = json.loads(health_response.body.decode('utf-8'))
+    except Exception as e:
+        logger.error(f"Error getting API health for /api/stats: {e}", exc_info=True)
+        api_health = {"status": "error", "message": str(e)}
+
+    # Redis Stats
+    redis_stats = {"status": "disconnected"}
+    if redis_client:
+        try:
+            info = await redis_client.info()
+            redis_stats = {
+                "connected_clients": info.get("connected_clients", 0),
+                "used_memory_human": info.get("used_memory_human", "0B"),
+                "keyspace_hits": info.get("keyspace_hits", 0),
+                "status": "connected"
+            }
+        except Exception as e:
+            logger.error(f"Error getting Redis stats for /api/stats: {e}", exc_info=True)
+            redis_stats = {"status": "error", "message": str(e)}
+
+    # Database Stats
+    database_stats = {"status": "disconnected"}
+    if db:
+        try:
+            db.ping()
+            conn = psycopg2.connect(db.db_url)
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT 
+                    relname,
+                    n_tup_ins as inserts,
+                    n_tup_upd as updates,
+                    n_tup_del as deletes
+                FROM pg_stat_user_tables;
+            """)
+            tables = []
+            for row in cur.fetchall():
+                tables.append({
+                    "table": row[0],
+                    "inserts": row[1],
+                    "updates": row[2],
+                    "deletes": row[3]
+                })
+            cur.close()
+            conn.close()
+            database_stats = {
+                "status": "connected",
+                "tables": tables
+            }
+        except Exception as e:
+            logger.error(f"Error getting database stats for /api/stats: {e}", exc_info=True)
+            database_stats = {"status": "error", "message": str(e)}
+        finally:
+            if db and hasattr(db, 'Session'):
+                db.Session.remove()
+
+    return {
+        "queue_metrics": queue_metrics,
+        "performance_stats": performance_stats,
+        "data_summaries": data_summaries,
+        "system": system_stats,
+        "api_health": api_health,
+        "redis": redis_stats,
+        "database": database_stats,
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.get("/api/stats")
+async def get_api_stats(current_user: User = Depends(get_current_user)):
+    """
+    Retrieves aggregated statistics for the Link Profiler system.
+    This endpoint is primarily consumed by the monitoring dashboard.
+    """
+    logger.info(f"API: Received request for aggregated stats by user: {current_user.username}.")
+    return await _get_aggregated_stats_for_api()
+
+@app.get("/api/jobs/all", response_model=List[CrawlJobResponse])
+async def get_all_jobs_api(
+    status_filter: Optional[str] = Query(None, description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED')."),
+    current_user: User = Depends(get_current_user) # Protected endpoint
+):
+    """
+    Retrieves all crawl jobs, optionally filtered by status.
+    """
+    logger.info(f"API: Received request for all jobs (status_filter: {status_filter}) by user: {current_user.username}.")
+    try:
+        all_jobs = db.get_all_crawl_jobs()
+        
+        if status_filter:
+            try:
+                filter_status = CrawlStatus[status_filter.upper()]
+                all_jobs = [job for job in all_jobs if job.status == filter_status]
+            except KeyError:
+                raise HTTPException(status_code=400, detail=f"Invalid status_filter: {status_filter}. Must be one of {list(CrawlStatus.__members__.keys())}.")
+        
+        # Sort by created_date descending
+        sorted_jobs = sorted(all_jobs, key=lambda job: job.created_date, reverse=True)
+        
+        return [CrawlJobResponse.from_crawl_job(job) for job in sorted_jobs]
+    except Exception as e:
+        logger.error(f"API: Error retrieving all jobs: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve all jobs: {e}")
+    finally:
+        if db and hasattr(db, 'Session'):
+            db.Session.remove()
+
+@app.get("/api/jobs/is_paused", response_model=Dict[str, bool])
+async def is_jobs_paused_endpoint(current_user: User = Depends(get_current_user)): # Protected endpoint
+    """
+    Checks if global job processing is currently paused.
+    """
+    logger.info(f"API: Received request to check if jobs are paused by user: {current_user.username}.")
+    if not redis_client:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Redis is not available.")
+    
+    try:
+        is_paused = await redis_client.get("processing_paused")
+        return {"is_paused": is_paused is not None and is_paused.decode('utf-8').lower() == 'true'}
+    except Exception as e:
+        logger.error(f"API: Error checking if jobs are paused: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to check pause status: {e}")
 
 
 @app.get("/health")
