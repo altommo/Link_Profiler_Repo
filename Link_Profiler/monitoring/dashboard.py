@@ -25,7 +25,7 @@ import time
 # Corrected project_root calculation to point to the repository root
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
-    sys.sys.path.insert(0, project_root)
+    sys.path.insert(0, project_root)
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain, serialize_model, CrawlConfig # Import CrawlConfig
