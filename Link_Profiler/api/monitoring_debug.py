@@ -17,7 +17,7 @@ try:
         logger, db, redis_client, config_loader,
         domain_service_instance, backlink_service_instance, serp_service_instance,
         keyword_service_instance, ai_service_instance, clickhouse_loader_instance,
-        auth_service_instance
+        auth_service_instance, get_coordinator # Import get_coordinator from main
     )
 except ImportError:
     logger = logging.getLogger(__name__)
@@ -40,6 +40,9 @@ except ImportError:
         async def lrange(self, key, start, end): return []
         async def delete(self, key): return 0
         async def zadd(self, key, mapping): pass
+        async def zcard(self, key): return 0
+        async def llen(self, key): return 0
+        async def zrangebyscore(self, key, min_score, max_score, withscores=False): return []
         def info(self): return {}
     redis_client = DummyRedisClient()
     class DummyConfigLoader:
@@ -59,19 +62,23 @@ except ImportError:
     class DummyAuthService:
         def _check_secret_key(self): raise HTTPException(status_code=500, detail="Secret key not set.")
     auth_service_instance = DummyAuthService()
+    # Dummy get_coordinator for testing
+    class DummyCoordinator:
+        async def get_queue_stats(self):
+            return {
+                "pending_jobs": 0,
+                "results_pending": 0,
+                "active_crawlers": 0,
+                "satellite_crawlers": {},
+                "timestamp": datetime.now().isoformat()
+            }
+    async def get_coordinator():
+        return DummyCoordinator()
 
 
 # Import shared Pydantic models and dependencies
 from Link_Profiler.api.schemas import CrawlJobResponse
 from Link_Profiler.api.dependencies import get_current_user
-
-# Import queue-related functions and models
-from Link_Profiler.api.queue_endpoints import get_coordinator # Needed for aggregated stats
-
-# Removed Prometheus metrics imports as middleware is moved
-# from Link_Profiler.monitoring.prometheus_metrics import (
-#     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text
-# )
 
 # Import core models
 from Link_Profiler.core.models import User, CrawlStatus
@@ -81,25 +88,6 @@ from Link_Profiler.monitoring.prometheus_metrics import get_metrics_text
 
 
 monitoring_debug_router = APIRouter(tags=["Monitoring & Debug"])
-
-# --- Middleware for Prometheus Metrics ---
-# Removed from here, moved to main.py
-# @monitoring_debug_router.middleware("http")
-# async def add_process_time_header(request: Request, call_next):
-#     start_time = time.perf_counter()
-    
-#     response = await call_next(request)
-    
-#     process_time = time.perf_counter() - start_time
-#     endpoint = request.url.path
-#     method = request.method
-#     status_code = response.status_code
-
-#     API_REQUESTS_TOTAL.labels(endpoint=endpoint, method=method, status_code=status_code).inc()
-#     API_REQUEST_DURATION_SECONDS.labels(endpoint=endpoint, method=method).observe(process_time)
-    
-#     response.headers["X-Process-Time"] = str(process_time)
-#     return response
 
 # --- Helper function for comprehensive health check ---
 async def health_check_internal() -> Dict[str, Any]:
@@ -401,26 +389,39 @@ async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
         "timestamp": datetime.now().isoformat()
     }
 
+async def _get_satellites_data_internal() -> Dict[str, Any]:
+    """
+    Internal helper to retrieve detailed health information for all satellite crawlers.
+    Does not require authentication.
+    """
+    job_coordinator = await get_coordinator()
+    stats = await job_coordinator.get_queue_stats() # This already contains satellite_crawlers
+
+    satellite_list = list(stats.get("satellite_crawlers", {}).values())
+    
+    return {"satellites": satellite_list, "active_count": len(satellite_list)}
+
 
 @monitoring_debug_router.get("/api/stats")
-async def get_api_stats():
+async def get_api_stats(current_user: Annotated[User, Depends(get_current_user)]):
     """
     Retrieves aggregated statistics for the Link Profiler system.
-    This endpoint is primarily consumed by the monitoring dashboard and does not require authentication.
+    This endpoint is primarily consumed by the monitoring dashboard and requires authentication.
     """
-    logger.info("API: Received request for aggregated stats (public endpoint).")
+    logger.info(f"API: Received request for aggregated stats by user: {current_user.username}.")
     return await _get_aggregated_stats_for_api()
 
 @monitoring_debug_router.get("/api/jobs/all", response_model=List[CrawlJobResponse])
 async def get_all_jobs_api(
-    status_filter: Annotated[Optional[str], Query(description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED').")] = None
+    status_filter: Annotated[Optional[str], Query(description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED').")] = None,
+    current_user: Annotated[User, Depends(get_current_user)] = None # Protect this endpoint
 ):
     """
     Retrieves all crawl jobs, optionally filtered by status.
-    This endpoint is primarily consumed by the monitoring dashboard and does not require authentication.
+    This endpoint is primarily consumed by the monitoring dashboard and requires authentication.
     Returns the most recent 50 jobs.
     """
-    logger.info(f"API: Received request for all jobs (public endpoint, status_filter: {status_filter}).")
+    logger.info(f"API: Received request for all jobs by user: {current_user.username} (status_filter: {status_filter}).")
     try:
         all_jobs = db.get_all_crawl_jobs()
         logger.debug(f"API: Retrieved {len(all_jobs)} jobs from database before filtering.")
@@ -443,12 +444,12 @@ async def get_all_jobs_api(
             db.Session.remove()
 
 @monitoring_debug_router.get("/api/jobs/is_paused", response_model=Dict[str, bool])
-async def is_jobs_paused_endpoint():
+async def is_jobs_paused_endpoint(current_user: Annotated[User, Depends(get_current_user)]):
     """
     Checks if global job processing is currently paused.
-    This endpoint is primarily consumed by the monitoring dashboard and does not require authentication.
+    This endpoint is primarily consumed by the monitoring dashboard and requires authentication.
     """
-    logger.info("API: Received request to check if jobs are paused (public endpoint).")
+    logger.info(f"API: Received request to check if jobs are paused by user: {current_user.username}.")
     if not redis_client:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Redis is not available.")
     
@@ -599,17 +600,4 @@ async def get_satellites_api_endpoint(current_user: Annotated[User, Depends(get_
     Retrieves detailed health information for all satellite crawlers.
     """
     logger.info(f"API: Received request for satellite health by user: {current_user.username}.")
-    job_coordinator = await get_coordinator()
-    stats = await job_coordinator.get_queue_stats() # This already contains satellite_crawlers
-
-    # The satellite_crawlers data from get_queue_stats is already in the desired format
-    # (Dict[str, Any] where Any is a dict with isoformatted timestamps)
-    # We just need to convert it to a list of values for the response model.
-    satellite_list = list(stats.get("satellite_crawlers", {}).values())
-    
-    # Ensure datetime objects are correctly parsed from ISO format strings if they come that way
-    # This conversion is already handled in the dashboard.py's loadSatellitesTable,
-    # but it's good to ensure the data is consistent.
-    # For the API response, we can return the raw dicts as they contain isoformatted strings.
-    
-    return {"satellites": satellite_list, "active_count": len(satellite_list)}
+    return await _get_satellites_data_internal()

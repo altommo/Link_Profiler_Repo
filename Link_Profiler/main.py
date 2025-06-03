@@ -509,6 +509,12 @@ from Link_Profiler.api.schemas import (
     JobStatusResponse, QueueStatsResponse, CrawlerHealthResponse # New: Import queue response models
 )
 
+# Import get_current_user for dependency injection
+from Link_Profiler.api.dependencies import get_current_user
+from Link_Profiler.api.monitoring_debug import (
+    _get_aggregated_stats_for_api, health_check_internal, _get_satellites_data_internal
+)
+
 
 # --- API Endpoints ---
 
@@ -537,3 +543,76 @@ app.include_router(reports_router)
 app.include_router(monitoring_debug_router)
 app.include_router(websocket_router)
 app.include_router(queue_router)
+
+
+# --- Additional API Endpoints (not part of routers yet) ---
+
+@app.get("/api/jobs/all", response_model=List[CrawlJobResponse])
+async def get_all_jobs(
+    status_filter: Optional[CrawlStatus] = Query(None, description="Filter jobs by status"),
+    current_user: User = Depends(get_current_user) # Protect this endpoint
+):
+    """
+    Retrieve a list of all crawl jobs, optionally filtered by status.
+    """
+    logger.info(f"User {current_user.username} requested all jobs with status filter: {status_filter}")
+    try:
+        all_jobs = db.get_all_crawl_jobs()
+        if status_filter:
+            filtered_jobs = [job for job in all_jobs if job.status == status_filter]
+        else:
+            filtered_jobs = all_jobs
+        
+        # Sort by created_date descending
+        sorted_jobs = sorted(filtered_jobs, key=lambda job: job.created_date if job.created_date else datetime.min, reverse=True)
+        
+        return [CrawlJobResponse.from_crawl_job(job) for job in sorted_jobs]
+    except Exception as e:
+        logger.error(f"Error retrieving all jobs: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve crawl jobs.")
+
+@app.get("/api/jobs/{job_id}", response_model=CrawlJobResponse)
+async def get_job_details(
+    job_id: str,
+    current_user: User = Depends(get_current_user) # Protect this endpoint
+):
+    """
+    Retrieve details for a specific crawl job.
+    """
+    logger.info(f"User {current_user.username} requested details for job ID: {job_id}")
+    try:
+        job = db.get_crawl_job(job_id)
+        if not job:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
+        return CrawlJobResponse.from_crawl_job(job)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving job details for {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve job details.")
+
+# --- Public Monitoring Endpoints (no authentication required) ---
+
+@app.get("/public/satellites")
+async def get_public_satellites():
+    """
+    Public endpoint to retrieve satellite status without authentication.
+    """
+    logger.info("API: Received request for public satellite health.")
+    return await _get_satellites_data_internal()
+
+@app.get("/public/stats")
+async def get_public_stats():
+    """
+    Public endpoint to retrieve general system statistics without authentication.
+    """
+    logger.info("API: Received request for public aggregated stats.")
+    return await _get_aggregated_stats_for_api()
+
+@app.get("/public/health")
+async def get_public_health_check():
+    """
+    Public endpoint for internal health checks without authentication.
+    """
+    logger.info("API: Received request for public health check.")
+    return await health_check_internal()

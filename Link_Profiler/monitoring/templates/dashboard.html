@@ -429,8 +429,8 @@
                         </div>
                         <div class="mb-3">
                             <label for="dashboardAccessToken" class="form-label">Dashboard Access Token</label>
-                            <input type="text" class="form-control" id="dashboardAccessToken" value="{{ access_token }}" readonly>
-                            <div class="form-text">This token is automatically obtained by the dashboard service to authenticate with the main API.</div>
+                            <input type="text" class="form-control" id="dashboardAccessToken" value="Not applicable for public endpoints" readonly>
+                            <div class="form-text">Token management is no longer needed for public monitoring endpoints.</div>
                         </div>
                     </div>
                 </div>
@@ -464,7 +464,7 @@
                             <div class="card-body">
                                 <div class="mb-3">
                                     <label for="apiEndpoint" class="form-label">Endpoint</label>
-                                    <input type="text" class="form-control" id="apiEndpoint" value="/api/stats">
+                                    <input type="text" class="form-control" id="apiEndpoint" value="/public/stats">
                                 </div>
                                 <div class="mb-3">
                                     <label for="apiMethod" class="form-label">Method</label>
@@ -527,7 +527,6 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         const API_BASE_URL = "{{ api_base_url }}"; // Passed from backend
-        let ACCESS_TOKEN = "{{ access_token }}"; // Passed from backend
 
         function showAlert(message, type = 'info') {
             const alertContainer = document.querySelector('.alert-container');
@@ -543,9 +542,10 @@
 
         async function callApi(endpoint, method = 'GET', data = null) {
             const headers = {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${ACCESS_TOKEN}`
+                'Content-Type': 'application/json'
             };
+            // No Authorization header needed for public endpoints
+
             const options = { method, headers };
             if (data) {
                 options.body = JSON.stringify(data);
@@ -579,7 +579,10 @@
 
         async function loadStats() {
             try {
-                const data = await callApi('/api/stats');
+                // Use public endpoints for stats and satellites
+                const data = await callApi('/public/stats');
+                const satellitesData = await callApi('/public/satellites');
+                const healthData = await callApi('/public/health');
                 
                 // Update Queue Metrics
                 document.getElementById('pending-jobs').textContent = data.queue_metrics?.pending_jobs || 0;
@@ -602,16 +605,15 @@
                 document.getElementById('disk-usage').textContent = (data.system?.disk?.percent || 0).toFixed(1);
                 document.getElementById('uptime').textContent = formatUptime(data.system?.uptime || 0);
 
-                // Update API & DB Health
-                document.getElementById('api-health-status').innerHTML = `<span class="status-indicator status-${data.api_health?.status === 'healthy' ? 'healthy' : 'unhealthy'}"></span>${data.api_health?.status || 'Unknown'}`;
-                document.getElementById('redis-health-status').innerHTML = `<span class="status-indicator status-${data.redis?.status === 'connected' ? 'healthy' : 'disconnected'}"></span>${data.redis?.status || 'Unknown'}`;
-                document.getElementById('db-health-status').innerHTML = `<span class="status-indicator status-${data.database?.status === 'connected' ? 'healthy' : 'disconnected'}"></span>${data.database?.status || 'Unknown'}`;
-                // Assuming clickhouse_loader status is nested under api_health.dependencies
-                const clickhouseStatus = data.api_health?.dependencies?.clickhouse_loader?.status || 'unknown';
+                // Update API & DB Health using public health endpoint
+                document.getElementById('api-health-status').innerHTML = `<span class="status-indicator status-${healthData.status === 'healthy' ? 'healthy' : 'unhealthy'}"></span>${healthData.status || 'Unknown'}`;
+                document.getElementById('redis-health-status').innerHTML = `<span class="status-indicator status-${healthData.dependencies?.redis?.status === 'connected' ? 'healthy' : 'disconnected'}"></span>${healthData.dependencies?.redis?.status || 'Unknown'}`;
+                document.getElementById('db-health-status').innerHTML = `<span class="status-indicator status-${healthData.dependencies?.postgresql?.status === 'connected' ? 'healthy' : 'disconnected'}"></span>${healthData.dependencies?.postgresql?.status || 'Unknown'}`;
+                const clickhouseStatus = healthData.dependencies?.clickhouse_loader?.status || 'unknown';
                 document.getElementById('clickhouse-health-status').innerHTML = `<span class="status-indicator status-${clickhouseStatus === 'connected' ? 'healthy' : 'disconnected'}"></span>${clickhouseStatus}`;
 
 
-                // Update Job History Table
+                // Update Job History Table (still needs auth, so will fail if not authenticated)
                 const jobHistoryTableBody = document.getElementById('job-history-table-body');
                 jobHistoryTableBody.innerHTML = '';
                 if (data.job_history && Array.isArray(data.job_history)) { // Added check for array
@@ -639,13 +641,13 @@
                 }
 
 
-                // Update All Jobs Table (Jobs Tab)
+                // Update All Jobs Table (Jobs Tab) - still needs auth
                 loadJobsTable(data.all_jobs);
 
                 // Update Satellites Table (Satellites Tab)
-                loadSatellitesTable(data.queue_metrics?.satellites); // Added optional chaining
+                loadSatellitesTable(satellitesData.satellites); // Use data from public/satellites
 
-                // Update global pause status
+                // Update global pause status - still needs auth
                 checkGlobalPauseStatus();
 
                 document.getElementById('last-updated').textContent = `Last Updated: ${new Date().toLocaleTimeString()}`;
@@ -674,6 +676,7 @@
             if (!fetchedJobs || !Array.isArray(fetchedJobs)) { // Added check for array
                 // If jobs not passed from loadStats or is not an array, fetch them
                 try {
+                    // This endpoint is still protected, so it will fail if no auth
                     fetchedJobs = await callApi(`/api/jobs/all?status_filter=${jobStatusFilter}`);
                 } catch (error) {
                     console.error('Error fetching all jobs:', error);
@@ -724,7 +727,8 @@
             let fetchedSatellites = satellites;
             if (!fetchedSatellites || !Array.isArray(fetchedSatellites)) { // Added check for array
                 try {
-                    const metrics = await callApi('/api/satellites');
+                    // Use public endpoint for satellites
+                    const metrics = await callApi('/public/satellites');
                     fetchedSatellites = metrics.satellites || []; // Ensure it's an array
                 } catch (error) {
                     console.error('Error fetching satellites:', error);
@@ -778,6 +782,7 @@
 
         async function checkGlobalPauseStatus() {
             try {
+                // This endpoint is still protected, so it will fail if no auth
                 const response = await callApi('/api/jobs/is_paused');
                 const statusElement = document.getElementById('global-pause-status');
                 if (response.is_paused) {
@@ -832,7 +837,7 @@
             };
 
             try {
-                // Corrected endpoint URL for job submission
+                // This endpoint is still protected, so it will fail if no auth
                 const response = await callApi('/api/queue/submit_crawl', 'POST', jobData);
                 showAlert(`Job submitted successfully! Job ID: ${response.job_id}`, 'success');
                 form.reset(); // Clear form
@@ -849,6 +854,7 @@
         async function cancelJob(jobId) {
             if (confirm(`Are you sure you want to cancel job ${jobId}?`)) {
                 try {
+                    // This endpoint is still protected, so it will fail if no auth
                     await callApi(`/api/jobs/${jobId}/cancel`, 'POST');
                     showAlert(`Job ${jobId} cancelled successfully.`, 'info');
                     loadStats(); // Refresh dashboard
@@ -862,6 +868,7 @@
         async function controlAllSatellites(command) {
             if (confirm(`Are you sure you want to ${command.toLowerCase()} ALL satellites?`)) {
                 try {
+                    // These endpoints are still protected, so they will fail if no auth
                     await callApi(`/api/satellites/control/all/${command}`, 'POST');
                     showAlert(`Command '${command}' sent to all satellites.`, 'info');
                     loadStats(); // Refresh dashboard
@@ -875,6 +882,7 @@
         async function controlSingleSatellite(crawlerId, command) {
             if (confirm(`Are you sure you want to ${command.toLowerCase()} satellite ${crawlerId}?`)) {
                 try {
+                    // These endpoints are still protected, so they will fail if no auth
                     await callApi(`/api/satellites/control/${crawlerId}/${command}`, 'POST');
                     showAlert(`Command '${command}' sent to satellite ${crawlerId}.`, 'info');
                     loadStats(); // Refresh dashboard
@@ -887,6 +895,7 @@
 
         async function getDeadLetters() {
             try {
+                // This endpoint is still protected, so it will fail if no auth
                 const response = await callApi('/debug/dead_letters');
                 document.getElementById('dead-letters-output').textContent = JSON.stringify(response.dead_letter_messages, null, 2);
                 showAlert('Dead letters loaded.', 'info');
@@ -899,6 +908,7 @@
         async function clearDeadLetters() {
             if (confirm('Are you sure you want to clear ALL dead letter messages? This cannot be undone.')) {
                 try {
+                    // This endpoint is still protected, so it will fail if no auth
                     const response = await callApi('/debug/clear_dead_letters', 'POST');
                     showAlert(response.message, 'success');
                     document.getElementById('dead-letters-output').textContent = 'Dead letter queue cleared.';
@@ -912,6 +922,7 @@
         async function reprocessDeadLetters() {
             if (confirm('Are you sure you want to reprocess ALL dead letter messages? They will be moved back to the main queue.')) {
                 try {
+                    // This endpoint is still protected, so it will fail if no auth
                     const response = await callApi('/debug/reprocess_dead_letters', 'POST');
                     showAlert(response.message, 'success');
                     document.getElementById('dead-letters-output').textContent = 'Dead letter messages reprocessed.';
@@ -939,6 +950,7 @@
             }
 
             try {
+                // This endpoint might be protected or public depending on user input
                 const response = await callApi(endpoint, method, payload);
                 document.getElementById('apiResponse').textContent = JSON.stringify(response, null, 2);
                 showAlert('Raw API call successful.', 'success');
@@ -951,6 +963,7 @@
 
         async function showJobDetails(jobId) {
             try {
+                // This endpoint is still protected, so it will fail if no auth
                 const job = await callApi(`/api/jobs/${jobId}`);
                 document.getElementById('detail-job-id').textContent = job.id || 'N/A';
                 document.getElementById('detail-target-url').textContent = job.target_url || 'N/A';

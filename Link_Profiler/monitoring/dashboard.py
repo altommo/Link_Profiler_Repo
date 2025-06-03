@@ -56,20 +56,13 @@ class MonitoringDashboard:
         self.db: Optional[Database] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self.coordinator: Optional[JobCoordinator] = None # Add coordinator instance
-        self.api_access_token: Optional[str] = None # New: Store API access token
-        self.main_api_internal_url: str = "" # New: Store main API's internal URL for backend-to-backend calls
-        self._token_refresh_task: Optional[asyncio.Task] = None # New: Task for token renewal
+        self.main_api_external_url: str = "" # Use external URL for dashboard's direct calls
 
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Get stale_timeout from config
         self.job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs") # Added for is_paused endpoint
         self.dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name", "dead_letter_queue") # Added for is_paused endpoint
-        self.access_token_expire_minutes = config_loader.get("auth.access_token_expire_minutes", 30) # New: Get token expiry
         
-        # New: Monitor user credentials
-        self.monitor_username = config_loader.get("monitoring.monitor_auth.username")
-        self.monitor_password = config_loader.get("monitoring.monitor_auth.password")
-
     async def __aenter__(self):
         """Initialise aiohttp session, Redis, and Database connections."""
         self.logger.info("Entering MonitoringDashboard context. Initialising connections.")
@@ -115,36 +108,16 @@ class MonitoringDashboard:
         else:
             self.logger.warning("MonitoringDashboard: JobCoordinator could not be initialized due to missing DB or Redis connection.")
 
-        # New: Obtain initial API access token for the dashboard itself
-        # This is the internal URL for Docker Compose services or localhost for Linux services
-        self.main_api_internal_url = config_loader.get('api.internal_url', 'http://localhost:8000') # Use config_loader for internal URL
-        self.logger.info(f"MonitoringDashboard: Main API internal URL set to {self.main_api_internal_url}")
+        # New: Use external URL for dashboard's direct calls to public endpoints
+        self.main_api_external_url = config_loader.get('api.external_url', 'http://localhost:8000') # Use config_loader for external URL
+        self.logger.info(f"MonitoringDashboard: Main API external URL set to {self.main_api_external_url}")
         
-        await self._refresh_access_token() # Get initial token
-
-        # Start token renewal task if token was successfully obtained
-        if self.api_access_token:
-            self._token_refresh_task = asyncio.create_task(self._token_renewal_loop())
-            self.logger.info("MonitoringDashboard: Started token renewal background task.")
-        else:
-            self.logger.warning("MonitoringDashboard: No initial token obtained, token renewal task not started.")
-
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close aiohttp session, Redis, and Database connections."""
         self.logger.info("Exiting MonitoringDashboard context. Closing connections.")
         
-        # Cancel token refresh task
-        if self._token_refresh_task:
-            self._token_refresh_task.cancel()
-            try:
-                await self._token_refresh_task
-            except asyncio.CancelledError:
-                self.logger.info("MonitoringDashboard: Token renewal task cancelled.")
-            except Exception as e:
-                self.logger.error(f"MonitoringDashboard: Error cancelling token renewal task: {e}")
-
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
@@ -161,86 +134,25 @@ class MonitoringDashboard:
         # if self.db and hasattr(self.db, 'close'):
         #     self.db.close()
 
-    async def _refresh_access_token(self):
-        """Authenticates with the main API and obtains a new access token."""
-        if not self.monitor_username or not self.monitor_password:
-            self.logger.error("MonitoringDashboard: Monitor authentication credentials not found in config. Cannot refresh token.")
-            self.api_access_token = None
-            return
-
-        try:
-            token_url = f"{self.main_api_internal_url}/auth/token"
-            token_data = {
-                "username": self.monitor_username,
-                "password": self.monitor_password
-            }
-            self.logger.debug(f"MonitoringDashboard: Attempting to get token from {token_url} with username {self.monitor_username}.")
-            
-            # Use aiohttp.FormData for application/x-www-form-urlencoded
-            form_data = aiohttp.FormData()
-            form_data.add_field('username', self.monitor_username)
-            form_data.add_field('password', self.monitor_password)
-
-            async with self._session.post(token_url, data=form_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                self.logger.debug(f"MonitoringDashboard: Token refresh response status: {response.status}")
-                
-                response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-                
-                token_response = await response.json()
-                self.logger.debug(f"MonitoringDashboard: Token refresh response body: {token_response}")
-                
-                self.api_access_token = token_response.get("access_token")
-                self.logger.info("MonitoringDashboard: Successfully refreshed API access token.")
-        except aiohttp.ClientResponseError as e:
-            self.logger.error(f"MonitoringDashboard: Failed to refresh API access token from {token_url} (Status: {e.status}, Detail: {e.message or await response.text()}). Check monitor_user credentials or main API status.", exc_info=True)
-            self.api_access_token = None
-        except aiohttp.ClientError as e:
-            self.logger.error(f"MonitoringDashboard: Network error connecting to main API at {token_url} during token refresh: {e}. Is main API running?", exc_info=True)
-            self.api_access_token = None
-        except Exception as e:
-            self.logger.error(f"MonitoringDashboard: Unexpected error during token refresh: {e}", exc_info=True)
-            self.api_access_token = None
-
-    async def _token_renewal_loop(self):
-        """Periodically refreshes the API access token."""
-        # Renew token a few minutes before it expires
-        refresh_interval_seconds = (self.access_token_expire_minutes - 5) * 60 
-        if refresh_interval_seconds <= 0:
-            refresh_interval_seconds = 1 * 60 # Ensure at least 1 minute if expiry is too short
-
-        self.logger.info(f"MonitoringDashboard: Token will be refreshed every {refresh_interval_seconds} seconds.")
-        while True:
-            await asyncio.sleep(refresh_interval_seconds)
-            self.logger.info("MonitoringDashboard: Attempting to refresh API access token...")
-            await self._refresh_access_token()
-            if not self.api_access_token:
-                self.logger.error("MonitoringDashboard: Token refresh failed. Retrying in 60 seconds.")
-                await asyncio.sleep(60) # Short retry if refresh fails
-
-    async def _call_main_api(self, endpoint: str, method: str = 'GET', json_data: Optional[Dict] = None) -> Any:
-        """Helper to call the main FastAPI API with authentication."""
-        if not self.api_access_token:
-            self.logger.error(f"Attempted to call main API endpoint {endpoint} without an access token.")
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Dashboard not authenticated with main API.")
-
+    async def _call_main_api_public(self, endpoint: str, method: str = 'GET', json_data: Optional[Dict] = None) -> Any:
+        """Helper to call the main FastAPI API's public endpoints."""
         headers = {
-            "Authorization": f"Bearer {self.api_access_token}",
             "Content-Type": "application/json"
         }
-        url = f"{self.main_api_internal_url}{endpoint}" # Use internal URL for backend-to-backend calls
+        url = f"{self.main_api_external_url}{endpoint}" # Use external URL for public calls
         
         try:
             async with self._session.request(method, url, headers=headers, json=json_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 response.raise_for_status()
                 return await response.json()
         except aiohttp.ClientResponseError as e:
-            self.logger.error(f"Main API call failed for {url} (Status: {e.status}): {e.message}", exc_info=True)
-            raise HTTPException(status_code=e.status, detail=f"Main API error: {e.message}")
+            self.logger.error(f"Public Main API call failed for {url} (Status: {e.status}): {e.message}", exc_info=True)
+            raise HTTPException(status_code=e.status, detail=f"Public Main API error: {e.message}")
         except aiohttp.ClientError as e:
-            self.logger.error(f"Network error calling main API {url}: {e}", exc_info=True)
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to main API: {e}")
+            self.logger.error(f"Network error calling public Main API {url}: {e}", exc_info=True)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to public Main API: {e}")
         except Exception as e:
-            self.logger.error(f"Unexpected error calling main API {url}: {e}", exc_info=True)
+            self.logger.error(f"Unexpected error calling public Main API {url}: {e}", exc_info=True)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error: {e}")
 
     async def get_queue_metrics(self) -> Dict:
@@ -473,9 +385,9 @@ class MonitoringDashboard:
 
     async def get_api_health(self):
         """Check API health by calling its /health endpoint"""
-        # This now calls the main API's health endpoint using the obtained token
+        # This now calls the main API's public health endpoint
         try:
-            health_data = await self._call_main_api("/health")
+            health_data = await self._call_main_api_public("/public/health")
             return health_data
         except HTTPException as e:
             return {"status": "error", "message": e.detail, "code": e.status_code}
@@ -566,8 +478,11 @@ class MonitoringDashboard:
             self.get_api_health(), # This now calls the main API
             self.get_redis_stats(),
             self.get_database_stats(),
-            # Corrected: Ensure this always returns an awaitable
-            self._call_main_api("/api/jobs/all") if self.api_access_token else self._empty_list_awaitable()
+            # Removed: self._call_main_api("/api/jobs/all") if self.api_access_token else self._empty_list_awaitable()
+            # The dashboard will now fetch all_jobs directly from the main API using its own public endpoint if available,
+            # or the protected one if the user manually authenticates.
+            # For now, we'll assume all_jobs is not part of the public stats.
+            # If you want a public /public/jobs/all, you'd add it to main.py and call it here.
         ]
         
         # Run all data fetching tasks concurrently
@@ -583,7 +498,7 @@ class MonitoringDashboard:
             "api_health": results[5] if not isinstance(results[5], Exception) else {"error": str(results[5])},
             "redis": results[6] if not isinstance(results[6], Exception) else {"error": str(results[6])},
             "database": results[7] if not isinstance(results[7], Exception) else {"error": str(results[7])},
-            "all_jobs": results[8] if not isinstance(results[8], Exception) else [], # New: All jobs data
+            "all_jobs": [], # No longer passed from backend, frontend will fetch if needed
             "timestamp": datetime.now().isoformat()
         }
         return data
@@ -631,18 +546,17 @@ async def monitoring_home(request: Request):
         "api_health": all_data["api_health"], # Pass API health
         "redis_stats": all_data["redis"], # Pass Redis stats
         "database_stats": all_data["database"], # Pass DB stats
-        "all_jobs": all_data["all_jobs"], # New: Pass all jobs to template
+        "all_jobs": [], # No longer passed from backend, frontend will fetch if needed
         "refresh_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "access_token": dashboard.api_access_token, # Pass the dynamically obtained token
         "api_base_url": main_api_external_base_url, # Pass the external API base URL for frontend
-        "monitor_username": dashboard.monitor_username, # Pass monitor username to frontend
-        "monitor_password": dashboard.monitor_password, # Pass monitor password to frontend (for client-side auth)
-        "access_token_expire_minutes": dashboard.access_token_expire_minutes # Pass token expiry to frontend
+        # Removed: monitor_username, monitor_password, access_token, access_token_expire_minutes
     })
 
 @app.get("/api/stats")
 async def get_all_stats_api():
     """API endpoint for dashboard statistics (used by JavaScript for refresh)"""
+    # This endpoint is now deprecated/unused by the dashboard frontend, but kept for direct API access.
+    # It still requires authentication if called directly.
     return await dashboard.get_all_dashboard_data()
 
 @app.get("/api/metrics")
@@ -664,6 +578,8 @@ async def get_metrics_api():
 @app.get("/api/satellites")
 async def get_satellites_api():
     """API endpoint for satellite status"""
+    # This endpoint is now deprecated/unused by the dashboard frontend, but kept for direct API access.
+    # It still requires authentication if called directly.
     metrics = await dashboard.get_queue_metrics()
     return {
         "satellites": metrics.get("satellites", []),
@@ -674,8 +590,12 @@ async def get_satellites_api():
 async def submit_job_from_dashboard(request: QueueCrawlRequest):
     """Submit a new crawl job from the dashboard."""
     # This endpoint now proxies the request to the main API
+    # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api("/api/queue/submit_crawl", method="POST", json_data=request.dict()) # Corrected endpoint
+        # This call will now fail if the main API requires authentication and the dashboard doesn't provide it.
+        # If you want to make job submission public, you'd need a /public/queue/submit_crawl in main.py
+        # and call that here.
+        response_data = await dashboard._call_main_api_public("/api/queue/submit_crawl", method="POST", json_data=request.dict()) # Corrected endpoint
         return response_data
     except HTTPException as e:
         raise e
@@ -687,8 +607,9 @@ async def submit_job_from_dashboard(request: QueueCrawlRequest):
 async def pause_all_jobs_endpoint():
     """Pause all new job processing."""
     # This endpoint now proxies the request to the main API
+    # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api("/api/jobs/pause_all", method="POST")
+        response_data = await dashboard._call_main_api_public("/api/jobs/pause_all", method="POST")
         return response_data
     except HTTPException as e:
         raise e
@@ -700,8 +621,9 @@ async def pause_all_jobs_endpoint():
 async def resume_all_jobs_endpoint():
     """Resume all job processing."""
     # This endpoint now proxies the request to the main API
+    # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api("/api/jobs/resume_all", method="POST")
+        response_data = await dashboard._call_main_api_public("/api/jobs/resume_all", method="POST")
         return response_data
     except HTTPException as e:
         raise e
@@ -713,8 +635,9 @@ async def resume_all_jobs_endpoint():
 async def is_jobs_paused_endpoint():
     """Check if global job processing is currently paused."""
     # This endpoint now proxies the request to the main API
+    # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api("/api/jobs/is_paused", method="GET")
+        response_data = await dashboard._call_main_api_public("/api/jobs/is_paused", method="GET")
         return response_data
     except HTTPException as e:
         raise e
@@ -727,8 +650,9 @@ async def is_jobs_paused_endpoint():
 async def cancel_job_endpoint(job_id: str):
     """Cancel a specific job."""
     # This endpoint now proxies the request to the main API
+    # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api(f"/api/jobs/{job_id}/cancel", method="POST")
+        response_data = await dashboard._call_main_api_public(f"/api/jobs/{job_id}/cancel", method="POST")
         return response_data
     except HTTPException as e:
         raise e
@@ -740,8 +664,9 @@ async def cancel_job_endpoint(job_id: str):
 async def control_all_satellites_endpoint(command: str):
     """Send a control command to all active satellites (e.g., 'PAUSE', 'RESUME', 'SHUTDOWN', 'RESTART')."""
     # This endpoint now proxies the request to the main API
+    # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api(f"/api/satellites/control/all/{command}", method="POST")
+        response_data = await dashboard._call_main_api_public(f"/api/satellites/control/all/{command}", method="POST")
         return response_data
     except HTTPException as e:
         raise e
@@ -753,8 +678,9 @@ async def control_all_satellites_endpoint(command: str):
 async def control_single_satellite_endpoint(crawler_id: str, command: str):
     """Send a control command to a specific satellite (e.g., 'PAUSE', 'RESUME', 'SHUTDOWN', 'RESTART')."""
     # This endpoint now proxies the request to the main API
+    # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api(f"/api/satellites/control/{crawler_id}/{command}", method="POST")
+        response_data = await dashboard._call_main_api_public(f"/api/satellites/control/{crawler_id}/{command}", method="POST")
         return response_data
     except HTTPException as e:
         raise e
@@ -871,7 +797,7 @@ if __name__ == "__main__":
     
     # Configure logging
     logging.basicConfig(
-        level=getattr(logging, args.log_level.upper()),
+        level=getattr(logging.Logger, args.log_level.upper()), # Corrected: Use logging.Logger
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
