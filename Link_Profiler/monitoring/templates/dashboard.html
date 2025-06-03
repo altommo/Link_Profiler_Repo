@@ -628,10 +628,10 @@
                             <span>Running: {{ satellite.running_jobs | default(0) }}</span>
                         </div>
                         <div class="satellite-actions">
-                            <button onclick="controlSatellite('{{ satellite.crawler_id }}', 'PAUSE')" class="pause">Pause</button>
-                            <button onclick="controlSatellite('{{ satellite.crawler_id }}', 'RESUME')">Resume</button>
-                            <button onclick="controlSatellite('{{ satellite.crawler_id }}', 'SHUTDOWN')" class="shutdown">Shutdown</button>
-                            <button onclick="controlSatellite('{{ satellite.crawler_id }}', 'RESTART')">Restart</button>
+                            <button onclick="controlSatellite('${escapeForTemplateLiteralAttribute(satellite.crawler_id)}', 'PAUSE')" class="pause">Pause</button>
+                            <button onclick="controlSatellite('${escapeForTemplateLiteralAttribute(satellite.crawler_id)}', 'RESUME')">Resume</button>
+                            <button onclick="controlSatellite('${escapeForTemplateLiteralAttribute(satellite.crawler_id)}', 'SHUTDOWN')" class="shutdown">Shutdown</button>
+                            <button onclick="controlSatellite('${escapeForTemplateLiteralAttribute(satellite.crawler_id)}', 'RESTART')">Restart</button>
                         </div>
                     </div>
                     {% endfor %}
