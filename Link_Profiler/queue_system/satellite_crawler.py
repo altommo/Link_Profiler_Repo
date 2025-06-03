@@ -141,9 +141,21 @@ class SatelliteCrawler:
 
     async def __aenter__(self):
         self.logger.info(f"SatelliteCrawler {self.crawler_id} entering context.")
-        self.redis_client = redis.Redis(connection_pool=redis.ConnectionPool.from_url(self.redis_url))
-        await self.redis_client.ping()
-        self.logger.info(f"SatelliteCrawler {self.crawler_id} connected to Redis.")
+        
+        # --- Redis Connection ---
+        try:
+            self.redis_client = redis.Redis(connection_pool=redis.ConnectionPool.from_url(self.redis_url))
+            await self.redis_client.ping()
+            self.logger.info(f"SatelliteCrawler {self.crawler_id} connected to Redis.")
+        except redis.exceptions.ConnectionError as e:
+            self.logger.critical(f"SatelliteCrawler {self.crawler_id} FAILED to connect to Redis at {self.redis_url}: {e}. Exiting.", exc_info=True)
+            sys.exit(1) # Exit if Redis connection fails, allowing process manager to restart
+        except redis.exceptions.AuthenticationError as e:
+            self.logger.critical(f"SatelliteCrawler {self.crawler_id} FAILED to authenticate with Redis at {self.redis_url}: {e}. Check password. Exiting.", exc_info=True)
+            sys.exit(1) # Exit if Redis authentication fails
+        except Exception as e:
+            self.logger.critical(f"SatelliteCrawler {self.crawler_id} encountered unexpected error connecting to Redis at {self.redis_url}: {e}. Exiting.", exc_info=True)
+            sys.exit(1) # Exit for any other unexpected Redis error
 
         # --- Start: Uniqueness check for crawler_id ---
         original_crawler_id = self.crawler_id
