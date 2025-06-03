@@ -448,24 +448,6 @@ app = FastAPI(
     lifespan=lifespan # Register the lifespan context manager
 )
 
-# --- Middleware for Prometheus Metrics ---
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    start_time = time.perf_counter()
-    
-    response = await call_next(request)
-    
-    process_time = time.perf_counter() - start_time
-    endpoint = request.url.path
-    method = request.method
-    status_code = response.status_code
-
-    API_REQUESTS_TOTAL.labels(endpoint=endpoint, method=method, status_code=status_code).inc()
-    API_REQUEST_DURATION_SECONDS.labels(endpoint=endpoint, method=method).observe(process_time)
-    
-    response.headers["X-Process-Time"] = str(process_time)
-    return response
-
 # --- Pydantic Models for API Request/Response ---
 # Moved to Link_Profiler/api/schemas.py
 from Link_Profiler.api.schemas import (
@@ -497,7 +479,7 @@ from Link_Profiler.api.link_building import link_building_router
 from Link_Profiler.api.ai import ai_router
 from Link_Profiler.api.reports import reports_router
 from Link_Profiler.api.monitoring_debug import monitoring_debug_router
-from Link_Profiler.api.websocket import websocket_router # New: Import the websocket router
+from Link_Profiler.api.websocket import websocket_router
 
 # Register the routers with the main app
 app.include_router(auth_router)
@@ -509,7 +491,7 @@ app.include_router(link_building_router)
 app.include_router(ai_router)
 app.include_router(reports_router)
 app.include_router(monitoring_debug_router)
-app.include_router(websocket_router) # New: Include the websocket router
+app.include_router(websocket_router)
 
 
 # Add queue-related endpoints to the main app
