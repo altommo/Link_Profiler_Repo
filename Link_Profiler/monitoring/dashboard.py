@@ -34,8 +34,8 @@ from Link_Profiler.queue_system.job_coordinator import JobCoordinator # Import J
 from Link_Profiler.api.queue_endpoints import QueueCrawlRequest, JobStatusResponse, get_coordinator # Import necessary models and functions
 
 # Initialize and load config once using the absolute path
-config_loader = ConfigLoader()
 # The config_dir path is now correct relative to the new project_root
+config_loader = ConfigLoader()
 config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
 
 app = FastAPI(title="Link Profiler Monitor")
@@ -173,12 +173,15 @@ class MonitoringDashboard:
             }
             self.logger.debug(f"MonitoringDashboard: Attempting to get token from {token_url} with username {monitor_username}.")
             async with self._session.post(token_url, data=token_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                response.raise_for_status()
+                self.logger.debug(f"MonitoringDashboard: Token refresh response status: {response.status}")
                 token_response = await response.json()
+                self.logger.debug(f"MonitoringDashboard: Token refresh response body: {token_response}")
+                response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+                
                 self.api_access_token = token_response.get("access_token")
                 self.logger.info("MonitoringDashboard: Successfully refreshed API access token.")
         except aiohttp.ClientResponseError as e:
-            self.logger.error(f"MonitoringDashboard: Failed to refresh API access token from {token_url} (Status: {e.status}, Detail: {e.message}). Check monitor_user credentials or main API status.", exc_info=True)
+            self.logger.error(f"MonitoringDashboard: Failed to refresh API access token from {token_url} (Status: {e.status}, Detail: {e.message or await response.text()}). Check monitor_user credentials or main API status.", exc_info=True)
             self.api_access_token = None
         except aiohttp.ClientError as e:
             self.logger.error(f"MonitoringDashboard: Network error connecting to main API at {token_url} during token refresh: {e}. Is main API running?", exc_info=True)
@@ -597,12 +600,16 @@ async def monitoring_home(request: Request):
     # Construct the external API base URL for the frontend JavaScript
     # Prioritize api.external_url from config, then fallback to request.url.scheme + api.host:api.port
     main_api_external_base_url = config_loader.get('api.external_url')
+    
+    logger.debug(f"Configured api.external_url for frontend: {main_api_external_base_url}")
+
     if not main_api_external_base_url:
-        # Fallback if external_url is not explicitly set in config
+        logger.critical("CRITICAL ERROR: 'api.external_url' is not configured in config.yaml or via environment variables. "
+                        "The dashboard frontend will not be able to connect to the main API. "
+                        "Please set api.external_url to the public HTTPS URL of your main API (e.g., 'https://monitor.yspanel.com:8000').")
+        # Fallback to a potentially incorrect URL, but log a critical error
         main_api_external_base_url = f"{request.url.scheme}://{request.url.hostname}:{config_loader.get('api.port', 8000)}"
-        logger.warning(f"API external_url not set in config. Falling back to {main_api_external_base_url}. Ensure this is correct for HTTPS.")
-
-
+        
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "queue_metrics": all_data["queue_metrics"],
