@@ -453,13 +453,16 @@ class Database:
             orm_job = self._to_orm(job)
             session.add(orm_job)
             session.commit()
-            logger.info(f"Added crawl job {job.id} to DB.")
+            # After commit, refresh the ORM object to ensure it reflects the database state
+            # This is crucial for scoped_session to see the latest data if another session committed it.
+            session.refresh(orm_job)
+            logger.info(f"DB: Added crawl job {job.id} (type: {job.job_type}, target: {job.target_url}) to DB. Status: {job.status.value}")
         except IntegrityError:
             session.rollback()
-            logger.warning(f"Crawl job {job.id} already exists. Skipping.")
+            logger.warning(f"DB: Crawl job {job.id} already exists. Skipping add.")
         except Exception as e:
             session.rollback()
-            logger.error(f"Error adding crawl job {job.id}: {e}", exc_info=True)
+            logger.error(f"DB: Error adding crawl job {job.id}: {e}", exc_info=True)
         finally:
             session.close()
 
@@ -468,9 +471,13 @@ class Database:
         session = self._get_session()
         try:
             orm_job = session.query(CrawlJobORM).filter_by(id=job_id).first()
+            if orm_job:
+                logger.debug(f"DB: Retrieved single job {job_id} from DB. Status: {orm_job.status}")
+            else:
+                logger.debug(f"DB: Job {job_id} not found in DB.")
             return self._to_dataclass(orm_job)
         except Exception as e:
-            logger.error(f"Error retrieving crawl job {job_id}: {e}", exc_info=True)
+            logger.error(f"DB: Error retrieving crawl job {job_id}: {e}", exc_info=True)
             return None
         finally:
             session.close()
@@ -479,10 +486,17 @@ class Database:
         """Retrieves a list of all crawl jobs from the database."""
         session = self._get_session()
         try:
+            # Use expire_all() to ensure the session loads fresh data from the database
+            # This is important for scoped_session when changes might be committed by other processes.
+            session.expire_all() 
             orm_jobs = session.query(CrawlJobORM).all()
+            logger.debug(f"DB: Retrieved {len(orm_jobs)} jobs from DB for get_all_crawl_jobs.")
+            if orm_jobs:
+                for job_orm in orm_jobs[:5]: # Log first 5 for inspection
+                    logger.debug(f"DB: Sample job from all_jobs: ID={job_orm.id[:8]}..., Type={job_orm.job_type}, Status={job_orm.status}")
             return [self._to_dataclass(job) for job in orm_jobs]
         except Exception as e:
-            logger.error(f"Error retrieving all crawl jobs: {e}", exc_info=True)
+            logger.error(f"DB: Error retrieving all crawl jobs: {e}", exc_info=True)
             return []
         finally:
             session.close()
@@ -502,12 +516,12 @@ class Database:
                     if hasattr(updated_data, column.key):
                         setattr(orm_job, column.key, getattr(updated_data, column.key))
                 session.commit()
-                logger.debug(f"Updated crawl job {job.id} status to {job.status.value}.")
+                logger.debug(f"DB: Updated crawl job {job.id} status to {job.status.value}.")
             else:
-                logger.warning(f"Crawl job {job.id} not found for update.")
+                logger.warning(f"DB: Crawl job {job.id} not found for update.")
         except Exception as e:
             session.rollback()
-            logger.error(f"Error updating crawl job {job.id}: {e}", exc_info=True)
+            logger.error(f"DB: Error updating crawl job {job.id}: {e}", exc_info=True)
         finally:
             session.close()
 
