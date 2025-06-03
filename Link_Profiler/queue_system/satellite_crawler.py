@@ -68,6 +68,7 @@ class SatelliteCrawler:
         self.max_retries = config_loader.get("queue.max_retries", 3)
         self.retry_delay = config_loader.get("queue.retry_delay", 5)
         self.clickhouse_enabled = config_loader.get("clickhouse.enabled", False)
+        self.code_version = config_loader.get("system.current_code_version", "unknown") # New: Read current code version
 
         # Database initialization
         # Prioritize passed database_url, then config, then hardcoded fallback
@@ -257,7 +258,8 @@ class SatelliteCrawler:
                 "timestamp": datetime.now().isoformat(),
                 "total_jobs_completed": self.total_jobs_completed,
                 "total_errors_encountered": self.total_errors_encountered,
-                "is_locally_paused": self.is_locally_paused # New: Include local pause status
+                "is_locally_paused": self.is_locally_paused, # Include local pause status
+                "code_version": self.code_version # New: Include code version in heartbeat
             }
             
             # Store detailed heartbeat data in a separate key with an expiry
