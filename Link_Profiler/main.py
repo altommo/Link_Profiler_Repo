@@ -63,7 +63,7 @@ from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backli
 from Link_Profiler.monitoring.prometheus_metrics import (
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
-from Link_Profiler.api.queue_endpoints import submit_crawl_to_queue, QueueCrawlRequest, get_coordinator
+from Link_Profiler.api.queue_endpoints import submit_crawl_to_queue, get_coordinator
 from Link_Profiler.config.config_loader import ConfigLoader
 from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config
 from Link_Profiler.utils.data_exporter import export_to_csv
