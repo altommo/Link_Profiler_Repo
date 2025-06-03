@@ -694,10 +694,23 @@ async def control_single_satellite_endpoint(crawler_id: str, command: str):
 async def get_all_jobs_api(status_filter: Optional[str] = None):
     """Get all jobs for the dashboard."""
     if not dashboard.coordinator:
+        logger.error("Dashboard API: Job coordinator not available when calling /api/jobs/all.")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
-    jobs = await dashboard.coordinator.get_all_jobs_for_dashboard(status_filter=status_filter)
-    logger.debug(f"Dashboard API: Retrieved {len(jobs)} jobs from DB for /api/jobs/all.") # Debugging log
-    return [JobStatusResponse.from_crawl_job(job) for job in jobs]
+    try:
+        # Explicitly manage session for this critical read operation
+        # This ensures a fresh view of the database, especially if other processes are writing.
+        session = dashboard.db._get_session()
+        try:
+            session.expire_all() # Ensure all objects in the session are refreshed from the database
+            jobs = await dashboard.coordinator.get_all_jobs_for_dashboard(status_filter=status_filter)
+            logger.debug(f"Dashboard API: Retrieved {len(jobs)} jobs from DB for /api/jobs/all.") # Debugging log
+            return [JobStatusResponse.from_crawl_job(job) for job in jobs]
+        finally:
+            session.close() # Always close the session
+    except Exception as e:
+        logger.error(f"Dashboard API: Error retrieving all jobs for /api/jobs/all: {e}", exc_info=True)
+        # Return a proper JSON error response for the frontend
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve all jobs: {e}")
 
 @app.get("/api/jobs/{job_id}", response_model=JobStatusResponse)
 async def get_single_job_api(job_id: str):
