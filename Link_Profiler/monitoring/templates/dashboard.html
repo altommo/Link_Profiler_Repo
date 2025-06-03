@@ -976,6 +976,11 @@
             }
         }
 
+        function escapeForTemplateLiteralAttribute(str) {
+            // Escapes backticks and dollar signs for use within template literal attributes
+            return str.replace(/`/g, '\\`').replace(/\$/g, '\\$');
+        }
+
         function confirmRestartAllServices() {
             if (confirm("WARNING: This will restart the API, Coordinator, and Monitoring services. Are you sure you want to proceed?")) {
                 // This is a system-level command, not an API call.
@@ -1016,11 +1021,6 @@
         var firstTabEl = document.querySelector('.nav-link.active');
         var firstTab = new bootstrap.Tab(firstTabEl);
         firstTab.show();
-
-        // Helper function to escape strings for use in template literal attributes
-        function escapeForTemplateLiteralAttribute(str) {
-            return str.replace(/`/g, '\\`').replace(/\$/g, '\\$');
-        }
 
     </script>
 </body>
