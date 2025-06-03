@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 # Import from core.models for shared data structures and serialization
-from Link_Profiler.core.models import User, Token, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob
+from Link_Profiler.core.models import User, Token, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink # Added CrawlJob, LinkProfile, Backlink
 
 # Get logger from main.py (assuming main.py sets up logging globally)
 # This import is safe as schemas.py does not import main.py at the top level
@@ -179,9 +179,9 @@ class CrawlJobResponse(BaseModel):
 
         if isinstance(job_dict.get('created_date'), str):
             try:
-                job_dict['created_at'] = datetime.fromisoformat(job_dict['created_date'])
+                job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
             except ValueError:
-                 logger.warning(f"Could not parse created_at string: {job_dict.get('created_date')}")
+                 logger.warning(f"Could not parse created_date string: {job_dict.get('created_date')}")
                  job_dict['created_date'] = None
 
         if isinstance(job_dict.get('started_date'), str):
