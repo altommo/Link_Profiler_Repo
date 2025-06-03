@@ -139,6 +139,15 @@ async def submit_crawl_to_queue(request: QueueCrawlRequest):
         if job_type == "backlink_discovery":
             job.config["initial_seed_urls"] = request.initial_seed_urls
         
+        # IMPORTANT: Save the job to the database BEFORE submitting it to the queue
+        # This ensures the job record exists when a satellite picks it up.
+        if _db_instance:
+            _db_instance.add_crawl_job(job)
+            logger.debug(f"Queue Endpoints: Job {job.id} added to database.")
+        else:
+            logger.error(f"Queue Endpoints: Database instance not available, cannot save job {job.id} to DB.")
+            raise HTTPException(status_code=500, detail="Database not available for job persistence.")
+
         logger.debug(f"Queue Endpoints: Calling coordinator.submit_crawl_job for job ID: {job.id}, status: {job.status.value}")
         # Submit the CrawlJob object to the coordinator
         await coord.submit_crawl_job(job)

@@ -331,7 +331,7 @@ class Database:
             logger.warning(f"Some backlinks already exist. Attempting individual adds for {len(backlinks)} backlinks.")
             # Fallback to individual adds for better error reporting on duplicates
             for backlink in backlinks:
-                self.add_backlink(backlink) # This will log duplicates as debug
+                self.add_backlink(backlink)
         except Exception as e:
             session.rollback()
             logger.error(f"Error adding multiple backlinks: {e}", exc_info=True)
@@ -1046,7 +1046,7 @@ class Database:
 
         Args:
             target_domain: The domain for which to track backlink counts.
-            time_unit: The unit of time ('day', 'week', 'month', 'quarter', 'year').
+            time_unit: The unit of time ('day', 'week', 'month', 'quarter', 'year', 'hour').
             num_units: The number of past units to retrieve data for.
 
         Returns:
@@ -1059,7 +1059,7 @@ class Database:
             current_date = datetime.now()
 
             for i in range(num_units):
-                if time_unit == "hour": # Added support for "hour"
+                if time_unit == "hour":
                     start_of_unit = current_date - timedelta(hours=i)
                     start_of_unit = start_of_unit.replace(minute=0, second=0, microsecond=0)
                     end_of_unit = start_of_unit.replace(minute=59, second=59, microsecond=999999)
@@ -1093,7 +1093,7 @@ class Database:
                     end_of_unit = start_of_unit.replace(hour=23, minute=59, second=59, microsecond=999999)
                     period_label = start_of_unit.strftime("%Y-%m-%d")
                 else:
-                    raise ValueError("Invalid time_unit. Must be 'day', 'week', 'month', 'quarter', 'year', or 'hour'.") # Updated error message
+                    raise ValueError("Invalid time_unit. Must be 'day', 'week', 'month', 'quarter', 'year', or 'hour'.")
 
                 count = session.query(BacklinkORM).filter(
                     BacklinkORM.target_domain_name == target_domain,
@@ -1166,7 +1166,7 @@ class Database:
             current_date = datetime.now()
 
             for i in range(num_units):
-                if time_unit == "hour": # Added support for "hour"
+                if time_unit == "hour":
                     start_of_unit = current_date - timedelta(hours=i)
                     start_of_unit = start_of_unit.replace(minute=0, second=0, microsecond=0)
                     end_of_unit = start_of_unit.replace(minute=59, second=59, microsecond=999999)
@@ -1198,7 +1198,7 @@ class Database:
                     end_of_unit = start_of_unit.replace(hour=23, minute=59, second=59, microsecond=999999)
                     period_label = start_of_unit.strftime("%Y-%m-%d")
                 else:
-                    raise ValueError("Invalid time_unit. Must be 'day', 'week', 'month', 'quarter', 'year', or 'hour'.") # Updated error message
+                    raise ValueError("Invalid time_unit. Must be 'day', 'week', 'month', 'quarter', 'year', or 'hour'.")
 
                 # Query for jobs completed within the current time unit
                 jobs_in_period = session.query(CrawlJobORM).filter(
