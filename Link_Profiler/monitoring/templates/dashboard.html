@@ -81,14 +81,20 @@
     <script>
         // IMPORTANT: These values are now injected by the backend (Link_Profiler/monitoring/dashboard.py)
         // Do NOT hardcode them here. They are passed from the Jinja2 template.
-        const ACCESS_TOKEN = '{{ access_token }}'; 
-        const API_BASE_URL = '{{ api_base_url }}'; 
+        const ACCESS_TOKEN = {{ access_token | tojson }}; 
+        const API_BASE_URL = {{ api_base_url | tojson }}; 
 
         let disableConfirmations = false; // New: Global flag to disable confirmations
 
+        // Helper function to escape characters for HTML attribute values within template literals
+        function escapeForTemplateLiteralAttribute(s) {
+            // Escape single quotes, double quotes, and backticks
+            return String(s).replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/`/g, "\\`");
+        }
+
         // --- START: ACCESS TOKEN WARNING ---
         document.addEventListener('DOMContentLoaded', () => {
-            if (!ACCESS_TOKEN || ACCESS_TOKEN === 'None' || ACCESS_TOKEN === 'YOUR_ACCESS_TOKEN') {
+            if (!ACCESS_TOKEN || ACCESS_TOKEN === null || ACCESS_TOKEN === 'YOUR_ACCESS_TOKEN') {
                 const warningDiv = document.createElement('div');
                 warningDiv.style.backgroundColor = '#ffe0b2'; // Light orange
                 warningDiv.style.border = '1px solid #ff9800'; // Orange border
@@ -316,8 +322,8 @@
                                 <td>${job.started_date ? new Date(job.started_date).toLocaleString() : 'N/A'}</td>
                                 <td>${job.completed_date ? new Date(job.completed_date).toLocaleString() : 'N/A'}</td>
                                 <td class="job-actions">
-                                    <button onclick="viewJobDetails('${job.job_id}')">View</button>
-                                    ${job.status !== 'COMPLETED' && job.status !== 'FAILED' && job.status !== 'CANCELLED' ? `<button class="cancel" onclick="cancelJob('${job.job_id}')">Cancel</button>` : ''}
+                                    <button onclick="viewJobDetails('${escapeForTemplateLiteralAttribute(job.job_id)}')">View</button>
+                                    ${job.status !== 'COMPLETED' && job.status !== 'FAILED' && job.status !== 'CANCELLED' ? `<button class="cancel" onclick="cancelJob('${escapeForTemplateLiteralAttribute(job.job_id)}')">Cancel</button>` : ''}
                                 </td>
                             </tr>
                         `;
@@ -421,10 +427,10 @@
                                     <span>Running: ${satellite.running_jobs || 0}</span>
                                 </div>
                                 <div class="satellite-actions">
-                                    <button onclick="controlSatellite('${satellite.crawler_id}', 'PAUSE')" class="pause">Pause</button>
-                                    <button onclick="controlSatellite('${satellite.crawler_id}', 'RESUME')">Resume</button>
-                                    <button onclick="controlSatellite('${satellite.crawler_id}', 'SHUTDOWN')" class="shutdown">Shutdown</button>
-                                    <button onclick="controlSatellite('${satellite.crawler_id}', 'RESTART')">Restart</button>
+                                    <button onclick="controlSatellite('${escapeForTemplateLiteralAttribute(satellite.crawler_id)}', 'PAUSE')" class="pause">Pause</button>
+                                    <button onclick="controlSatellite('${escapeForTemplateLiteralAttribute(satellite.crawler_id)}', 'RESUME')">Resume</button>
+                                    <button onclick="controlSatellite('${escapeForTemplateLiteralAttribute(satellite.crawler_id)}', 'SHUTDOWN')" class="shutdown">Shutdown</button>
+                                    <button onclick="controlSatellite('${escapeForTemplateLiteralAttribute(satellite.crawler_id)}', 'RESTART')">Restart</button>
                                 </div>
                             </div>
                         `;
