@@ -110,8 +110,8 @@ class MonitoringDashboard:
             self.logger.warning("MonitoringDashboard: JobCoordinator could not be initialized due to missing DB or Redis connection.")
 
         # New: Obtain initial API access token for the dashboard itself
-        # This is the internal URL for Docker Compose services
-        self.main_api_internal_url = os.getenv('MAIN_API_INTERNAL_URL', 'http://localhost:8000')
+        # This is the internal URL for Docker Compose services or localhost for Linux services
+        self.main_api_internal_url = os.getenv('LP_MAIN_API_INTERNAL_URL', 'http://localhost:8000')
         self.logger.info(f"MonitoringDashboard: Main API internal URL set to {self.main_api_internal_url}")
         
         await self._refresh_access_token() # Get initial token
@@ -595,8 +595,13 @@ async def monitoring_home(request: Request):
     all_data = await dashboard.get_all_dashboard_data()
     
     # Construct the external API base URL for the frontend JavaScript
-    # This ensures the frontend uses the same scheme (http/https) as the dashboard itself
-    main_api_external_base_url = f"{request.url.scheme}://{request.url.hostname}:{config_loader.get('api.port', 8000)}"
+    # Prioritize api.external_url from config, then fallback to request.url.scheme + api.host:api.port
+    main_api_external_base_url = config_loader.get('api.external_url')
+    if not main_api_external_base_url:
+        # Fallback if external_url is not explicitly set in config
+        main_api_external_base_url = f"{request.url.scheme}://{request.url.hostname}:{config_loader.get('api.port', 8000)}"
+        logger.warning(f"API external_url not set in config. Falling back to {main_api_external_base_url}. Ensure this is correct for HTTPS.")
+
 
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
