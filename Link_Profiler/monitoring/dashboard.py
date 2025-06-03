@@ -31,7 +31,8 @@ from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain, serialize_model, CrawlConfig # Import CrawlConfig
 from Link_Profiler.config.config_loader import ConfigLoader
 from Link_Profiler.queue_system.job_coordinator import JobCoordinator # Import JobCoordinator
-from Link_Profiler.api.queue_endpoints import QueueCrawlRequest, JobStatusResponse, get_coordinator # Import necessary models and functions
+from Link_Profiler.api.queue_endpoints import get_coordinator # Import necessary functions, but not models
+from Link_Profiler.api.schemas import QueueCrawlRequest, JobStatusResponse # Corrected: Import models from schemas
 
 # Initialize and load config once using the absolute path
 # The config_dir path is now correct relative to the new project_root
@@ -748,34 +749,6 @@ async def control_single_satellite_endpoint(crawler_id: str, command: str):
     except Exception as e:
         logger.error(f"Error sending control command '{command}' to satellite '{crawler_id}' from dashboard (proxying to main API): {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send command to satellite via main API: {e}")
-
-
-@app.get("/api/jobs/all", response_model=List[JobStatusResponse])
-async def get_all_jobs_api(status_filter: Optional[str] = None):
-    """Get all jobs for the dashboard."""
-    # This endpoint now proxies the request to the main API
-    try:
-        response_data = await dashboard._call_main_api(f"/api/jobs/all?status_filter={status_filter}" if status_filter else "/api/jobs/all", method="GET")
-        # The response_data is already a list of dicts, convert to Pydantic models
-        return [JobStatusResponse(**job_data) for job_data in response_data]
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"Error retrieving all jobs from dashboard (proxying to main API): {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve all jobs via main API: {e}")
-
-@app.get("/api/jobs/{job_id}", response_model=JobStatusResponse)
-async def get_single_job_api(job_id: str):
-    """Get details for a single job."""
-    # This endpoint now proxies the request to the main API
-    try:
-        response_data = await dashboard._call_main_api(f"/api/jobs/{job_id}", method="GET")
-        return JobStatusResponse(**response_data)
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"Error retrieving job {job_id} from dashboard (proxying to main API): {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve job via main API: {e}")
 
 
 # CLI tool for queue management
