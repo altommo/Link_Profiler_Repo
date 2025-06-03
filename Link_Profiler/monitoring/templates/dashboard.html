@@ -418,8 +418,8 @@
                                 ${satellite.current_job ? `- Processing: ${satellite.current_job}` : ''}
                                 <div class="satellite-details">
                                     <span>Jobs: ${satellite.total_jobs_completed || 0}</span>
-                                    <span>Errors: ${satellite.total_errors_encountered || 0}</span>
-                                    <span>Running: ${satellite.running_jobs || 0}</span>
+                                    <span>Errors: {{ satellite.total_errors_encountered | default(0) }}</span>
+                                    <span>Running: {{ satellite.running_jobs | default(0) }}</span>
                                 </div>
                                 <div class="satellite-actions">
                                     <button onclick="controlSatellite('${satellite.crawler_id}', 'PAUSE')" class="pause">Pause</button>
