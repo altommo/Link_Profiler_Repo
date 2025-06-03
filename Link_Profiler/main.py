@@ -496,8 +496,8 @@ from Link_Profiler.api.competitive_analysis import competitive_analysis_router
 from Link_Profiler.api.link_building import link_building_router
 from Link_Profiler.api.ai import ai_router
 from Link_Profiler.api.reports import reports_router
-from Link_Profiler.api.monitoring_debug import monitoring_debug_router # New: Import the monitoring_debug router
-from Link_Profiler.api.dependencies import get_current_user # Import get_current_user for other endpoints that need it
+from Link_Profiler.api.monitoring_debug import monitoring_debug_router
+from Link_Profiler.api.websocket import websocket_router # New: Import the websocket router
 
 # Register the routers with the main app
 app.include_router(auth_router)
@@ -508,27 +508,9 @@ app.include_router(competitive_analysis_router)
 app.include_router(link_building_router)
 app.include_router(ai_router)
 app.include_router(reports_router)
-app.include_router(monitoring_debug_router) # New: Include the monitoring_debug router
+app.include_router(monitoring_debug_router)
+app.include_router(websocket_router) # New: Include the websocket router
 
 
 # Add queue-related endpoints to the main app
 add_queue_endpoints(app, db, alert_service_instance, connection_manager)
-
-# New: WebSocket endpoint for real-time updates
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time updates on job status and alerts.
-    """
-    await connection_manager.connect(websocket)
-    try:
-        while True:
-            # Keep the connection alive. Clients can send messages, but we don't expect them.
-            # If a message is received, it can be processed or ignored.
-            # A simple ping-pong or timeout mechanism could be added for robustness.
-            await websocket.receive_text() # This will block until a message is received or connection closes
-    except WebSocketDisconnect:
-        connection_manager.disconnect(websocket)
-    except Exception as e:
-        logger.error(f"WebSocket error for {websocket.client.host}:{websocket.client.port}: {e}", exc_info=True)
-        connection_manager.disconnect(websocket)
