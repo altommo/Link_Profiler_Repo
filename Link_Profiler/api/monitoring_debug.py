@@ -409,7 +409,7 @@ async def get_api_stats():
 
 @monitoring_debug_router.get("/api/jobs/all", response_model=List[CrawlJobResponse])
 async def get_all_jobs_api(
-    status_filter: Annotated[Optional[str], Query(None, description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED').")]
+    status_filter: Annotated[Optional[str], Query(description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED').")] = None # Corrected default value placement
 ):
     """
     Retrieves all crawl jobs, optionally filtered by status.
