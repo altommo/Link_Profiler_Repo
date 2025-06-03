@@ -1940,9 +1940,19 @@ async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
     try:
         system_stats = {
             "cpu_percent": psutil.cpu_percent(interval=None),
-            "memory_percent": psutil.virtual_memory().percent,
-            "disk_percent": psutil.disk_usage('/').percent,
-            "uptime_seconds": time.time() - psutil.boot_time()
+            "memory": { # Nested memory object
+                "percent": psutil.virtual_memory().percent,
+                "total": psutil.virtual_memory().total,
+                "available": psutil.virtual_memory().available,
+                "used": psutil.virtual_memory().used
+            },
+            "disk": { # Nested disk object
+                "percent": psutil.disk_usage('/').percent,
+                "total": psutil.disk_usage('/').total,
+                "used": psutil.disk_usage('/').used,
+                "free": psutil.disk_usage('/').free
+            },
+            "uptime": time.time() - psutil.boot_time() # Renamed from uptime_seconds
         }
     except Exception as e:
         logger.error(f"Error getting system stats for /api/stats: {e}", exc_info=True)
@@ -2041,6 +2051,7 @@ async def get_all_jobs_api(
     logger.info(f"API: Received request for all jobs (public endpoint, status_filter: {status_filter}).")
     try:
         all_jobs = db.get_all_crawl_jobs()
+        logger.debug(f"API: Retrieved {len(all_jobs)} jobs from database before filtering.")
         
         if status_filter:
             try:
