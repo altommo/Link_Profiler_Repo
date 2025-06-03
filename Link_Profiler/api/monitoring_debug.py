@@ -592,3 +592,24 @@ async def reprocess_dead_letters(current_user: Annotated[User, Depends(get_curre
     except Exception as e:
         logger.error(f"Error reprocessing dead-letter messages: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to reprocess dead-letter messages: {e}")
+
+@monitoring_debug_router.get("/api/satellites") # New: Implement /api/satellites endpoint
+async def get_satellites_api_endpoint(current_user: Annotated[User, Depends(get_current_user)]):
+    """
+    Retrieves detailed health information for all satellite crawlers.
+    """
+    logger.info(f"API: Received request for satellite health by user: {current_user.username}.")
+    job_coordinator = await get_coordinator()
+    stats = await job_coordinator.get_queue_stats() # This already contains satellite_crawlers
+
+    # The satellite_crawlers data from get_queue_stats is already in the desired format
+    # (Dict[str, Any] where Any is a dict with isoformatted timestamps)
+    # We just need to convert it to a list of values for the response model.
+    satellite_list = list(stats.get("satellite_crawlers", {}).values())
+    
+    # Ensure datetime objects are correctly parsed from ISO format strings if they come that way
+    # This conversion is already handled in the dashboard.py's loadSatellitesTable,
+    # but it's good to ensure the data is consistent.
+    # For the API response, we can return the raw dicts as they contain isoformatted strings.
+    
+    return {"satellites": satellite_list, "active_count": len(satellite_list)}

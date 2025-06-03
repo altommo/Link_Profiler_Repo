@@ -23,6 +23,7 @@ else:
 
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query
+from fastapi.middleware.cors import CORSMiddleware # New: Import CORSMiddleware
 from typing import List, Optional, Dict, Any, Union, Annotated
 import logging
 from urllib.parse import urlparse
@@ -465,6 +466,28 @@ app = FastAPI(
     description="API for discovering backlinks and generating link profiles.",
     version="0.1.0",
     lifespan=lifespan # Register the lifespan context manager
+)
+
+# --- CORS Middleware ---
+# New: Add CORSMiddleware to allow cross-origin requests from the monitoring dashboard
+# Configure allowed origins based on your deployment.
+# For production, replace "*" with your actual dashboard domain (e.g., "https://monitor.yspanel.com")
+origins = [
+    "http://localhost",
+    "http://localhost:8000",
+    "http://localhost:8001", # For local testing of dashboard
+    "https://api.yspanel.com", # Your main API domain
+    "https://monitor.yspanel.com", # Your monitoring dashboard domain
+    "https://linkprofiler.yspanel.com", # Another potential domain
+    "https://www.yspanel.com" # Your www domain
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # --- Pydantic Models for API Request/Response ---
