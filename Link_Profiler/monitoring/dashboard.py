@@ -31,8 +31,8 @@ from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain, serialize_model, CrawlConfig # Import CrawlConfig
 from Link_Profiler.config.config_loader import ConfigLoader
 from Link_Profiler.queue_system.job_coordinator import JobCoordinator # Import JobCoordinator
-from Link_Profiler.api.queue_endpoints import get_coordinator # Import necessary functions, but not models
-from Link_Profiler.api.schemas import QueueCrawlRequest, JobStatusResponse # Corrected: Import models from schemas
+from Link_Profiler.api.queue_endpoints import get_coordinator, QueueCrawlRequest # Corrected: Import QueueCrawlRequest from queue_endpoints
+from Link_Profiler.api.schemas import JobStatusResponse # Corrected: Import JobStatusResponse from schemas
 
 # Initialize and load config once using the absolute path
 # The config_dir path is now correct relative to the new project_root
