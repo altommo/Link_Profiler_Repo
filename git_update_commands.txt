@@ -1,0 +1,24 @@
+# Git Commands to Update Repository
+
+# Navigate to the project directory
+cd C:\Users\hp\Documents\Projects\Domain_Research\Link_Profiler_Repo
+
+# Check current status
+git status
+
+# Add all new and modified files
+git add .
+
+# Commit the changes
+git commit -m "Add systemd service files and update monitoring configuration
+
+- Add systemd service files for api, coordinator, and monitoring
+- Update config.yaml with monitoring authentication settings
+- Add api.external_url configuration for frontend
+- Add deployment script for server updates
+- Fix authentication flow between dashboard and main API"
+
+# Push to remote repository
+git push origin main
+
+echo "Repository updated successfully!"

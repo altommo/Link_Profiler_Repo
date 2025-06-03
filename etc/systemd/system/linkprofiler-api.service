@@ -1,23 +1,22 @@
 [Unit]
-Description=Link Profiler Monitoring Dashboard
-After=network.target linkprofiler-api.service
+Description=Link Profiler API
+After=network.target postgresql.service redis.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/Link_Profiler_Repo/Link_Profiler/monitoring
+WorkingDirectory=/opt/Link_Profiler_Repo
 Environment=PATH=/opt/Link_Profiler_Repo/venv/bin
 Environment=PYTHONPATH=/opt/Link_Profiler_Repo
 Environment=LP_DATABASE_URL=postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db
 Environment=DATABASE_URL=postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db
 Environment=LP_REDIS_URL=redis://:redis_secure_pass_456@127.0.0.1:6379/0
 Environment=REDIS_URL=redis://:redis_secure_pass_456@127.0.0.1:6379/0
-Environment=LP_MAIN_API_INTERNAL_URL=http://localhost:8000
-Environment=LP_API_EXTERNAL_URL=https://monitor.yspanel.com:8000
-Environment=LP_MONITORING_MONITOR_AUTH_USERNAME=monitor_user
-Environment=LP_MONITORING_MONITOR_AUTH_PASSWORD=secure_monitor_password
+Environment=ACCESS_TOKEN=your_secure_api_token_789
+Environment=LP_ACCESS_TOKEN=your_secure_api_token_789
 Environment=LP_AUTH_SECRET_KEY=cb53bd28ffc37f3f99bcae7b2f23252fc74fe233f623c37b4fbce541c0c672d3
-ExecStart=/opt/Link_Profiler_Repo/venv/bin/python /opt/Link_Profiler_Repo/Link_Profiler/monitoring/dashboard.py dashboard
+Environment=LP_API_EXTERNAL_URL=https://monitor.yspanel.com:8000
+ExecStart=/opt/Link_Profiler_Repo/venv/bin/uvicorn Link_Profiler.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=10
 
