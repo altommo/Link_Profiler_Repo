@@ -1,3 +1,6 @@
+"""
+Satellite Crawler responsible for fetching and processing crawl jobs from Redis.
+"""
 import logging
 import asyncio
 import os
@@ -276,6 +279,8 @@ class SatelliteCrawler:
                 "code_version": self.code_version # New: Include code version in heartbeat
             }
             
+            self.logger.debug(f"Heartbeat for {self.crawler_id}: Sending code_version '{self.code_version}'.") # New debug log
+
             # Store detailed heartbeat data in a separate key with an expiry
             # The expiry should be longer than the stale_timeout to allow for recovery
             await self.redis_client.set(

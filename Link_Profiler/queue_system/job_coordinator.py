@@ -314,6 +314,7 @@ class JobCoordinator:
                             
                             # New: Check for code version mismatch
                             satellite_code_version = detailed_heartbeat_data.get("code_version", "unknown")
+                            logger.debug(f"Monitor: Comparing satellite '{crawler_id}' version '{satellite_code_version}' with desired '{self.current_code_version}'.") # New debug log
                             if satellite_code_version != self.current_code_version:
                                 logger.warning(f"Satellite '{crawler_id}' is outdated (version: {satellite_code_version}, desired: {self.current_code_version}). Sending RESTART command.")
                                 await self.send_control_command(crawler_id, "RESTART")
@@ -439,7 +440,7 @@ class JobCoordinator:
         job.completed_date = datetime.now()
         job.add_error(url=job.target_url, error_type="ManualCancellation", message="Job cancelled by user/system.")
         self.db.update_crawl_job(job)
-        logger.info(f"Job {job_id} status updated to CANCELLED in DB.")
+        logger.info(f"Job {job.id} status updated to CANCELLED in DB.")
 
         # 2. Remove from Redis queues if pending/scheduled
         job_message = json.dumps(serialize_model(job))
