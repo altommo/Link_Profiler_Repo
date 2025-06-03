@@ -71,8 +71,8 @@ async def identify_link_prospects_job(
 
 @link_building_router.get("/prospects", response_model=List[LinkProspectResponse])
 async def get_all_link_prospects_endpoint(
-    status_filter: Annotated[Optional[str], Query(description="Filter prospects by status (e.g., 'identified', 'contacted', 'acquired').")] = None, # Corrected default value placement
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)], # Moved to come before other optional parameters
+    status_filter: Annotated[Optional[str], Query(description="Filter prospects by status (e.g., 'identified', 'contacted', 'acquired').")] = None
 ):
     """
     Retrieves all identified link building prospects, optionally filtered by status.
@@ -146,8 +146,8 @@ async def create_outreach_campaign_endpoint(
 
 @link_building_router.get("/campaigns", response_model=List[OutreachCampaignResponse])
 async def get_all_outreach_campaigns_endpoint(
-    status_filter: Annotated[Optional[str], Query(description="Filter campaigns by status (e.g., 'active', 'completed').")] = None, # Corrected default value placement
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)], # Moved to come before other optional parameters
+    status_filter: Annotated[Optional[str], Query(description="Filter campaigns by status (e.g., 'active', 'completed').")] = None
 ):
     """
     Retrieves all outreach campaigns, optionally filtered by status.
