@@ -340,8 +340,8 @@
 
         async function loadStats() {
             try {
-                const response = await fetch('/api/stats');
-                const data = await response.json();
+                // Changed to use callApi for consistency and authentication
+                const data = await callApi('/api/stats');
                 console.log('Received general stats data:', data); // Debugging log
                 
                 // Update Queue Metrics
@@ -463,8 +463,8 @@
                 // Update global job status indicator
                 const globalJobStatusSpan = document.getElementById('globalJobStatus');
                 if (globalJobStatusSpan) {
-                    // This now calls the dashboard's own API endpoint, which proxies to main API
-                    const isGlobalPaused = await fetch('/api/jobs/is_paused').then(res => res.json()).then(data => data.is_paused).catch(() => false);
+                    // Changed to use callApi for consistency and authentication
+                    const isGlobalPaused = await callApi('/api/jobs/is_paused').then(data => data.is_paused).catch(() => false);
                     if (isGlobalPaused) {
                         globalJobStatusSpan.textContent = '(PAUSED)';
                         globalJobStatusSpan.style.color = '#ff9800'; // Orange for paused
