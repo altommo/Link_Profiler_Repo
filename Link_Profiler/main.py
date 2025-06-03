@@ -491,53 +491,17 @@ from Link_Profiler.api.schemas import (
 from Link_Profiler.api.auth import auth_router
 from Link_Profiler.api.users import users_router
 from Link_Profiler.api.crawl_audit import crawl_audit_router
-from Link_Profiler.api.analytics import analytics_router # New: Import the analytics router
+from Link_Profiler.api.analytics import analytics_router
+from Link_Profiler.api.competitive_analysis import competitive_analysis_router # New: Import the competitive_analysis router
 from Link_Profiler.api.dependencies import get_current_user # Import get_current_user for other endpoints that need it
 
 # Register the routers with the main app
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(crawl_audit_router)
-app.include_router(analytics_router) # New: Include the analytics router
+app.include_router(analytics_router)
+app.include_router(competitive_analysis_router) # New: Include the competitive_analysis router
 
-
-@app.post("/competitor/link_intersect", response_model=LinkIntersectResponse) # New endpoint
-async def get_link_intersect(request: LinkIntersectRequest, current_user: Annotated[User, Depends(get_current_user)]):
-    """
-    Performs a link intersect analysis to find common linking domains between a primary domain and competitors.
-    """
-    logger.info(f"API: Received request for link intersect analysis for {request.primary_domain} by user: {current_user.username}.")
-    if not request.primary_domain or not request.competitor_domains:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary domain and at least one competitor domain must be provided.")
-    
-    try:
-        result = await competitive_analysis_service_instance.perform_link_intersect_analysis(
-            primary_domain=request.primary_domain,
-            competitor_domains=request.competitor_domains
-        )
-        return LinkIntersectResponse.from_link_intersect_result(result)
-    except Exception as e:
-        logger.error(f"API: Error performing link intersect analysis: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform link intersect analysis: {e}")
-
-@app.post("/competitor/keyword_analysis", response_model=CompetitiveKeywordAnalysisResponse) # New endpoint
-async def get_competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRequest, current_user: Annotated[User, Depends(get_current_user)]):
-    """
-    Performs a competitive keyword analysis, identifying common keywords, keyword gaps, and unique keywords.
-    """
-    logger.info(f"API: Received request for competitive keyword analysis for {request.primary_domain} by user: {current_user.username}.")
-    if not request.primary_domain or not request.competitor_domains:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary domain and at least one competitor domain must be provided.")
-    
-    try:
-        result = await competitive_analysis_service_instance.perform_competitive_keyword_analysis(
-            primary_domain=request.primary_domain,
-            competitor_domains=request.competitor_domains
-        )
-        return CompetitiveKeywordAnalysisResponse.from_competitive_keyword_analysis_result(result)
-    except Exception as e:
-        logger.error(f"API: Error performing competitive keyword analysis: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform competitive keyword analysis: {e}")
 
 @app.post("/link_building/prospects/identify", response_model=Dict[str, str], status_code=202) # New endpoint
 async def identify_link_prospects_job(
