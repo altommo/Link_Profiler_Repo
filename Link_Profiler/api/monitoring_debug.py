@@ -9,7 +9,7 @@ from typing import Annotated, Dict, List, Any, Optional
 import psutil
 import psycopg2 # For database stats
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Query, Request # Import Request
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Query # Removed Request as it's no longer needed for middleware
 
 # Import globally initialized instances from main.py
 try:
@@ -68,34 +68,38 @@ from Link_Profiler.api.dependencies import get_current_user
 # Import queue-related functions and models
 from Link_Profiler.api.queue_endpoints import get_coordinator # Needed for aggregated stats
 
-# Import Prometheus metrics
-from Link_Profiler.monitoring.prometheus_metrics import (
-    API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text
-)
+# Removed Prometheus metrics imports as middleware is moved
+# from Link_Profiler.monitoring.prometheus_metrics import (
+#     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text
+# )
 
 # Import core models
 from Link_Profiler.core.models import User, CrawlStatus
+
+# Re-import get_metrics_text for the /metrics endpoint
+from Link_Profiler.monitoring.prometheus_metrics import get_metrics_text
 
 
 monitoring_debug_router = APIRouter(tags=["Monitoring & Debug"])
 
 # --- Middleware for Prometheus Metrics ---
-@monitoring_debug_router.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    start_time = time.perf_counter()
+# Removed from here, moved to main.py
+# @monitoring_debug_router.middleware("http")
+# async def add_process_time_header(request: Request, call_next):
+#     start_time = time.perf_counter()
     
-    response = await call_next(request)
+#     response = await call_next(request)
     
-    process_time = time.perf_counter() - start_time
-    endpoint = request.url.path
-    method = request.method
-    status_code = response.status_code
+#     process_time = time.perf_counter() - start_time
+#     endpoint = request.url.path
+#     method = request.method
+#     status_code = response.status_code
 
-    API_REQUESTS_TOTAL.labels(endpoint=endpoint, method=method, status_code=status_code).inc()
-    API_REQUEST_DURATION_SECONDS.labels(endpoint=endpoint, method=method).observe(process_time)
+#     API_REQUESTS_TOTAL.labels(endpoint=endpoint, method=method, status_code=status_code).inc()
+#     API_REQUEST_DURATION_SECONDS.labels(endpoint=endpoint, method=method).observe(process_time)
     
-    response.headers["X-Process-Time"] = str(process_time)
-    return response
+#     response.headers["X-Process-Time"] = str(process_time)
+#     return response
 
 # --- Helper function for comprehensive health check ---
 async def health_check_internal() -> Dict[str, Any]:
@@ -409,7 +413,7 @@ async def get_api_stats():
 
 @monitoring_debug_router.get("/api/jobs/all", response_model=List[CrawlJobResponse])
 async def get_all_jobs_api(
-    status_filter: Annotated[Optional[str], Query(description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED').")] = None # Corrected default value placement
+    status_filter: Annotated[Optional[str], Query(description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED').")] = None
 ):
     """
     Retrieves all crawl jobs, optionally filtered by status.

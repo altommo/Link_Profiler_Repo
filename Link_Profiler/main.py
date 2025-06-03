@@ -61,9 +61,10 @@ from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
 from Link_Profiler.crawlers.social_media_crawler import SocialMediaCrawler
 from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob
 from Link_Profiler.monitoring.prometheus_metrics import (
+    API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text, # Re-added for middleware
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
-from Link_Profiler.api.queue_endpoints import submit_crawl_to_queue, get_coordinator
+from Link_Profiler.api.queue_endpoints import submit_crawl_to_queue, QueueCrawlRequest, get_coordinator
 from Link_Profiler.config.config_loader import ConfigLoader
 from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config
 from Link_Profiler.utils.data_exporter import export_to_csv
@@ -456,6 +457,24 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan # Register the lifespan context manager
 )
+
+# --- Middleware for Prometheus Metrics ---
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    start_time = time.perf_counter()
+    
+    response = await call_next(request)
+    
+    process_time = time.perf_counter() - start_time
+    endpoint = request.url.path
+    method = request.method
+    status_code = response.status_code
+
+    API_REQUESTS_TOTAL.labels(endpoint=endpoint, method=method, status_code=status_code).inc()
+    API_REQUEST_DURATION_SECONDS.labels(endpoint=endpoint, method=method).observe(process_time)
+    
+    response.headers["X-Process-Time"] = str(process_time)
+    return response
 
 # --- Pydantic Models for API Request/Response ---
 # Moved to Link_Profiler/api/schemas.py
