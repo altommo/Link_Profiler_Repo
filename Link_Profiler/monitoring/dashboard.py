@@ -55,6 +55,8 @@ class MonitoringDashboard:
         self.db: Optional[Database] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self.coordinator: Optional[JobCoordinator] = None # Add coordinator instance
+        self.api_access_token: Optional[str] = None # New: Store API access token
+        self.main_api_base_url: str = "" # New: Store main API base URL
 
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Get stale_timeout from config
@@ -105,6 +107,36 @@ class MonitoringDashboard:
         else:
             self.logger.warning("MonitoringDashboard: JobCoordinator could not be initialized due to missing DB or Redis connection.")
 
+        # New: Obtain API access token for the dashboard itself
+        api_host = config_loader.get('api.host', '127.0.0.1')
+        api_port = config_loader.get('api.port', 8000)
+        self.main_api_base_url = f"http://{api_host}:{api_port}"
+        
+        monitor_username = config_loader.get('monitoring.monitor_auth.username')
+        monitor_password = config_loader.get('monitoring.monitor_auth.password')
+
+        if monitor_username and monitor_password:
+            try:
+                token_url = f"{self.main_api_base_url}/auth/token"
+                token_data = {
+                    "username": monitor_username,
+                    "password": monitor_password
+                }
+                # Use aiohttp to get the token
+                async with self._session.post(token_url, data=token_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+                    token_response = await response.json()
+                    self.api_access_token = token_response.get("access_token")
+                    self.logger.info("MonitoringDashboard: Successfully obtained API access token.")
+            except aiohttp.ClientError as e:
+                self.logger.error(f"MonitoringDashboard: Failed to obtain API access token from {token_url}: {e}", exc_info=True)
+                self.api_access_token = None
+            except Exception as e:
+                self.logger.error(f"MonitoringDashboard: Unexpected error obtaining API access token: {e}", exc_info=True)
+                self.api_access_token = None
+        else:
+            self.logger.warning("MonitoringDashboard: Monitor authentication credentials not found in config. API interactions will likely fail.")
+
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -126,6 +158,32 @@ class MonitoringDashboard:
         # If self.db has a close method, call it:
         # if self.db and hasattr(self.db, 'close'):
         #     self.db.close()
+
+    async def _call_main_api(self, endpoint: str, method: str = 'GET', json_data: Optional[Dict] = None) -> Any:
+        """Helper to call the main FastAPI API with authentication."""
+        if not self.api_access_token:
+            self.logger.error(f"Attempted to call main API endpoint {endpoint} without an access token.")
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Dashboard not authenticated with main API.")
+
+        headers = {
+            "Authorization": f"Bearer {self.api_access_token}",
+            "Content-Type": "application/json"
+        }
+        url = f"{self.main_api_base_url}{endpoint}"
+        
+        try:
+            async with self._session.request(method, url, headers=headers, json=json_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                return await response.json()
+        except aiohttp.ClientResponseError as e:
+            self.logger.error(f"Main API call failed for {url} (Status: {e.status}): {e.message}", exc_info=True)
+            raise HTTPException(status_code=e.status, detail=f"Main API error: {e.message}")
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Network error calling main API {url}: {e}", exc_info=True)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to main API: {e}")
+        except Exception as e:
+            self.logger.error(f"Unexpected error calling main API {url}: {e}", exc_info=True)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error: {e}")
 
     async def get_queue_metrics(self) -> Dict:
         """Get comprehensive queue metrics"""
@@ -357,20 +415,13 @@ class MonitoringDashboard:
 
     async def get_api_health(self):
         """Check API health by calling its /health endpoint"""
-        if not self._session:
-            return {"status": "error", "message": "Internal aiohttp session not ready."}
-
-        api_port = config_loader.get('api.port', 8000)
-        api_host = config_loader.get('api.host', '127.0.0.1') # Use configured API host
-        api_base_url = f"http://{api_host}:{api_port}"
+        # This now calls the main API's health endpoint using the obtained token
         try:
-            async with self._session.get(f"{api_base_url}/health", timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                else:
-                    return {"status": "error", "code": resp.status, "message": f"API returned status {resp.status}"}
+            health_data = await self._call_main_api("/health")
+            return health_data
+        except HTTPException as e:
+            return {"status": "error", "message": e.detail, "code": e.status_code}
         except Exception as e:
-            self.logger.error(f"Error checking API health: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
     async def get_redis_stats(self):
@@ -450,10 +501,11 @@ class MonitoringDashboard:
             self.get_performance_stats(),
             self.get_data_summaries(),
             self.get_system_stats(),
-            self.get_api_health(),
+            self.get_api_health(), # This now calls the main API
             self.get_redis_stats(),
             self.get_database_stats(),
-            self.coordinator.get_all_jobs_for_dashboard() if self.coordinator else asyncio.sleep(0) and [] # New: Fetch all jobs
+            # This now calls the main API's /api/jobs/all endpoint
+            self._call_main_api("/api/jobs/all") if self.api_access_token else asyncio.sleep(0) and [] 
         ]
         
         # Run all data fetching tasks concurrently
@@ -505,7 +557,9 @@ async def monitoring_home(request: Request):
         "redis_stats": all_data["redis"], # Pass Redis stats
         "database_stats": all_data["database"], # Pass DB stats
         "all_jobs": all_data["all_jobs"], # New: Pass all jobs to template
-        "refresh_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "refresh_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "access_token": dashboard.api_access_token, # Pass the dynamically obtained token
+        "api_base_url": dashboard.main_api_base_url # Pass the main API base URL
     })
 
 @app.get("/api/stats")
@@ -576,154 +630,122 @@ async def health_check():
 @app.post("/api/jobs/submit", status_code=status.HTTP_202_ACCEPTED)
 async def submit_job_from_dashboard(request: QueueCrawlRequest):
     """Submit a new crawl job from the dashboard."""
-    if not dashboard.coordinator:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
-    
+    # This endpoint now proxies the request to the main API
     try:
-        # Convert config dict to CrawlConfig if provided
-        crawl_config_obj = CrawlConfig.from_dict(request.config if request.config else {})
-        
-        job_id = str(uuid.uuid4())
-        job_type = request.config.get("job_type", "backlink_discovery")
-        
-        job = CrawlJob(
-            id=job_id,
-            target_url=request.target_url,
-            job_type=job_type,
-            status=CrawlStatus.PENDING,
-            priority=request.priority,
-            created_date=datetime.now(),
-            scheduled_at=request.scheduled_at,
-            cron_schedule=request.cron_schedule,
-            config=serialize_model(crawl_config_obj),
-        )
-        
-        if job_type == "backlink_discovery":
-            job.config["initial_seed_urls"] = request.initial_seed_urls
-        elif job_type == "link_health_audit":
-            job.config["source_urls_to_audit"] = request.initial_seed_urls # Re-use initial_seed_urls for this
-        elif job_type == "technical_audit":
-            job.config["urls_to_audit_tech"] = request.initial_seed_urls # Re-use initial_seed_urls for this
-        elif job_type == "full_seo_audit":
-            job.config["urls_to_audit_full_seo"] = request.initial_seed_urls # Re-use initial_seed_urls for this
-        elif job_type == "domain_analysis":
-            job.config["domain_names_to_analyze"] = request.initial_seed_urls # Re-use initial_seed_urls for this
-        # Add other job type specific config assignments as needed
-
-        await dashboard.coordinator.submit_crawl_job(job)
-        return {"job_id": job_id, "status": "submitted", "message": "Job queued for processing"}
+        response_data = await dashboard._call_main_api("/api/jobs", method="POST", json_data=request.dict())
+        return response_data
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        dashboard.logger.error(f"Error submitting job from dashboard: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to submit job: {e}")
+        logger.error(f"Error submitting job from dashboard (proxying to main API): {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to submit job via main API: {e}")
 
 @app.post("/api/jobs/pause_all", status_code=status.HTTP_200_OK)
 async def pause_all_jobs_endpoint():
     """Pause all new job processing."""
-    if not dashboard.coordinator:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
-    success = await dashboard.coordinator.pause_job_processing()
-    if not success:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to pause job processing.")
-    return {"status": "success", "message": "All job processing paused."}
+    # This endpoint now proxies the request to the main API
+    try:
+        response_data = await dashboard._call_main_api("/api/jobs/pause_all", method="POST")
+        return response_data
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error pausing all jobs from dashboard (proxying to main API): {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to pause all jobs via main API: {e}")
 
 @app.post("/api/jobs/resume_all", status_code=status.HTTP_200_OK)
 async def resume_all_jobs_endpoint():
     """Resume all job processing."""
-    if not dashboard.coordinator:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
-    success = await dashboard.coordinator.resume_job_processing()
-    if not success:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to resume job processing.")
-    return {"status": "success", "message": "All job processing resumed."}
+    # This endpoint now proxies the request to the main API
+    try:
+        response_data = await dashboard._call_main_api("/api/jobs/resume_all", method="POST")
+        return response_data
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error resuming all jobs from dashboard (proxying to main API): {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to resume all jobs via main API: {e}")
 
 @app.get("/api/jobs/is_paused", response_model=Dict[str, bool]) # New endpoint to check global pause status
 async def is_jobs_paused_endpoint():
     """Check if global job processing is currently paused."""
-    if not dashboard.redis:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Redis is not available.")
+    # This endpoint now proxies the request to the main API
     try:
-        is_paused = await dashboard.redis.exists("processing_paused")
-        return {"is_paused": bool(is_paused)}
+        response_data = await dashboard._call_main_api("/api/jobs/is_paused", method="GET")
+        return response_data
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        dashboard.logger.error(f"Error checking global pause status: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to check pause status: {e}")
+        logger.error(f"Error checking global pause status from dashboard (proxying to main API): {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to check pause status via main API: {e}")
 
 
 @app.post("/api/jobs/{job_id}/cancel", status_code=status.HTTP_200_OK)
 async def cancel_job_endpoint(job_id: str):
     """Cancel a specific job."""
-    if not dashboard.coordinator:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
-    success = await dashboard.coordinator.cancel_job(job_id)
-    if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found or cannot be cancelled.")
-    return {"status": "success", "message": f"Job {job_id} cancelled."}
+    # This endpoint now proxies the request to the main API
+    try:
+        response_data = await dashboard._call_main_api(f"/api/jobs/{job_id}/cancel", method="POST")
+        return response_data
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error cancelling job {job_id} from dashboard (proxying to main API): {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to cancel job via main API: {e}")
 
 @app.post("/api/satellites/control/all/{command}", status_code=status.HTTP_200_OK)
 async def control_all_satellites_endpoint(command: str):
     """Send a control command to all active satellites (e.g., 'PAUSE', 'RESUME', 'SHUTDOWN', 'RESTART')."""
-    if not dashboard.coordinator:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
-    
-    valid_commands = ["PAUSE", "RESUME", "SHUTDOWN", "RESTART"]
-    if command.upper() not in valid_commands:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid command. Must be one of: {', '.join(valid_commands)}")
-
-    success = await dashboard.coordinator.send_global_control_command(command.upper())
-    if not success:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send global command '{command}'.")
-    return {"status": "success", "message": f"Global command '{command}' sent to all satellites."}
+    # This endpoint now proxies the request to the main API
+    try:
+        response_data = await dashboard._call_main_api(f"/api/satellites/control/all/{command}", method="POST")
+        return response_data
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error sending global control command '{command}' from dashboard (proxying to main API): {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send global command via main API: {e}")
 
 @app.post("/api/satellites/control/{crawler_id}/{command}", status_code=status.HTTP_200_OK)
 async def control_single_satellite_endpoint(crawler_id: str, command: str):
     """Send a control command to a specific satellite (e.g., 'PAUSE', 'RESUME', 'SHUTDOWN', 'RESTART')."""
-    if not dashboard.coordinator:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
-    
-    valid_commands = ["PAUSE", "RESUME", "SHUTDOWN", "RESTART"]
-    if command.upper() not in valid_commands:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid command. Must be one of: {', '.join(valid_commands)}")
-
-    # Optional: Check if crawler_id is known/active before sending
-    # For now, we send it regardless, and the satellite will ignore if it's not its ID.
-    
-    success = await dashboard.coordinator.send_control_command(crawler_id, command.upper())
-    if not success:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send command '{command}' to satellite '{crawler_id}'.")
-    return {"status": "success", "message": f"Command '{command}' sent to satellite '{crawler_id}'."}
+    # This endpoint now proxies the request to the main API
+    try:
+        response_data = await dashboard._call_main_api(f"/api/satellites/control/{crawler_id}/{command}", method="POST")
+        return response_data
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error sending control command '{command}' to satellite '{crawler_id}' from dashboard (proxying to main API): {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send command to satellite via main API: {e}")
 
 
 @app.get("/api/jobs/all", response_model=List[JobStatusResponse])
 async def get_all_jobs_api(status_filter: Optional[str] = None):
     """Get all jobs for the dashboard."""
-    if not dashboard.coordinator:
-        logger.error("Dashboard API: Job coordinator not available when calling /api/jobs/all.")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
+    # This endpoint now proxies the request to the main API
     try:
-        # Explicitly manage session for this critical read operation
-        # This ensures a fresh view of the database, especially if other processes are writing.
-        session = dashboard.db._get_session()
-        try:
-            session.expire_all() # Ensure all objects in the session are refreshed from the database
-            jobs = await dashboard.coordinator.get_all_jobs_for_dashboard(status_filter=status_filter)
-            logger.debug(f"Dashboard API: Retrieved {len(jobs)} jobs from DB for /api/jobs/all.") # Debugging log
-            return [JobStatusResponse.from_crawl_job(job) for job in jobs]
-        finally:
-            session.close() # Always close the session
+        response_data = await dashboard._call_main_api(f"/api/jobs/all?status_filter={status_filter}" if status_filter else "/api/jobs/all", method="GET")
+        # The response_data is already a list of dicts, convert to Pydantic models
+        return [JobStatusResponse(**job_data) for job_data in response_data]
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        logger.error(f"Dashboard API: Error retrieving all jobs for /api/jobs/all: {e}", exc_info=True)
-        # Return a proper JSON error response for the frontend
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve all jobs: {e}")
+        logger.error(f"Error retrieving all jobs from dashboard (proxying to main API): {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve all jobs via main API: {e}")
 
 @app.get("/api/jobs/{job_id}", response_model=JobStatusResponse)
 async def get_single_job_api(job_id: str):
     """Get details for a single job."""
-    if not dashboard.coordinator:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job coordinator not available.")
-    job = await dashboard.coordinator.get_job_status(job_id)
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-    return JobStatusResponse.from_crawl_job(job)
+    # This endpoint now proxies the request to the main API
+    try:
+        response_data = await dashboard._call_main_api(f"/api/jobs/{job_id}", method="GET")
+        return JobStatusResponse(**response_data)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving job {job_id} from dashboard (proxying to main API): {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve job via main API: {e}")
 
 
 # CLI tool for queue management

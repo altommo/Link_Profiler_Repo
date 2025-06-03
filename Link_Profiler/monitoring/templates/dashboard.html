@@ -79,16 +79,16 @@
         }
     </style>
     <script>
-        // IMPORTANT: Replace 'YOUR_ACCESS_TOKEN' with a valid token obtained from your /auth/token endpoint.
-        // For security, in a production environment, this token should be managed securely (e.g., via a login form).
-        const ACCESS_TOKEN = 'xKroXcaIePQydhdhS4GMhdMfTsjhKzthaoL5OmU5MBA'; 
-        const API_BASE_URL = 'http://127.0.0.1:8000'; // Set to your main FastAPI API address (coordinator service)
+        // IMPORTANT: These values are now injected by the backend (Link_Profiler/monitoring/dashboard.py)
+        // Do NOT hardcode them here. They are passed from the Jinja2 template.
+        const ACCESS_TOKEN = '{{ access_token }}'; 
+        const API_BASE_URL = '{{ api_base_url }}'; 
 
         let disableConfirmations = false; // New: Global flag to disable confirmations
 
         // --- START: ACCESS TOKEN WARNING ---
         document.addEventListener('DOMContentLoaded', () => {
-            if (ACCESS_TOKEN === 'YOUR_ACCESS_TOKEN') {
+            if (!ACCESS_TOKEN || ACCESS_TOKEN === 'None' || ACCESS_TOKEN === 'YOUR_ACCESS_TOKEN') {
                 const warningDiv = document.createElement('div');
                 warningDiv.style.backgroundColor = '#ffe0b2'; // Light orange
                 warningDiv.style.border = '1px solid #ff9800'; // Orange border
@@ -101,9 +101,15 @@
                 warningDiv.style.color = '#e65100'; // Dark orange text
                 warningDiv.innerHTML = `
                     <p>⚠️ <strong>WARNING: ACCESS TOKEN NOT CONFIGURED!</strong></p>
-                    <p>Please replace <code>'YOUR_ACCESS_TOKEN'</code> in <code>dashboard.html</code> with a valid token from your API's <code>/auth/token</code> endpoint.</p>
+                    <p>The dashboard could not obtain an access token from the main API.</p>
+                    <p>Please ensure:</p>
+                    <ol style="text-align: left;">
+                        <li>Your main API (coordinator service) is running and accessible at <code>${API_BASE_URL}</code>.</li>
+                        <li>You have configured <code>monitoring.monitor_auth.username</code> and <code>monitoring.monitor_auth.password</code> in <code>Link_Profiler/config/config.yaml</code>.</li>
+                        <li>A user with these credentials exists in your main API's database (register via <code>${API_BASE_URL}/auth/register</code>).</li>
+                    </ol>
                     <p>API interactions (submitting jobs, controlling satellites) will not work until this is resolved.</p>
-                    <p>Check your browser's developer console (F12) for network errors (e.g., 401 Unauthorized).</p>
+                    <p>Check your browser's developer console (F12) and the <strong>monitor service logs</strong> for network errors (e.g., 401 Unauthorized, connection refused).</p>
                 `;
                 document.body.insertBefore(warningDiv, document.body.firstChild);
             }
@@ -412,8 +418,8 @@
                                 ${satellite.current_job ? `- Processing: ${satellite.current_job}` : ''}
                                 <div class="satellite-details">
                                     <span>Jobs: ${satellite.total_jobs_completed || 0}</span>
-                                    <span>Errors: ${satellite.total_errors_encountered || 0}</span>
-                                    <span>Running: ${satellite.running_jobs || 0}</span>
+                                    <span>Errors: ${satellite.total_errors_encountered | default(0) }}</span>
+                                    <span>Running: ${satellite.running_jobs | default(0) }}</span>
                                 </div>
                                 <div class="satellite-actions">
                                     <button onclick="controlSatellite('${satellite.crawler_id}', 'PAUSE')" class="pause">Pause</button>
@@ -452,8 +458,7 @@
                 // Update global job status indicator
                 const globalJobStatusSpan = document.getElementById('globalJobStatus');
                 if (globalJobStatusSpan) {
-                    // Check if 'processing_paused' key exists in Redis (from JobCoordinator)
-                    // This now calls the dashboard's own API endpoint
+                    // This now calls the dashboard's own API endpoint, which proxies to main API
                     const isGlobalPaused = await fetch('/api/jobs/is_paused').then(res => res.json()).then(data => data.is_paused).catch(() => false);
                     if (isGlobalPaused) {
                         globalJobStatusSpan.textContent = '(PAUSED)';

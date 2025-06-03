@@ -262,6 +262,9 @@ monitoring:
   monitor_port: 8001 # Port for the monitoring dashboard and Prometheus metrics
   performance_window: 3600 # Time window in seconds for performance calculations (e.g., jobs per hour)
   max_job_history: 50 # Max number of recent jobs to show on dashboard
+  monitor_auth: # New: Credentials for the monitor to authenticate with the main API
+    username: "monitor_user" # IMPORTANT: Create this user in your main API's database
+    password: "monitor_secure_password_123" # IMPORTANT: Use a strong password
 
 # Authentication settings
 auth:
