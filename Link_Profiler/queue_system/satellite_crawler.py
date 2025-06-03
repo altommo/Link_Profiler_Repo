@@ -72,6 +72,7 @@ class SatelliteCrawler:
         self.retry_delay = config_loader.get("queue.retry_delay", 5)
         self.clickhouse_enabled = config_loader.get("clickhouse.enabled", False)
         self.code_version = config_loader.get("system.current_code_version", "unknown") # New: Read current code version
+        self.version_control_enabled = config_loader.get("system.version_control_enabled", False) # New: Load version control flag
 
         # Database initialization
         # Prioritize passed database_url, then config, then hardcoded fallback
@@ -276,10 +277,14 @@ class SatelliteCrawler:
                 "total_jobs_completed": self.total_jobs_completed,
                 "total_errors_encountered": self.total_errors_encountered,
                 "is_locally_paused": self.is_locally_paused, # Include local pause status
-                "code_version": self.code_version # New: Include code version in heartbeat
             }
             
-            self.logger.debug(f"Heartbeat for {self.crawler_id}: Sending code_version '{self.code_version}'.") # New debug log
+            # Only include code_version if version control is enabled
+            if self.version_control_enabled:
+                heartbeat_data["code_version"] = self.code_version
+                self.logger.debug(f"Heartbeat for {self.crawler_id}: Sending code_version '{self.code_version}'.") # New debug log
+            else:
+                self.logger.debug(f"Heartbeat for {self.crawler_id}: Version control disabled, not sending code_version.")
 
             # Store detailed heartbeat data in a separate key with an expiry
             # The expiry should be longer than the stale_timeout to allow for recovery

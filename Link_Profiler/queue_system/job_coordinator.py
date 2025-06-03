@@ -55,9 +55,11 @@ class JobCoordinator:
         self.scheduler_interval = config_loader.get("queue.scheduler_interval", 5)
         self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Added stale_timeout from config
 
-        # New: Current desired code version for satellites
+        # New: Current desired code version for satellites and version control flag
         self.current_code_version = config_loader.get("system.current_code_version", "unknown")
+        self.version_control_enabled = config_loader.get("system.version_control_enabled", False) # New: Load version control flag
         logger.info(f"JobCoordinator: Desired satellite code version: {self.current_code_version}")
+        logger.info(f"JobCoordinator: Version control enabled: {self.version_control_enabled}")
 
         # Webhook configuration (for job completion webhooks)
         self.webhook_enabled = config_loader.get("notifications.webhooks.enabled", False)
@@ -312,15 +314,19 @@ class JobCoordinator:
                         try:
                             detailed_heartbeat_data = json.loads(detailed_heartbeat_json)
                             
-                            # New: Check for code version mismatch
-                            satellite_code_version = detailed_heartbeat_data.get("code_version", "unknown")
-                            logger.debug(f"Monitor: Comparing satellite '{crawler_id}' version '{satellite_code_version}' with desired '{self.current_code_version}'.") # New debug log
-                            if satellite_code_version != self.current_code_version:
-                                logger.warning(f"Satellite '{crawler_id}' is outdated (version: {satellite_code_version}, desired: {self.current_code_version}). Sending RESTART command.")
-                                await self.send_control_command(crawler_id, "RESTART")
-                                detailed_heartbeat_data["is_outdated"] = True # Mark as outdated for dashboard
+                            # New: Check for code version mismatch ONLY if version control is enabled
+                            if self.version_control_enabled:
+                                satellite_code_version = detailed_heartbeat_data.get("code_version", "unknown")
+                                logger.debug(f"Monitor: Comparing satellite '{crawler_id}' version '{satellite_code_version}' with desired '{self.current_code_version}'.") # New debug log
+                                if satellite_code_version != self.current_code_version:
+                                    logger.warning(f"Satellite '{crawler_id}' is outdated (version: {satellite_code_version}, desired: {self.current_code_version}). Sending RESTART command.")
+                                    await self.send_control_command(crawler_id, "RESTART")
+                                    detailed_heartbeat_data["is_outdated"] = True # Mark as outdated for dashboard
+                                else:
+                                    detailed_heartbeat_data["is_outdated"] = False # Mark as not outdated
                             else:
-                                detailed_heartbeat_data["is_outdated"] = False # Mark as not outdated
+                                logger.debug(f"Monitor: Version control is disabled. Skipping version check for satellite '{crawler_id}'.")
+                                detailed_heartbeat_data["is_outdated"] = False # Assume not outdated if feature is off
                                 
                             current_active_crawlers_details[crawler_id] = detailed_heartbeat_data
                             logger.debug(f"Monitor: Successfully retrieved detailed data for '{crawler_id}': {detailed_heartbeat_data}") # Added log
