@@ -1155,7 +1155,7 @@ async def submit_job_api(
     # Delegate to the existing submit_crawl_to_queue function
     # Added debug log to confirm request object before passing
     logger.debug(f"API: Passing QueueCrawlRequest to submit_crawl_to_queue: {request.dict()}")
-    return await submit_crawl_to_queue(request)
+    return await submit_crawl_to_queue(queue_request)
 
 
 @app.post("/crawl/start_backlink_discovery", response_model=Dict[str, str], status_code=202)
@@ -2020,23 +2020,24 @@ async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
     }
 
 @app.get("/api/stats")
-async def get_api_stats(current_user: User = Depends(get_current_user)):
+async def get_api_stats():
     """
     Retrieves aggregated statistics for the Link Profiler system.
-    This endpoint is primarily consumed by the monitoring dashboard.
+    This endpoint is primarily consumed by the monitoring dashboard and does not require authentication.
     """
-    logger.info(f"API: Received request for aggregated stats by user: {current_user.username}.")
+    logger.info("API: Received request for aggregated stats (public endpoint).")
     return await _get_aggregated_stats_for_api()
 
 @app.get("/api/jobs/all", response_model=List[CrawlJobResponse])
 async def get_all_jobs_api(
-    status_filter: Optional[str] = Query(None, description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED')."),
-    current_user: User = Depends(get_current_user) # Protected endpoint
+    status_filter: Optional[str] = Query(None, description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED').")
 ):
     """
     Retrieves all crawl jobs, optionally filtered by status.
+    This endpoint is primarily consumed by the monitoring dashboard and does not require authentication.
+    Returns the most recent 50 jobs.
     """
-    logger.info(f"API: Received request for all jobs (status_filter: {status_filter}) by user: {current_user.username}.")
+    logger.info(f"API: Received request for all jobs (public endpoint, status_filter: {status_filter}).")
     try:
         all_jobs = db.get_all_crawl_jobs()
         
@@ -2047,8 +2048,8 @@ async def get_all_jobs_api(
             except KeyError:
                 raise HTTPException(status_code=400, detail=f"Invalid status_filter: {status_filter}. Must be one of {list(CrawlStatus.__members__.keys())}.")
         
-        # Sort by created_date descending
-        sorted_jobs = sorted(all_jobs, key=lambda job: job.created_date, reverse=True)
+        # Sort by created_date descending and limit to the most recent 50
+        sorted_jobs = sorted(all_jobs, key=lambda job: job.created_date, reverse=True)[:50]
         
         return [CrawlJobResponse.from_crawl_job(job) for job in sorted_jobs]
     except Exception as e:
@@ -2059,11 +2060,12 @@ async def get_all_jobs_api(
             db.Session.remove()
 
 @app.get("/api/jobs/is_paused", response_model=Dict[str, bool])
-async def is_jobs_paused_endpoint(current_user: User = Depends(get_current_user)): # Protected endpoint
+async def is_jobs_paused_endpoint():
     """
     Checks if global job processing is currently paused.
+    This endpoint is primarily consumed by the monitoring dashboard and does not require authentication.
     """
-    logger.info(f"API: Received request to check if jobs are paused by user: {current_user.username}.")
+    logger.info("API: Received request to check if jobs are paused (public endpoint).")
     if not redis_client:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Redis is not available.")
     
