@@ -276,3 +276,9 @@ auth:
   secret_key: "xKroXcaIePQydhdhS4GMhdMfTsjhKzthaoL5OmU5MBA" # REQUIRED: This is your generated key
   algorithm: "HS256"
   access_token_expire_minutes: 30 # Token expiry time in minutes
+
+# System-wide settings
+system:
+  # Current version of the deployed code. Update this value on every new deployment
+  # to trigger automatic restarts of outdated satellite crawlers.
+  current_code_version: "1.0.0" # Example: "1.0.0", "1.0.1", "2.0.0-beta"
