@@ -9,7 +9,7 @@ WorkingDirectory=/opt/Link_Profiler_Repo/Link_Profiler
 Environment=PATH=/opt/Link_Profiler_Repo/venv/bin
 Environment=LP_DATABASE_URL=postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db
 Environment=DATABASE_URL=postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db
-Environment=LP_REDIS_URL=redis://:redis_secure_pass_456@127.00.1:6379/0
+Environment=LP_REDIS_URL=redis://:redis_secure_pass_456@127.0.0.1:6379/0
 Environment=REDIS_URL=redis://:redis_secure_pass_456@127.0.0.1:6379/0
 Environment=ACCESS_TOKEN=your_secure_api_token_789
 Environment=LP_ACCESS_TOKEN=your_secure_api_token_789
