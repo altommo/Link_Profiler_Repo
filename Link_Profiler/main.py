@@ -61,10 +61,9 @@ from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
 from Link_Profiler.crawlers.social_media_crawler import SocialMediaCrawler
 from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob
 from Link_Profiler.monitoring.prometheus_metrics import (
-    API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text,
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
-from Link_Profiler.api.queue_endpoints import add_queue_endpoints, submit_crawl_to_queue, QueueCrawlRequest, get_coordinator
+from Link_Profiler.api.queue_endpoints import submit_crawl_to_queue, QueueCrawlRequest, get_coordinator
 from Link_Profiler.config.config_loader import ConfigLoader
 from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config
 from Link_Profiler.utils.data_exporter import export_to_csv
@@ -395,8 +394,6 @@ async def lifespan(app: FastAPI):
         logger.info("Global Playwright browser for WebCrawler is disabled by configuration.")
 
 
-    # Manually manage the context managers to ensure proper nesting and single yield
-    # This pattern ensures all __aenter__ are called before yield, and __aexit__ in reverse order.
     entered_contexts = []
     try:
         for cm in context_managers:
@@ -416,7 +413,19 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("Redis client not initialized. Skipping Redis ping.")
         
-        # New: Start alert rule refreshing in background
+        # Initialize and start JobCoordinator background tasks
+        # This call will now handle its own __aenter__ and task creation
+        from Link_Profiler.api.queue_endpoints import get_coordinator as get_job_coordinator_instance
+        try:
+            await get_job_coordinator_instance()
+            logger.info("JobCoordinator successfully initialized and background tasks started via get_coordinator.")
+        except Exception as e:
+            logger.error(f"Failed to initialize JobCoordinator during lifespan startup: {e}", exc_info=True)
+            # Depending on criticality, you might want to raise an exception here
+            # to prevent the app from starting if the queue system is essential.
+            # For now, we'll just log and continue.
+
+        # Start alert rule refreshing in background
         asyncio.create_task(alert_service_instance.refresh_rules())
 
         yield # This is the single yield point for the lifespan
@@ -463,7 +472,8 @@ from Link_Profiler.api.schemas import (
     OutreachCampaignCreateRequest, OutreachCampaignResponse, OutreachEventCreateRequest,
     OutreachEventResponse, ContentGenerationRequest, CompetitorStrategyAnalysisRequest,
     ReportScheduleRequest, ReportJobResponse, LinkVelocityRequest, DomainHistoryResponse,
-    TopicClusteringRequest, Token, UserCreate, UserResponse
+    TopicClusteringRequest, Token, UserCreate, UserResponse,
+    JobStatusResponse, QueueStatsResponse, CrawlerHealthResponse # New: Import queue response models
 )
 
 
@@ -480,6 +490,7 @@ from Link_Profiler.api.ai import ai_router
 from Link_Profiler.api.reports import reports_router
 from Link_Profiler.api.monitoring_debug import monitoring_debug_router
 from Link_Profiler.api.websocket import websocket_router
+from Link_Profiler.api.queue import queue_router # New: Import the queue router
 
 # Register the routers with the main app
 app.include_router(auth_router)
@@ -492,7 +503,4 @@ app.include_router(ai_router)
 app.include_router(reports_router)
 app.include_router(monitoring_debug_router)
 app.include_router(websocket_router)
-
-
-# Add queue-related endpoints to the main app
-add_queue_endpoints(app, db, alert_service_instance, connection_manager)
+app.include_router(queue_router)

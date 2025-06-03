@@ -22,7 +22,7 @@ except ImportError:
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
-    email: str = Field(..., pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+    email: str = Field(..., pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
     password: str = Field(..., min_length=8)
 
 class UserResponse(BaseModel):
@@ -179,9 +179,9 @@ class CrawlJobResponse(BaseModel):
 
         if isinstance(job_dict.get('created_date'), str):
             try:
-                job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
+                job_dict['created_at'] = datetime.fromisoformat(job_dict['created_date'])
             except ValueError:
-                 logger.warning(f"Could not parse created_date string: {job_dict.get('created_date')}")
+                 logger.warning(f"Could not parse created_at string: {job_dict.get('created_date')}")
                  job_dict['created_date'] = None
 
         if isinstance(job_dict.get('started_date'), str):
@@ -540,7 +540,6 @@ class OutreachCampaignResponse(BaseModel):
     created_date: datetime
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
-    description: Optional[str] = None
     metrics: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
@@ -637,3 +636,34 @@ class DomainHistoryResponse(BaseModel): # New Pydantic model for DomainHistory
                 logger.warning(f"Could not parse snapshot_date string: {history_dict.get('snapshot_date')}")
                 history_dict['snapshot_date'] = None
         return cls(**history_dict)
+
+# New: Pydantic models for Queue Endpoints
+class QueueStatsResponse(BaseModel):
+    pending_jobs: int
+    results_pending: int
+    active_satellites: int
+    satellite_crawlers: Dict[str, Any] # Detailed info about each satellite
+    timestamp: datetime
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: CrawlStatus
+    progress_percentage: float
+    message: Optional[str] = None
+    errors: List[str] = Field(default_factory=list)
+    results_summary: Dict[str, Any] = Field(default_factory=dict)
+    last_updated: datetime
+
+    class Config:
+        use_enum_values = True
+
+class CrawlerHealthResponse(BaseModel):
+    crawler_id: str
+    status: str
+    last_seen: datetime
+    cpu_usage: float
+    memory_usage: float
+    jobs_processed: int
+    current_job_id: Optional[str] = None
+    error_rate: float
+    uptime_seconds: float
