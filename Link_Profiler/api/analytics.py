@@ -68,8 +68,8 @@ async def get_link_velocity(
 @analytics_router.get("/domain/{domain_name}/history", response_model=List[DomainHistoryResponse])
 async def get_domain_history_endpoint(
     domain_name: str, 
-    num_snapshots: Annotated[int, Query(gt=0, description="Number of historical snapshots to retrieve.")] = 12, # Corrected default value placement
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)], # Moved to come before other optional parameters
+    num_snapshots: Annotated[int, Query(gt=0, description="Number of historical snapshots to retrieve.")] = 12
 ):
     """
     Retrieves the historical progression of a domain's authority metrics.
@@ -94,8 +94,8 @@ async def get_domain_history_endpoint(
 async def get_serp_position_history_endpoint(
     target_url: Annotated[str, Query(..., description="The URL for which to track SERP history.")],
     keyword: Annotated[str, Query(..., description="The keyword for which to track SERP history.")],
-    num_snapshots: Annotated[int, Query(gt=0, description="The maximum number of recent historical snapshots to retrieve.")] = 12, # Corrected default value placement
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)], # Moved to come before other optional parameters
+    num_snapshots: Annotated[int, Query(gt=0, description="The maximum number of recent historical snapshots to retrieve.")] = 12
 ):
     """
     Retrieves the historical SERP positions for a specific URL and keyword.
