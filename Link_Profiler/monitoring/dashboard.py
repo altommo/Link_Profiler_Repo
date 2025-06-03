@@ -21,11 +21,11 @@ from psycopg2 import OperationalError as Psycopg2OperationalError
 import aiohttp
 import time
 
-# Add project root to path for imports
+# Add project root to path
 # Corrected project_root calculation to point to the repository root
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
-    sys.sys.path.insert(0, project_root)
+    sys.path.insert(0, project_root)
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain, serialize_model, CrawlConfig # Import CrawlConfig
@@ -51,7 +51,7 @@ class MonitoringDashboard:
         
         # Initialize clients as None; they will be set up in __aenter__
         self.redis_pool: Optional[redis.ConnectionPool] = None
-        self.redis: Optional[redis.Redis] = None
+        self.redis: Optional[redis.Redis] = None # This is the attribute holding the Redis client
         self.db: Optional[Database] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self.coordinator: Optional[JobCoordinator] = None # Add coordinator instance
@@ -102,7 +102,8 @@ class MonitoringDashboard:
         # This coordinator instance is for dashboard's internal use, not the main API's coordinator.
         # It needs a DB and Redis client.
         if self.db and self.redis:
-            self.coordinator = JobCoordinator(redis_url=redis_url, database=self.db)
+            # Corrected: Pass self.redis (the client instance) and config_loader
+            self.coordinator = JobCoordinator(redis_client=self.redis, database=self.db, config_loader=config_loader)
             # No need to call __aenter__ on this coordinator as it's not running background tasks
             # It's just used for its methods like get_all_jobs_for_dashboard, pause_job_processing etc.
             self.logger.info("MonitoringDashboard: JobCoordinator instance created.")
@@ -656,41 +657,6 @@ async def get_satellites_api():
         "active_count": metrics.get("active_satellites", 0)
     }
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    try:
-        # Use the dashboard's internal health check logic
-        api_health_data = await dashboard.get_api_health()
-        redis_health_data = await dashboard.get_redis_stats()
-        db_health_data = await dashboard.get_database_stats()
-
-        overall_status = "healthy"
-        dependencies = {}
-
-        if api_health_data.get("status") == "error":
-            overall_status = "unhealthy"
-        dependencies["api"] = api_health_data
-
-        if redis_health_data.get("status") != "connected":
-            overall_status = "unhealthy"
-        dependencies["redis"] = redis_health_data
-
-        if db_health_data.get("status") != "connected":
-            overall_status = "unhealthy"
-        dependencies["postgresql"] = db_health_data
-
-        status_code = 200 if overall_status == "healthy" else 503
-        return Response(content=json.dumps({
-            "status": overall_status,
-            "timestamp": datetime.now().isoformat(),
-            "dependencies": dependencies
-        }, indent=2), media_type="application/json", status_code=status_code)
-
-    except Exception as e:
-        return {"status": "unhealthy", "error": str(e), "timestamp": datetime.now().isoformat()}
-
-# New: API Endpoints for Job Management (for dashboard to interact with)
 @app.post("/api/jobs/submit", status_code=status.HTTP_202_ACCEPTED)
 async def submit_job_from_dashboard(request: QueueCrawlRequest):
     """Submit a new crawl job from the dashboard."""
