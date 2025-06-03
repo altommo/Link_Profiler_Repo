@@ -57,11 +57,13 @@ class MonitoringDashboard:
         self.coordinator: Optional[JobCoordinator] = None # Add coordinator instance
         self.api_access_token: Optional[str] = None # New: Store API access token
         self.main_api_base_url: str = "" # New: Store main API base URL
+        self._token_refresh_task: Optional[asyncio.Task] = None # New: Task for token renewal
 
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Get stale_timeout from config
         self.job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs") # Added for is_paused endpoint
         self.dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name", "dead_letter_queue") # Added for is_paused endpoint
+        self.access_token_expire_minutes = config_loader.get("auth.access_token_expire_minutes", 30) # New: Get token expiry
 
     async def __aenter__(self):
         """Initialise aiohttp session, Redis, and Database connections."""
@@ -107,35 +109,19 @@ class MonitoringDashboard:
         else:
             self.logger.warning("MonitoringDashboard: JobCoordinator could not be initialized due to missing DB or Redis connection.")
 
-        # New: Obtain API access token for the dashboard itself
+        # New: Obtain initial API access token for the dashboard itself
         api_host = config_loader.get('api.host', '127.0.0.1')
         api_port = config_loader.get('api.port', 8000)
         self.main_api_base_url = f"http://{api_host}:{api_port}"
         
-        monitor_username = config_loader.get('monitoring.monitor_auth.username')
-        monitor_password = config_loader.get('monitoring.monitor_auth.password')
+        await self._refresh_access_token() # Get initial token
 
-        if monitor_username and monitor_password:
-            try:
-                token_url = f"{self.main_api_base_url}/auth/token"
-                token_data = {
-                    "username": monitor_username,
-                    "password": monitor_password
-                }
-                # Use aiohttp to get the token
-                async with self._session.post(token_url, data=token_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                    response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
-                    token_response = await response.json()
-                    self.api_access_token = token_response.get("access_token")
-                    self.logger.info("MonitoringDashboard: Successfully obtained API access token.")
-            except aiohttp.ClientError as e:
-                self.logger.error(f"MonitoringDashboard: Failed to obtain API access token from {token_url}: {e}", exc_info=True)
-                self.api_access_token = None
-            except Exception as e:
-                self.logger.error(f"MonitoringDashboard: Unexpected error obtaining API access token: {e}", exc_info=True)
-                self.api_access_token = None
+        # Start token renewal task if token was successfully obtained
+        if self.api_access_token:
+            self._token_refresh_task = asyncio.create_task(self._token_renewal_loop())
+            self.logger.info("MonitoringDashboard: Started token renewal background task.")
         else:
-            self.logger.warning("MonitoringDashboard: Monitor authentication credentials not found in config. API interactions will likely fail.")
+            self.logger.warning("MonitoringDashboard: No initial token obtained, token renewal task not started.")
 
         return self
 
@@ -143,6 +129,16 @@ class MonitoringDashboard:
         """Close aiohttp session, Redis, and Database connections."""
         self.logger.info("Exiting MonitoringDashboard context. Closing connections.")
         
+        # Cancel token refresh task
+        if self._token_refresh_task:
+            self._token_refresh_task.cancel()
+            try:
+                await self._token_refresh_task
+            except asyncio.CancelledError:
+                self.logger.info("MonitoringDashboard: Token renewal task cancelled.")
+            except Exception as e:
+                self.logger.error(f"MonitoringDashboard: Error cancelling token renewal task: {e}")
+
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
@@ -158,6 +154,50 @@ class MonitoringDashboard:
         # If self.db has a close method, call it:
         # if self.db and hasattr(self.db, 'close'):
         #     self.db.close()
+
+    async def _refresh_access_token(self):
+        """Authenticates with the main API and obtains a new access token."""
+        monitor_username = config_loader.get('monitoring.monitor_auth.username')
+        monitor_password = config_loader.get('monitoring.monitor_auth.password')
+
+        if not monitor_username or not monitor_password:
+            self.logger.error("MonitoringDashboard: Monitor authentication credentials not found in config. Cannot refresh token.")
+            self.api_access_token = None
+            return
+
+        try:
+            token_url = f"{self.main_api_base_url}/auth/token"
+            token_data = {
+                "username": monitor_username,
+                "password": monitor_password
+            }
+            async with self._session.post(token_url, data=token_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                token_response = await response.json()
+                self.api_access_token = token_response.get("access_token")
+                self.logger.info("MonitoringDashboard: Successfully refreshed API access token.")
+        except aiohttp.ClientError as e:
+            self.logger.error(f"MonitoringDashboard: Failed to refresh API access token from {token_url}: {e}", exc_info=True)
+            self.api_access_token = None
+        except Exception as e:
+            self.logger.error(f"MonitoringDashboard: Unexpected error during token refresh: {e}", exc_info=True)
+            self.api_access_token = None
+
+    async def _token_renewal_loop(self):
+        """Periodically refreshes the API access token."""
+        # Renew token a few minutes before it expires
+        refresh_interval_seconds = (self.access_token_expire_minutes - 5) * 60 
+        if refresh_interval_seconds <= 0:
+            refresh_interval_seconds = 1 * 60 # Ensure at least 1 minute if expiry is too short
+
+        self.logger.info(f"MonitoringDashboard: Token will be refreshed every {refresh_interval_seconds} seconds.")
+        while True:
+            await asyncio.sleep(refresh_interval_seconds)
+            self.logger.info("MonitoringDashboard: Attempting to refresh API access token...")
+            await self._refresh_access_token()
+            if not self.api_access_token:
+                self.logger.error("MonitoringDashboard: Token refresh failed. Retrying in 60 seconds.")
+                await asyncio.sleep(60) # Short retry if refresh fails
 
     async def _call_main_api(self, endpoint: str, method: str = 'GET', json_data: Optional[Dict] = None) -> Any:
         """Helper to call the main FastAPI API with authentication."""
@@ -756,7 +796,7 @@ async def get_single_job_api(job_id: str):
 class QueueManager:
     def __init__(self, redis_url: str = None):
         # Load Redis URL from config_loader, with fallback to environment variable then hardcoded default
-        redis_url = redis_url or config_loader.get("redis.url", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        redis_url = config_loader.get("redis.url", os.getenv("REDIS_URL", "redis://localhost:6379/0"))
         self.redis_pool = redis.ConnectionPool.from_url(redis_url)
         self.redis = redis.Redis(connection_pool=self.redis_pool)
         self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Get stale_timeout from config
