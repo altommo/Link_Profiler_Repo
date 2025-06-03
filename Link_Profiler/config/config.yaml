@@ -43,7 +43,7 @@ api:
   # This MUST be set to the HTTPS URL if your dashboard is served over HTTPS,
   # otherwise, you will encounter "Mixed Content" errors in the browser.
   # Example: "https://monitor.yspanel.com:8000"
-  external_url: "https://monitor.yspanel.com" 
+  external_url: "https://api.yspanel.com" 
 
 # Database settings (PostgreSQL)
 database:
