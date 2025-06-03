@@ -1,0 +1,27 @@
+[Unit]
+Description=Link Profiler Satellite Crawler
+After=network.target redis.service postgresql.service # Adjust dependencies as needed
+
+[Service]
+User=linkprofiler # Recommended: Create a dedicated user for the service
+Group=linkprofiler # Recommended: Create a dedicated group for the service
+WorkingDirectory=/opt/Link_Profiler_Repo # Adjust this to your project's root directory
+ExecStart=/usr/bin/python3 /opt/Link_Profiler_Repo/run_satellite.py --crawler-id contabo-main --redis-url "redis://:redis_secure_pass_456@127.0.0.1:6379/0" --database-url "postgresql://postgres:postgres@localhost:5432/link_profiler_db" --log-level INFO
+# IMPORTANT: Ensure the paths and Redis/DB URLs in ExecStart match your setup.
+# You can also use Environment variables instead of passing them directly in ExecStart.
+# Example Environment variables:
+# Environment="REDIS_URL=redis://:redis_secure_pass_456@127.0.0.1:6379/0"
+# Environment="DATABASE_URL=postgresql://postgres:postgres@localhost:5432/link_profiler_db"
+# Environment="LP_SYSTEM_CURRENT_CODE_VERSION=1.0.0" # Match this with config.yaml
+
+# Restart policy:
+# always: The service will be restarted regardless of whether it exited cleanly or with an error.
+# on-failure: The service will be restarted only if it exited with an error (non-zero exit code).
+Restart=always
+RestartSec=5s # Wait 5 seconds before attempting to restart
+StandardOutput=journal # Redirects standard output to the systemd journal
+StandardError=journal # Redirects standard error to the systemd journal
+SyslogIdentifier=linkprofiler-satellite # Identifier for log messages in the journal
+
+[Install]
+WantedBy=multi-user.target
