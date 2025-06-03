@@ -25,7 +25,7 @@ import time
 # Corrected project_root calculation to point to the repository root
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+    sys.sys.path.insert(0, project_root)
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain, serialize_model, CrawlConfig # Import CrawlConfig
@@ -65,6 +65,10 @@ class MonitoringDashboard:
         self.job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs") # Added for is_paused endpoint
         self.dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name", "dead_letter_queue") # Added for is_paused endpoint
         self.access_token_expire_minutes = config_loader.get("auth.access_token_expire_minutes", 30) # New: Get token expiry
+        
+        # New: Monitor user credentials
+        self.monitor_username = config_loader.get("monitoring.monitor_auth.username")
+        self.monitor_password = config_loader.get("monitoring.monitor_auth.password")
 
     async def __aenter__(self):
         """Initialise aiohttp session, Redis, and Database connections."""
@@ -113,7 +117,7 @@ class MonitoringDashboard:
 
         # New: Obtain initial API access token for the dashboard itself
         # This is the internal URL for Docker Compose services or localhost for Linux services
-        self.main_api_internal_url = os.getenv('LP_MAIN_API_INTERNAL_URL', 'http://localhost:8000')
+        self.main_api_internal_url = config_loader.get('api.internal_url', 'http://localhost:8000') # Use config_loader for internal URL
         self.logger.info(f"MonitoringDashboard: Main API internal URL set to {self.main_api_internal_url}")
         
         await self._refresh_access_token() # Get initial token
@@ -159,10 +163,7 @@ class MonitoringDashboard:
 
     async def _refresh_access_token(self):
         """Authenticates with the main API and obtains a new access token."""
-        monitor_username = config_loader.get('monitoring.monitor_auth.username')
-        monitor_password = config_loader.get('monitoring.monitor_auth.password')
-
-        if not monitor_username or not monitor_password:
+        if not self.monitor_username or not self.monitor_password:
             self.logger.error("MonitoringDashboard: Monitor authentication credentials not found in config. Cannot refresh token.")
             self.api_access_token = None
             return
@@ -170,15 +171,23 @@ class MonitoringDashboard:
         try:
             token_url = f"{self.main_api_internal_url}/auth/token"
             token_data = {
-                "username": monitor_username,
-                "password": monitor_password
+                "username": self.monitor_username,
+                "password": self.monitor_password
             }
-            self.logger.debug(f"MonitoringDashboard: Attempting to get token from {token_url} with username {monitor_username}.")
-            async with self._session.post(token_url, data=token_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
+            self.logger.debug(f"MonitoringDashboard: Attempting to get token from {token_url} with username {self.monitor_username}.")
+            
+            # Use aiohttp.FormData for application/x-www-form-urlencoded
+            form_data = aiohttp.FormData()
+            form_data.add_field('username', self.monitor_username)
+            form_data.add_field('password', self.monitor_password)
+
+            async with self._session.post(token_url, data=form_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 self.logger.debug(f"MonitoringDashboard: Token refresh response status: {response.status}")
+                
+                response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+                
                 token_response = await response.json()
                 self.logger.debug(f"MonitoringDashboard: Token refresh response body: {token_response}")
-                response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
                 
                 self.api_access_token = token_response.get("access_token")
                 self.logger.info("MonitoringDashboard: Successfully refreshed API access token.")
@@ -625,7 +634,10 @@ async def monitoring_home(request: Request):
         "all_jobs": all_data["all_jobs"], # New: Pass all jobs to template
         "refresh_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "access_token": dashboard.api_access_token, # Pass the dynamically obtained token
-        "api_base_url": main_api_external_base_url # Pass the external API base URL for frontend
+        "api_base_url": main_api_external_base_url, # Pass the external API base URL for frontend
+        "monitor_username": dashboard.monitor_username, # Pass monitor username to frontend
+        "monitor_password": dashboard.monitor_password, # Pass monitor password to frontend (for client-side auth)
+        "access_token_expire_minutes": dashboard.access_token_expire_minutes # Pass token expiry to frontend
     })
 
 @app.get("/api/stats")
@@ -663,7 +675,7 @@ async def submit_job_from_dashboard(request: QueueCrawlRequest):
     """Submit a new crawl job from the dashboard."""
     # This endpoint now proxies the request to the main API
     try:
-        response_data = await dashboard._call_main_api("/api/jobs", method="POST", json_data=request.dict())
+        response_data = await dashboard._call_main_api("/api/queue/submit_crawl", method="POST", json_data=request.dict()) # Corrected endpoint
         return response_data
     except HTTPException as e:
         raise e
