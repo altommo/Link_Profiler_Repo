@@ -2,7 +2,7 @@
 
 # Logging settings
 logging:
-  level: INFO # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: DEBUG # DEBUG, INFO, WARNING, ERROR, CRITICAL
   config: # Optional: Full logging configuration dictionary (Python dictConfig format)
     version: 1
     disable_existing_loggers: False
@@ -13,11 +13,11 @@ logging:
       console:
         class: logging.StreamHandler
         formatter: standard
-        level: INFO
+        level: DEBUG # Set handler level to DEBUG as well
     loggers:
       Link_Profiler:
         handlers: [console]
-        level: INFO
+        level: DEBUG # Set logger level to DEBUG
         propagate: False
       uvicorn:
         handlers: [console]
@@ -33,7 +33,7 @@ logging:
         propagate: False
     root:
       handlers: [console]
-      level: INFO
+      level: DEBUG # Set root level to DEBUG
 
 # API settings
 api:
@@ -281,4 +281,4 @@ auth:
 system:
   # Current version of the deployed code. Update this value on every new deployment
   # to trigger automatic restarts of outdated satellite crawlers.
-  current_code_version: "1.0.1" # Example: "1.0.0", "1.0.1", "2.0.0-beta"
+  current_code_version: "1.0.2" # Example: "1.0.0", "1.0.1", "2.0.0-beta"
