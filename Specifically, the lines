@@ -1,2 +1,0 @@
-<div class="metric"><span>Redis:</span><span>{{ api_health.dependencies.get('redis', {}).get('status') or 'Unknown' }}</span></div>
-<div class="metric"><span>PostgreSQL:</span><span>{{ api_health.dependencies.get('postgresql', {}).get('status') or 'Unknown' }}</span></div>

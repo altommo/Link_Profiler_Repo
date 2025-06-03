@@ -1,2 +1,0 @@
-                    <div class="metric"><span>Redis:</span><span>${data.api_health.dependencies?.redis?.status || 'Unknown'}</span></div>
-                    <div class="metric"><span>PostgreSQL:</span><span>${data.api_health.dependencies?.postgresql?.status || 'Unknown'}</span></div>
