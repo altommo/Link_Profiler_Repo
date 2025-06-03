@@ -130,14 +130,19 @@ class ContentGapAnalysisRequest(BaseModel): # New Pydantic model for Content Gap
     competitor_urls: List[str] = Field(..., description="A list of competitor URLs to compare against.")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration for fetching content.")
 
+class TopicClusteringRequest(BaseModel): # New Pydantic model for Topic Clustering
+    texts: List[str] = Field(..., description="A list of text documents to cluster.")
+    num_clusters: int = Field(5, description="The desired number of topic clusters.")
 
-# Other Pydantic models that were in main.py and are used by multiple routers
-# will be moved here in subsequent phases.
+class LinkVelocityRequest(BaseModel): # New Pydantic model for Link Velocity Request
+    time_unit: str = Field("month", description="The unit of time ('day', 'week', 'month', 'quarter', 'year').")
+    num_units: int = Field(6, description="The number of past units to retrieve data for.")
+
+# --- Pydantic Models for API Responses and other requests (moved from main.py) ---
 
 class CrawlErrorResponse(BaseModel):
     timestamp: datetime
     url: str
-
     error_type: str
     message: str
     details: Optional[str]
@@ -149,7 +154,6 @@ class CrawlErrorResponse(BaseModel):
 
 class CrawlJobResponse(BaseModel):
     id: str
-
     target_url: str
     job_type: str
     status: CrawlStatus # Keep as Enum type hint
@@ -163,13 +167,15 @@ class CrawlJobResponse(BaseModel):
     error_log: List[CrawlErrorResponse]
     results: Dict = Field(default_factory=dict)
 
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
+
     @classmethod
     def from_crawl_job(cls, job: CrawlJob):
-        # Convert CrawlJob dataclass to a dictionary
         job_dict = serialize_model(job)
         
-        # Explicitly convert Enum to its value string for Pydantic
-        job_dict['status'] = job.status.value 
+        # Explicitly convert Enum to its value string for Pydantic if not using use_enum_values
+        # job_dict['status'] = job.status.value 
 
         if isinstance(job_dict.get('created_date'), str):
             try:
@@ -241,12 +247,15 @@ class BacklinkResponse(BaseModel):
     crawl_timestamp: Optional[datetime] = None
     source_domain_metrics: Dict[str, Any] = Field(default_factory=dict)
 
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
+
     @classmethod
     def from_backlink(cls, backlink: Backlink):
         backlink_dict = serialize_model(backlink)
         
-        backlink_dict['link_type'] = LinkType(backlink.link_type.value)
-        backlink_dict['spam_level'] = SpamLevel(backlink.spam_level.value)
+        # backlink_dict['link_type'] = LinkType(backlink.link_type.value) # Handled by use_enum_values
+        # backlink_dict['spam_level'] = SpamLevel(backlink.spam_level.value) # Handled by use_enum_values
         
         if isinstance(backlink_dict.get('discovered_date'), str):
             try:
@@ -297,7 +306,6 @@ class DomainResponse(BaseModel):
 
 class DomainAnalysisResponse(BaseModel):
     domain_name: str
-
     value_score: float
     is_valuable: bool
     reasons: List[str]
@@ -320,7 +328,6 @@ class SERPSearchRequest(BaseModel):
 
 class SERPResultResponse(BaseModel):
     keyword: str
-
     position: int
     result_url: str
     title_text: str
@@ -354,7 +361,6 @@ class KeywordSuggestionResponse(BaseModel):
     data_timestamp: datetime
 
     @classmethod
-
     def from_keyword_suggestion(cls, suggestion: KeywordSuggestion):
         suggestion_dict = serialize_model(suggestion)
         if isinstance(suggestion_dict.get('data_timestamp'), str):
@@ -384,7 +390,6 @@ class CompetitiveKeywordAnalysisRequest(BaseModel):
 
 class CompetitiveKeywordAnalysisResponse(BaseModel):
     primary_domain: str
-
     competitor_domains: List[str]
     common_keywords: List[str]
     keyword_gaps: Dict[str, List[str]]
@@ -432,12 +437,15 @@ class AlertRuleResponse(BaseModel):
     created_at: datetime
     last_triggered_at: Optional[datetime]
 
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
+
     @classmethod
     def from_alert_rule(cls, rule: AlertRule):
         rule_dict = serialize_model(rule)
         # Ensure enums are converted to their values for Pydantic
-        rule_dict['severity'] = rule.severity.value
-        rule_dict['notification_channels'] = [c.value for c in rule.notification_channels]
+        # rule_dict['severity'] = rule.severity.value # Handled by use_enum_values
+        # rule_dict['notification_channels'] = [c.value for c in rule.notification_channels] # Handled by use_enum_values
         
         if isinstance(rule_dict.get('created_at'), str):
             try:
@@ -597,19 +605,18 @@ class ReportJobResponse(BaseModel):
     file_path: Optional[str]
     error_message: Optional[str]
 
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
+
     @classmethod
     def from_report_job(cls, job: ReportJob):
         job_dict = serialize_model(job)
-        job_dict['status'] = job.status.value
+        # job_dict['status'] = job.status.value # Handled by use_enum_values
         if isinstance(job_dict.get('created_date'), str):
             job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
         if isinstance(job_dict.get('completed_date'), str):
             job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
         return cls(**job_dict)
-
-class LinkVelocityRequest(BaseModel): # New Pydantic model for Link Velocity Request
-    time_unit: str = Field("month", description="The unit of time ('day', 'week', 'month', 'quarter', 'year').")
-    num_units: int = Field(6, description="The number of past units to retrieve data for.")
 
 class DomainHistoryResponse(BaseModel): # New Pydantic model for DomainHistory
     domain_name: str
@@ -630,7 +637,3 @@ class DomainHistoryResponse(BaseModel): # New Pydantic model for DomainHistory
                 logger.warning(f"Could not parse snapshot_date string: {history_dict.get('snapshot_date')}")
                 history_dict['snapshot_date'] = None
         return cls(**history_dict)
-
-class TopicClusteringRequest(BaseModel): # New Pydantic model for Topic Clustering
-    texts: List[str] = Field(..., description="A list of text documents to cluster.")
-    num_clusters: int = Field(5, description="The desired number of topic clusters.")

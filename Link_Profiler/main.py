@@ -23,7 +23,6 @@ else:
 
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query
-from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union, Annotated
 import logging
 from urllib.parse import urlparse
@@ -491,13 +490,13 @@ from Link_Profiler.api.schemas import (
 # Import the new routers
 from Link_Profiler.api.auth import auth_router
 from Link_Profiler.api.users import users_router
-from Link_Profiler.api.crawl_audit import crawl_audit_router # New: Import the crawl_audit router
+from Link_Profiler.api.crawl_audit import crawl_audit_router
 from Link_Profiler.api.dependencies import get_current_user # Import get_current_user for other endpoints that need it
 
 # Register the routers with the main app
 app.include_router(auth_router)
 app.include_router(users_router)
-app.include_router(crawl_audit_router) # New: Include the crawl_audit router
+app.include_router(crawl_audit_router)
 
 
 @app.get("/link_profile/{target_domain}/link_velocity", response_model=Dict[str, int]) # Protected endpoint
