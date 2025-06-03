@@ -367,8 +367,8 @@
                 apiHealthDiv.innerHTML = `
                     <div class="metric"><span>Status:</span><span class="${healthClass}">${healthStatus}</span></div>
                     <div class="metric"><span>Timestamp:</span><span>${data.api_health.timestamp || 'N/A'}</span></div>
-                    <div class="metric"><span>Redis:</span><span>${data.api_health.get('dependencies', {}).get('redis', {}).get('status') or 'Unknown'}</span></div>
-                    <div class="metric"><span>PostgreSQL:</span><span>${data.api_health.get('dependencies', {}).get('postgresql', {}).get('status') or 'Unknown'}</span></div>
+                    <div class="metric"><span>Redis:</span><span>${data.api_health.dependencies?.redis?.status || 'Unknown'}</span></div>
+                    <div class="metric"><span>PostgreSQL:</span><span>${data.api_health.dependencies?.postgresql?.status || 'Unknown'}</span></div>
                 `;
                 
                 // Redis Stats
