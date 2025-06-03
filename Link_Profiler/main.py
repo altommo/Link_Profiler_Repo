@@ -1146,10 +1146,12 @@ async def submit_job_api(
     for various job types (e.g., backlink_discovery, technical_audit, etc.)
     by setting the 'job_type' in the config.
     """
-    logger.info(f"Received general job submission for {request.target_url} (type: {request.config.get('job_type', 'N/A')}) by user: {current_user.username}.")
+    logger.info(f"API: Received general job submission for {request.target_url} (type: {request.config.get('job_type', 'N/A')}) by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type=request.config.get('job_type', 'general_job')).inc()
     
     # Delegate to the existing submit_crawl_to_queue function
+    # Added debug log to confirm request object before passing
+    logger.debug(f"API: Passing QueueCrawlRequest to submit_crawl_to_queue: {request.dict()}")
     return await submit_crawl_to_queue(request)
 
 
@@ -1162,7 +1164,7 @@ async def start_backlink_discovery(
     """
     Submits a new backlink discovery job to the queue.
     """
-    logger.info(f"Received request to submit backlink discovery for {request.target_url} by user: {current_user.username}.")
+    logger.info(f"API: Received request to submit backlink discovery for {request.target_url} by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='backlink_discovery').inc()
     
     # Convert StartCrawlRequest to QueueCrawlRequest
@@ -1184,7 +1186,7 @@ async def start_link_health_audit(
     """
     Submits a new link health audit job to the queue.
     """
-    logger.info(f"Received request to submit link health audit for {len(request.source_urls)} URLs by user: {current_user.username}.")
+    logger.info(f"API: Received request to submit link health audit for {len(request.source_urls)} URLs by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='link_health_audit').inc()
 
     if not request.source_urls:
@@ -1213,7 +1215,7 @@ async def start_technical_audit(
     """
     Submits a new technical audit job to the queue.
     """
-    logger.info(f"Received request to submit technical audit for {len(request.urls_to_audit)} URLs by user: {current_user.username}.")
+    logger.info(f"API: Received request to submit technical audit for {len(request.urls_to_audit)} URLs by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='technical_audit').inc()
 
     if not request.urls_to_audit:
@@ -1243,7 +1245,7 @@ async def start_full_seo_audit(
     Submits a new full SEO audit job to the queue.
     This job orchestrates technical and link health audits.
     """
-    logger.info(f"Received request to submit full SEO audit for {len(request.urls_to_audit)} URLs by user: {current_user.username}.")
+    logger.info(f"API: Received request to submit full SEO audit for {len(request.urls_to_audit)} URLs by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='full_seo_audit').inc()
 
     if not request.urls_to_audit:
@@ -1271,7 +1273,7 @@ async def start_domain_analysis_job(
     """
     Submits a new batch domain analysis job to the queue.
     """
-    logger.info(f"Received request to submit domain analysis for {len(request.domain_names)} domains by user: {current_user.username}.")
+    logger.info(f"API: Received request to submit domain analysis for {len(request.domain_names)} domains by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='domain_analysis').inc()
 
     if not request.domain_names:
@@ -1302,7 +1304,7 @@ async def start_web3_crawl(
     """
     Submits a new Web3 content crawl job to the queue.
     """
-    logger.info(f"Received request to submit Web3 crawl for identifier: {request.web3_content_identifier} by user: {current_user.username}.")
+    logger.info(f"API: Received request to submit Web3 crawl for identifier: {request.web3_content_identifier} by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='web3_crawl').inc()
 
     queue_request = QueueCrawlRequest(
@@ -1325,7 +1327,7 @@ async def start_social_media_crawl(
     """
     Submits a new social media content crawl job to the queue.
     """
-    logger.info(f"Received request to submit social media crawl for query: {request.social_media_query} by user: {current_user.username}.")
+    logger.info(f"API: Received request to submit social media crawl for query: {request.social_media_query} by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='social_media_crawl').inc()
 
     queue_request = QueueCrawlRequest(
@@ -1349,7 +1351,7 @@ async def start_content_gap_analysis(
     """
     Submits a new content gap analysis job to the queue.
     """
-    logger.info(f"Received request to submit content gap analysis for {request.target_url} by user: {current_user.username}.")
+    logger.info(f"API: Received request to submit content gap analysis for {request.target_url} by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='content_gap_analysis').inc()
 
     if not request.target_url or not request.competitor_urls:
@@ -1372,7 +1374,7 @@ async def get_content_gap_analysis_result(target_url: str, current_user: User = 
     """
     Retrieves the content gap analysis result for a given target URL.
     """
-    logger.info(f"Received request for content gap analysis result for {target_url} by user: {current_user.username}.")
+    logger.info(f"API: Received request for content gap analysis result for {target_url} by user: {current_user.username}.")
     if not urlparse(target_url).scheme or not urlparse(target_url).netloc:
         raise HTTPException(status_code=400, detail="Invalid target_url provided. Must be a full URL (e.g., https://example.com).")
 
@@ -1381,12 +1383,12 @@ async def get_content_gap_analysis_result(target_url: str, current_user: User = 
         raise HTTPException(status_code=404, detail="Content gap analysis result not found for this URL. A job might not have been completed yet.")
     return ContentGapAnalysisResultResponse.from_content_gap_analysis_result(result)
 
-@app.post("/content/topic_clustering", response_model=Dict[str, List[str]]) # New endpoint
+@app.post("/content/topic_clustering", response_model=List[str]) # New endpoint
 async def perform_topic_clustering_endpoint(request: TopicClusteringRequest, current_user: User = Depends(get_current_user)): # Protected endpoint
     """
     Performs topic clustering on a list of provided texts using AI.
     """
-    logger.info(f"Received request for topic clustering by user: {current_user.username}.")
+    logger.info(f"API: Received request for topic clustering by user: {current_user.username}.")
     if not request.texts:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one text document must be provided for topic clustering.")
     
@@ -1400,7 +1402,7 @@ async def perform_topic_clustering_endpoint(request: TopicClusteringRequest, cur
         )
         return clustered_topics
     except Exception as e:
-        logger.error(f"Error performing topic clustering: {e}", exc_info=True)
+        logger.error(f"API: Error performing topic clustering: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform topic clustering: {e}")
 
 @app.get("/link_profile/{target_domain}/link_velocity", response_model=Dict[str, int]) # Protected endpoint
@@ -1408,7 +1410,7 @@ async def get_link_velocity(target_domain: str, request_params: LinkVelocityRequ
     """
     Retrieves the link velocity (new backlinks over time) for a given target domain.
     """
-    logger.info(f"Received request for link velocity of {target_domain} by user: {current_user.username}.")
+    logger.info(f"API: Received request for link velocity of {target_domain} by user: {current_user.username}.")
     if not target_domain:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target domain must be provided.")
     
@@ -1424,7 +1426,7 @@ async def get_link_velocity(target_domain: str, request_params: LinkVelocityRequ
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error retrieving link velocity for {target_domain}: {e}", exc_info=True)
+        logger.error(f"API: Error retrieving link velocity for {target_domain}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve link velocity: {e}")
 
 @app.get("/domain/{domain_name}/history", response_model=List[DomainHistoryResponse]) # Protected endpoint
@@ -1436,7 +1438,7 @@ async def get_domain_history_endpoint(
     """
     Retrieves the historical progression of a domain's authority metrics.
     """
-    logger.info(f"Received request for domain history of {domain_name} by user: {current_user.username}.")
+    logger.info(f"API: Received request for domain history of {domain_name} by user: {current_user.username}.")
     if not domain_name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Domain name must be provided.")
     
@@ -1449,7 +1451,7 @@ async def get_domain_history_endpoint(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No historical data found for {domain_name}.")
         return [DomainHistoryResponse.from_domain_history(h) for h in history_data]
     except Exception as e:
-        logger.error(f"Error retrieving domain history for {domain_name}: {e}", exc_info=True)
+        logger.error(f"API: Error retrieving domain history for {domain_name}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve domain history: {e}")
 
 @app.get("/serp/history", response_model=List[SERPResultResponse]) # New endpoint
@@ -1462,7 +1464,7 @@ async def get_serp_position_history_endpoint(
     """
     Retrieves the historical SERP positions for a specific URL and keyword.
     """
-    logger.info(f"Received request for SERP history for URL '{target_url}' and keyword '{keyword}' by user: {current_user.username}.")
+    logger.info(f"API: Received request for SERP history for URL '{target_url}' and keyword '{keyword}' by user: {current_user.username}.")
     if not target_url or not keyword:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target URL and keyword must be provided.")
     
@@ -1472,7 +1474,7 @@ async def get_serp_position_history_endpoint(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No SERP history found for URL '{target_url}' and keyword '{keyword}'.")
         return [SERPResultResponse.from_serp_result(sr) for sr in history_data]
     except Exception as e:
-        logger.error(f"Error retrieving SERP position history for '{target_url}' and '{keyword}': {e}", exc_info=True)
+        logger.error(f"API: Error retrieving SERP position history for '{target_url}' and '{keyword}': {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve SERP position history: {e}")
 
 @app.post("/keyword/semantic_suggestions", response_model=List[str]) # New endpoint
@@ -1483,7 +1485,7 @@ async def get_semantic_keyword_suggestions_endpoint(
     """
     Generates a list of semantically related keywords using AI.
     """
-    logger.info(f"Received request for semantic keyword suggestions for '{primary_keyword}' by user: {current_user.username}.")
+    logger.info(f"API: Received request for semantic keyword suggestions for '{primary_keyword}' by user: {current_user.username}.")
     if not primary_keyword:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary keyword must be provided.")
     
@@ -1496,7 +1498,7 @@ async def get_semantic_keyword_suggestions_endpoint(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No semantic keyword suggestions found for '{primary_keyword}'.")
         return suggestions
     except Exception as e:
-        logger.error(f"Error generating semantic keyword suggestions for '{primary_keyword}': {e}", exc_info=True)
+        logger.error(f"API: Error generating semantic keyword suggestions for '{primary_keyword}': {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate semantic keyword suggestions: {e}")
 
 @app.post("/competitor/link_intersect", response_model=LinkIntersectResponse) # New endpoint
@@ -1504,7 +1506,7 @@ async def get_link_intersect(request: LinkIntersectRequest, current_user: User =
     """
     Performs a link intersect analysis to find common linking domains between a primary domain and competitors.
     """
-    logger.info(f"Received request for link intersect analysis for {request.primary_domain} by user: {current_user.username}.")
+    logger.info(f"API: Received request for link intersect analysis for {request.primary_domain} by user: {current_user.username}.")
     if not request.primary_domain or not request.competitor_domains:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary domain and at least one competitor domain must be provided.")
     
@@ -1515,7 +1517,7 @@ async def get_link_intersect(request: LinkIntersectRequest, current_user: User =
         )
         return LinkIntersectResponse.from_link_intersect_result(result)
     except Exception as e:
-        logger.error(f"Error performing link intersect analysis: {e}", exc_info=True)
+        logger.error(f"API: Error performing link intersect analysis: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform link intersect analysis: {e}")
 
 @app.post("/competitor/keyword_analysis", response_model=CompetitiveKeywordAnalysisResponse) # New endpoint
@@ -1523,7 +1525,7 @@ async def get_competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRe
     """
     Performs a competitive keyword analysis, identifying common keywords, keyword gaps, and unique keywords.
     """
-    logger.info(f"Received request for competitive keyword analysis for {request.primary_domain} by user: {current_user.username}.")
+    logger.info(f"API: Received request for competitive keyword analysis for {request.primary_domain} by user: {current_user.username}.")
     if not request.primary_domain or not request.competitor_domains:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary domain and at least one competitor domain must be provided.")
     
@@ -1534,7 +1536,7 @@ async def get_competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRe
         )
         return CompetitiveKeywordAnalysisResponse.from_competitive_keyword_analysis_result(result)
     except Exception as e:
-        logger.error(f"Error performing competitive keyword analysis: {e}", exc_info=True)
+        logger.error(f"API: Error performing competitive keyword analysis: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform competitive keyword analysis: {e}")
 
 @app.post("/link_building/prospects/identify", response_model=Dict[str, str], status_code=202) # New endpoint
@@ -1546,7 +1548,7 @@ async def identify_link_prospects_job(
     """
     Submits a job to identify and score link building prospects.
     """
-    logger.info(f"Received request to identify link prospects for {request.target_domain} by user: {current_user.username}.")
+    logger.info(f"API: Received request to identify link prospects for {request.target_domain} by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='prospect_identification').inc()
 
     queue_request = QueueCrawlRequest(
@@ -1567,12 +1569,12 @@ async def get_all_link_prospects_endpoint(
     """
     Retrieves all identified link building prospects, optionally filtered by status.
     """
-    logger.info(f"Received request for all link prospects (status: {status_filter}) by user: {current_user.username}.")
+    logger.info(f"API: Received request for all link prospects (status: {status_filter}) by user: {current_user.username}.")
     try:
         prospects = await link_building_service_instance.get_all_prospects(status_filter=status_filter)
         return [LinkProspectResponse.from_link_prospect(p) for p in prospects]
     except Exception as e:
-        logger.error(f"Error retrieving link prospects: {e}", exc_info=True)
+        logger.error(f"API: Error retrieving link prospects: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve link prospects: {e}")
 
 @app.put("/link_building/prospects/{prospect_url:path}", response_model=LinkProspectResponse) # New endpoint
@@ -1584,7 +1586,7 @@ async def update_link_prospect_endpoint(
     """
     Updates the status or other details of a specific link prospect.
     """
-    logger.info(f"Received request to update link prospect {prospect_url} by user: {current_user.username}.")
+    logger.info(f"API: Received request to update link prospect {prospect_url} by user: {current_user.username}.")
     try:
         updated_prospect = await link_building_service_instance.update_prospect_status(
             url=prospect_url,
@@ -1605,7 +1607,7 @@ async def update_link_prospect_endpoint(
         db.save_link_prospect(updated_prospect) # Save the full updated object
         return LinkProspectResponse.from_link_prospect(updated_prospect)
     except Exception as e:
-        logger.error(f"Error updating link prospect {prospect_url}: {e}", exc_info=True)
+        logger.error(f"API: Error updating link prospect {prospect_url}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update link prospect: {e}")
 
 @app.post("/link_building/campaigns", response_model=OutreachCampaignResponse, status_code=status.HTTP_201_CREATED) # New endpoint
@@ -1616,7 +1618,7 @@ async def create_outreach_campaign_endpoint(
     """
     Creates a new link building outreach campaign.
     """
-    logger.info(f"Received request to create outreach campaign '{request.name}' by user: {current_user.username}.")
+    logger.info(f"API: Received request to create outreach campaign '{request.name}' by user: {current_user.username}.")
     try:
         campaign = OutreachCampaign(
             id=str(uuid.uuid4()),
@@ -1631,7 +1633,7 @@ async def create_outreach_campaign_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error creating outreach campaign: {e}", exc_info=True)
+        logger.error(f"API: Error creating outreach campaign: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create outreach campaign: {e}")
 
 @app.get("/link_building/campaigns", response_model=List[OutreachCampaignResponse]) # New endpoint
@@ -1642,12 +1644,12 @@ async def get_all_outreach_campaigns_endpoint(
     """
     Retrieves all outreach campaigns, optionally filtered by status.
     """
-    logger.info(f"Received request for all outreach campaigns (status: {status_filter}) by user: {current_user.username}.")
+    logger.info(f"API: Received request for all outreach campaigns (status: {status_filter}) by user: {current_user.username}.")
     try:
         campaigns = db.get_all_outreach_campaigns(status_filter=status_filter)
         return [OutreachCampaignResponse.from_outreach_campaign(c) for c in campaigns]
     except Exception as e:
-        logger.error(f"Error retrieving outreach campaigns: {e}", exc_info=True)
+        logger.error(f"API: Error retrieving outreach campaigns: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve outreach campaign: {e}")
 
 @app.get("/link_building/campaigns/{campaign_id}", response_model=OutreachCampaignResponse) # New endpoint
@@ -1658,7 +1660,7 @@ async def get_outreach_campaign_by_id_endpoint(
     """
     Retrieves a specific outreach campaign by its ID.
     """
-    logger.info(f"Received request for outreach campaign {campaign_id} by user: {current_user.username}.")
+    logger.info(f"API: Received request for outreach campaign {campaign_id} by user: {current_user.username}.")
     try:
         campaign = db.get_outreach_campaign(campaign_id)
         if not campaign:
@@ -1667,7 +1669,7 @@ async def get_outreach_campaign_by_id_endpoint(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving outreach campaign {campaign_id}: {e}", exc_info=True)
+        logger.error(f"API: Error retrieving outreach campaign {campaign_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve outreach campaign: {e}")
 
 @app.post("/link_building/events", response_model=OutreachEventResponse, status_code=status.HTTP_201_CREATED) # New endpoint
@@ -1678,7 +1680,7 @@ async def create_outreach_event_endpoint(
     """
     Records a new outreach event for a prospect within a campaign.
     """
-    logger.info(f"Received request to record outreach event for prospect {request.prospect_url} in campaign {request.campaign_id} by user: {current_user.username}.")
+    logger.info(f"API: Received request to record outreach event for prospect {request.prospect_url} in campaign {request.campaign_id} by user: {current_user.username}.")
     try:
         # Basic validation: check if campaign and prospect exist
         campaign = db.get_outreach_campaign(request.campaign_id)
@@ -1710,7 +1712,7 @@ async def create_outreach_event_endpoint(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error creating outreach event: {e}", exc_info=True)
+        logger.error(f"API: Error creating outreach event: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create outreach event: {e}")
 
 @app.get("/link_building/prospects/{prospect_url:path}/events", response_model=List[OutreachEventResponse]) # New endpoint
@@ -1721,12 +1723,12 @@ async def get_outreach_events_for_prospect_endpoint(
     """
     Retrieves all outreach events for a specific link prospect.
     """
-    logger.info(f"Received request for outreach events for prospect {prospect_url} by user: {current_user.username}.")
+    logger.info(f"API: Received request for outreach events for prospect {prospect_url} by user: {current_user.username}.")
     try:
         events = db.get_outreach_events_for_prospect(prospect_url)
         return [OutreachEventResponse.from_outreach_event(e) for e in events]
     except Exception as e:
-        logger.error(f"Error retrieving outreach events for prospect {prospect_url}: {e}", exc_info=True)
+        logger.error(f"API: Error retrieving outreach events for prospect {prospect_url}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve outreach events: {e}")
 
 @app.post("/ai/content_ideas", response_model=List[str]) # New endpoint
@@ -1737,7 +1739,7 @@ async def generate_content_ideas_endpoint(
     """
     Generates content ideas for a given topic using AI.
     """
-    logger.info(f"Received request for content ideas for topic '{request.topic}' by user: {current_user.username}.")
+    logger.info(f"API: Received request for content ideas for topic '{request.topic}' by user: {current_user.username}.")
     if not request.topic:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Topic must be provided.")
     
@@ -1750,7 +1752,7 @@ async def generate_content_ideas_endpoint(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No content ideas generated for '{request.topic}'.")
         return ideas
     except Exception as e:
-        logger.error(f"Error generating content ideas for '{request.topic}': {e}", exc_info=True)
+        logger.error(f"API: Error generating content ideas for '{request.topic}': {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate content ideas: {e}")
 
 @app.post("/ai/competitor_strategy", response_model=Dict[str, Any]) # New endpoint
@@ -1761,7 +1763,7 @@ async def analyze_competitor_strategy_endpoint(
     """
     Analyzes competitor strategies using AI.
     """
-    logger.info(f"Received request for AI competitor strategy analysis for {request.primary_domain} by user: {current_user.username}.")
+    logger.info(f"API: Received request for AI competitor strategy analysis for {request.primary_domain} by user: {current_user.username}.")
     if not request.primary_domain or not request.competitor_domains:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary domain and competitor domains must be provided.")
     
@@ -1774,7 +1776,7 @@ async def analyze_competitor_strategy_endpoint(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AI could not perform competitor strategy analysis for {request.primary_domain}.")
         return analysis_result
     except Exception as e:
-        logger.error(f"Error performing AI competitor strategy analysis for {request.primary_domain}: {e}", exc_info=True)
+        logger.error(f"API: Error performing AI competitor strategy analysis for {request.primary_domain}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform AI competitor strategy analysis: {e}")
 
 @app.post("/reports/schedule", response_model=Dict[str, str], status_code=202) # New endpoint
@@ -1786,7 +1788,7 @@ async def schedule_report_generation_job(
     """
     Schedules a report generation job to run at a specific time or on a recurring basis.
     """
-    logger.info(f"Received request to schedule report '{request.report_type}' for '{request.target_identifier}' by user: {current_user.username}.")
+    logger.info(f"API: Received request to schedule report '{request.report_type}' for '{request.target_identifier}' by user: {current_user.username}.")
     JOBS_CREATED_TOTAL.labels(job_type='report_generation').inc()
 
     if not request.scheduled_at and not request.cron_schedule:
@@ -1815,7 +1817,7 @@ async def get_report_job_status(job_id: str, current_user: User = Depends(get_cu
     """
     Retrieves the status of a scheduled or generated report job.
     """
-    logger.info(f"Received request for report job status {job_id} by user: {current_user.username}.")
+    logger.info(f"API: Received request for report job status {job_id} by user: {current_user.username}.")
     try:
         report_job = db.get_report_job(job_id)
         if not report_job:
@@ -1824,7 +1826,7 @@ async def get_report_job_status(job_id: str, current_user: User = Depends(get_cu
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving report job status {job_id}: {e}", exc_info=True)
+        logger.error(f"API: Error retrieving report job status {job_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve report job status: {e}")
 
 @app.get("/reports/{job_id}/download") # New endpoint
@@ -1832,7 +1834,7 @@ async def download_report_file(job_id: str, current_user: User = Depends(get_cur
     """
     Downloads the generated report file for a completed report job.
     """
-    logger.info(f"Received request to download report for job {job_id} by user: {current_user.username}.")
+    logger.info(f"API: Received request to download report for job {job_id} by user: {current_user.username}.")
     try:
         report_job = db.get_report_job(job_id)
         if not report_job:
@@ -1850,7 +1852,7 @@ async def download_report_file(job_id: str, current_user: User = Depends(get_cur
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error downloading report for job {job_id}: {e}", exc_info=True)
+        logger.error(f"API: Error downloading report for job {job_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to download report: {e}")
 
 

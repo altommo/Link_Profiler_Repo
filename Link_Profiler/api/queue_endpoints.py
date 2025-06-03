@@ -41,10 +41,13 @@ async def get_coordinator() -> JobCoordinator: # Removed arguments, now uses mod
     """Get or create job coordinator instance"""
     global coordinator
     if not QUEUE_AVAILABLE:
+        logger.error("Queue system not available. Croniter might be missing.")
         raise HTTPException(status_code=503, detail="Queue system not available")
     
     if coordinator is None:
+        logger.info("Queue Endpoints: Initializing JobCoordinator instance.")
         if _db_instance is None:
+            logger.critical("Queue Endpoints: Database instance not set for JobCoordinator. This is a configuration error.")
             raise RuntimeError("Database instance not set for JobCoordinator. Ensure add_queue_endpoints is called during app startup.")
         
         coordinator = JobCoordinator(
@@ -58,6 +61,7 @@ async def get_coordinator() -> JobCoordinator: # Removed arguments, now uses mod
         asyncio.create_task(coordinator.process_results())
         asyncio.create_task(coordinator.monitor_satellites())
         asyncio.create_task(coordinator._process_scheduled_jobs()) # New: Start scheduled jobs processor
+        logger.info("Queue Endpoints: JobCoordinator background tasks started.")
     
     return coordinator
 
@@ -106,6 +110,7 @@ class CrawlerHealthResponse(BaseModel):
 # Queue endpoint functions that can be added to any FastAPI app
 async def submit_crawl_to_queue(request: QueueCrawlRequest):
     """Submit a crawl job to the distributed queue system"""
+    logger.debug(f"Queue Endpoints: Received request in submit_crawl_to_queue for target: {request.target_url}, type: {request.config.get('job_type')}")
     try:
         coord = await get_coordinator() # Call without arguments
         
@@ -127,10 +132,6 @@ async def submit_crawl_to_queue(request: QueueCrawlRequest):
             cron_schedule=request.cron_schedule, # Pass cron_schedule
             config=serialize_model(crawl_config_obj), # Store serialized config
             # Pass initial_seed_urls, keyword, etc. within the config dict for the satellite to use
-            # The satellite will deserialize this config and pass it to CrawlService.execute_predefined_job
-            # For backlink_discovery, initial_seed_urls is directly from request
-            # For other job types, specific parameters are passed in request.config
-            # e.g., {"keyword": "...", "num_results": "...", "job_type": "serp_analysis"}
             # The satellite's _execute_crawl_job will extract these from job.config
         )
         
@@ -138,13 +139,15 @@ async def submit_crawl_to_queue(request: QueueCrawlRequest):
         if job_type == "backlink_discovery":
             job.config["initial_seed_urls"] = request.initial_seed_urls
         
+        logger.debug(f"Queue Endpoints: Calling coordinator.submit_crawl_job for job ID: {job.id}, status: {job.status.value}")
         # Submit the CrawlJob object to the coordinator
         await coord.submit_crawl_job(job)
+        logger.info(f"Queue Endpoints: Job {job.id} successfully submitted to coordinator.")
         
         return {"job_id": job_id, "status": "submitted", "message": "Job queued for processing"}
         
     except Exception as e:
-        logger.error(f"Error submitting job to queue: {e}")
+        logger.error(f"Queue Endpoints: Error submitting job to queue: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to submit job: {e}")
 
 async def get_queue_job_status(job_id: str):
@@ -170,7 +173,7 @@ async def get_queue_job_status(job_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting job status: {e}")
+        logger.error(f"Error getting job status: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get job status: {e}")
 
 async def get_queue_stats():
@@ -205,7 +208,7 @@ async def get_queue_stats():
         )
         
     except Exception as e:
-        logger.error(f"Error getting queue stats: {e}")
+        logger.error(f"Error getting queue stats: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get queue stats: {e}")
 
 async def get_crawler_health():
@@ -217,7 +220,7 @@ async def get_crawler_health():
         for crawler_id, details in coord.satellite_crawlers.items(): # `details` is the Dict[str, Any]
             last_heartbeat_str = details.get("timestamp")
             if last_heartbeat_str:
-                last_heartbeat_dt = datetime.fromisoformat(last_heartbeat_str)
+                last_heartbeat_dt = datetime.fromisoformat(last_seen_str)
                 time_diff = datetime.now() - last_heartbeat_dt
                 
                 health_info_list.append(SatelliteDetails( # Use SatelliteDetails model
@@ -237,7 +240,7 @@ async def get_crawler_health():
         )
         
     except Exception as e:
-        logger.error(f"Error getting crawler health: {e}")
+        logger.error(f"Error getting crawler health: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get crawler health: {e}")
 
 # Function to add queue endpoints to an existing FastAPI app
