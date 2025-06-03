@@ -38,7 +38,11 @@ from Link_Profiler.core.models import User
 analytics_router = APIRouter(prefix="/api", tags=["Analytics & Data Retrieval"])
 
 @analytics_router.get("/link_profile/{target_domain}/link_velocity", response_model=Dict[str, int])
-async def get_link_velocity(target_domain: str, request_params: LinkVelocityRequest = Depends(), current_user: Annotated[User, Depends(get_current_user)]):
+async def get_link_velocity(
+    target_domain: str,
+    current_user: Annotated[User, Depends(get_current_user)], # Moved to come before parameter with default
+    request_params: LinkVelocityRequest = Depends()
+):
     """
     Retrieves the link velocity (new backlinks over time) for a given target domain.
     """
