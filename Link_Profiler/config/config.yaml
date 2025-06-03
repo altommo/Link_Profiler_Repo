@@ -60,6 +60,7 @@ queue:
   result_queue_name: "crawl_results"
   dead_letter_queue_name: "dead_letter_queue"
   scheduler_interval: 5 # How often (in seconds) the coordinator checks for scheduled jobs
+  heartbeat_queue_sorted_name: "crawler_heartbeats_sorted" # New: Name of the sorted set for crawler heartbeats
 
 # Crawler settings
 crawler:

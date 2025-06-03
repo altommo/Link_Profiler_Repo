@@ -20,8 +20,14 @@ def main():
     """Main entry point for satellite crawler"""
     import argparse
     
+    # Explicitly load config for standalone satellite to ensure defaults are available
+    config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
+
+    # Load default Redis URL from config first
+    default_redis_url = config_loader.get("redis.url", os.getenv("REDIS_URL", "redis://localhost:6379/0")) # Modified: Load default from config/env
+
     parser = argparse.ArgumentParser(description="Link Profiler Satellite Crawler")
-    parser.add_argument("--redis-url", default="redis://localhost:6379", 
+    parser.add_argument("--redis-url", default=default_redis_url, # Modified: Use loaded default
                        help="Redis connection URL")
     parser.add_argument("--crawler-id", 
                        help="Unique crawler identifier")
@@ -40,9 +46,7 @@ def main():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # Explicitly load config for standalone satellite
-    # This ensures environment variables (like LP_DATABASE_URL) are picked up
-    config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
+    # The config_loader.load_config call was moved to the top of main()
     
     async def run_crawler():
         async with SatelliteCrawler(

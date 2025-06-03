@@ -6,7 +6,7 @@ import redis.asyncio as redis
 import json
 import uuid
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Any # Added 'Any'
+from typing import List, Dict, Optional, Any
 from dataclasses import asdict
 import logging
 from croniter import croniter
@@ -44,7 +44,7 @@ class JobCoordinator:
         # Queue names
         self.job_queue = config_loader.get("queue.job_queue_name", "crawl_jobs")
         self.result_queue = config_loader.get("queue.result_queue_name", "crawl_results")
-        self.heartbeat_queue_sorted = "crawler_heartbeats_sorted" # This is not in config, but could be
+        self.heartbeat_queue_sorted = config_loader.get("queue.heartbeat_queue_sorted_name", "crawler_heartbeats_sorted") # Modified: Load from config
         self.scheduled_jobs_queue = config_loader.get("queue.scheduled_jobs_queue", "scheduled_jobs") # New: Scheduled jobs queue name
         
         # Job tracking (authoritative state is in DB, this is for quick in-memory lookup of active jobs)
