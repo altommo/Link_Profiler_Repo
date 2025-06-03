@@ -357,22 +357,23 @@ class SatelliteCrawler:
         job = CrawlJob.from_dict(job_data)
         job.status = CrawlStatus.IN_PROGRESS
         job.started_date = datetime.now()
+        self.logger.debug(f"Job {job_id}: Updating job status to IN_PROGRESS in DB.")
         self.db.update_crawl_job(job)
         self.running_jobs[job_id] = asyncio.current_task() # Store the task for cancellation
 
         try:
             result_data = {}
             if job_type == "backlink_discovery":
-                # Pass job_id to web_crawler.start_crawl
+                self.logger.debug(f"Job {job_id}: Calling web_crawler.start_crawl for {target_url} with seeds {initial_seed_urls}.")
                 crawl_result_generator = self.web_crawler.start_crawl(target_url, initial_seed_urls, job_id)
-                # Consume the generator to get the final crawl result summary
-                # Assuming start_crawl yields results and the last one is the summary or we aggregate
+                
                 final_crawl_result = None
                 async for crawl_res in crawl_result_generator:
-                    # Process intermediate crawl_res if needed, e.g., save backlinks
-                    # For now, just keep the last one as the "final" summary
+                    self.logger.debug(f"Job {job_id}: Received intermediate crawl result: {crawl_res.pages_crawled} pages, {crawl_res.total_links_found} links.")
                     final_crawl_result = crawl_res 
                 
+                self.logger.debug(f"Job {job_id}: Final crawl result after loop: {final_crawl_result}")
+
                 if final_crawl_result:
                     result_data = serialize_model(final_crawl_result)
                     job.urls_crawled = final_crawl_result.pages_crawled
@@ -492,6 +493,7 @@ class SatelliteCrawler:
             job.completed_date = datetime.now()
             # Removed direct assignment to job.duration_seconds
             # job.duration_seconds = (job.completed_date - job.started_date).total_seconds()
+            self.logger.debug(f"Job {job_id}: Final status before DB update: {job.status.value}. Job ID: {job.id}")
             self.db.update_crawl_job(job)
             self.logger.info(f"Job {job_id} finished. Status: {job.status.value}")
             self.total_jobs_completed += 1 # Increment on successful completion
@@ -508,6 +510,7 @@ class SatelliteCrawler:
                 error_type="CancelledError",
                 message="Job was cancelled by system shutdown or manual intervention."
             ))
+            self.logger.debug(f"Job {job_id}: Final status before DB update: {job.status.value}. Job ID: {job.id}")
             self.db.update_crawl_job(job)
             self.total_errors_encountered += 1 # Increment on cancellation
         except Exception as e:
@@ -523,6 +526,7 @@ class SatelliteCrawler:
                 error_type=e.__class__.__name__,
                 message=str(e)
             ))
+            self.logger.debug(f"Job {job_id}: Final status before DB update: {job.status.value}. Job ID: {job.id}")
             self.db.update_crawl_job(job)
             # Optionally push to dead-letter queue
             job_data["dead_letter_reason"] = str(e)
