@@ -186,10 +186,12 @@ class SatelliteCrawler:
         await self.serp_crawler.__aenter__() # This one is a context manager
 
         # Conditionally launch Playwright browser for WebCrawler
-        if config_loader.get("browser_crawler.enabled", False):
+        browser_crawler_enabled = config_loader.get("browser_crawler.enabled", False)
+        self.logger.debug(f"Satellite startup: browser_crawler.enabled is configured as: {browser_crawler_enabled}") # Added debug log
+        if browser_crawler_enabled:
             browser_type = config_loader.get("browser_crawler.browser_type", "chromium")
             headless = config_loader.get("browser_crawler.headless", True)
-            self.logger.info(f"Satellite startup: Launching Playwright browser ({browser_type}, headless={headless})...")
+            self.logger.info(f"Satellite startup: Launching global Playwright browser ({browser_type}, headless={headless})...")
             self.playwright_instance = await async_playwright().start() # Store playwright_instance
             if browser_type == "chromium":
                 self.playwright_browser = await self.playwright_instance.chromium.launch(headless=headless)
