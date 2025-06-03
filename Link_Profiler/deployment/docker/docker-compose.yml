@@ -43,6 +43,8 @@ services:
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/link_profiler_db
       - DEAD_LETTER_QUEUE_NAME=dead_letter_queue # Pass dead letter queue name
+      # LP_AUTH_SECRET_KEY is loaded from config.yaml by default, but can be overridden by env var
+      # - LP_AUTH_SECRET_KEY=your_generated_auth_secret_key_here 
       # Optional API Keys (uncomment and set as needed)
       # - ABSTRACT_API_KEY=your_abstract_api_key_here
       # - USE_ABSTRACT_API=false
@@ -80,8 +82,11 @@ services:
       - "8001:8001"
     environment:
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/link_profiler_db # Monitor also needs DB access
+      - MAIN_API_INTERNAL_URL=http://coordinator:8000 # How monitor reaches coordinator internally
     depends_on:
       - redis
+      - postgres
     restart: unless-stopped
 
   # Satellite crawler instances
@@ -91,6 +96,7 @@ services:
       dockerfile: Link_Profiler/deployment/docker/Dockerfile.satellite
     environment:
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/link_profiler_db # Satellites also need DB access
       - CRAWLER_ID=satellite-us-east-1
       - REGION=us-east-1
       # Pass through API keys needed by CrawlService within satellites
@@ -116,6 +122,7 @@ services:
       # - CLICKHOUSE_PASSWORD=
     depends_on:
       - redis
+      - postgres
     restart: unless-stopped
 
   satellite-2:
@@ -124,10 +131,12 @@ services:
       dockerfile: Link_Profiler/deployment/docker/Dockerfile.satellite
     environment:
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/link_profiler_db
       - CRAWLER_ID=satellite-us-west-1
       - REGION=us-west-1
     depends_on:
       - redis
+      - postgres
     restart: unless-stopped
 
   satellite-3:
@@ -136,10 +145,12 @@ services:
       dockerfile: Link_Profiler/deployment/docker/Dockerfile.satellite
     environment:
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/link_profiler_db
       - CRAWLER_ID=satellite-eu-west-1
       - REGION=eu-west-1
     depends_on:
       - redis
+      - postgres
     restart: unless-stopped
 
 volumes:

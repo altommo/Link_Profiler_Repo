@@ -56,7 +56,7 @@ class MonitoringDashboard:
         self._session: Optional[aiohttp.ClientSession] = None
         self.coordinator: Optional[JobCoordinator] = None # Add coordinator instance
         self.api_access_token: Optional[str] = None # New: Store API access token
-        self.main_api_base_url: str = "" # New: Store main API base URL
+        self.main_api_internal_url: str = "" # New: Store main API's internal URL for backend-to-backend calls
         self._token_refresh_task: Optional[asyncio.Task] = None # New: Task for token renewal
 
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
@@ -110,9 +110,9 @@ class MonitoringDashboard:
             self.logger.warning("MonitoringDashboard: JobCoordinator could not be initialized due to missing DB or Redis connection.")
 
         # New: Obtain initial API access token for the dashboard itself
-        api_host = config_loader.get('api.host', '127.0.0.1')
-        api_port = config_loader.get('api.port', 8000)
-        self.main_api_base_url = f"http://{api_host}:{api_port}"
+        # This is the internal URL for Docker Compose services
+        self.main_api_internal_url = os.getenv('MAIN_API_INTERNAL_URL', 'http://localhost:8000')
+        self.logger.info(f"MonitoringDashboard: Main API internal URL set to {self.main_api_internal_url}")
         
         await self._refresh_access_token() # Get initial token
 
@@ -166,18 +166,22 @@ class MonitoringDashboard:
             return
 
         try:
-            token_url = f"{self.main_api_base_url}/auth/token"
+            token_url = f"{self.main_api_internal_url}/auth/token"
             token_data = {
                 "username": monitor_username,
                 "password": monitor_password
             }
+            self.logger.debug(f"MonitoringDashboard: Attempting to get token from {token_url} with username {monitor_username}.")
             async with self._session.post(token_url, data=token_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 response.raise_for_status()
                 token_response = await response.json()
                 self.api_access_token = token_response.get("access_token")
                 self.logger.info("MonitoringDashboard: Successfully refreshed API access token.")
+        except aiohttp.ClientResponseError as e:
+            self.logger.error(f"MonitoringDashboard: Failed to refresh API access token from {token_url} (Status: {e.status}, Detail: {e.message}). Check monitor_user credentials or main API status.", exc_info=True)
+            self.api_access_token = None
         except aiohttp.ClientError as e:
-            self.logger.error(f"MonitoringDashboard: Failed to refresh API access token from {token_url}: {e}", exc_info=True)
+            self.logger.error(f"MonitoringDashboard: Network error connecting to main API at {token_url} during token refresh: {e}. Is main API running?", exc_info=True)
             self.api_access_token = None
         except Exception as e:
             self.logger.error(f"MonitoringDashboard: Unexpected error during token refresh: {e}", exc_info=True)
@@ -209,7 +213,7 @@ class MonitoringDashboard:
             "Authorization": f"Bearer {self.api_access_token}",
             "Content-Type": "application/json"
         }
-        url = f"{self.main_api_base_url}{endpoint}"
+        url = f"{self.main_api_internal_url}{endpoint}" # Use internal URL for backend-to-backend calls
         
         try:
             async with self._session.request(method, url, headers=headers, json=json_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
@@ -590,6 +594,10 @@ async def monitoring_home(request: Request):
     # Get all metrics for initial render
     all_data = await dashboard.get_all_dashboard_data()
     
+    # Construct the external API base URL for the frontend JavaScript
+    # This ensures the frontend uses the same scheme (http/https) as the dashboard itself
+    main_api_external_base_url = f"{request.url.scheme}://{request.url.hostname}:{config_loader.get('api.port', 8000)}"
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "queue_metrics": all_data["queue_metrics"],
@@ -603,7 +611,7 @@ async def monitoring_home(request: Request):
         "all_jobs": all_data["all_jobs"], # New: Pass all jobs to template
         "refresh_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "access_token": dashboard.api_access_token, # Pass the dynamically obtained token
-        "api_base_url": dashboard.main_api_base_url # Pass the main API base URL
+        "api_base_url": main_api_external_base_url # Pass the external API base URL for frontend
     })
 
 @app.get("/api/stats")
