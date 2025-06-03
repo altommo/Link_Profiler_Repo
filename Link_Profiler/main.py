@@ -1118,11 +1118,13 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     """
     user = await auth_service_instance.authenticate_user(form_data.username, form_data.password)
     if not user:
+        logger.warning(f"Authentication failed for user: '{form_data.username}'. Incorrect username or password.")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    logger.info(f"User '{form_data.username}' successfully authenticated and received token.")
     access_token_expires = timedelta(minutes=auth_service_instance.access_token_expire_minutes)
     access_token = auth_service_instance.create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
