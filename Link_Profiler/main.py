@@ -473,21 +473,21 @@ app = FastAPI(
 # Configure allowed origins based on your deployment.
 # For production, replace "*" with your actual dashboard domain (e.g., "https://monitor.yspanel.com")
 origins = [
-    "http://localhost",
-    "http://localhost:8000",
-    "http://localhost:8001", # For local testing of dashboard
-    "https://api.yspanel.com", # Your main API domain
-    "https://monitor.yspanel.com", # Your monitoring dashboard domain
-    "https://linkprofiler.yspanel.com", # Another potential domain
-    "https://www.yspanel.com" # Your www domain
+    "https://monitor.yspanel.com",  # Your monitoring dashboard domain
+    "https://api.yspanel.com",     # Your main API domain
+    "https://linkprofiler.yspanel.com",  # Alternative domain
+    "https://yspanel.com",         # Main domain
+    "https://www.yspanel.com",     # WWW domain
+    "http://localhost:8001",       # For local testing
+    "http://localhost:8000"        # For local testing
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=origins,         # Use specific origins, not "*"
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
 
 # --- Pydantic Models for API Request/Response ---
