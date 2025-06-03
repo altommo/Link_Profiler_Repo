@@ -490,11 +490,14 @@ class Database:
             # This is important for scoped_session when changes might be committed by other processes.
             session.expire_all() 
             orm_jobs = session.query(CrawlJobORM).all()
-            logger.debug(f"DB: Retrieved {len(orm_jobs)} jobs from DB for get_all_crawl_jobs.")
+            logger.debug(f"DB: Retrieved {len(orm_jobs)} ORM jobs from DB for get_all_crawl_jobs.")
             if orm_jobs:
-                for job_orm in orm_jobs[:5]: # Log first 5 for inspection
-                    logger.debug(f"DB: Sample job from all_jobs: ID={job_orm.id[:8]}..., Type={job_orm.job_type}, Status={job_orm.status}")
-            return [self._to_dataclass(job) for job in orm_jobs]
+                for i, job_orm in enumerate(orm_jobs[:5]): # Log first 5 for inspection
+                    logger.debug(f"DB: Sample ORM job {i+1} from all_jobs: ID={job_orm.id[:8]}..., Type={job_orm.job_type}, Status={job_orm.status}")
+            
+            dataclass_jobs = [self._to_dataclass(job) for job in orm_jobs]
+            logger.debug(f"DB: Converted {len(dataclass_jobs)} dataclass jobs from DB for get_all_crawl_jobs.")
+            return dataclass_jobs
         except Exception as e:
             logger.error(f"DB: Error retrieving all crawl jobs: {e}", exc_info=True)
             return []
