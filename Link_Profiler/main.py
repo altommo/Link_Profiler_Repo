@@ -837,6 +837,7 @@ class CompetitiveKeywordAnalysisRequest(BaseModel):
 
 class CompetitiveKeywordAnalysisResponse(BaseModel):
     primary_domain: str
+
     competitor_domains: List[str]
     common_keywords: List[str]
     keyword_gaps: Dict[str, List[str]]
@@ -1155,7 +1156,7 @@ async def submit_job_api(
     # Delegate to the existing submit_crawl_to_queue function
     # Added debug log to confirm request object before passing
     logger.debug(f"API: Passing QueueCrawlRequest to submit_crawl_to_queue: {request.dict()}")
-    return await submit_crawl_to_queue(queue_request)
+    return await submit_crawl_to_queue(request)
 
 
 @app.post("/crawl/start_backlink_discovery", response_model=Dict[str, str], status_code=202)
