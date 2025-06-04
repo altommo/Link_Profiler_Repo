@@ -69,7 +69,7 @@ queue:
 crawler:
   max_depth: 3
   max_pages: 1000
-  delay_seconds: 1.0
+  # delay_seconds: 1.0 # Removed, now handled by adaptive_rate_limiter
   user_agent: "LinkProfilerBot/1.0 (+http://linkprofiler.com/bot.html)" # Default user agent
   respect_robots_txt: true # Default to true, can be overridden by job config
   follow_redirects: true
@@ -88,7 +88,7 @@ anti_detection:
   random_delay_range: [0.5, 2.0] # Range for random delays in seconds
   stealth_mode: true # Applies to Playwright
   browser_fingerprint_randomization: false # Applies to Playwright
-  ml_rate_optimization: false # Placeholder for future ML-driven rate limiting
+  # ml_rate_optimization: false # Moved to rate_limiting section
   captcha_solving_enabled: false # Placeholder for CAPTCHA solving integration
 
 quality_assurance:
@@ -275,6 +275,31 @@ monitoring:
   monitor_auth: # New: Credentials for the monitor to authenticate with the main API
     username: "monitor_user" # IMPORTANT: Create this user in your main API's database
     password: "monitor_secure_password_123" # IMPORTANT: Use a strong password
+  enabled: true # Enable/disable health monitoring
+  metrics_interval: 30 # Interval in seconds for collecting metrics
+  health_check_interval: 60 # Interval in seconds for running health checks
+  alert_cooldown: 300 # Cooldown period for alerts in seconds
+
+# Circuit Breaker settings
+circuit_breaker:
+  failure_threshold: 5           # Failures before opening
+  recovery_timeout: 60           # Seconds before trying half-open
+  success_threshold: 3           # Successes needed to close from half-open
+  timeout_duration: 30           # Request timeout in seconds
+
+# Rate Limiting settings
+rate_limiting:
+  ml_enhanced: true
+  min_delay: 0.1
+  max_delay: 30.0
+  learning_rate: 0.1
+  aggression_factor: 0.8
+
+# Queue System settings
+queue_system:
+  redis_url: "redis://:redis_secure_pass_456@127.0.0.1:6379/0" # Redis URL for the smart queue
+  max_queue_size: 100000 # Maximum number of tasks in the queue
+  domain_max_concurrent: 2 # Max concurrent requests per domain in the smart queue
 
 # Authentication settings
 auth:
