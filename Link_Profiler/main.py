@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import logging # Import logging early
+from typing import List, Optional, Dict, Any, Union, Annotated # Import Optional here
 
 # --- Robust Project Root Discovery ---
 # Assuming this file is at Link_Profiler/Link_Profiler/main.py
@@ -58,7 +59,7 @@ def validate_critical_config():
             logger.error(f"CRITICAL: Environment variable {env_var} not properly loaded or config still uses placeholder!")
             logger.error(f"  Environment: {env_var}={env_value[:20]}...")
             logger.error(f"  Config:      {config_path}={config_value[:20] if config_value else 'None'}...")
-        elif not env_value and (config_path == "auth.secret_key" and config_value == "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY"):
+        elif not env_value and (config_path == "auth.secret_key" and config_value == "PLACEHADER_MUST_SET_LP_AUTH_SECRET_KEY"):
              logger.warning(f"WARNING: {env_var} is not set and config still uses placeholder. Authentication will fail.")
         elif not env_value and (config_path == "database.url" or config_path == "redis.url"):
              logger.warning(f"WARNING: {env_var} is not set. Using default/fallback for {config_path}.")
@@ -100,7 +101,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from typing import List, Optional, Dict, Any, Union, Annotated
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
