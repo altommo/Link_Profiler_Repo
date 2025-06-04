@@ -11,6 +11,7 @@ from typing import Dict, Optional, Callable, Any
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
+import aiohttp # Import aiohttp
 
 logger = logging.getLogger(__name__)
 
