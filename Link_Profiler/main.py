@@ -96,8 +96,8 @@ from Link_Profiler.clients.news_api_client import NewsAPIClient
 config_loader = ConfigLoader()
 config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
 
-# Initialize templates
-templates = Jinja2Templates(directory=os.path.join(project_root, "templates"))
+# Initialize templates - Adjusted path to be relative to the current file's directory
+templates = Jinja2Templates(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates"))
 
 # Setup logging using the loaded configuration
 logging_config = config_loader.get("logging.config", get_default_logging_config(config_loader.get("logging.level", "INFO")))
