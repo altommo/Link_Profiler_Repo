@@ -10,7 +10,7 @@ import random
 from Link_Profiler.utils.user_agent_manager import user_agent_manager
 from Link_Profiler.config.config_loader import config_loader
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # This logger is for the module, not the class instance
 
 class RobotsParser:
     """
@@ -23,6 +23,7 @@ class RobotsParser:
         self._fetch_lock: Dict[str, asyncio.Lock] = {} # To prevent multiple fetches for the same domain
         self._session: Optional[aiohttp.ClientSession] = None
         self.cache_expiry: timedelta = timedelta(hours=1) # Cache robots.txt for 1 hour
+        self.logger = logging.getLogger(__name__ + ".RobotsParser") # Initialize logger for the instance
 
     async def __aenter__(self):
         """Async context manager entry."""
