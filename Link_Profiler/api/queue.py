@@ -13,8 +13,8 @@ from Link_Profiler.services.job_submission_service import get_coordinator, submi
 # Import shared Pydantic models and dependencies
 from Link_Profiler.api.schemas import (
     JobStatusResponse, QueueStatsResponse, CrawlerHealthResponse,
+    StartCrawlRequest
 )
-from Link_Profiler.api.schemas import QueueCrawlRequest # Corrected import path for QueueCrawlRequest
 
 from Link_Profiler.api.dependencies import get_current_user
 
@@ -25,7 +25,7 @@ from Link_Profiler.core.models import User, CrawlStatus
 queue_router = APIRouter(prefix="/api/queue", tags=["Queue Management"])
 
 @queue_router.post("/submit_crawl", response_model=Dict[str, str])
-async def submit_crawl_endpoint(request: QueueCrawlRequest, current_user: Annotated[User, Depends(get_current_user)]):
+async def submit_crawl_endpoint(request: StartCrawlRequest, current_user: Annotated[User, Depends(get_current_user)]):
     """
     Submits a crawl job to the distributed queue system.
     """
@@ -38,27 +38,20 @@ async def submit_sample_job_endpoint(current_user: Annotated[User, Depends(get_c
     Submit a sample crawl job for testing the queue system.
     """
     logger.info(f"API: Received request to submit sample job by user: {current_user.username}.")
-    sample_request = QueueCrawlRequest(
+    sample_request = StartCrawlRequest(
         target_url="https://example.com/sample",
-        initial_seed_urls=["https://example.com/sample/page1"],
-        priority=7,
-        config={"job_type": "sample_crawl"} # Ensure job_type is set for sample
+        initial_seed_urls=["https://example.com/sample/page1"]
     )
     return await submit_crawl_to_queue(sample_request)
 
 @queue_router.post("/schedule/crawl", response_model=Dict[str, str])
-async def schedule_crawl_endpoint(request: QueueCrawlRequest, current_user: Annotated[User, Depends(get_current_user)]):
+async def schedule_crawl_endpoint(request: StartCrawlRequest, current_user: Annotated[User, Depends(get_current_user)]):
     """
     Schedule a crawl job to run at a specific time or on a recurring basis.
-    Requires 'scheduled_at' for one-time scheduling or 'cron_schedule' for recurring.
+    Note: Scheduling functionality needs to be implemented in the job submission service.
     """
     logger.info(f"API: Received request to schedule job for {request.target_url} by user: {current_user.username}.")
-    if not request.scheduled_at and not request.cron_schedule:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Either 'scheduled_at' or 'cron_schedule' must be provided for scheduling.")
-    
-    if request.cron_schedule and not request.scheduled_at:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="For recurring jobs, 'scheduled_at' must be provided for the initial run time.")
-
+    # TODO: Implement scheduling functionality
     return await submit_crawl_to_queue(request)
 
 @queue_router.get("/job_status/{job_id}", response_model=JobStatusResponse)
