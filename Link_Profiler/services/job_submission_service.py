@@ -96,10 +96,12 @@ async def submit_crawl_to_queue(request: StartCrawlRequest) -> Dict[str, str]: #
     """
     job_id = str(uuid.uuid4())
     
-    # Explicitly extract attributes from CrawlConfigRequest into a dictionary
+    # Explicitly create a dictionary from the request.config Pydantic model
     # This is the most robust way to ensure a plain dictionary is passed.
     if request.config is not None:
         # Manually extract attributes to ensure compatibility
+        # This approach avoids .dict() or .model_dump() and directly accesses attributes
+        # It assumes CrawlConfigRequest has all these attributes.
         crawl_config_kwargs = {
             "max_depth": request.config.max_depth,
             "max_pages": request.config.max_pages,
