@@ -3,12 +3,12 @@ import aiohttp
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 from datetime import datetime, timedelta
-import random # New: Import random for human-like delays
+import random 
 
-from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
-from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
+from Link_Profiler.utils.user_agent_manager import user_agent_manager
+from Link_Profiler.config.config_loader import config_loader
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,10 @@ class RobotsParser:
     """
     def __init__(self):
         self._parsers: Dict[str, RobotFileParser] = {}
+        self._cache_timestamps: Dict[str, datetime] = {} # Separate cache for timestamps
         self._fetch_lock: Dict[str, asyncio.Lock] = {} # To prevent multiple fetches for the same domain
         self._session: Optional[aiohttp.ClientSession] = None
+        self.cache_expiry: timedelta = timedelta(hours=1) # Cache robots.txt for 1 hour
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -28,7 +30,7 @@ class RobotsParser:
             headers = {}
             if config_loader.get("anti_detection.request_header_randomization", False):
                 headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
+            elif config_loader.get("anti_detection.user_agent_rotation", False): # Use anti_detection config for rotation
                 headers['User-Agent'] = user_agent_manager.get_random_user_agent()
             # If neither is enabled, aiohttp uses its default user agent.
 
@@ -41,40 +43,39 @@ class RobotsParser:
             await self._session.close()
             self._session = None
 
-    async def _fetch_robots_txt(self, domain: str) -> Optional[str]:
+    async def _fetch_and_parse_robots_txt(self, domain: str) -> RobotFileParser:
         """
-        Fetches and parses the robots.txt file for a given domain.
-        Returns the parser if successful, or an empty parser if not found/failed.
+        Fetches robots.txt content for a given domain and returns a configured RobotFileParser.
+        Handles caching and network errors.
         """
         if domain not in self._fetch_lock:
             self._fetch_lock[domain] = asyncio.Lock()
 
         async with self._fetch_lock[domain]:
-            # Check cache first (moved inside lock to prevent race conditions on cache check)
-            if domain in self._parsers and (datetime.now() - self._parsers[domain].mtime) < timedelta(hours=1): # Using mtime for cache expiry
-                self.logger.debug(f"Using cached robots.txt for {domain}")
-                return None # Content already parsed and cached
+            # Check cache first (inside lock)
+            if domain in self._parsers and (datetime.now() - self._cache_timestamps.get(domain, datetime.min)) < self.cache_expiry:
+                self.logger.debug(f"Using cached robots.txt parser for {domain}")
+                return self._parsers[domain]
 
             robots_txt_url = urljoin(f"http://{domain}", "/robots.txt")
-            
+            parser = RobotFileParser()
+            parser.set_url(robots_txt_url) # Set URL for the parser
+
             session_to_use = self._session
             if session_to_use is None:
-                # This case should ideally not happen if used within WebCrawler's context
                 self.logger.warning(f"RobotsParser session not active for {domain}. Creating temporary session.")
-                
                 headers = {}
                 if config_loader.get("anti_detection.request_header_randomization", False):
                     headers.update(user_agent_manager.get_random_headers())
-                elif config_loader.get("crawler.user_agent_rotation", False):
+                elif config_loader.get("anti_detection.user_agent_rotation", False):
                     headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-                session_to_use = aiohttp.ClientSession(headers=headers) # Create a temporary session if not active
-
-            parser = RobotFileParser()
-            parser.set_url(robots_txt_url)
+                session_to_use = aiohttp.ClientSession(headers=headers)
 
             # Add human-like delays if configured
-            if config_loader.get("anti_detection.human_like_delays", False):
+            if config_loader.get("anti_detection.human_like_delays", False) and config_loader.get("anti_detection.random_delay_range"):
+                delay = random.uniform(*config_loader["anti_detection"]["random_delay_range"])
+                await asyncio.sleep(delay)
+            elif config_loader.get("anti_detection.human_like_delays", False):
                 await asyncio.sleep(random.uniform(0.1, 0.5))
 
             try:
@@ -82,34 +83,27 @@ class RobotsParser:
                     if response.status == 200:
                         content = await response.text()
                         parser.parse(content.splitlines())
-                        self._parsers[domain] = parser
-                        self._parsers[domain].mtime = datetime.now() # Update mtime for cache
                         self.logger.info(f"Successfully fetched and parsed robots.txt for {domain}")
-                        return content # Return content for parsing
                     elif response.status == 404:
                         self.logger.info(f"No robots.txt found for {domain} (404 Not Found). Assuming full crawl allowed.")
-                        # If no robots.txt, assume everything is allowed. Store an empty parser.
-                        self._parsers[domain] = parser 
-                        self._parsers[domain].mtime = datetime.now() # Update mtime for cache
-                        return "" # Empty string indicates no robots.txt, which means full crawl allowed
+                        # For 404, parser remains empty, which means all allowed.
                     else:
-                        self.logger.warning(f"Failed to fetch robots.txt for {domain}. Status: {response.status}")
+                        self.logger.warning(f"Failed to fetch robots.txt for {domain}. Status: {response.status}. Defaulting to allow.")
+                        # On other errors, parser remains empty, defaulting to allow.
             except aiohttp.ClientError as e:
-                self.logger.warning(f"Client error fetching robots.txt for {domain}: {e}")
+                self.logger.warning(f"Network/Client error fetching robots.txt for {domain}: {e}. Defaulting to allow.")
             except asyncio.TimeoutError:
-                self.logger.warning(f"Timeout fetching robots.txt for {domain}.")
+                self.logger.warning(f"Timeout fetching robots.txt for {domain}. Defaulting to allow.")
             except Exception as e:
-                self.logger.error(f"Unexpected error fetching robots.txt for {domain}: {e}")
+                self.logger.error(f"Unexpected error fetching robots.txt for {domain}: {e}. Defaulting to allow.")
             finally:
                 if session_to_use is not self._session and not session_to_use.closed:
-                    await session_to_use.close() # Close temporary session
+                    await session_to_use.close()
 
-            # If fetching fails for any reason (e.g., network error, timeout),
-            # we should still store an empty parser to avoid re-attempting for this domain
-            # and default to allowing the crawl.
-            self._parsers[domain] = parser 
-            self._parsers[domain].mtime = datetime.now() # Update mtime for cache
-            return None # Indicate failure to fetch content, but parser is set to allow by default
+            self._parsers[domain] = parser
+            self._cache_timestamps[domain] = datetime.now()
+            self.logger.debug(f"Parsed robots.txt for {domain} and cached.")
+            return parser
 
     async def can_fetch(self, url: str, user_agent: str) -> bool:
         """
@@ -120,23 +114,16 @@ class RobotsParser:
         domain = parsed_url.netloc
         
         if not domain:
-            self.logger.warning(f"Invalid URL for robots.txt check: {url}")
-            return True # Cannot determine, so allow
+            self.logger.warning(f"Invalid URL for robots.txt check: {url}. Allowing by default.")
+            return True
 
         # Ensure the parser for this domain is fetched and cached
-        await self._fetch_robots_txt(domain) # This call ensures self._parsers[domain] is populated
-
-        # Now, safely access the parser from the cache
-        parser = self._parsers.get(domain)
+        parser = await self._fetch_and_parse_robots_txt(domain)
         
-        if parser is None:
-            # This case should ideally not happen if _fetch_robots_txt always sets a parser,
-            # but as a fallback, if parser is somehow missing, allow.
-            self.logger.warning(f"Robots.txt parser not found for {domain} after fetch attempt. Defaulting to allow.")
-            return True
-        
-        # Check if the parser explicitly disallows fetching
+        # Now, use the obtained parser to check if the URL is allowed
         can_crawl = parser.can_fetch(user_agent, url)
+        
         if not can_crawl:
-            self.logger.debug(f"Blocked by robots.txt: {url} for {user_agent}")
+            self.logger.debug(f"Blocked by robots.txt: {url} for user agent {user_agent}")
+        
         return can_crawl
