@@ -530,6 +530,7 @@ from Link_Profiler.api.reports import reports_router
 from Link_Profiler.api.monitoring_debug import monitoring_debug_router
 from Link_Profiler.api.websocket import websocket_router
 from Link_Profiler.api.queue import queue_router # New: Import the queue router
+from Link_Profiler.api.public_jobs import public_jobs_router # New: Import the public jobs router
 
 # Register the routers with the main app
 app.include_router(auth_router)
@@ -543,6 +544,7 @@ app.include_router(reports_router)
 app.include_router(monitoring_debug_router)
 app.include_router(websocket_router)
 app.include_router(queue_router)
+app.include_router(public_jobs_router) # New: Include the public jobs router
 
 
 # --- Additional API Endpoints (not part of routers yet) ---
@@ -592,65 +594,65 @@ async def get_job_details(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve job details.")
 
 # --- Public Monitoring Endpoints (no authentication required) ---
+# These are now part of monitoring_debug_router and public_jobs_router
+# @app.get("/public/satellites")
+# async def get_public_satellites():
+#     """
+#     Public endpoint to retrieve satellite status without authentication.
+#     """
+#     logger.info("API: Received request for public satellite health.")
+#     return await _get_satellites_data_internal()
 
-@app.get("/public/satellites")
-async def get_public_satellites():
-    """
-    Public endpoint to retrieve satellite status without authentication.
-    """
-    logger.info("API: Received request for public satellite health.")
-    return await _get_satellites_data_internal()
+# @app.get("/public/stats")
+# async def get_public_stats():
+#     """
+#     Public endpoint to retrieve general system statistics without authentication.
+#     """
+#     logger.info("API: Received request for public aggregated stats.")
+#     return await _get_aggregated_stats_for_api()
 
-@app.get("/public/stats")
-async def get_public_stats():
-    """
-    Public endpoint to retrieve general system statistics without authentication.
-    """
-    logger.info("API: Received request for public aggregated stats.")
-    return await _get_aggregated_stats_for_api()
+# @app.get("/public/health")
+# async def get_public_health_check():
+#     """
+#     Public endpoint for internal health checks without authentication.
+#     """
+#     logger.info("API: Received request for public health check.")
+#     return await health_check_internal()
 
-@app.get("/public/health")
-async def get_public_health_check():
-    """
-    Public endpoint for internal health checks without authentication.
-    """
-    logger.info("API: Received request for public health check.")
-    return await health_check_internal()
-
-@app.get("/public/jobs", response_model=List[CrawlJobResponse])
-async def public_jobs(
-    status_filter: Optional[CrawlStatus] = Query(None, description="Filter jobs by status")
-):
-    """
-    Public endpoint to retrieve a list of all crawl jobs, optionally filtered by status,
-    without authentication.
-    """
-    logger.info(f"API: Received request for public jobs with status filter: {status_filter}")
-    try:
-        all_jobs = db.get_all_crawl_jobs()
-        if status_filter:
-            filtered_jobs = [job for job in all_jobs if job.status == status_filter]
-        else:
-            filtered_jobs = all_jobs
+# @app.get("/public/jobs", response_model=List[CrawlJobResponse])
+# async def public_jobs(
+#     status_filter: Optional[CrawlStatus] = Query(None, description="Filter jobs by status")
+# ):
+#     """
+#     Public endpoint to retrieve a list of all crawl jobs, optionally filtered by status,
+#     without authentication.
+#     """
+#     logger.info(f"API: Received request for public jobs with status filter: {status_filter}")
+#     try:
+#         all_jobs = db.get_all_crawl_jobs()
+#         if status_filter:
+#             filtered_jobs = [job for job in all_jobs if job.status == status_filter]
+#         else:
+#             filtered_jobs = all_jobs
         
-        # Sort by created_date descending
-        sorted_jobs = sorted(filtered_jobs, key=lambda job: job.created_date if job.created_date else datetime.min, reverse=True)
+#         # Sort by created_date descending
+#         sorted_jobs = sorted(filtered_jobs, key=lambda job: job.created_date if job.created_date else datetime.min, reverse=True)
         
-        return [CrawlJobResponse.from_crawl_job(job) for job in sorted_jobs]
-    except Exception as e:
-        logger.error(f"Error retrieving public jobs: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve public crawl jobs.")
+#         return [CrawlJobResponse.from_crawl_job(job) for job in sorted_jobs]
+#     except Exception as e:
+#         logger.error(f"Error retrieving public jobs: {e}", exc_info=True)
+#         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve public crawl jobs.")
 
-@app.get("/public/jobs/paused")
-async def public_jobs_paused():
-    """
-    Public endpoint to check if job processing is paused without authentication.
-    """
-    logger.info("API: Received request for public job pause status.")
-    try:
-        coordinator = await get_coordinator()
-        is_paused = await coordinator.is_paused()
-        return {"is_paused": is_paused}
-    except Exception as e:
-        logger.error(f"Error checking public job pause status: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve public job pause status.")
+# @app.get("/public/jobs/paused")
+# async def public_jobs_paused():
+#     """
+#     Public endpoint to check if job processing is paused without authentication.
+#     """
+#     logger.info("API: Received request for public job pause status.")
+#     try:
+#         coordinator = await get_coordinator()
+#         is_paused = await coordinator.is_paused()
+#         return {"is_paused": is_paused}
+#     except Exception as e:
+#         logger.error(f"Error checking public job pause status: {e}", exc_info=True)
+#         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve public job pause status.")
