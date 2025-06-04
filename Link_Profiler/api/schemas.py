@@ -91,12 +91,17 @@ class CrawlConfigRequest(BaseModel):
     extract_image_text: bool = Field(False, description="Whether to perform OCR on images to extract text.")
     crawl_web3_content: bool = Field(False, description="Whether to crawl Web3 content (e.g., IPFS, blockchain data).")
     crawl_social_media: bool = Field(False, description="Whether to crawl social media content.")
+    job_type: str = Field("unknown", description="The type of job this configuration is for (e.g., 'backlink_discovery', 'technical_audit').") # Added job_type to CrawlConfig
 
 
 class StartCrawlRequest(BaseModel):
     target_url: str = Field(..., description="The URL for which to find backlinks (e.g., 'https://example.com').")
     initial_seed_urls: List[str] = Field(..., description="A list of URLs to start crawling from to discover backlinks.")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration.")
+    priority: int = Field(5, ge=1, le=10, description="Priority of the job (1=highest, 10=lowest).") # Added priority
+    scheduled_at: Optional[datetime] = Field(None, description="Optional: UTC datetime to schedule the job for.") # Added scheduled_at
+    cron_schedule: Optional[str] = Field(None, description="Optional: Cron string for recurring jobs.") # Added cron_schedule
+
 
 class LinkHealthAuditRequest(BaseModel):
     source_urls: List[str] = Field(..., description="A list of source URLs whose outgoing links should be audited for brokenness.")
@@ -165,6 +170,7 @@ class CrawlJobResponse(BaseModel):
     errors_count: int
     error_log: List[CrawlErrorResponse]
     results: Dict = Field(default_factory=dict)
+    initial_seed_urls: List[str] = Field(default_factory=list) # Added initial_seed_urls
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
@@ -198,6 +204,7 @@ class CrawlJobResponse(BaseModel):
                 job_dict['completed_date'] = None
 
         job_dict['error_log'] = [CrawlErrorResponse.from_crawl_error(err) for err in job.error_log]
+        job_dict['initial_seed_urls'] = job.initial_seed_urls # Ensure initial_seed_urls is passed
 
         return cls(**job_dict)
 

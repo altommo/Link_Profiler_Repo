@@ -39,6 +39,9 @@ from Link_Profiler.utils.api_rate_limiter import APIRateLimiter
 # New import for Playwright browser management
 from playwright.async_api import async_playwright, Browser
 
+# New import for SmartCrawlQueue
+from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue
+
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +109,9 @@ class SatelliteCrawler:
         self.link_building_service = LinkBuildingService(self.db, None, None, None, None, None) # Needs proper init later
         self.report_service = ReportService(self.db)
 
+        # Initialize SmartCrawlQueue here, it needs redis_client which will be set in __aenter__
+        self.smart_crawl_queue: Optional[SmartCrawlQueue] = None
+
         # Initialize web_crawler here, but pass playwright_browser as None initially
         # It will be set in __aenter__ if browser_crawler is enabled
         self.web_crawler = WebCrawler(
@@ -125,7 +131,8 @@ class SatelliteCrawler:
             web3_service=self.web3_service,
             link_building_service=self.link_building_service,
             report_service=self.report_service,
-            playwright_browser=None # Initialise as None, set in __aenter__
+            playwright_browser=None, # Initialise as None, set in __aenter__
+            crawl_queue=self.smart_crawl_queue # Pass the SmartCrawlQueue instance
         )
         self.technical_auditor = TechnicalAuditor(
             lighthouse_path=config_loader.get("technical_auditor.lighthouse_path")
@@ -191,6 +198,14 @@ class SatelliteCrawler:
         if self.clickhouse_loader:
             await self.clickhouse_loader.__aenter__()
             self.logger.info(f"SatelliteCrawler {self.crawler_id} connected to ClickHouse.")
+
+        # Initialize SmartCrawlQueue after redis_client is available
+        self.smart_crawl_queue = SmartCrawlQueue(redis_client=self.redis_client)
+        # Load any persisted tasks from Redis into the in-memory queue
+        await self.smart_crawl_queue.load_persisted_tasks()
+        self.logger.info(f"SatelliteCrawler {self.crawler_id}: SmartCrawlQueue initialized and loaded persisted tasks.")
+        # Assign the initialized smart_crawl_queue to web_crawler
+        self.web_crawler.crawl_queue = self.smart_crawl_queue
 
         # Initialize services that are asynchronous context managers
         await self.ai_service.__aenter__()
@@ -373,7 +388,7 @@ class SatelliteCrawler:
         job_id = job_data.get("id")
         job_type = job_data.get("job_type")
         target_url = job_data.get("target_url")
-        initial_seed_urls = job_data.get("initial_seed_urls", [])
+        initial_seed_urls = job_data.get("initial_seed_urls", []) # Get initial_seed_urls
         config_dict = job_data.get("config", {})
         
         self.logger.info(f"Processing job {job_id} (Type: {job_type}, Target: {target_url})")
@@ -528,8 +543,11 @@ class SatelliteCrawler:
 
             job.results = result_data
             job.completed_date = datetime.now()
-            # Removed direct assignment to job.duration_seconds
-            # job.duration_seconds = (job.completed_date - job.started_date).total_seconds()
+            # Calculate duration here
+            if job.started_date:
+                job.duration_seconds = (job.completed_date - job.started_date).total_seconds()
+            else:
+                job.duration_seconds = 0.0
             self.logger.debug(f"Job {job_id}: Final status before DB update: {job.status.value}. Job ID: {job.id}")
             self.db.update_crawl_job(job)
             self.logger.info(f"Job {job_id} finished. Status: {job.status.value}")
@@ -539,8 +557,10 @@ class SatelliteCrawler:
             self.logger.warning(f"Job {job_id} was cancelled.")
             job.status = CrawlStatus.CANCELLED
             job.completed_date = datetime.now()
-            # Removed direct assignment to job.duration_seconds
-            # job.duration_seconds = (job.completed_date - job.started_date).total_seconds() if job.started_date else 0
+            if job.started_date:
+                job.duration_seconds = (job.completed_date - job.started_date).total_seconds()
+            else:
+                job.duration_seconds = 0.0
             job.error_log.append(CrawlError(
                 timestamp=datetime.now(),
                 url=target_url,
@@ -554,8 +574,10 @@ class SatelliteCrawler:
             self.logger.error(f"Error processing job {job_id}: {e}", exc_info=True)
             job.status = CrawlStatus.FAILED
             job.completed_date = datetime.now()
-            # Removed direct assignment to job.duration_seconds
-            # job.duration_seconds = (job.completed_date - job.started_date).total_seconds() if job.started_date else 0
+            if job.started_date:
+                job.duration_seconds = (job.completed_date - job.started_date).total_seconds()
+            else:
+                job.duration_seconds = 0.0
             job.errors_count += 1
             job.error_log.append(CrawlError(
                 timestamp=datetime.now(),

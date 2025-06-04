@@ -491,6 +491,7 @@ class CrawlJob:
     results: Dict = field(default_factory=dict)
     error_log: List[CrawlError] = field(default_factory=list) # Changed to List[CrawlError]
     anomalies_detected: List[str] = field(default_factory=list) # New: List of detected anomalies for the job
+    initial_seed_urls: List[str] = field(default_factory=list) # New: Initial seed URLs for the crawl job
     
     # New fields for scheduling
     scheduled_at: Optional[datetime] = None # When the job should be moved to the active queue
@@ -532,9 +533,21 @@ class CrawlJob:
         if 'error_log' in data and isinstance(data['error_log'], list):
             data['error_log'] = [CrawlError.from_dict(err_data) for err_data in data['error_log']]
         
+        # Deserialize config
+        if 'config' in data and isinstance(data['config'], dict):
+            data['config'] = CrawlConfig.from_dict(data['config'])
+        elif 'config' in data and isinstance(data['config'], CrawlConfig): # If it's already a CrawlConfig object
+            pass # No conversion needed
+        else: # Default to empty CrawlConfig if not present or invalid
+            data['config'] = CrawlConfig()
+
         # Ensure anomalies_detected is a list
         if 'anomalies_detected' in data and data['anomalies_detected'] is None:
             data['anomalies_detected'] = []
+        
+        # Ensure initial_seed_urls is a list
+        if 'initial_seed_urls' in data and data['initial_seed_urls'] is None:
+            data['initial_seed_urls'] = []
 
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
