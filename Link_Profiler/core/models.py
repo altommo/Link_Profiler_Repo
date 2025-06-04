@@ -3,15 +3,17 @@ Core Models - Data structures for the Link Profiler system
 File: core/models.py
 """
 
+import enum
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set, Union, Any
 from datetime import datetime
-from enum import Enum
+from typing import List, Dict, Optional, Set, Any, Union
 from urllib.parse import urlparse
 import json
 
+from pydantic import BaseModel, Field # Import BaseModel and Field from pydantic
 
-class LinkType(Enum):
+
+class LinkType(enum.Enum):
     """Types of links we can discover"""
     FOLLOW = "follow"
     NOFOLLOW = "nofollow" 
@@ -21,7 +23,7 @@ class LinkType(Enum):
     CANONICAL = "canonical"
 
 
-class ContentType(Enum):
+class ContentType(enum.Enum):
     """Types of content we can analyze"""
     HTML = "text/html"
     PDF = "application/pdf"
@@ -31,7 +33,7 @@ class ContentType(Enum):
     OTHER = "other"
 
 
-class CrawlStatus(Enum):
+class CrawlStatus(enum.Enum):
     """Status of crawling operations"""
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
@@ -44,7 +46,7 @@ class CrawlStatus(Enum):
     CANCELLED = "cancelled"
 
 
-class SpamLevel(Enum):
+class SpamLevel(enum.Enum):
     """Spam classification levels"""
     CLEAN = "clean"
     SUSPICIOUS = "suspicious"
@@ -338,6 +340,7 @@ class LinkIntersectResult:
 class CompetitiveKeywordAnalysisResult:
     """Result of a competitive keyword analysis."""
     primary_domain: str
+
     competitor_domains: List[str]
     common_keywords: List[str] = field(default_factory=list)
     keyword_gaps: Dict[str, List[str]] = field(default_factory=dict) # competitor_domain -> keywords they rank for, but primary doesn't
