@@ -541,10 +541,10 @@ app.include_router(competitive_analysis_router)
 app.include_router(link_building_router)
 app.include_router(ai_router)
 app.include_router(reports_router)
-app.include_router(monitoring_debug_router)
+app.include_router(monitoring_debug_router) # Uncommented this line
 app.include_router(websocket_router)
 app.include_router(queue_router)
-app.include_router(public_jobs_router) # New: Include the public jobs router
+app.include_router(public_jobs_router)
 
 
 # --- Additional API Endpoints (not part of routers yet) ---
