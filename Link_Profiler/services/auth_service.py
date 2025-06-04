@@ -29,36 +29,26 @@ class AuthService:
     def __init__(self, database: Database):
         self.db = database
         
-        # New: Add logging for loaded secret_key and fallback to environment variable
-        raw_secret = config_loader.get("auth.secret_key")
-        logger.info(f"Auth service loaded secret_key from config: {raw_secret[:10]}..." if raw_secret else "Auth service loaded secret_key: None")
-        
+        # Prioritize environment variable for secret_key
         env_secret = os.getenv("LP_AUTH_SECRET_KEY")
-        if env_secret:
-            logger.info(f"Auth service found LP_AUTH_SECRET_KEY in environment: {env_secret[:10]}...")
-            # Prioritize environment variable if it's set and config still has placeholder
-            if raw_secret == "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY" or not raw_secret:
-                self.secret_key = env_secret
-                logger.info("Using LP_AUTH_SECRET_KEY from environment due to placeholder/missing config value.")
-            else:
-                self.secret_key = raw_secret # Use config value if it's not the placeholder
-                if raw_secret != env_secret:
-                    logger.warning("LP_AUTH_SECRET_KEY in environment differs from config.yaml. Using config.yaml value.")
-        else:
-            self.secret_key = raw_secret
-            logger.warning("LP_AUTH_SECRET_KEY not found in environment. Relying on config.yaml or default.")
+        config_secret = config_loader.get("auth.secret_key")
 
+        if env_secret and env_secret != "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY":
+            self.secret_key = env_secret
+            logger.info(f"Auth service using secret_key from environment variable (LP_AUTH_SECRET_KEY): {self.secret_key[:10]}...")
+        elif config_secret and config_secret != "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY":
+            self.secret_key = config_secret
+            logger.info(f"Auth service using secret_key from config.yaml: {self.secret_key[:10]}...")
+        else:
+            self.secret_key = None # No valid secret key found
+            logger.error("AUTH_SECRET_KEY is not configured in environment (LP_AUTH_SECRET_KEY) or config.yaml, or is using the default placeholder. Authentication will not work securely.")
 
         self.algorithm = config_loader.get("auth.algorithm", "HS256")
         self.access_token_expire_minutes = config_loader.get("auth.access_token_expire_minutes", 30)
         self.logger = logging.getLogger(__name__)
 
-        if not self.secret_key or self.secret_key == "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY":
-            self.logger.error("AUTH_SECRET_KEY is not configured or is using the default placeholder. Authentication will not work securely.")
-            self.secret_key = None # Set to None to disable auth features gracefully
-            # Do NOT raise ValueError here, allow the application to start
-            # Individual methods will raise HTTPException if called without a valid key.
-
+        # The _check_secret_key method will now handle raising HTTPException if self.secret_key is None
+        
     async def __aenter__(self):
         """No specific async setup needed for this class."""
         return self
