@@ -8,14 +8,18 @@ from utils.circuit_breaker import ResilienceManager, CircuitBreakerOpenError
 from Link_Profiler.core.models import CrawlResult, CrawlConfig, Link, CrawlJob # Corrected imports
 # ADD this import
 from utils.adaptive_rate_limiter import MLRateLimiter
+# ADD this import
+from queue_system.smart_crawler_queue import SmartCrawlQueue, Priority
 
 class WebCrawler:
-    def __init__(self, config: CrawlConfig):
+    def __init__(self, config: CrawlConfig, crawl_queue: SmartCrawlQueue = None):
         self.config = config
         # ADD this line in __init__
         self.resilience_manager = ResilienceManager()
         # REPLACE the existing AdaptiveRateLimiter with MLRateLimiter
         self.rate_limiter = MLRateLimiter()
+        # ADD this line
+        self.crawl_queue = crawl_queue
         # ... rest of existing init code
     
     async def crawl_url(self, url: str, last_crawl_result: Optional[CrawlResult] = None) -> CrawlResult:
@@ -107,17 +111,87 @@ class WebCrawler:
         return result
 
     async def start_crawl(self, target_url: str, initial_seed_urls: List[str], job_id: str) -> CrawlResult:
-        """
-        Placeholder for start_crawl. This method will be modified in a later segment.
-        For now, it's here to ensure the class structure is complete.
-        """
-        print(f"Starting crawl for {target_url} with job ID {job_id}")
-        # This part will be replaced by the smart queue logic later.
-        # For now, just a dummy call to crawl_url
-        if initial_seed_urls:
-            # Simulate crawling the first seed URL
-            return await self.crawl_url(initial_seed_urls[0])
+        """MODIFY existing start_crawl to use smart queue"""
         
-        # If no initial seed URLs, return a dummy result
-        return CrawlResult(url=target_url, status_code=200, error_message="No initial URLs provided for crawl.")
+        pages_crawled_count = 0 # Initialize counter
+        last_crawl_result = None # Initialize for passing to crawl_url
+
+        # REPLACE the existing URL queue logic with:
+        if self.crawl_queue:
+            # Use smart queue system
+            for url in initial_seed_urls:
+                await self.crawl_queue.enqueue_url(url, Priority.HIGH, job_id=job_id)
+            
+            while True:
+                task = await self.crawl_queue.get_next_task()
+                if not task or pages_crawled_count >= self.config.max_pages:
+                    print(f"Crawl finished for job {job_id}. Total pages crawled: {pages_crawled_count}")
+                    break
+                
+                print(f"Crawling: {task.url} (Job: {job_id}, Priority: {task.priority.name})")
+                result = await self.crawl_url(task.url, last_crawl_result) # Pass last_crawl_result if needed by _crawl_url_internal
+                
+                if result.error_message:
+                    print(f"Failed to crawl {task.url}: {result.error_message}")
+                    await self.crawl_queue.mark_task_completed(task, success=False)
+                else:
+                    print(f"Successfully crawled {task.url} (Status: {result.status_code})")
+                    await self.crawl_queue.mark_task_completed(task, success=True)
+                    pages_crawled_count += 1
+                    last_crawl_result = result # Update last_crawl_result for next iteration
+                    
+                    # Add discovered links to queue
+                    for link in result.links_found:
+                        # Check if the link's domain is allowed by the config
+                        link_domain = urlparse(link.target_url).netloc
+                        if self.config.is_domain_allowed(link_domain):
+                            await self.crawl_queue.enqueue_url(
+                                link.target_url, 
+                                Priority.NORMAL, 
+                                job_id=job_id
+                            )
+                        else:
+                            print(f"Skipping disallowed domain: {link.target_url}")
+            
+            # Return a summary CrawlResult for the job
+            return CrawlResult(
+                url=target_url,
+                status_code=200, # Or a more appropriate summary status
+                error_message=None,
+                pages_crawled=pages_crawled_count,
+                is_final_summary=True,
+                crawl_duration_seconds=(datetime.now() - self.crawl_queue.stats['start_time']).total_seconds() if 'start_time' in self.crawl_queue.stats else 0.0
+            )
+        else:
+            # Fallback to existing queue logic (or simplified version if no smart queue)
+            print("No SmartCrawlQueue provided. Running simplified crawl.")
+            # This is a simplified version of your original start_crawl logic
+            # if you don't have a SmartCrawlQueue instance.
+            # You might want to keep your original complex logic here if it's still needed
+            # as a fallback, or simplify it as shown below.
+            
+            crawled_urls = set()
+            urls_to_crawl = initial_seed_urls[:] # Copy the list
+            
+            while urls_to_crawl and len(crawled_urls) < self.config.max_pages:
+                current_url = urls_to_crawl.pop(0)
+                if current_url in crawled_urls:
+                    continue
+                
+                print(f"Fallback crawling: {current_url}")
+                result = await self.crawl_url(current_url)
+                crawled_urls.add(current_url)
+                
+                if not result.error_message:
+                    for link in result.links_found:
+                        link_domain = urlparse(link.target_url).netloc
+                        if self.config.is_domain_allowed(link_domain) and link.target_url not in crawled_urls:
+                            urls_to_crawl.append(link.target_url)
+            
+            return CrawlResult(
+                url=target_url,
+                status_code=200,
+                pages_crawled=len(crawled_urls),
+                is_final_summary=True
+            )
 
