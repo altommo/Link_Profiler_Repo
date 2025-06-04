@@ -249,12 +249,14 @@ class WebCrawler:
         parsed_url = urlparse(url)
         domain = parsed_url.netloc
         
+        self.logger.debug(f"Attempting to crawl_url: {url}")
+
         if not self.config.is_domain_allowed(domain):
-            self.logger.warning(f"Skipping {url}: Domain not allowed by config.")
+            self.logger.warning(f"Skipping {url}: Domain '{domain}' not allowed by config.")
             return CrawlResult(
                 url=url,
                 status_code=403,
-                error_message="Domain not allowed by config",
+                error_message=f"Domain '{domain}' not allowed by config",
                 crawl_timestamp=current_crawl_timestamp
             )
         
@@ -619,6 +621,8 @@ class WebCrawler:
         
         last_crawl_result: Optional[CrawlResult] = None
 
+        self.logger.info(f"Starting crawl for job {job_id} with initial seeds: {initial_seed_urls}")
+
         while not urls_to_visit.empty() and pages_crawled_count < self.config.max_pages:
             current_job = self.db.get_crawl_job(job_id) # Use passed job_id
             if current_job:
@@ -647,6 +651,7 @@ class WebCrawler:
                             )
 
             url, current_depth = await urls_to_visit.get()
+            self.logger.debug(f"Retrieved URL from queue: {url} (Depth: {current_depth})")
             
             if url in self.crawled_urls:
                 self.logger.debug(f"Skipping {url}: Already crawled.")
