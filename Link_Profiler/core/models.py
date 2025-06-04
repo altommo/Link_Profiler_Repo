@@ -239,6 +239,13 @@ class CrawlResult:
     crawl_timestamp: Optional[datetime] = None
     validation_issues: List[str] = field(default_factory=list)
     anomaly_flags: List[str] = field(default_factory=list)
+    
+    # New fields for overall crawl summary
+    pages_crawled: int = 0
+    total_links_found: int = 0
+    target_links_found: List[Backlink] = field(default_factory=list) # Links pointing to the target
+    crawl_errors_encountered: int = 0
+    crawl_duration_seconds: float = 0.0
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'CrawlResult':
@@ -382,7 +389,7 @@ class CrawlJob:
     urls_crawled: int = 0
     links_found: int = 0
     errors_count: int = 0
-    config: Dict = field(default_factory=dict)
+    config: CrawlConfig = field(default_factory=CrawlConfig) # Configuration specific to this job
     results: Dict = field(default_factory=dict)
     error_log: List[CrawlError] = field(default_factory=list) # Changed to List[CrawlError]
     anomalies_detected: List[str] = field(default_factory=list) # New: List of detected anomalies for the job
@@ -436,85 +443,51 @@ class CrawlJob:
         return cls(**filtered_data)
 
 
-@dataclass
-class CrawlConfig:
+# Changed CrawlConfig to Pydantic BaseModel
+class CrawlConfig(BaseModel):
     """Configuration for crawling operations"""
-    max_depth: int = 3
-    max_pages: int = 1000
-    delay_seconds: float = 1.0
-    timeout_seconds: int = 30
-    user_agent: str = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" # Changed default user agent to Googlebot
-    respect_robots_txt: bool = True
-    follow_redirects: bool = True
-    extract_images: bool = True
-    extract_pdfs: bool = False
-    max_file_size_mb: int = 10
-    allowed_domains: Set[str] = field(default_factory=set)
-    blocked_domains: Set[str] = field(default_factory=set)
-    custom_headers: Dict[str, str] = field(default_factory=dict) # Ensure default is a dict
-    max_retries: int = 3 # Added max_retries
-    retry_delay_seconds: float = 5.0 # Added retry_delay_seconds
-    
-    # New fields for anti-detection and quality assurance
-    user_agent_rotation: bool = False # New: Rotate user agents from a pool
-    request_header_randomization: bool = False # New: Randomize other request headers
-    human_like_delays: bool = False # New: Add small random delays to mimic human behavior
-    stealth_mode: bool = True # New: Enable Playwright stealth mode (default True for Playwright)
-    browser_fingerprint_randomization: bool = False # New: Randomize browser fingerprint properties
-    ml_rate_optimization: bool = False # New: Enable machine learning-based rate optimization
-    captcha_solving_enabled: bool = False # New: Enable CAPTCHA solving for browser-based crawls
-    anomaly_detection_enabled: bool = False # New: Enable real-time anomaly detection
+    max_depth: int = Field(3, description="Maximum depth to crawl from seed URLs.")
+    max_pages: int = Field(1000, description="Maximum number of pages to crawl.")
+    delay_seconds: float = Field(1.0, description="Delay between requests to the same domain in seconds.")
+    timeout_seconds: int = Field(30, description="Timeout for HTTP requests in seconds.")
+    user_agent: str = Field("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)", description="Changed default user agent to Googlebot") # Changed default user agent to Googlebot
+    respect_robots_txt: bool = Field(True, description="Whether to respect robots.txt rules.")
+    follow_redirects: bool = Field(True, description="Whether to follow HTTP redirects.")
+    extract_images: bool = Field(True, description="Whether to extract image links.")
+    extract_pdfs: bool = Field(False, description="Whether to extract links from PDF documents.")
+    max_file_size_mb: int = Field(10, description="Maximum file size to download in MB.")
+    allowed_domains: Optional[List[str]] = Field(None, description="List of domains explicitly allowed to crawl. If empty, all domains are allowed unless blocked.")
+    blocked_domains: Optional[List[str]] = Field(None, description="List of domains explicitly blocked from crawling.")
+    custom_headers: Optional[Dict[str, str]] = Field(None, description="Custom HTTP headers to send with requests.")
+    max_retries: int = Field(3, description="Maximum number of retries for failed URL fetches.")
+    retry_delay_seconds: float = Field(5.0, description="Delay between retries in seconds.")
+    user_agent_rotation: bool = Field(False, description="Whether to rotate user agents from a pool.")
+    request_header_randomization: bool = Field(False, description="Whether to randomize other request headers (Accept, Accept-Language, etc.).")
+    human_like_delays: bool = Field(False, description="Whether to add small random delays to mimic human browsing behavior.")
+    stealth_mode: bool = Field(True, description="Whether to enable Playwright stealth mode for browser-based crawling.")
+    browser_fingerprint_randomization: bool = Field(False, description="Whether to randomize browser fingerprint properties (e.g., device scale, mobile, touch, screen dimensions, timezone, locale, color scheme) for Playwright.")
+    ml_rate_optimization: bool = Field(False, description="Whether to enable machine learning-based rate optimization for adaptive delays.")
+    captcha_solving_enabled: bool = Field(False, description="Whether to enable CAPTCHA solving for browser-based crawls.")
+    anomaly_detection_enabled: bool = Field(False, description="Whether to enable real-time anomaly detection.")
+    use_proxies: bool = Field(False, description="Whether to use proxies for crawling.")
+    proxy_list: Optional[List[Dict[str, str]]] = Field(None, description="List of proxy configurations (e.g., [{'url': 'http://user:pass@ip:port', 'region': 'us-east'}]).")
+    proxy_region: Optional[str] = Field(None, description="Desired proxy region for this crawl job. If not specified, any available proxy will be used.")
+    render_javascript: bool = Field(False, description="Whether to use a headless browser to render JavaScript content for crawling.")
+    browser_type: Optional[str] = Field("chromium", description="Browser type for headless rendering (chromium, firefox, webkit). Only applicable if render_javascript is true.")
+    headless_browser: bool = Field(True, description="Whether the browser should run in headless mode. Only applicable if render_javascript is true.")
+    extract_image_text: bool = Field(False, description="Whether to perform OCR on images to extract text.")
+    crawl_web3_content: bool = Field(False, description="Whether to crawl Web3 content (e.g., IPFS, blockchain data).")
+    crawl_social_media: bool = Field(False, description="Whether to crawl social media content.")
+    extract_video_content: bool = Field(False, description="Whether to extract and analyze video content") # New: Whether to extract and analyze video content
+    job_type: str = Field("unknown", description="The type of job this configuration is for (e.g., 'backlink_discovery', 'technical_audit').") # Added job_type to CrawlConfig
 
-    # New fields for proxy management
-    use_proxies: bool = False # New: Whether to use proxies for crawling
-    proxy_list: List[Dict[str, str]] = field(default_factory=list) # New: List of proxy dictionaries (e.g., {'url': 'http://user:pass@ip:port', 'region': 'us-east'})
-    proxy_region: Optional[str] = None # New: Desired proxy region for this crawl job
-
-    # New fields for headless browser crawling (for SPA content)
-    render_javascript: bool = False # New: Whether to use a headless browser to render JavaScript content
-    browser_type: Optional[str] = "chromium" # New: Browser type for headless rendering (chromium, firefox, webkit)
-    headless_browser: bool = True # New: Whether the browser should run in headless mode (True by default)
-    extract_image_text: bool = False # New: Whether to perform OCR on images to extract text
-    crawl_web3_content: bool = False # New: Whether to crawl Web3 content (e.g., IPFS, blockchain data)
-    crawl_social_media: bool = False # New: Whether to crawl social media content
-    extract_video_content: bool = False # New: Whether to extract and analyze video content
-
-    # New fields for domain analysis jobs
-    domain_names_to_analyze: List[str] = field(default_factory=list)
-    min_value_score: float = 50.0
-    limit: Optional[int] = None
-    
-    def is_domain_allowed(self, domain: str) -> bool:
-        """Check if domain is allowed for crawling"""
-        if self.blocked_domains and domain in self.blocked_domains:
-            return False
-        if self.allowed_domains and domain not in self.allowed_domains:
-            return False
-        return True
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
+        extra = "allow" # Allow extra fields for flexibility if needed
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'CrawlConfig':
-        """Create a CrawlConfig instance from a dictionary."""
-        # Handle sets which are serialized as lists
-        if 'allowed_domains' in data and isinstance(data['allowed_domains'], list):
-            data['allowed_domains'] = set(data['allowed_domains'])
-        if 'blocked_domains' in data and isinstance(data['blocked_domains'], list):
-            data['blocked_domains'] = set(data['blocked_domains'])
-        
-        # Ensure custom_headers is a dict, even if it was None in input data
-        if 'custom_headers' in data and data['custom_headers'] is None:
-            data['custom_headers'] = {}
-
-        # Ensure proxy_list is a list of dicts, even if it was None
-        if 'proxy_list' in data and data['proxy_list'] is None:
-            data['proxy_list'] = []
-
-        # Filter out any keys not in the dataclass constructor
-        # This prevents errors if the dict contains extra serialization metadata
-        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
-        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
-        return cls(**filtered_data)
-
+        return cls(**data)
 
 @dataclass 
 class SEOMetrics:
@@ -547,7 +520,7 @@ class SEOMetrics:
     issues: List[str] = field(default_factory=list)
     
     # New fields for content quality and completeness
-    structured_data_types: List[str] = field(default_factory=list) # e.g., ["Article", "FAQPage"]
+    structured_data_types: List[str] = field(default_factory=list) # e.g., ["Article", "FAPage"]
     og_title: Optional[str] = None
     og_description: Optional[str] = None
     twitter_title: Optional[str] = None
@@ -884,7 +857,7 @@ class ReportJob:
     """Represents a job for generating a report."""
     id: str
     report_type: str # e.g., "link_profile_pdf", "all_backlinks_excel"
-    target_identifier: str # e.g., a URL, or "all" for global reports
+    target_identifier: str # e.g., a URL, or "all" for a full dump
     format: str # e.g., "pdf", "excel"
     status: CrawlStatus = CrawlStatus.PENDING
     created_date: datetime = field(default_factory=datetime.now)
@@ -989,14 +962,29 @@ def serialize_model(obj) -> Dict:
                 result[field_name] = value.value
             elif isinstance(value, set):
                 result[field_name] = list(value)
-            elif hasattr(value, '__dataclass_fields__'):
+            elif isinstance(value, dict): # Handle nested dictionaries
                 result[field_name] = serialize_model(value)
-            elif isinstance(value, list) and value and hasattr(value[0], '__dataclass_fields__'):
-                # Recursively serialize lists of dataclasses
+            elif hasattr(value, '__dataclass_fields__'): # Handle nested dataclasses
+                result[field_name] = serialize_model(value)
+            elif isinstance(value, list) and value and (hasattr(value[0], '__dataclass_fields__') or isinstance(value[0], BaseModel)): # Handle lists of dataclasses or Pydantic models
                 result[field_name] = [serialize_model(item) for item in value]
+            elif isinstance(value, BaseModel): # Handle Pydantic models
+                result[field_name] = value.model_dump(mode='json') # Use model_dump for Pydantic models
             else:
                 result[field_name] = value
         return result
+    elif isinstance(obj, BaseModel): # Handle top-level Pydantic models
+        return obj.model_dump(mode='json')
+    elif isinstance(obj, dict): # Handle top-level dictionaries
+        return {key: serialize_model(value) for key, value in obj.items()}
+    elif isinstance(obj, list): # Handle top-level lists
+        return [serialize_model(item) for item in obj]
+    elif isinstance(obj, datetime): # Handle top-level datetime
+        return obj.isoformat()
+    elif isinstance(obj, Enum): # Handle top-level Enum
+        return obj.value
+    elif isinstance(obj, set): # Handle top-level set
+        return list(obj)
     return obj
 
 
