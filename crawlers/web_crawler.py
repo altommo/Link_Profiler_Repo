@@ -10,6 +10,9 @@ from Link_Profiler.core.models import CrawlResult, CrawlConfig, Link, CrawlJob #
 from utils.adaptive_rate_limiter import MLRateLimiter
 # ADD this import
 from queue_system.smart_crawler_queue import SmartCrawlQueue, Priority
+# ADD these imports
+from monitoring.crawler_metrics import crawler_metrics
+from monitoring.health_monitor import HealthMonitor
 
 class WebCrawler:
     def __init__(self, config: CrawlConfig, crawl_queue: SmartCrawlQueue = None):
@@ -20,8 +23,24 @@ class WebCrawler:
         self.rate_limiter = MLRateLimiter()
         # ADD this line
         self.crawl_queue = crawl_queue
+        # ADD these lines
+        self.metrics = crawler_metrics
+        self.health_monitor = HealthMonitor(self.metrics)
         # ... rest of existing init code
     
+    async def __aenter__(self):
+        # ADD this line after existing __aenter__ code
+        await self.health_monitor.start_monitoring()
+        return self # Return self for context manager
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        # ADD this line before existing __aexit__ code
+        self.health_monitor.stop_monitoring()
+        # If you have other cleanup, add it here.
+        # For example, if you had an aiohttp session to close:
+        # await self.session.close()
+        return False # Propagate exceptions if any
+
     async def crawl_url(self, url: str, last_crawl_result: Optional[CrawlResult] = None) -> CrawlResult:
         """REPLACE the entire crawl_url method with this resilient version"""
         try:
@@ -46,10 +65,7 @@ class WebCrawler:
             )
     
     async def _crawl_url_internal(self, url: str, last_crawl_result: Optional[CrawlResult] = None) -> CrawlResult:
-        """RENAME your existing crawl_url method to this name"""
-        # This is a placeholder for your actual crawling logic.
-        # You should replace this with the original content of your crawl_url method.
-        # For example, using aiohttp for actual HTTP requests:
+        """ADD monitoring to existing crawl method"""
         
         # Placeholder for aiohttp client session. In a real app, this would be managed
         # at a higher level (e.g., passed in or a singleton).
@@ -64,6 +80,9 @@ class WebCrawler:
         
         parsed_url = urlparse(url)
         domain = parsed_url.netloc
+
+        # Track request start
+        request_context = await self.metrics.track_request_start(url)
 
         # REPLACE the existing rate limiter wait with:
         await self.rate_limiter.adaptive_wait(domain) # Wait before the request
@@ -108,6 +127,9 @@ class WebCrawler:
         # Pass the result to the rate limiter after the request
         await self.rate_limiter.adaptive_wait(domain, result) # This second call is for learning from the response
 
+        # Track successful/failed completion
+        await self.metrics.track_request_complete(url, result, request_context)
+
         return result
 
     async def start_crawl(self, target_url: str, initial_seed_urls: List[str], job_id: str) -> CrawlResult:
@@ -119,11 +141,18 @@ class WebCrawler:
         # REPLACE the existing URL queue logic with:
         if self.crawl_queue:
             # Use smart queue system
+            # Initialize start_time for queue stats if not already present
+            if 'start_time' not in self.crawl_queue.stats:
+                self.crawl_queue.stats['start_time'] = datetime.now()
+
             for url in initial_seed_urls:
                 await self.crawl_queue.enqueue_url(url, Priority.HIGH, job_id=job_id)
             
             while True:
                 task = await self.crawl_queue.get_next_task()
+                # Update queue metrics
+                await self.metrics.track_queue_metrics(self.crawl_queue.get_queue_stats())
+
                 if not task or pages_crawled_count >= self.config.max_pages:
                     print(f"Crawl finished for job {job_id}. Total pages crawled: {pages_crawled_count}")
                     break
