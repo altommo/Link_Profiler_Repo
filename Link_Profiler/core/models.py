@@ -309,9 +309,11 @@ class CrawlResult:
     # New fields for overall crawl summary
     pages_crawled: int = 0
     total_links_found: int = 0
-    target_links_found: List[Backlink] = field(default_factory=list) # Links pointing to the target
-    crawl_errors_encountered: int = 0
+    backlinks_found: int = 0 # Count of backlinks found to the target
+    failed_urls_count: int = 0 # Count of URLs that failed to crawl
+    is_final_summary: bool = False # Flag to indicate if this is the final summary result
     crawl_duration_seconds: float = 0.0
+    errors: List['CrawlError'] = field(default_factory=list) # List of CrawlError objects encountered during the crawl
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'CrawlResult':
@@ -322,6 +324,8 @@ class CrawlResult:
             data['links_found'] = [Backlink.from_dict(bl_data) for bl_data in data['links_found']]
         if 'seo_metrics' in data and isinstance(data['seo_metrics'], dict):
             data['seo_metrics'] = SEOMetrics.from_dict(data['seo_metrics'])
+        if 'errors' in data and isinstance(data['errors'], list):
+            data['errors'] = [CrawlError.from_dict(err_data) for err_data in data['errors']]
         
         # Handle content which might be bytes but serialized as string
         if 'content' in data and isinstance(data['content'], str) and data.get('content_type') != 'text/html':
@@ -509,52 +513,6 @@ class CrawlJob:
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered_data)
 
-
-# Changed CrawlConfig to Pydantic BaseModel
-class CrawlConfig(BaseModel):
-    """Configuration for crawling operations"""
-    max_depth: int = Field(3, description="Maximum depth to crawl from seed URLs.")
-    max_pages: int = Field(1000, description="Maximum number of pages to crawl.")
-    delay_seconds: float = Field(1.0, description="Delay between requests to the same domain in seconds.")
-    timeout_seconds: int = Field(30, description="Timeout for HTTP requests in seconds.")
-    user_agent: str = Field("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)", description="Changed default user agent to Googlebot") # Changed default user agent to Googlebot
-    respect_robots_txt: bool = Field(True, description="Whether to respect robots.txt rules.")
-    follow_redirects: bool = Field(True, description="Whether to follow HTTP redirects.")
-    extract_images: bool = Field(True, description="Whether to extract image links.")
-    extract_pdfs: bool = Field(False, description="Whether to extract links from PDF documents.")
-    max_file_size_mb: int = Field(10, description="Maximum file size to download in MB.")
-    allowed_domains: Optional[List[str]] = Field(None, description="List of domains explicitly allowed to crawl. If empty, all domains are allowed unless blocked.")
-    blocked_domains: Optional[List[str]] = Field(None, description="List of domains explicitly blocked from crawling.")
-    custom_headers: Optional[Dict[str, str]] = Field(None, description="Custom HTTP headers to send with requests.")
-    max_retries: int = Field(3, description="Maximum number of retries for failed URL fetches.")
-    retry_delay_seconds: float = Field(5.0, description="Delay between retries in seconds.")
-    user_agent_rotation: bool = Field(False, description="Whether to rotate user agents from a pool.")
-    request_header_randomization: bool = Field(False, description="Whether to randomize other request headers (Accept, Accept-Language, etc.).")
-    human_like_delays: bool = Field(False, description="Whether to add small random delays to mimic human browsing behavior.")
-    stealth_mode: bool = Field(True, description="Whether to enable Playwright stealth mode for browser-based crawling.")
-    browser_fingerprint_randomization: bool = Field(False, description="Whether to randomize browser fingerprint properties (e.g., device scale, mobile, touch, screen dimensions, timezone, locale, color scheme) for Playwright.")
-    ml_rate_optimization: bool = Field(False, description="Whether to enable machine learning-based rate optimization for adaptive delays.")
-    captcha_solving_enabled: bool = Field(False, description="Whether to enable CAPTCHA solving for browser-based crawls.")
-    anomaly_detection_enabled: bool = Field(False, description="Whether to enable real-time anomaly detection.")
-    use_proxies: bool = Field(False, description="Whether to use proxies for crawling.")
-    proxy_list: Optional[List[Dict[str, str]]] = Field(None, description="List of proxy configurations (e.g., [{'url': 'http://user:pass@ip:port', 'region': 'us-east'}]).")
-    proxy_region: Optional[str] = Field(None, description="Desired proxy region for this crawl job. If not specified, any available proxy will be used.")
-    render_javascript: bool = Field(False, description="Whether to use a headless browser to render JavaScript content for crawling.")
-    browser_type: Optional[str] = Field("chromium", description="Browser type for headless rendering (chromium, firefox, webkit). Only applicable if render_javascript is true.")
-    headless_browser: bool = Field(True, description="Whether the browser should run in headless mode. Only applicable if render_javascript is true.")
-    extract_image_text: bool = Field(False, description="Whether to perform OCR on images to extract text.")
-    crawl_web3_content: bool = Field(False, description="Whether to crawl Web3 content (e.g., IPFS, blockchain data).")
-    crawl_social_media: bool = Field(False, description="Whether to crawl social media content.")
-    extract_video_content: bool = Field(False, description="Whether to extract and analyze video content") # New: Whether to extract and analyze video content
-    job_type: str = Field("unknown", description="The type of job this configuration is for (e.g., 'backlink_discovery', 'technical_audit').") # Added job_type to CrawlConfig
-
-    class Config:
-        use_enum_values = True # Ensure enums are serialized by value
-        extra = "allow" # Allow extra fields for flexibility if needed
-
-    @classmethod
-    def from_dict(cls, data: Dict) -> 'CrawlConfig':
-        return cls(**data)
 
 @dataclass 
 class SEOMetrics:
