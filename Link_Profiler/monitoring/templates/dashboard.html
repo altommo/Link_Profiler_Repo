@@ -3,522 +3,298 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Link Profiler Dashboard</title>
+    <title>Link Profiler - System Monitor</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
         body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f4f7f6;
-            color: #333;
         }
+        
+        .login-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .login-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            max-width: 400px;
+            width: 100%;
+            padding: 2rem;
+        }
+        
+        .dashboard-container {
+            display: none;
+            background: #f8f9fa;
+            min-height: 100vh;
+        }
+        
         .navbar {
-            background-color: #2c3e50;
-            color: #ecf0f1;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
         }
-        .navbar-brand {
-            color: #ecf0f1 !important;
-            font-weight: bold;
-        }
-        .sidebar {
-            background-color: #34495e;
-            color: #ecf0f1;
-            padding-top: 20px;
-            height: 100vh;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 250px;
-            overflow-y: auto;
-        }
-        .sidebar .nav-link {
-            color: #ecf0f1;
-            padding: 10px 15px;
-            border-left: 3px solid transparent;
-        }
-        .sidebar .nav-link:hover {
-            background-color: #1abc9c;
-            border-left-color: #2ecc71;
-        }
-        .sidebar .nav-link.active {
-            background-color: #16a085;
-            border-left-color: #2ecc71;
-        }
-        .content {
-            margin-left: 250px;
-            padding: 20px;
-        }
+        
         .card {
             border: none;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
-            margin-bottom: 20px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
-        .card-header {
-            background-color: #3498db;
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        }
+        
+        .metric-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            font-weight: bold;
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
         }
-        .metric-card .card-body {
-            text-align: center;
-        }
+        
         .metric-value {
-            font-size: 2.5em;
+            font-size: 2rem;
             font-weight: bold;
-            color: #2c3e50;
+            margin-bottom: 0.5rem;
         }
-        .metric-label {
-            font-size: 0.9em;
-            color: #7f8c8d;
+        
+        .status-badge {
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
         }
-        .status-indicator {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 5px;
+        
+        .status-healthy {
+            background: linear-gradient(135deg, #56ab2f, #a8e6cf);
+            color: #2d5a3d;
         }
-        .status-healthy { background-color: #2ecc71; }
-        .status-unhealthy { background-color: #e74c3c; }
-        .status-warning { background-color: #f39c12; }
-        .status-disconnected { background-color: #95a5a6; }
-        .status-unknown { background-color: #bdc3c7; }
-
-        .job-status-pending { color: #f39c12; font-weight: bold; }
-        .job-status-in_progress { color: #3498db; font-weight: bold; }
-        .job-status-completed { color: #2ecc71; font-weight: bold; }
-        .job-status-failed { color: #e74c3c; font-weight: bold; }
-        .job-status-cancelled { color: #95a5a6; font-weight: bold; }
-
-        .table-responsive {
-            max-height: 500px;
-            overflow-y: auto;
-        }
-        .table thead th {
-            position: sticky;
-            top: 0;
-            background-color: #f8f9fa;
-            z-index: 1;
-        }
-        .btn-primary { background-color: #3498db; border-color: #3498db; }
-        .btn-primary:hover { background-color: #2980b9; border-color: #2980b9; }
-        .btn-success { background-color: #2ecc71; border-color: #2ecc71; }
-        .btn-success:hover { background-color: #27ae60; border-color: #27ae60; }
-        .btn-danger { background-color: #e74c3c; border-color: #e74c3c; }
-        .btn-danger:hover { background-color: #c0392b; border-color: #c0392b; }
-        .btn-warning { background-color: #f39c12; border-color: #f39c12; }
-        .btn-warning:hover { background-color: #e67e22; border-color: #e67e22; }
-        .btn-info { background-color: #9b59b6; border-color: #9b59b6; }
-        .btn-info:hover { background-color: #8e44ad; border-color: #8e44ad; }
-
-        .form-control:focus {
-            border-color: #3498db;
-            box-shadow: 0 0 0 0.25rem rgba(52, 152, 219, 0.25);
-        }
-        .modal-content {
-            border-radius: 8px;
-        }
-        .modal-header {
-            background-color: #2c3e50;
+        
+        .status-unhealthy {
+            background: linear-gradient(135deg, #ff416c, #ff4b2b);
             color: white;
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
         }
-        .modal-footer .btn {
-            border-radius: 5px;
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 50px;
+            padding: 0.75rem 2rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
         }
-        .spinner-border {
-            width: 1.5rem;
-            height: 1.5rem;
-            vertical-align: middle;
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
         }
-        .alert-container {
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            z-index: 1050;
-            width: 300px;
+        
+        .form-control {
+            border-radius: 10px;
+            border: 1px solid #e0e6ed;
+            padding: 0.75rem 1rem;
+            transition: all 0.3s ease;
         }
+        
+        .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+        
         .alert {
-            padding: 10px;
-            margin-bottom: 10px;
-            border-radius: 5px;
-            opacity: 0.9;
+            border-radius: 10px;
+            border: none;
         }
-        .alert-success { background-color: #d4edda; color: #155724; border-color: #c3e6cb; }
-        .alert-danger { background-color: #f8d7da; color: #721c24; border-color: #f5c6cb; }
-        .alert-warning { background-color: #fff3cd; color: #856404; border-color: #ffeeba; }
-        .alert-info { background-color: #d1ecf1; color: #0c5460; border-color: #bee5eb; }
+        
+        .satellite-status {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        .satellite-active {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .satellite-inactive {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .logo-text {
+            font-size: 1.8rem;
+            font-weight: bold;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-dark">
-        <div class="container-fluid">
-            <a class="navbar-brand" href="#">Link Profiler Dashboard</a>
-            <span class="navbar-text text-white-50" id="last-updated">Last Updated: Loading...</span>
-        </div>
-    </nav>
-
-    <div class="sidebar">
-        <ul class="nav flex-column">
-            <li class="nav-item">
-                <a class="nav-link active" href="#overview" data-bs-toggle="tab"><i class="fas fa-tachometer-alt"></i> Overview</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="#jobs" data-bs-toggle="tab"><i class="fas fa-tasks"></i> Jobs</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="#satellites" data-bs-toggle="tab"><i class="fas fa-satellite-dish"></i> Satellites</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="#submit-job" data-bs-toggle="tab"><i class="fas fa-plus-circle"></i> Submit Job</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="#settings" data-bs-toggle="tab"><i class="fas fa-cogs"></i> Settings</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="#debug" data-bs-toggle="tab"><i class="fas fa-bug"></i> Debug</a>
-            </li>
-        </ul>
-    </div>
-
-    <div class="content">
-        <div class="alert-container"></div>
-
-        <div class="tab-content">
-            <!-- Overview Tab -->
-            <div class="tab-pane fade show active" id="overview">
-                <h2 class="mb-4">System Overview</h2>
-                <div class="row">
-                    <!-- Queue Metrics -->
-                    <div class="col-md-4">
-                        <div class="card metric-card">
-                            <div class="card-header">Queue Metrics</div>
-                            <div class="card-body">
-                                <div class="metric-value" id="pending-jobs">...</div>
-                                <div class="metric-label">Pending Jobs</div>
-                                <hr>
-                                <div class="metric-value" id="active-satellites">...</div>
-                                <div class="metric-label">Active Satellites</div>
-                                <hr>
-                                <div class="metric-value" id="results-pending">...</div>
-                                <div class="metric-label">Results Pending</div>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Performance Stats -->
-                    <div class="col-md-4">
-                        <div class="card metric-card">
-                            <div class="card-header">Performance Stats</div>
-                            <div class="card-body">
-                                <div class="metric-value" id="jobs-per-hour">...</div>
-                                <div class="metric-label">Jobs/Hour (Last {{ performance_stats.performance_window_seconds / 3600 }}h)</div>
-                                <hr>
-                                <div class="metric-value" id="avg-job-duration">...</div>
-                                <div class="metric-label">Avg Job Duration (s)</div>
-                                <hr>
-                                <div class="metric-value" id="success-rate">...</div>
-                                <div class="metric-label">Success Rate (%)</div>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Data Summaries -->
-                    <div class="col-md-4">
-                        <div class="card metric-card">
-                            <div class="card-header">Data Summaries</div>
-                            <div class="card-body">
-                                <div class="metric-value" id="total-link-profiles">...</div>
-                                <div class="metric-label">Total Link Profiles</div>
-                                <hr>
-                                <div class="metric-value" id="total-backlinks">...</div>
-                                <div class="metric-label">Total Backlinks Stored</div>
-                                <hr>
-                                <div class="metric-value" id="total-domains-analyzed">...</div>
-                                <div class="metric-label">Total Domains Analyzed</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="row mt-4">
-                    <!-- System Health -->
-                    <div class="col-md-6">
-                        <div class="card">
-                            <div class="card-header">System Health</div>
-                            <div class="card-body">
-                                <p><strong>CPU Usage:</strong> <span id="cpu-usage">...</span>%</p>
-                                <p><strong>Memory Usage:</strong> <span id="memory-usage">...</span>%</p>
-                                <p><strong>Disk Usage:</strong> <span id="disk-usage">...</span>%</p>
-                                <p><strong>Uptime:</strong> <span id="uptime">...</span></p>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- API & DB Health -->
-                    <div class="col-md-6">
-                        <div class="card">
-                            <div class="card-header">API & Database Health</div>
-                            <div class="card-body">
-                                <p><strong>Main API:</strong> <span id="api-health-status">...</span></p>
-                                <p><strong>Redis:</strong> <span id="redis-health-status">...</span></p>
-                                <p><strong>PostgreSQL:</strong> <span id="db-health-status">...</span></p>
-                                <p><strong>ClickHouse:</strong> <span id="clickhouse-health-status">...</span></p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <h3 class="mt-4">Recent Job History</h3>
-                <div class="table-responsive">
-                    <table class="table table-striped table-hover">
-                        <thead>
-                            <tr>
-                                <th>Job ID</th>
-                                <th>Status</th>
-                                <th>URLs Crawled</th>
-                                <th>Links Found</th>
-                                <th>Duration (s)</th>
-                                <th>Completed At</th>
-                            </tr>
-                        </thead>
-                        <tbody id="job-history-table-body">
-                            <!-- Job history will be loaded here -->
-                        </tbody>
-                    </table>
-                </div>
+    <!-- Login Container -->
+    <div id="loginContainer" class="login-container">
+        <div class="login-card">
+            <div class="text-center mb-4">
+                <div class="logo-text">🔗 Link Profiler</div>
+                <p class="text-muted mt-2">System Monitoring Dashboard</p>
             </div>
-
-            <!-- Jobs Tab -->
-            <div class="tab-pane fade" id="jobs">
-                <h2 class="mb-4">All Jobs</h2>
+            
+            <div id="loginAlert" class="alert alert-danger d-none" role="alert"></div>
+            
+            <form id="loginForm">
                 <div class="mb-3">
-                    <label for="jobStatusFilter" class="form-label">Filter by Status:</label>
-                    <select class="form-select" id="jobStatusFilter">
-                        <option value="">All</option>
-                        <option value="PENDING">Pending</option>
-                        <option value="IN_PROGRESS">In Progress</option>
-                        <option value="COMPLETED">Completed</option>
-                        <option value="FAILED">Failed</option>
-                        <option value="CANCELLED">Cancelled</option>
-                    </select>
+                    <label for="username" class="form-label">Username</label>
+                    <input type="text" class="form-control" id="username" required>
                 </div>
-                <div class="table-responsive">
-                    <table class="table table-striped table-hover">
-                        <thead>
-                            <tr>
-                                <th>Job ID</th>
-                                <th>Target URL</th>
-                                <th>Job Type</th>
-                                <th>Status</th>
-                                <th>Progress (%)</th>
-                                <th>URLs Crawled</th>
-                                <th>Links Found</th>
-                                <th>Errors</th>
-                                <th>Created Date</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="all-jobs-table-body">
-                            <!-- All jobs will be loaded here -->
-                        </tbody>
-                    </table>
+                <div class="mb-3">
+                    <label for="password" class="form-label">Password</label>
+                    <input type="password" class="form-control" id="password" required>
                 </div>
-            </div>
-
-            <!-- Satellites Tab -->
-            <div class="tab-pane fade" id="satellites">
-                <h2 class="mb-4">Satellite Crawlers</h2>
-                <div class="row mb-3">
-                    <div class="col-md-6">
-                        <button class="btn btn-warning" onclick="controlAllSatellites('PAUSE')"><i class="fas fa-pause"></i> Pause All</button>
-                        <button class="btn btn-success" onclick="controlAllSatellites('RESUME')"><i class="fas fa-play"></i> Resume All</button>
-                        <button class="btn btn-danger" onclick="controlAllSatellites('SHUTDOWN')"><i class="fas fa-power-off"></i> Shutdown All</button>
-                        <button class="btn btn-info" onclick="controlAllSatellites('RESTART')"><i class="fas fa-sync-alt"></i> Restart All</button>
-                    </div>
-                    <div class="col-md-6 text-end">
-                        <span id="global-pause-status" class="badge bg-secondary">Checking Pause Status...</span>
-                    </div>
-                </div>
-                <div class="table-responsive">
-                    <table class="table table-striped table-hover">
-                        <thead>
-                            <tr>
-                                <th>Crawler ID</th>
-                                <th>Region</th>
-                                <th>Status</th>
-                                <th>Code Version</th>
-                                <th>Running Jobs</th>
-                                <th>Jobs Completed</th>
-                                <th>Errors</th>
-                                <th>Last Seen</th>
-                                <th>Uptime (s)</th>
-                                <th>CPU (%)</th>
-                                <th>Memory (%)</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="satellites-table-body">
-                            <!-- Satellites will be loaded here -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Submit Job Tab -->
-            <div class="tab-pane fade" id="submit-job">
-                <h2 class="mb-4">Submit New Crawl Job</h2>
-                <form id="submitJobForm">
-                    <div class="mb-3">
-                        <label for="targetUrl" class="form-label">Target URL</label>
-                        <input type="url" class="form-control" id="targetUrl" placeholder="e.g., https://example.com" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="initialSeedUrls" class="form-label">Initial Seed URLs (comma-separated)</label>
-                        <input type="text" class="form-control" id="initialSeedUrls" placeholder="e.g., https://example.com/page1, https://example.com/page2">
-                        <div class="form-text">Leave empty to use Target URL as the only seed.</div>
-                    </div>
-                    <div class="mb-3">
-                        <label for="jobType" class="form-label">Job Type</label>
-                        <select class="form-select" id="jobType" required>
-                            <option value="backlink_discovery">Backlink Discovery</option>
-                            <option value="technical_audit">Technical Audit</option>
-                            <option value="link_health_audit">Link Health Audit</option>
-                            <option value="domain_analysis">Domain Analysis</option>
-                            <option value="full_seo_audit">Full SEO Audit</option>
-                            <option value="web3_crawl">Web3 Crawl</option>
-                            <option value="social_media_crawl">Social Media Crawl</option>
-                            <option value="content_gap_analysis">Content Gap Analysis</option>
-                            <option value="report_generation">Report Generation</option>
-                            <option value="sample_crawl">Sample Crawl (for testing)</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label for="jobPriority" class="form-label">Priority (1-10, 1=Highest)</label>
-                        <input type="number" class="form-control" id="jobPriority" value="5" min="1" max="10">
-                    </div>
-                    <div class="mb-3">
-                        <label for="scheduledAt" class="form-label">Schedule At (Optional, UTC ISO format)</label>
-                        <input type="datetime-local" class="form-control" id="scheduledAt">
-                        <div class="form-text">e.g., 2025-01-01T10:30:00</div>
-                    </div>
-                    <div class="mb-3">
-                        <label for="cronSchedule" class="form-label">Cron Schedule (Optional, for recurring jobs)</label>
-                        <input type="text" class="form-control" id="cronSchedule" placeholder="e.g., 0 0 * * * (daily at midnight)">
-                        <div class="form-text">Requires "Schedule At" for the first run.</div>
-                    </div>
-                    <div class="mb-3">
-                        <label for="crawlConfig" class="form-label">Crawl Config (JSON Optional)</label>
-                        <textarea class="form-control" id="crawlConfig" rows="5" placeholder='{"max_depth": 2, "render_javascript": true}'></textarea>
-                        <div class="form-text">Additional configuration for the crawler in JSON format.</div>
-                    </div>
-                    <button type="submit" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Submit Job</button>
-                </form>
-            </div>
-
-            <!-- Settings Tab -->
-            <div class="tab-pane fade" id="settings">
-                <h2 class="mb-4">Settings</h2>
-                <div class="card">
-                    <div class="card-header">API Configuration</div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <label for="apiExternalUrl" class="form-label">Main API External URL (for frontend calls)</label>
-                            <input type="text" class="form-control" id="apiExternalUrl" value="{{ api_base_url }}" readonly>
-                            <div class="form-text">This is the URL the dashboard uses to communicate with the main API. Configured in config.yaml.</div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="dashboardAccessToken" class="form-label">Dashboard Access Token</label>
-                            <input type="text" class="form-control" id="dashboardAccessToken" value="Not applicable for public endpoints" readonly>
-                            <div class="form-text">Token management is no longer needed for public monitoring endpoints.</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="card mt-4">
-                    <div class="card-header">System Control</div>
-                    <div class="card-body">
-                        <button class="btn btn-danger" onclick="confirmRestartAllServices()"><i class="fas fa-redo"></i> Restart All Services</button>
-                        <div class="form-text mt-2">This will restart the API, Coordinator, and Monitoring services. Satellites will attempt to reconnect.</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Debug Tab -->
-            <div class="tab-pane fade" id="debug">
-                <h2 class="mb-4">Debug Tools</h2>
-                <div class="row">
-                    <div class="col-md-6">
-                        <div class="card">
-                            <div class="card-header">Dead Letter Queue</div>
-                            <div class="card-body">
-                                <button class="btn btn-warning" onclick="getDeadLetters()"><i class="fas fa-eye"></i> View Dead Letters</button>
-                                <button class="btn btn-danger" onclick="clearDeadLetters()"><i class="fas fa-trash"></i> Clear Dead Letters</button>
-                                <button class="btn btn-info" onclick="reprocessDeadLetters()"><i class="fas fa-redo-alt"></i> Reprocess Dead Letters</button>
-                                <div class="mt-3" id="dead-letters-output" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto; background-color: #e9ecef; padding: 10px; border-radius: 5px;"></div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card">
-                            <div class="card-header">Raw API Calls</div>
-                            <div class="card-body">
-                                <div class="mb-3">
-                                    <label for="apiEndpoint" class="form-label">Endpoint</label>
-                                    <input type="text" class="form-control" id="apiEndpoint" value="/public/stats">
-                                </div>
-                                <div class="mb-3">
-                                    <label for="apiMethod" class="form-label">Method</label>
-                                    <select class="form-select" id="apiMethod">
-                                        <option>GET</option>
-                                        <option>POST</option>
-                                        <option>PUT</option>
-                                        <option>DELETE</option>
-                                    </select>
-                                </div>
-                                <div class="mb-3">
-                                    <label for="apiPayload" class="form-label">Payload (JSON)</label>
-                                    <textarea class="form-control" id="apiPayload" rows="5"></textarea>
-                                </div>
-                                <button class="btn btn-primary" onclick="makeRawApiCall()"><i class="fas fa-code"></i> Make API Call</button>
-                                <div class="mt-3">
-                                    <h5>Response:</h5>
-                                    <pre id="apiResponse" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto; background-color: #e9ecef; padding: 10px; border-radius: 5px;"></pre>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="fas fa-sign-in-alt me-2"></i>Login
+                </button>
+            </form>
         </div>
     </div>
 
-    <!-- Modals -->
-    <div class="modal fade" id="jobDetailsModal" tabindex="-1" aria-labelledby="jobDetailsModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="jobDetailsModalLabel">Job Details</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+    <!-- Dashboard Container -->
+    <div id="dashboardContainer" class="dashboard-container">
+        <!-- Navigation -->
+        <nav class="navbar navbar-expand-lg navbar-dark">
+            <div class="container-fluid">
+                <span class="navbar-brand">
+                    🔗 Link Profiler Monitor
+                </span>
+                <button class="btn btn-outline-light btn-sm" onclick="logout()">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+            </div>
+        </nav>
+
+        <!-- Main Dashboard Content -->
+        <div class="container-fluid mt-4">
+            <div id="dashboardContent">
+                <!-- System Status -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-body">
+                                <h5 class="card-title">
+                                    <i class="fas fa-heartbeat text-primary me-2"></i>System Status
+                                </h5>
+                                <div id="systemStatus" class="d-flex align-items-center">
+                                    <span class="status-badge status-healthy">
+                                        <i class="fas fa-check-circle me-1"></i>All Systems Operational
+                                    </span>
+                                    <small class="text-muted ms-3" id="lastUpdated">Last updated: --</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="modal-body">
-                    <p><strong>Job ID:</strong> <span id="detail-job-id"></span></p>
-                    <p><strong>Target URL:</strong> <span id="detail-target-url"></span></p>
-                    <p><strong>Job Type:</strong> <span id="detail-job-type"></span></p>
-                    <p><strong>Status:</strong> <span id="detail-status"></span></p>
-                    <p><strong>Progress:</strong> <span id="detail-progress"></span>%</p>
-                    <p><strong>URLs Crawled:</strong> <span id="detail-urls-crawled"></span></p>
-                    <p><strong>Links Found:</strong> <span id="detail-links-found"></span></p>
-                    <p><strong>Errors:</strong> <span id="detail-errors-count"></span></p>
-                    <p><strong>Created:</strong> <span id="detail-created-date"></span></p>
-                    <p><strong>Started:</strong> <span id="detail-started-date"></span></p>
-                    <p><strong>Completed:</strong> <span id="detail-completed-date"></span></p>
-                    <h6>Error Log:</h6>
-                    <pre id="detail-error-log" style="white-space: pre-wrap; max-height: 200px; overflow-y: auto; background-color: #e9ecef; padding: 10px; border-radius: 5px;"></pre>
-                    <h6>Results Summary:</h6>
-                    <pre id="detail-results-summary" style="white-space: pre-wrap; max-height: 200px; overflow-y: auto; background-color: #e9ecef; padding: 10px; border-radius: 5px;"></pre>
+
+                <!-- Key Metrics -->
+                <div class="row mb-4">
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card metric-card">
+                            <div class="card-body text-center">
+                                <i class="fas fa-tasks fa-2x mb-3"></i>
+                                <div class="metric-value" id="pendingJobs">--</div>
+                                <div>Pending Jobs</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card metric-card">
+                            <div class="card-body text-center">
+                                <i class="fas fa-satellite fa-2x mb-3"></i>
+                                <div class="metric-value" id="activeSatellites">--</div>
+                                <div>Active Crawlers</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card metric-card">
+                            <div class="card-body text-center">
+                                <i class="fas fa-chart-line fa-2x mb-3"></i>
+                                <div class="metric-value" id="successRate">--</div>
+                                <div>Success Rate</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="card metric-card">
+                            <div class="card-body text-center">
+                                <i class="fas fa-database fa-2x mb-3"></i>
+                                <div class="metric-value" id="totalProfiles">--</div>
+                                <div>Link Profiles</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+
+                <!-- Detailed Stats -->
+                <div class="row">
+                    <div class="col-lg-8 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-satellite-dish text-primary me-2"></i>Crawler Health
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="satelliteStatus">
+                                    <div class="text-center text-muted">
+                                        <i class="fas fa-spinner fa-spin me-2"></i>Loading satellite status...
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-server text-primary me-2"></i>System Resources
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <small class="text-muted">CPU Usage</small>
+                                    <div class="progress" style="height: 8px;">
+                                        <div id="cpuProgress" class="progress-bar" style="width: 0%"></div>
+                                    </div>
+                                    <small id="cpuText">--</small>
+                                </div>
+                                <div class="mb-3">
+                                    <small class="text-muted">Memory Usage</small>
+                                    <div class="progress" style="height: 8px;">
+                                        <div id="memoryProgress" class="progress-bar" style="width: 0%"></div>
+                                    </div>
+                                    <small id="memoryText">--</small>
+                                </div>
+                                <div>
+                                    <small class="text-muted">Disk Usage</small>
+                                    <div class="progress" style="height: 8px;">
+                                        <div id="diskProgress" class="progress-bar" style="width: 0%"></div>
+                                    </div>
+                                    <small id="diskText">--</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -526,513 +302,216 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        const API_BASE_URL = "{{ api_base_url }}"; // Passed from backend
+        const API_BASE = 'https://api.yspanel.com';
+        let authToken = localStorage.getItem('authToken');
+        let refreshInterval;
 
-        function showAlert(message, type = 'info') {
-            const alertContainer = document.querySelector('.alert-container');
-            const alertDiv = document.createElement('div');
-            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
-            alertDiv.innerHTML = `
-                ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            `;
-            alertContainer.prepend(alertDiv); // Add to top
-            setTimeout(() => alertDiv.remove(), 5000); // Auto-remove after 5 seconds
+        // Check if user is already logged in
+        document.addEventListener('DOMContentLoaded', function() {
+            if (authToken) {
+                verifyToken();
+            }
+        });
+
+        // Login form submission
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            await login();
+        });
+
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const loginAlert = document.getElementById('loginAlert');
+
+            try {
+                const response = await fetch(`${API_BASE}/auth/token`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    authToken = data.access_token;
+                    localStorage.setItem('authToken', authToken);
+                    
+                    // Verify the user is admin
+                    const userResponse = await fetch(`${API_BASE}/users/me`, {
+                        headers: {
+                            'Authorization': `Bearer ${authToken}`
+                        }
+                    });
+                    
+                    const userData = await userResponse.json();
+                    
+                    if (userData.is_admin) {
+                        showDashboard();
+                    } else {
+                        showError('Access denied. Admin privileges required.');
+                        localStorage.removeItem('authToken');
+                        authToken = null;
+                    }
+                } else {
+                    showError(data.detail || 'Login failed');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                showError('Connection error. Please try again.');
+            }
         }
 
-        async function callApi(endpoint, method = 'GET', data = null) {
-            const headers = {
-                'Content-Type': 'application/json'
-            };
-            // No Authorization header needed for public endpoints
-
-            const options = { method, headers };
-            if (data) {
-                options.body = JSON.stringify(data);
-            }
-
-            console.log(`Calling API: ${method} ${API_BASE_URL}${endpoint}`); // Debugging log
+        async function verifyToken() {
             try {
-                const response = await fetch(`${API_BASE_URL}${endpoint}`, options);
-                if (!response.ok) {
-                    const errorText = await response.text(); // Get raw text to check for HTML
-                    let errorData = { detail: response.statusText };
-                    try {
-                        errorData = JSON.parse(errorText); // Try parsing as JSON
-                    } catch (e) {
-                        // If not JSON, use the raw text
-                        errorData.detail = errorText.substring(0, 200) + (errorText.length > 200 ? '...' : '');
+                const response = await fetch(`${API_BASE}/users/me`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
                     }
-                    console.error(`API call failed for ${endpoint}:`, response.status, errorData); // Debugging log
-                    showAlert(`API Error (${response.status}): ${errorData.detail}`, 'danger');
-                    throw new Error(errorData.detail || `API Error: ${response.statusText}`);
+                });
+
+                if (response.ok) {
+                    const userData = await response.json();
+                    if (userData.is_admin) {
+                        showDashboard();
+                    } else {
+                        logout();
+                    }
+                } else {
+                    logout();
                 }
-                const responseData = await response.json();
-                console.log(`API call successful for ${endpoint}:`, responseData); // Debugging log
-                return responseData;
             } catch (error) {
-                console.error(`Error during API call to ${endpoint}:`, error); // Debugging log
-                showAlert(`Error during API call to ${endpoint}: ${error.message}`, 'danger');
-                throw error;
+                logout();
             }
+        }
+
+        function showDashboard() {
+            document.getElementById('loginContainer').style.display = 'none';
+            document.getElementById('dashboardContainer').style.display = 'block';
+            startDataRefresh();
+        }
+
+        function showError(message) {
+            const loginAlert = document.getElementById('loginAlert');
+            loginAlert.textContent = message;
+            loginAlert.classList.remove('d-none');
+            setTimeout(() => {
+                loginAlert.classList.add('d-none');
+            }, 5000);
+        }
+
+        function logout() {
+            localStorage.removeItem('authToken');
+            authToken = null;
+            document.getElementById('loginContainer').style.display = 'flex';
+            document.getElementById('dashboardContainer').style.display = 'none';
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        }
+
+        async function callAuthenticatedAPI(endpoint) {
+            const response = await fetch(`${API_BASE}${endpoint}`, {
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                }
+            });
+
+            if (response.status === 401) {
+                logout();
+                return null;
+            }
+
+            return response.ok ? await response.json() : null;
         }
 
         async function loadStats() {
             try {
-                // Use public endpoints for stats and satellites
-                const data = await callApi('/public/stats');
-                const satellitesData = await callApi('/public/satellites');
-                const healthData = await callApi('/public/health');
+                const stats = await callAuthenticatedAPI('/api/stats');
+                if (!stats) return;
+
+                // Update metrics
+                document.getElementById('pendingJobs').textContent = stats.queue_metrics?.pending_jobs || 0;
+                document.getElementById('activeSatellites').textContent = stats.queue_metrics?.active_satellites || 0;
+                document.getElementById('successRate').textContent = (stats.performance_stats?.success_rate || 0) + '%';
+                document.getElementById('totalProfiles').textContent = stats.data_summaries?.total_link_profiles || 0;
+
+                // Update system status
+                const isHealthy = stats.api_health?.status === 'healthy';
+                const statusElement = document.getElementById('systemStatus');
+                const badgeClass = isHealthy ? 'status-healthy' : 'status-unhealthy';
+                const icon = isHealthy ? 'fa-check-circle' : 'fa-exclamation-triangle';
+                const text = isHealthy ? 'All Systems Operational' : 'System Issues Detected';
                 
-                // Update Queue Metrics
-                document.getElementById('pending-jobs').textContent = data.queue_metrics?.pending_jobs || 0;
-                document.getElementById('active-satellites').textContent = data.queue_metrics?.active_crawlers || 0;
-                document.getElementById('results-pending').textContent = data.queue_metrics?.results_pending || 0;
+                statusElement.innerHTML = `
+                    <span class="status-badge ${badgeClass}">
+                        <i class="fas ${icon} me-1"></i>${text}
+                    </span>
+                    <small class="text-muted ms-3">Last updated: ${new Date().toLocaleTimeString()}</small>
+                `;
 
-                // Update Performance Stats
-                document.getElementById('jobs-per-hour').textContent = (data.performance_stats?.jobs_per_hour || 0).toFixed(2);
-                document.getElementById('avg-job-duration').textContent = (data.performance_stats?.avg_job_duration || 0).toFixed(2);
-                document.getElementById('success-rate').textContent = (data.performance_stats?.success_rate || 0).toFixed(1) + '%';
-
-                // Update Data Summaries
-                document.getElementById('total-link-profiles').textContent = data.data_summaries?.total_link_profiles || 0;
-                document.getElementById('total-backlinks').textContent = data.data_summaries?.total_backlinks_stored || 0;
-                document.getElementById('total-domains-analyzed').textContent = data.data_summaries?.total_domains_analyzed || 0;
-
-                // Update System Health
-                document.getElementById('cpu-usage').textContent = (data.system?.cpu_percent || 0).toFixed(1);
-                document.getElementById('memory-usage').textContent = (data.system?.memory?.percent || 0).toFixed(1);
-                document.getElementById('disk-usage').textContent = (data.system?.disk?.percent || 0).toFixed(1);
-                document.getElementById('uptime').textContent = formatUptime(data.system?.uptime || 0);
-
-                // Update API & DB Health using public health endpoint
-                document.getElementById('api-health-status').innerHTML = `<span class="status-indicator status-${healthData.status === 'healthy' ? 'healthy' : 'unhealthy'}"></span>${healthData.status || 'Unknown'}`;
-                document.getElementById('redis-health-status').innerHTML = `<span class="status-indicator status-${healthData.dependencies?.redis?.status === 'connected' ? 'healthy' : 'disconnected'}"></span>${healthData.dependencies?.redis?.status || 'Unknown'}`;
-                document.getElementById('db-health-status').innerHTML = `<span class="status-indicator status-${healthData.dependencies?.postgresql?.status === 'connected' ? 'healthy' : 'disconnected'}"></span>${healthData.dependencies?.postgresql?.status || 'Unknown'}`;
-                const clickhouseStatus = healthData.dependencies?.clickhouse_loader?.status || 'unknown';
-                document.getElementById('clickhouse-health-status').innerHTML = `<span class="status-indicator status-${clickhouseStatus === 'connected' ? 'healthy' : 'disconnected'}"></span>${clickhouseStatus}`;
-
-
-                // Update Job History Table (now using public endpoint)
-                const jobHistoryTableBody = document.getElementById('job-history-table-body');
-                jobHistoryTableBody.innerHTML = '';
-                // Fetch recent jobs for history
-                const recentJobs = await callApi('/public/jobs'); // Use public endpoint
-                if (recentJobs && Array.isArray(recentJobs)) {
-                    // Take only the first few for "Recent Job History"
-                    const displayJobs = recentJobs.slice(0, 10); 
-                    displayJobs.forEach(job => {
-                        const row = jobHistoryTableBody.insertRow();
-                        const jobId = job.id || 'N/A';
-                        const targetUrl = job.target_url || 'N/A';
-                        const status = job.status || 'N/A';
-                        const urlsCrawled = job.urls_crawled || 0;
-                        const linksFound = job.links_found || 0;
-                        const durationSeconds = job.duration_seconds !== undefined && job.duration_seconds !== null ? job.duration_seconds.toFixed(2) : 'N/A';
-                        const completedAt = job.completed_date ? new Date(job.completed_date).toLocaleString() : 'N/A'; // Use completed_date
-
-                        row.innerHTML = `
-                            <td>${jobId.substring(0, 8)}...</td>
-                            <td class="job-status-${status.toLowerCase()}">${status}</td>
-                            <td>${urlsCrawled}</td>
-                            <td>${linksFound}</td>
-                            <td>${durationSeconds}</td>
-                            <td>${completedAt}</td>
-                        `;
-                    });
-                } else {
-                    jobHistoryTableBody.innerHTML = '<tr><td colspan="6" class="text-center">No job history found or data is malformed.</td></tr>';
+                // Update system resources
+                if (stats.system) {
+                    updateProgressBar('cpuProgress', 'cpuText', stats.system.cpu_percent, '%');
+                    updateProgressBar('memoryProgress', 'memoryText', stats.system.memory?.percent, '%');
+                    updateProgressBar('diskProgress', 'diskText', stats.system.disk?.percent, '%');
                 }
 
-
-                // Update All Jobs Table (Jobs Tab) - now using public endpoint
-                loadJobsTable(); // Call without arguments to fetch from public endpoint
-
-                // Update Satellites Table (Satellites Tab)
-                loadSatellitesTable(satellitesData.satellites); // Use data from public/satellites
-
-                // Update global pause status - now using public endpoint
-                checkGlobalPauseStatus();
-
-                document.getElementById('last-updated').textContent = `Last Updated: ${new Date().toLocaleTimeString()}`;
+                // Update satellites
+                updateSatellites(stats.queue_metrics?.satellites || []);
 
             } catch (error) {
                 console.error('Error loading stats:', error);
-                showAlert(`Error loading stats: ${error.message}`, 'danger');
             }
         }
 
-        function formatUptime(seconds) {
-            if (typeof seconds !== 'number' || isNaN(seconds)) return 'N/A';
-            const days = Math.floor(seconds / (3600 * 24));
-            seconds %= (3600 * 24);
-            const hours = Math.floor(seconds / 3600);
-            seconds %= 3600;
-            const minutes = Math.floor(seconds / 60);
-            const secs = Math.floor(seconds % 60);
-            return `${days}d ${hours}h ${minutes}m ${secs}s`;
-        }
-
-        async function loadJobsTable() {
-            const jobStatusFilter = document.getElementById('jobStatusFilter').value;
-            let fetchedJobs = [];
-
-            try {
-                // Use public endpoint for all jobs
-                fetchedJobs = await callApi(`/public/jobs?status_filter=${jobStatusFilter}`);
-            } catch (error) {
-                console.error('Error fetching all jobs:', error);
-                fetchedJobs = []; // Fallback to empty array on error
-            }
-
-            const allJobsTableBody = document.getElementById('all-jobs-table-body');
-            allJobsTableBody.innerHTML = '';
-            if (fetchedJobs && fetchedJobs.length > 0) {
-                fetchedJobs.forEach(job => {
-                    const row = allJobsTableBody.insertRow();
-                    const jobId = job.id || 'N/A';
-                    const targetUrl = job.target_url || 'N/A';
-                    const jobType = job.job_type || 'N/A';
-                    const status = job.status || 'N/A';
-                    const progressPercentage = job.progress_percentage !== undefined && job.progress_percentage !== null ? job.progress_percentage.toFixed(1) : 'N/A';
-                    const urlsCrawled = job.urls_crawled || 0;
-                    const linksFound = job.links_found || 0;
-                    const errorsCount = job.errors_count || 0;
-                    const createdDate = job.created_date ? new Date(job.created_date).toLocaleString() : 'N/A';
-                    const isDisabled = job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED';
-
-                    row.innerHTML = `
-                        <td><a href="#" onclick="showJobDetails('${escapeForTemplateLiteralAttribute(jobId)}')">${jobId.substring(0, 8)}...</a></td>
-                        <td>${targetUrl.substring(0, 40)}...</td>
-                        <td>${jobType}</td>
-                        <td class="job-status-${status.toLowerCase()}">${status}</td>
-                        <td>${progressPercentage}</td>
-                        <td>${urlsCrawled}</td>
-                        <td>${linksFound}</td>
-                        <td>${errorsCount}</td>
-                        <td>${createdDate}</td>
-                        <td>
-                            <button class="btn btn-sm btn-danger" onclick="cancelJob('${escapeForTemplateLiteralAttribute(jobId)}')" ${isDisabled ? 'disabled' : ''}><i class="fas fa-times"></i> Cancel</button>
-                        </td>
-                    `;
-                });
-            } else {
-                allJobsTableBody.innerHTML = '<tr><td colspan="10" class="text-center">No jobs found.</td></tr>';
+        function updateProgressBar(progressId, textId, value, suffix = '') {
+            const progressBar = document.getElementById(progressId);
+            const textElement = document.getElementById(textId);
+            
+            if (value !== undefined && value !== null) {
+                progressBar.style.width = value + '%';
+                progressBar.className = 'progress-bar ' + getProgressBarClass(value);
+                textElement.textContent = value.toFixed(1) + suffix;
             }
         }
 
-        async function loadSatellitesTable(satellites = null) {
-            let fetchedSatellites = satellites;
-            if (!fetchedSatellites || !Array.isArray(fetchedSatellites)) { // Added check for array
-                try {
-                    // Use public endpoint for satellites
-                    const metrics = await callApi('/public/satellites');
-                    fetchedSatellites = metrics.satellites || []; // Ensure it's an array
-                } catch (error) {
-                    console.error('Error fetching satellites:', error);
-                    fetchedSatellites = []; // Fallback to empty array on error
-                }
-            }
-
-            const satellitesTableBody = document.getElementById('satellites-table-body');
-            satellitesTableBody.innerHTML = '';
-            if (fetchedSatellites && fetchedSatellites.length > 0) {
-                fetchedSatellites.forEach(sat => {
-                    const crawlerId = sat.crawler_id || 'N/A';
-                    const region = sat.region || 'N/A';
-                    const status = sat.status || 'N/A';
-                    const statusClass = `status-${status.toLowerCase()}`;
-                    const codeVersion = sat.code_version || 'N/A';
-                    const runningJobs = sat.running_jobs || 0;
-                    const totalJobsCompleted = sat.total_jobs_completed || 0;
-                    const totalErrorsEncountered = sat.total_errors_encountered || 0;
-                    const lastSeen = sat.last_seen ? new Date(sat.last_seen).toLocaleString() : 'N/A';
-                    const uptimeSeconds = sat.uptime_seconds || 0;
-                    const cpuUsage = sat.cpu_usage !== undefined && sat.cpu_usage !== null ? sat.cpu_usage.toFixed(1) : 'N/A';
-                    const memoryUsage = sat.memory_usage !== undefined && sat.memory_usage !== null ? sat.memory_usage.toFixed(1) : 'N/A';
-                    const isOutdated = sat.is_outdated ? '(Outdated)' : '';
-
-                    const row = satellitesTableBody.insertRow();
-                    row.innerHTML = `
-                        <td>${crawlerId}</td>
-                        <td>${region}</td>
-                        <td><span class="status-indicator ${statusClass}"></span>${status} ${isOutdated}</td>
-                        <td>${codeVersion}</td>
-                        <td>${runningJobs}</td>
-                        <td>${totalJobsCompleted}</td>
-                        <td>${totalErrorsEncountered}</td>
-                        <td>${lastSeen}</td>
-                        <td>${formatUptime(uptimeSeconds)}</td>
-                        <td>${cpuUsage}</td>
-                        <td>${memoryUsage}</td>
-                        <td>
-                            <button class="btn btn-sm btn-warning" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(crawlerId)}', 'PAUSE')"><i class="fas fa-pause"></i></button>
-                            <button class="btn btn-sm btn-success" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(crawlerId)}', 'RESUME')"><i class="fas fa-play"></i></button>
-                            <button class="btn btn-sm btn-danger" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(crawlerId)}', 'SHUTDOWN')"><i class="fas fa-power-off"></i></button>
-                            <button class="btn btn-sm btn-info" onclick="controlSingleSatellite('${escapeForTemplateLiteralAttribute(crawlerId)}', 'RESTART')"><i class="fas fa-sync-alt"></i></button>
-                        </td>
-                    `;
-                });
-            } else {
-                satellitesTableBody.innerHTML = '<tr><td colspan="12" class="text-center">No active satellites.</td></tr>';
-            }
+        function getProgressBarClass(value) {
+            if (value < 50) return 'bg-success';
+            if (value < 80) return 'bg-warning';
+            return 'bg-danger';
         }
 
-        async function checkGlobalPauseStatus() {
-            try {
-                // Use public endpoint for pause status
-                const response = await callApi('/public/jobs/paused');
-                const statusElement = document.getElementById('global-pause-status');
-                if (response.is_paused) {
-                    statusElement.className = 'badge bg-warning';
-                    statusElement.textContent = 'Job Processing PAUSED';
-                } else {
-                    statusElement.className = 'badge bg-success';
-                    statusElement.textContent = 'Job Processing ACTIVE';
-                }
-            } catch (error) {
-                console.error('Error checking global pause status:', error);
-                document.getElementById('global-pause-status').className = 'badge bg-danger';
-                document.getElementById('global-pause-status').textContent = 'Pause Status Unknown';
+        function updateSatellites(satellites) {
+            const container = document.getElementById('satelliteStatus');
+            
+            if (satellites.length === 0) {
+                container.innerHTML = '<div class="text-center text-muted">No active crawlers</div>';
+                return;
             }
+
+            const satelliteHTML = satellites.map(satellite => `
+                <div class="d-flex justify-content-between align-items-center mb-2 p-2 rounded" style="background: #f8f9fa;">
+                    <div>
+                        <strong>${satellite.crawler_id || 'Unknown'}</strong>
+                        <small class="text-muted d-block">${satellite.region || 'Unknown region'}</small>
+                    </div>
+                    <div class="text-end">
+                        <span class="satellite-status satellite-active">Active</span>
+                        <small class="text-muted d-block">Jobs: ${satellite.jobs_processed || 0}</small>
+                    </div>
+                </div>
+            `).join('');
+
+            container.innerHTML = satelliteHTML;
         }
 
-        async function submitJob(event) {
-            event.preventDefault();
-            const form = event.target;
-            const submitButton = form.querySelector('button[type="submit"]');
-            submitButton.disabled = true;
-            submitButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Submitting...';
-
-            const targetUrl = document.getElementById('targetUrl').value;
-            const initialSeedUrls = document.getElementById('initialSeedUrls').value.split(',').map(url => url.trim()).filter(url => url);
-            const jobType = document.getElementById('jobType').value;
-            const jobPriority = parseInt(document.getElementById('jobPriority').value);
-            const scheduledAtInput = document.getElementById('scheduledAt').value;
-            const cronSchedule = document.getElementById('cronSchedule').value.trim();
-            const crawlConfigText = document.getElementById('crawlConfig').value;
-
-            let config = {};
-            if (crawlConfigText) {
-                try {
-                    config = JSON.parse(crawlConfigText);
-                } catch (e) {
-                    showAlert('Invalid JSON in Crawl Config. Please correct it.', 'danger');
-                    submitButton.disabled = false;
-                    submitButton.innerHTML = '<i class="fas fa-paper-plane"></i> Submit Job';
-                    return;
-                }
-            }
-            config.job_type = jobType; // Ensure job_type is always set in config
-
-            const jobData = {
-                target_url: targetUrl,
-                initial_seed_urls: initialSeedUrls,
-                config: config,
-                priority: jobPriority,
-                scheduled_at: scheduledAtInput ? new Date(scheduledAtInput).toISOString() : null,
-                cron_schedule: cronSchedule || null
-            };
-
-            try {
-                // This endpoint is still protected, so it will fail if no auth
-                const response = await callApi('/api/queue/submit_crawl', 'POST', jobData);
-                showAlert(`Job submitted successfully! Job ID: ${response.job_id}`, 'success');
-                form.reset(); // Clear form
-                loadStats(); // Refresh dashboard
-            } catch (error) {
-                console.error('Error submitting job:', error);
-                showAlert(`Failed to submit job: ${error.message}`, 'danger');
-            } finally {
-                submitButton.disabled = false;
-                submitButton.innerHTML = '<i class="fas fa-paper-plane"></i> Submit Job';
-            }
+        function startDataRefresh() {
+            loadStats(); // Load immediately
+            refreshInterval = setInterval(loadStats, 10000); // Refresh every 10 seconds
         }
-
-        async function cancelJob(jobId) {
-            if (confirm(`Are you sure you want to cancel job ${jobId}?`)) {
-                try {
-                    // This endpoint is still protected, so it will fail if no auth
-                    await callApi(`/api/jobs/${jobId}/cancel`, 'POST');
-                    showAlert(`Job ${jobId} cancelled successfully.`, 'info');
-                    loadStats(); // Refresh dashboard
-                } catch (error) {
-                    console.error(`Error cancelling job ${jobId}:`, error);
-                    showAlert(`Failed to cancel job ${jobId}: ${error.message}`, 'danger');
-                }
-            }
-        }
-
-        async function controlAllSatellites(command) {
-            if (confirm(`Are you sure you want to ${command.toLowerCase()} ALL satellites?`)) {
-                try {
-                    // These endpoints are still protected, so they will fail if no auth
-                    await callApi(`/api/satellites/control/all/${command}`, 'POST');
-                    showAlert(`Command '${command}' sent to all satellites.`, 'info');
-                    loadStats(); // Refresh dashboard
-                } catch (error) {
-                    console.error(`Error sending command to all satellites:`, error);
-                    showAlert(`Failed to send command to all satellites: ${error.message}`, 'danger');
-                }
-            }
-        }
-
-        async function controlSingleSatellite(crawlerId, command) {
-            if (confirm(`Are you sure you want to ${command.toLowerCase()} satellite ${crawlerId}?`)) {
-                try {
-                    // These endpoints are still protected, so they will fail if no auth
-                    await callApi(`/api/satellites/control/${crawlerId}/${command}`, 'POST');
-                    showAlert(`Command '${command}' sent to satellite ${crawlerId}.`, 'info');
-                    loadStats(); // Refresh dashboard
-                } catch (error) {
-                    console.error(`Error sending command to satellite ${crawlerId}:`, error);
-                    showAlert(`Failed to send command to satellite ${crawlerId}: ${error.message}`, 'danger');
-                }
-            }
-        }
-
-        async function getDeadLetters() {
-            try {
-                // This endpoint is still protected, so it will fail if no auth
-                const response = await callApi('/debug/dead_letters');
-                document.getElementById('dead-letters-output').textContent = JSON.stringify(response.dead_letter_messages, null, 2);
-                showAlert('Dead letters loaded.', 'info');
-            } catch (error) {
-                console.error('Error getting dead letters:', error);
-                showAlert(`Failed to get dead letters: ${error.message}`, 'danger');
-            }
-        }
-
-        async function clearDeadLetters() {
-            if (confirm('Are you sure you want to clear ALL dead letter messages? This cannot be undone.')) {
-                try {
-                    // This endpoint is still protected, so it will fail if no auth
-                    const response = await callApi('/debug/clear_dead_letters', 'POST');
-                    showAlert(response.message, 'success');
-                    document.getElementById('dead-letters-output').textContent = 'Dead letter queue cleared.';
-                } catch (error) {
-                    console.error('Error clearing dead letters:', error);
-                    showAlert(`Failed to clear dead letters: ${error.message}`, 'danger');
-                }
-            }
-        }
-
-        async function reprocessDeadLetters() {
-            if (confirm('Are you sure you want to reprocess ALL dead letter messages? They will be moved back to the main queue.')) {
-                try {
-                    // This endpoint is still protected, so it will fail if no auth
-                    const response = await callApi('/debug/reprocess_dead_letters', 'POST');
-                    showAlert(response.message, 'success');
-                    document.getElementById('dead-letters-output').textContent = 'Dead letter messages reprocessed.';
-                    loadStats(); // Refresh dashboard to see re-queued jobs
-                } catch (error) {
-                    console.error('Error reprocessing dead letters:', error);
-                    showAlert(`Failed to reprocess dead letters: ${error.message}`, 'danger');
-                }
-            }
-        }
-
-        async function makeRawApiCall() {
-            const endpoint = document.getElementById('apiEndpoint').value;
-            const method = document.getElementById('apiMethod').value;
-            const payloadText = document.getElementById('apiPayload').value;
-            let payload = null;
-
-            if (payloadText) {
-                try {
-                    payload = JSON.parse(payloadText);
-                } catch (e) {
-                    showAlert('Invalid JSON in API Payload. Please correct it.', 'danger');
-                    return;
-                }
-            }
-
-            try {
-                // This endpoint might be protected or public depending on user input
-                const response = await callApi(endpoint, method, payload);
-                document.getElementById('apiResponse').textContent = JSON.stringify(response, null, 2);
-                showAlert('Raw API call successful.', 'success');
-            } catch (error) {
-                console.error('Error making raw API call:', error);
-                document.getElementById('apiResponse').textContent = `Error: ${error.message}`;
-                showAlert(`Raw API call failed: ${error.message}`, 'danger');
-            }
-        }
-
-        async function showJobDetails(jobId) {
-            try {
-                // This endpoint is still protected, so it will fail if no auth
-                const job = await callApi(`/api/jobs/${jobId}`);
-                document.getElementById('detail-job-id').textContent = job.id || 'N/A';
-                document.getElementById('detail-target-url').textContent = job.target_url || 'N/A';
-                document.getElementById('detail-job-type').textContent = job.job_type || 'N/A';
-                document.getElementById('detail-status').className = `job-status-${(job.status || 'N/A').toLowerCase()}`;
-                document.getElementById('detail-status').textContent = job.status || 'N/A';
-                document.getElementById('detail-progress').textContent = (job.progress_percentage !== undefined && job.progress_percentage !== null ? job.progress_percentage.toFixed(1) : 'N/A');
-                document.getElementById('detail-urls-crawled').textContent = job.urls_crawled || 0;
-                document.getElementById('detail-links-found').textContent = job.links_found || 0;
-                document.getElementById('detail-errors-count').textContent = job.errors_count || 0;
-                document.getElementById('detail-created-date').textContent = job.created_date ? new Date(job.created_date).toLocaleString() : 'N/A';
-                document.getElementById('detail-started-date').textContent = job.started_date ? new Date(job.started_date).toLocaleString() : 'N/A';
-                document.getElementById('detail-completed-date').textContent = job.completed_date ? new Date(job.completed_date).toLocaleString() : 'N/A';
-                
-                document.getElementById('detail-error-log').textContent = (job.error_log && job.error_log.length > 0) ? JSON.stringify(job.error_log, null, 2) : 'No errors.';
-                document.getElementById('detail-results-summary').textContent = job.results ? JSON.stringify(job.results, null, 2) : 'No results.';
-
-                const jobDetailsModal = new bootstrap.Modal(document.getElementById('jobDetailsModal'));
-                jobDetailsModal.show();
-            } catch (error) {
-                console.error(`Error fetching job details for ${jobId}:`, error);
-                showAlert(`Failed to load job details: ${error.message}`, 'danger');
-            }
-        }
-
-        function escapeForTemplateLiteralAttribute(str) {
-            // Escapes backticks and dollar signs for use within template literal attributes
-            return str.replace(/`/g, '\\`').replace(/\$/g, '\\$');
-        }
-
-        function confirmRestartAllServices() {
-            if (confirm("WARNING: This will restart the API, Coordinator, and Monitoring services. Are you sure you want to proceed?")) {
-                // This is a system-level command, not an API call.
-                // In a real production setup, you'd likely have a separate management API or script for this.
-                // For now, this is a placeholder for a manual action or a more privileged endpoint.
-                showAlert("Initiating service restart... This might take a moment.", "info");
-                // You would typically call a privileged endpoint here, e.g.:
-                // callApi('/admin/restart-all-services', 'POST');
-                // For this demo, it's a client-side confirmation only.
-            }
-        }
-
-
-        // Event Listeners
-        document.getElementById('submitJobForm').addEventListener('submit', submitJob);
-        document.getElementById('jobStatusFilter').addEventListener('change', () => loadJobsTable());
-
-        // Initial load and periodic refresh
-        document.addEventListener('DOMContentLoaded', () => {
-            loadStats();
-            setInterval(loadStats, 10000); // Refresh every 10 seconds
-        });
-
-        // Handle tab changes to refresh data
-        document.querySelectorAll('a[data-bs-toggle="tab"]').forEach(tabEl => {
-            tabEl.addEventListener('shown.bs.tab', event => {
-                const targetTabId = event.target.getAttribute('href');
-                if (targetTabId === '#jobs') {
-                    loadJobsTable();
-                } else if (targetTabId === '#satellites') {
-                    loadSatellitesTable();
-                }
-                // Other tabs are refreshed by loadStats() interval
-            });
-        });
-
-        // Initial tab activation (Bootstrap 5)
-        var firstTabEl = document.querySelector('.nav-link.active');
-        var firstTab = new bootstrap.Tab(firstTabEl);
-        firstTab.show();
-
     </script>
 </body>
 </html>
