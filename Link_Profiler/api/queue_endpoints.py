@@ -7,9 +7,10 @@ import asyncio
 
 import redis.asyncio as redis
 from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, status
 
 # Import core models
-from Link_Profiler.core.models import CrawlJob, CrawlStatus, CrawlConfig, serialize_model
+from Link_Profiler.core.models import CrawlJob, CrawlStatus, CrawlConfig, serialize_model, User
 
 # Import job coordinator
 from Link_Profiler.queue_system.job_coordinator import JobCoordinator
@@ -17,6 +18,7 @@ from Link_Profiler.config.config_loader import ConfigLoader # Import ConfigLoade
 from Link_Profiler.database.database import Database # Import Database
 from Link_Profiler.services.alert_service import AlertService # Import AlertService
 from Link_Profiler.utils.connection_manager import ConnectionManager # Import ConnectionManager
+from Link_Profiler.api.dependencies import get_current_user # Import for authentication
 
 
 logger = logging.getLogger(__name__)
@@ -133,3 +135,40 @@ async def submit_crawl_to_queue(request: QueueCrawlRequest) -> Dict[str, str]:
     await job_coordinator.submit_crawl_job(job)
     logger.info(f"Job {job_id} ({job.job_type}) submitted to queue for {request.target_url}.")
     return {"job_id": job_id, "status": "Job submitted to queue."}
+
+
+# --- FastAPI Router for Queue Endpoints ---
+queue_router = APIRouter(prefix="/api/queue", tags=["Queue Management"])
+
+@queue_router.post("/submit_crawl", status_code=status.HTTP_202_ACCEPTED)
+async def submit_crawl_job_endpoint(request: QueueCrawlRequest, current_user: User = Depends(get_current_user)):
+    """
+    Submits a new crawl job to the queue. Requires authentication.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required to submit jobs.")
+    
+    logger.info(f"Admin user {current_user.username} submitting new crawl job for {request.target_url}.")
+    try:
+        response = await submit_crawl_to_queue(request)
+        return response
+    except Exception as e:
+        logger.error(f"Error submitting crawl job: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to submit crawl job: {e}")
+
+@queue_router.get("/stats")
+async def get_queue_stats_endpoint(current_user: User = Depends(get_current_user)):
+    """
+    Retrieves statistics about the job queues. Requires authentication.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required to view queue stats.")
+    
+    logger.info(f"Admin user {current_user.username} requesting queue stats.")
+    try:
+        coordinator = await get_coordinator()
+        stats = await coordinator.get_queue_stats()
+        return stats
+    except Exception as e:
+        logger.error(f"Error retrieving queue stats: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve queue stats: {e}")

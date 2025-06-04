@@ -177,3 +177,44 @@ body {
     -webkit-text-fill-color: transparent;
     background-clip: text;
 }
+
+/* Specific styles for Crawler Management tab */
+.table-responsive {
+    max-height: 600px; /* Adjust as needed */
+    overflow-y: auto;
+}
+
+.table thead th {
+    position: sticky;
+    top: 0;
+    background-color: #f8f9fa;
+    z-index: 1;
+}
+
+.job-status-PENDING { color: #ffc107; font-weight: bold; }
+.job-status-IN_PROGRESS { color: #0d6efd; font-weight: bold; }
+.job-status-COMPLETED { color: #198754; font-weight: bold; }
+.job-status-FAILED { color: #dc3545; font-weight: bold; }
+.job-status-CANCELLED { color: #6c757d; font-weight: bold; }
+
+.modal-pre {
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    background-color: #e9ecef;
+    padding: 10px;
+    border-radius: 5px;
+    font-size: 0.85em;
+}
+
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+    border-width: 0.15em;
+}
+
+.badge {
+    font-size: 0.75em;
+    padding: 0.4em 0.6em;
+    border-radius: 0.25rem;
+}

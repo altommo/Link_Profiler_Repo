@@ -25,6 +25,12 @@ document.addEventListener('DOMContentLoaded', function() {
             showSection(sectionId);
         });
     });
+
+    // Event listener for job status filter
+    document.getElementById('jobStatusFilter').addEventListener('change', loadJobsTable);
+
+    // Event listener for submit job form
+    document.getElementById('submitJobForm').addEventListener('submit', submitJob);
 });
 
 // Login form submission
@@ -180,8 +186,9 @@ async function loadStats() {
             updateProgressBar('diskProgress', 'diskText', stats.system.disk?.percent, '%');
         }
 
-        // Update satellites
-        updateSatellites(stats.queue_metrics?.satellites || []);
+        // Update satellites (for Dashboard Overview)
+        // The detailed satellite table is now handled by loadSatellitesTable in Crawler Management
+        // updateSatellites(stats.queue_metrics?.satellites || []);
 
     } catch (error) {
         console.error('Error loading stats:', error);
@@ -206,39 +213,296 @@ function getProgressBarClass(value) {
     return 'bg-danger';
 }
 
-function updateSatellites(satellites) {
-    const container = document.getElementById('satelliteStatus');
-    
-    if (satellites.length === 0) {
-        container.innerHTML = '<div class="text-center text-muted">No active crawlers</div>';
-        return;
+// --- Crawler Management Tab Functions ---
+
+async function loadJobsTable() {
+    const statusFilter = document.getElementById('jobStatusFilter').value;
+    const tableBody = document.getElementById('all-jobs-table-body');
+    tableBody.innerHTML = '<tr><td colspan="9" class="text-center"><i class="fas fa-spinner fa-spin me-2"></i>Loading jobs...</td></tr>';
+
+    try {
+        const jobs = await callAuthenticatedAPI(`/api/jobs/all?status_filter=${statusFilter}`);
+        if (!jobs) {
+            tableBody.innerHTML = '<tr><td colspan="9" class="text-center">Failed to load jobs.</td></tr>';
+            return;
+        }
+
+        if (jobs.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="9" class="text-center">No jobs found.</td></tr>';
+            return;
+        }
+
+        tableBody.innerHTML = ''; // Clear loading message
+        jobs.forEach(job => {
+            const row = tableBody.insertRow();
+            const jobIdShort = job.id.substring(0, 8) + '...';
+            const targetUrlShort = job.target_url.length > 40 ? job.target_url.substring(0, 37) + '...' : job.target_url;
+            const createdDate = job.created_date ? new Date(job.created_date).toLocaleString() : 'N/A';
+            const isDisabled = job.status === 'COMPLETED' || job.status === 'FAILED' || job.status === 'CANCELLED';
+
+            row.innerHTML = `
+                <td><a href="#" onclick="showJobDetails('${job.id}')">${jobIdShort}</a></td>
+                <td>${targetUrlShort}</td>
+                <td>${job.job_type}</td>
+                <td class="job-status-${job.status.toLowerCase()}">${job.status}</td>
+                <td>${job.progress_percentage !== undefined ? job.progress_percentage.toFixed(1) : 'N/A'}</td>
+                <td>${job.urls_crawled || 0}</td>
+                <td>${job.errors_count || 0}</td>
+                <td>${createdDate}</td>
+                <td>
+                    <button class="btn btn-sm btn-danger" onclick="cancelJob('${job.id}')" ${isDisabled ? 'disabled' : ''}>
+                        <i class="fas fa-times"></i> Cancel
+                    </button>
+                </td>
+            `;
+        });
+    } catch (error) {
+        console.error('Error loading jobs:', error);
+        tableBody.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Error loading jobs. Please check console.</td></tr>';
     }
-
-    const satelliteHTML = satellites.map(satellite => {
-        const statusClass = `satellite-status-indicator satellite-status-${satellite.status || 'unknown'}`;
-        return `
-            <div class="d-flex justify-content-between align-items-center mb-2 p-2 rounded" style="background: #f8f9fa;">
-                <div>
-                    <strong>${satellite.crawler_id || 'Unknown'}</strong>
-                    <small class="text-muted d-block">${satellite.region || 'Unknown region'}</small>
-                </div>
-                <div class="text-end">
-                    <span class="${statusClass}"></span>${(satellite.status || 'Unknown').toUpperCase()}
-                    <small class="text-muted d-block">Jobs: ${satellite.jobs_processed || 0}</small>
-                </div>
-            </div>
-        `;
-    }).join('');
-
-    container.innerHTML = satelliteHTML;
 }
 
+async function showJobDetails(jobId) {
+    const jobDetailsModal = new bootstrap.Modal(document.getElementById('jobDetailsModal'));
+    const modalBody = document.getElementById('jobDetailsModal').querySelector('.modal-body');
+    modalBody.innerHTML = '<div class="text-center"><i class="fas fa-spinner fa-spin fa-2x"></i><p>Loading job details...</p></div>';
+
+    try {
+        const job = await callAuthenticatedAPI(`/api/jobs/${jobId}`);
+        if (!job) {
+            modalBody.innerHTML = '<div class="text-center text-danger">Failed to load job details.</div>';
+            return;
+        }
+
+        document.getElementById('detail-job-id').textContent = job.id || 'N/A';
+        document.getElementById('detail-target-url').textContent = job.target_url || 'N/A';
+        document.getElementById('detail-job-type').textContent = job.job_type || 'N/A';
+        document.getElementById('detail-status').className = `job-status-${(job.status || 'N/A').toLowerCase()}`;
+        document.getElementById('detail-status').textContent = job.status || 'N/A';
+        document.getElementById('detail-progress').textContent = job.progress_percentage !== undefined ? job.progress_percentage.toFixed(1) : 'N/A';
+        document.getElementById('detail-urls-crawled').textContent = job.urls_crawled || 0;
+        document.getElementById('detail-links-found').textContent = job.links_found || 0;
+        document.getElementById('detail-errors-count').textContent = job.errors_count || 0;
+        document.getElementById('detail-created-date').textContent = job.created_date ? new Date(job.created_date).toLocaleString() : 'N/A';
+        document.getElementById('detail-started-date').textContent = job.started_date ? new Date(job.started_date).toLocaleString() : 'N/A';
+        document.getElementById('detail-completed-date').textContent = job.completed_date ? new Date(job.completed_date).toLocaleString() : 'N/A';
+        
+        document.getElementById('detail-error-log').textContent = (job.error_log && job.error_log.length > 0) ? JSON.stringify(job.error_log, null, 2) : 'No errors.';
+        document.getElementById('detail-results-summary').textContent = job.results ? JSON.stringify(job.results, null, 2) : 'No results.';
+
+        jobDetailsModal.show();
+    } catch (error) {
+        console.error(`Error fetching job details for ${jobId}:`, error);
+        modalBody.innerHTML = `<div class="text-center text-danger">Error loading job details: ${error.message}</div>`;
+    }
+}
+
+async function cancelJob(jobId) {
+    if (confirm(`Are you sure you want to cancel job ${jobId}?`)) {
+        try {
+            const response = await callAuthenticatedAPI(`/api/jobs/${jobId}/cancel`, 'POST');
+            if (response) {
+                alert(`Job ${jobId} cancelled successfully.`);
+                loadJobsTable(); // Refresh jobs table
+            } else {
+                alert(`Failed to cancel job ${jobId}.`);
+            }
+        } catch (error) {
+            console.error(`Error cancelling job ${jobId}:`, error);
+            alert(`Error cancelling job ${jobId}: ${error.message}`);
+        }
+    }
+}
+
+async function submitJob(event) {
+    event.preventDefault();
+    const form = event.target;
+    const submitButton = form.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    submitButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Submitting...';
+
+    const targetUrl = document.getElementById('targetUrl').value;
+    const initialSeedUrls = document.getElementById('initialSeedUrls').value.split(',').map(url => url.trim()).filter(url => url);
+    const jobType = document.getElementById('jobType').value;
+    const jobPriority = parseInt(document.getElementById('jobPriority').value);
+    const scheduledAtInput = document.getElementById('scheduledAt').value;
+    const cronSchedule = document.getElementById('cronSchedule').value.trim();
+    const crawlConfigText = document.getElementById('crawlConfig').value;
+
+    let config = {};
+    if (crawlConfigText) {
+        try {
+            config = JSON.parse(crawlConfigText);
+        } catch (e) {
+            alert('Invalid JSON in Crawl Config. Please correct it.');
+            submitButton.disabled = false;
+            submitButton.innerHTML = '<i class="fas fa-paper-plane"></i> Submit Job';
+            return;
+        }
+    }
+    config.job_type = jobType; // Ensure job_type is always set in config
+
+    const jobData = {
+        target_url: targetUrl,
+        initial_seed_urls: initialSeedUrls,
+        config: config,
+        priority: jobPriority,
+        scheduled_at: scheduledAtInput ? new Date(scheduledAtInput).toISOString() : null,
+        cron_schedule: cronSchedule || null
+    };
+
+    try {
+        const response = await callAuthenticatedAPI('/api/queue/submit_crawl', 'POST', jobData);
+        if (response && response.job_id) {
+            alert(`Job submitted successfully! Job ID: ${response.job_id}`);
+            form.reset(); // Clear form
+            bootstrap.Modal.getInstance(document.getElementById('submitJobModal')).hide(); // Close modal
+            loadJobsTable(); // Refresh jobs table
+        } else {
+            alert(`Failed to submit job: ${response?.detail || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error submitting job:', error);
+        alert(`Error submitting job: ${error.message}`);
+    } finally {
+        submitButton.disabled = false;
+        submitButton.innerHTML = '<i class="fas fa-paper-plane"></i> Submit Job';
+    }
+}
+
+async function loadSatellitesTable() {
+    const tableBody = document.getElementById('satellites-table-body');
+    tableBody.innerHTML = '<tr><td colspan="10" class="text-center"><i class="fas fa-spinner fa-spin me-2"></i>Loading satellites...</td></tr>';
+
+    try {
+        const satellitesData = await callAuthenticatedAPI('/api/monitoring/satellites'); // Assuming this endpoint exists and is protected
+        if (!satellitesData || !satellitesData.satellites) {
+            tableBody.innerHTML = '<tr><td colspan="10" class="text-center">Failed to load satellites.</td></tr>';
+            return;
+        }
+
+        const satellites = satellitesData.satellites;
+        if (satellites.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="10" class="text-center">No active satellites.</td></tr>';
+            return;
+        }
+
+        tableBody.innerHTML = ''; // Clear loading message
+        satellites.forEach(sat => {
+            const row = tableBody.insertRow();
+            const statusClass = `satellite-status-indicator satellite-status-${sat.status || 'unknown'}`;
+            const lastSeen = sat.last_seen ? new Date(sat.last_seen).toLocaleString() : 'N/A';
+            const uptime = formatUptime(sat.uptime_seconds || 0);
+
+            row.innerHTML = `
+                <td>${sat.crawler_id || 'N/A'}</td>
+                <td>${sat.region || 'N/A'}</td>
+                <td><span class="${statusClass}"></span>${(sat.status || 'Unknown').toUpperCase()}</td>
+                <td>${sat.code_version || 'N/A'}</td>
+                <td>${sat.running_jobs || 0}</td>
+                <td>${lastSeen}</td>
+                <td>${uptime}</td>
+                <td>${sat.cpu_usage !== undefined ? sat.cpu_usage.toFixed(1) : 'N/A'}</td>
+                <td>${sat.memory_usage !== undefined ? sat.memory_usage.toFixed(1) : 'N/A'}</td>
+                <td>
+                    <button class="btn btn-sm btn-warning me-1" onclick="controlSingleSatellite('${sat.crawler_id}', 'PAUSE')"><i class="fas fa-pause"></i></button>
+                    <button class="btn btn-sm btn-success me-1" onclick="controlSingleSatellite('${sat.crawler_id}', 'RESUME')"><i class="fas fa-play"></i></button>
+                    <button class="btn btn-sm btn-danger" onclick="controlSingleSatellite('${sat.crawler_id}', 'SHUTDOWN')"><i class="fas fa-power-off"></i></button>
+                </td>
+            `;
+        });
+    } catch (error) {
+        console.error('Error loading satellites:', error);
+        tableBody.innerHTML = '<tr><td colspan="10" class="text-center text-danger">Error loading satellites. Please check console.</td></tr>';
+    }
+}
+
+async function checkGlobalPauseStatus() {
+    const statusElement = document.getElementById('global-pause-status');
+    try {
+        const response = await callAuthenticatedAPI('/api/jobs/is_paused'); // Assuming this endpoint exists and is protected
+        if (response && response.is_paused !== undefined) {
+            if (response.is_paused) {
+                statusElement.className = 'badge bg-warning';
+                statusElement.textContent = 'Job Processing PAUSED';
+            } else {
+                statusElement.className = 'badge bg-success';
+                statusElement.textContent = 'Job Processing ACTIVE';
+            }
+        } else {
+            statusElement.className = 'badge bg-secondary';
+            statusElement.textContent = 'Pause Status Unknown';
+        }
+    } catch (error) {
+        console.error('Error checking global pause status:', error);
+        statusElement.className = 'badge bg-danger';
+        statusElement.textContent = 'Pause Status Error';
+    }
+}
+
+async function controlAllSatellites(command) {
+    if (confirm(`Are you sure you want to ${command.toLowerCase()} ALL satellites?`)) {
+        try {
+            const response = await callAuthenticatedAPI(`/api/satellites/control/all/${command}`, 'POST');
+            if (response && response.message) {
+                alert(response.message);
+                loadSatellitesTable(); // Refresh satellites table
+                checkGlobalPauseStatus(); // Refresh pause status
+            } else {
+                alert(`Failed to send command to all satellites.`);
+            }
+        } catch (error) {
+            console.error(`Error sending command to all satellites:`, error);
+            alert(`Error sending command to all satellites: ${error.message}`);
+        }
+    }
+}
+
+async function controlSingleSatellite(crawlerId, command) {
+    if (confirm(`Are you sure you want to ${command.toLowerCase()} satellite ${crawlerId}?`)) {
+        try {
+            const response = await callAuthenticatedAPI(`/api/satellites/control/${crawlerId}/${command}`, 'POST');
+            if (response && response.message) {
+                alert(response.message);
+                loadSatellitesTable(); // Refresh satellites table
+            } else {
+                alert(`Failed to send command to satellite ${crawlerId}.`);
+            }
+        } catch (error) {
+            console.error(`Error sending command to satellite ${crawlerId}:`, error);
+            alert(`Error sending command to satellite ${crawlerId}: ${error.message}`);
+        }
+    }
+}
+
+function formatUptime(seconds) {
+    if (typeof seconds !== 'number' || isNaN(seconds)) return 'N/A';
+    const days = Math.floor(seconds / (3600 * 24));
+    seconds %= (3600 * 24);
+    const hours = Math.floor(seconds / 3600);
+    seconds %= 3600;
+    const minutes = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${days}d ${hours}h ${minutes}m ${secs}s`;
+}
+
+// --- General Dashboard Functions ---
+
 function startDataRefresh() {
-    loadStats(); // Load immediately
+    loadStats(); // Load immediately for overview
+    loadJobsTable(); // Load jobs for crawler management
+    loadSatellitesTable(); // Load satellites for crawler management
+    checkGlobalPauseStatus(); // Check global pause status
+
     if (refreshInterval) {
         clearInterval(refreshInterval); // Clear any existing interval
     }
-    refreshInterval = setInterval(loadStats, 10000); // Refresh every 10 seconds
+    refreshInterval = setInterval(() => {
+        loadStats();
+        loadJobsTable();
+        loadSatellitesTable();
+        checkGlobalPauseStatus();
+    }, 10000); // Refresh all data every 10 seconds
 }
 
 function showSection(sectionId) {
@@ -258,4 +522,11 @@ function showSection(sectionId) {
         link.classList.remove('active');
     });
     document.querySelector(`.sidebar .nav-link[data-section="${sectionId}"]`).classList.add('active');
+
+    // Special handling for Crawler Management tab to load its tables
+    if (sectionId === 'crawler-management') {
+        loadJobsTable();
+        loadSatellitesTable();
+        checkGlobalPauseStatus();
+    }
 }

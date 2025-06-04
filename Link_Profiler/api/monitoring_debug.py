@@ -72,6 +72,10 @@ except ImportError:
                 "satellite_crawlers": {},
                 "timestamp": datetime.now().isoformat()
             }
+        async def control_satellite(self, crawler_id: str, command: str):
+            return {"message": f"Dummy: Command {command} sent to {crawler_id}"}
+        async def control_all_satellites(self, command: str):
+            return {"message": f"Dummy: Command {command} sent to all satellites"}
     async def get_coordinator():
         return DummyCoordinator()
 
@@ -476,6 +480,101 @@ async def is_jobs_paused_endpoint(current_user: Annotated[User, Depends(get_curr
     except Exception as e:
         logger.error(f"API: Error checking if jobs are paused: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to check pause status: {e}")
+
+@monitoring_debug_router.post("/api/jobs/{job_id}/cancel")
+async def cancel_job_api(job_id: str, current_user: Annotated[User, Depends(get_current_user)]):
+    """
+    Cancels a specific crawl job.
+    """
+    verify_admin_access(current_user)
+    logger.info(f"API: Received request to cancel job {job_id} by admin: {current_user.username}.")
+    try:
+        coordinator = await get_coordinator()
+        success = await coordinator.cancel_job(job_id)
+        if success:
+            return {"message": f"Job {job_id} cancelled successfully."}
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found or could not be cancelled.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling job {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to cancel job {job_id}: {e}")
+
+@monitoring_debug_router.post("/api/jobs/pause_all")
+async def pause_all_jobs_api(current_user: Annotated[User, Depends(get_current_user)]):
+    """
+    Pauses all new job processing.
+    """
+    verify_admin_access(current_user)
+    logger.info(f"API: Received request to pause all jobs by admin: {current_user.username}.")
+    try:
+        coordinator = await get_coordinator()
+        await coordinator.pause_job_processing()
+        return {"message": "All new job processing paused."}
+    except Exception as e:
+        logger.error(f"Error pausing all jobs: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to pause all jobs: {e}")
+
+@monitoring_debug_router.post("/api/jobs/resume_all")
+async def resume_all_jobs_api(current_user: Annotated[User, Depends(get_current_user)]):
+    """
+    Resumes all job processing.
+    """
+    verify_admin_access(current_user)
+    logger.info(f"API: Received request to resume all jobs by admin: {current_user.username}.")
+    try:
+        coordinator = await get_coordinator()
+        await coordinator.resume_job_processing()
+        return {"message": "All job processing resumed."}
+    except Exception as e:
+        logger.error(f"Error resuming all jobs: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to resume all jobs: {e}")
+
+@monitoring_debug_router.get("/api/monitoring/satellites")
+async def get_monitoring_satellites(current_user: Annotated[User, Depends(get_current_user)]):
+    """
+    Retrieves detailed health information for all satellite crawlers.
+    Requires admin authentication.
+    """
+    verify_admin_access(current_user)
+    logger.info(f"API: Received request for detailed satellite health by admin: {current_user.username}.")
+    return await _get_satellites_data_internal()
+
+@monitoring_debug_router.post("/api/satellites/control/{crawler_id}/{command}")
+async def control_single_satellite_api(crawler_id: str, command: str, current_user: Annotated[User, Depends(get_current_user)]):
+    """
+    Sends a control command to a specific satellite crawler.
+    Commands: PAUSE, RESUME, SHUTDOWN, RESTART.
+    """
+    verify_admin_access(current_user)
+    logger.info(f"API: Received command '{command}' for satellite '{crawler_id}' by admin: {current_user.username}.")
+    try:
+        coordinator = await get_coordinator()
+        response = await coordinator.control_satellite(crawler_id, command)
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error controlling satellite {crawler_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to control satellite {crawler_id}: {e}")
+
+@monitoring_debug_router.post("/api/satellites/control/all/{command}")
+async def control_all_satellites_api(command: str, current_user: Annotated[User, Depends(get_current_user)]):
+    """
+    Sends a control command to all active satellite crawlers.
+    Commands: PAUSE, RESUME, SHUTDOWN, RESTART.
+    """
+    verify_admin_access(current_user)
+    logger.info(f"API: Received command '{command}' for all satellites by admin: {current_user.username}.")
+    try:
+        coordinator = await get_coordinator()
+        response = await coordinator.control_all_satellites(command)
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error controlling all satellites: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to control all satellites: {e}")
 
 
 @monitoring_debug_router.get("/public/health")
