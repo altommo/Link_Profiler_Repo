@@ -70,9 +70,8 @@ crawler:
   max_depth: 3
   max_pages: 1000
   delay_seconds: 1.0
-  timeout_seconds: 30
-  user_agent: "LinkProfilerBot/1.0 (+http://linkprofiler.com/bot.html)"
-  respect_robots_txt: true
+  user_agent: "LinkProfilerBot/1.0 (+http://linkprofiler.com/bot.html)" # Default user agent
+  respect_robots_txt: true # Default to true, can be overridden by job config
   follow_redirects: true
   extract_images: true
   extract_pdfs: false
@@ -82,9 +81,11 @@ crawler:
   
 # Anti-detection & Quality Assurance settings
 anti_detection:
-  user_agent_rotation: false
-  request_header_randomization: false
-  human_like_delays: false
+  user_agent_rotation: true # Enable user agent rotation
+  consistent_ua_per_domain: true # Use same UA per domain vs random each request
+  request_header_randomization: true # Enable randomizing other request headers
+  human_like_delays: true # Enable human-like random delays
+  random_delay_range: [0.5, 2.0] # Range for random delays in seconds
   stealth_mode: true # Applies to Playwright
   browser_fingerprint_randomization: false # Applies to Playwright
   ml_rate_optimization: false # Placeholder for future ML-driven rate limiting

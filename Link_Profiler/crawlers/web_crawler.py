@@ -220,13 +220,32 @@ class WebCrawler:
         )
         
         headers = self.config.custom_headers.copy() if self.config.custom_headers else {}
-        if self.anti_detection_config.get("request_header_randomization", False): # Use self.anti_detection_config
-            random_headers = user_agent_manager.get_random_headers()
-            headers.update(random_headers)
-        elif self.config.user_agent_rotation:
-            headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+        
+        # User Agent Rotation Logic
+        if self.anti_detection_config.get("user_agent_rotation", False):
+            if self.anti_detection_config.get("consistent_ua_per_domain", False):
+                # This logic needs to be per-request in crawl_url, not here.
+                # For __aenter__, we just set a default random one.
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+            else:
+                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
         else:
             headers['User-Agent'] = self.config.user_agent
+
+        if self.anti_detection_config.get("request_header_randomization", False):
+            random_headers = user_agent_manager.get_random_headers()
+            # Only update specific headers that are randomized, not overwrite all
+            headers['Accept'] = random_headers.get('Accept', headers.get('Accept'))
+            headers['Accept-Language'] = random_headers.get('Accept-Language', headers.get('Accept-Language'))
+            headers['Accept-Encoding'] = random_headers.get('Accept-Encoding', headers.get('Accept-Encoding'))
+            headers['DNT'] = random_headers.get('DNT', headers.get('DNT'))
+            headers['Connection'] = random_headers.get('Connection', headers.get('Connection'))
+            headers['Upgrade-Insecure-Requests'] = random_headers.get('Upgrade-Insecure-Requests', headers.get('Upgrade-Insecure-Requests'))
+            headers['Sec-Fetch-Dest'] = random_headers.get('Sec-Fetch-Dest', headers.get('Sec-Fetch-Dest'))
+            headers['Sec-Fetch-Mode'] = random_headers.get('Sec-Fetch-Mode', headers.get('Sec-Fetch-Mode'))
+            headers['Sec-Fetch-Site'] = random_headers.get('Sec-Fetch-Site', headers.get('Sec-Fetch-Site'))
+            headers['Sec-Fetch-User'] = random_headers.get('Sec-Fetch-User', headers.get('Sec-Fetch-User'))
+
 
         self.session = aiohttp.ClientSession(
             connector=connector,
@@ -274,8 +293,13 @@ class WebCrawler:
         
         await self.rate_limiter.wait_if_needed(domain, last_crawl_result)
         
-        if self.anti_detection_config.get("human_like_delays", False): # Use self.anti_detection_config
+        # Random delays
+        if self.anti_detection_config.get("human_like_delays", False) and self.anti_detection_config.get("random_delay_range"):
+            delay = random.uniform(*self.anti_detection_config["random_delay_range"])
+            await asyncio.sleep(delay)
+        elif self.anti_detection_config.get("human_like_delays", False): # Fallback if range not specified
             await asyncio.sleep(random.uniform(0.1, 0.5))
+
 
         current_proxy = None
         if self.use_proxies:
@@ -297,11 +321,23 @@ class WebCrawler:
         content_type = "text/html" # Default content type
 
         try:
+            # Prepare headers for this specific request (including potential rotation)
+            request_headers = self.session.headers.copy() # Start with session's default headers
+            if self.anti_detection_config.get("user_agent_rotation", False):
+                if self.anti_detection_config.get("consistent_ua_per_domain", False):
+                    request_headers['User-Agent'] = user_agent_manager.get_user_agent_for_domain(domain)
+                else:
+                    request_headers['User-Agent'] = user_agent_manager.get_random_user_agent()
+            
+            if self.anti_detection_config.get("request_header_randomization", False):
+                random_headers = user_agent_manager.get_random_headers()
+                request_headers.update(random_headers) # Update with randomized headers
+
             if self.config.render_javascript and self.playwright_browser:
                 self.logger.info(f"Using Playwright to render JavaScript for: {url}")
                 context_options = {
-                    "user_agent": self.session.headers.get("User-Agent"),
-                    "extra_http_headers": self.session.headers,
+                    "user_agent": request_headers.get("User-Agent"), # Use the potentially rotated UA
+                    "extra_http_headers": request_headers, # Use the potentially randomized headers
                     "viewport": {"width": random.randint(1200, 1600), "height": random.randint(800, 1200)}
                 }
                 if self.anti_detection_config.get("browser_fingerprint_randomization", False): # Use self.anti_detection_config
@@ -351,7 +387,7 @@ class WebCrawler:
                     raise
 
             else: # Use aiohttp for direct HTTP requests
-                async with self.session.get(url, allow_redirects=self.config.follow_redirects, proxy=current_proxy) as response:
+                async with self.session.get(url, allow_redirects=self.config.follow_redirects, proxy=current_proxy, headers=request_headers) as response: # Pass request_headers
                     status_code = response.status
                     content = await response.read() # Read as bytes to handle images/PDFs
                     response_headers = dict(response.headers)
