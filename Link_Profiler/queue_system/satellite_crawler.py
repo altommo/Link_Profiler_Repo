@@ -163,7 +163,6 @@ class SatelliteCrawler:
 
         # --- Start: Uniqueness check for crawler_id ---
         original_crawler_id = self.crawler_id
-        # Check if the provided/generated crawler_id is already active
         # An ID is considered active if its last heartbeat is within the stale_timeout
         
         # Get the current timestamp
