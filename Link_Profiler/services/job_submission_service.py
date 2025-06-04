@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Any
 import asyncio # Import asyncio
 
 import redis.asyncio as redis
-from pydantic import BaseModel, Field # Keep BaseModel for type hinting incoming request
+from pydantic import BaseModel, Field
 
 # Import core models
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, CrawlConfig, serialize_model
@@ -98,14 +98,22 @@ async def submit_crawl_to_queue(request: StartCrawlRequest) -> Dict[str, str]: #
     
     # Convert CrawlConfigRequest Pydantic model to a dictionary
     # If request.config is None, default to an empty dictionary
-    crawl_config_dict = request.config.model_dump() if request.config else {}
+    # Use .model_dump() for Pydantic v2, or .dict() for Pydantic v1
+    # Ensure it's a dictionary before passing to CrawlConfig
+    if request.config:
+        if hasattr(request.config, 'model_dump'): # Pydantic v2
+            crawl_config_data = request.config.model_dump()
+        else: # Pydantic v1
+            crawl_config_data = request.config.dict()
+    else:
+        crawl_config_data = {}
     
     # Ensure job_type is present in the config dictionary, even if not explicitly set in request.config
     # This handles cases where job_type might be inferred or set by default in the API endpoint.
     # For now, we'll assume job_type is passed correctly in request.config from the API.
-    # If job_type is not in crawl_config_dict, CrawlConfig will use its default or raise error.
+    # If job_type is not in crawl_config_data, CrawlConfig will use its default or raise error.
 
-    crawl_config = CrawlConfig(**crawl_config_dict)
+    crawl_config = CrawlConfig(**crawl_config_data)
 
     # Create a CrawlJob object
     job = CrawlJob(
