@@ -76,6 +76,12 @@ except ImportError:
             return {"message": f"Dummy: Command {command} sent to {crawler_id}"}
         async def control_all_satellites(self, command: str):
             return {"message": f"Dummy: Command {command} sent to all satellites"}
+        async def cancel_job(self, job_id: str):
+            return True
+        async def pause_job_processing(self):
+            return True
+        async def resume_job_processing(self):
+            return True
     async def get_coordinator():
         return DummyCoordinator()
 
@@ -99,7 +105,7 @@ def verify_admin_access(current_user: User):
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Admin privileges required to access monitoring endpoints"
+            detail="Admin privileges required to access this endpoint" # More generic message
         )
 
 # --- Helper function for comprehensive health check ---

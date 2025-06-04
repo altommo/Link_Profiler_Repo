@@ -8,6 +8,7 @@ const API_BASE = window.location.protocol === 'file:'
 let authToken = localStorage.getItem('authToken');
 let refreshInterval;
 let currentUsername = '';
+let currentUserIsAdmin = false; // New variable to store admin status
 
 // DOMContentLoaded: Check for token and show appropriate screen
 document.addEventListener('DOMContentLoaded', function() {
@@ -62,13 +63,15 @@ async function login() {
             // Verify the user is admin and get username
             const userResponse = await callAuthenticatedAPI('/users/me');
             
-            if (userResponse && userResponse.is_admin) {
+            if (userResponse) {
                 currentUsername = userResponse.username;
+                currentUserIsAdmin = userResponse.is_admin; // Store admin status
                 document.getElementById('loggedInUsername').textContent = currentUsername;
                 showDashboard();
             } else {
-                showError('Access denied. Admin privileges required.');
-                logout(); // Clear token if not admin
+                // If /users/me fails, it means token is invalid or user doesn't exist
+                showError('Authentication failed. Please try again.');
+                logout(); 
             }
         } else {
             showError(data.detail || 'Login failed');
@@ -83,8 +86,9 @@ async function verifyToken() {
     try {
         const userData = await callAuthenticatedAPI('/users/me');
 
-        if (userData && userData.is_admin) {
+        if (userData) {
             currentUsername = userData.username;
+            currentUserIsAdmin = userData.is_admin; // Store admin status
             document.getElementById('loggedInUsername').textContent = currentUsername;
             showDashboard();
         } else {
@@ -98,6 +102,19 @@ async function verifyToken() {
 function showDashboard() {
     document.getElementById('loginContainer').style.display = 'none';
     document.getElementById('dashboardContainer').style.display = 'flex'; // Use flex for layout
+
+    // Hide Crawler Management for non-admin users
+    const crawlerManagementLink = document.querySelector('.sidebar .nav-link[data-section="crawler-management"]');
+    if (!currentUserIsAdmin) {
+        crawlerManagementLink.style.display = 'none';
+        // If current section is crawler-management, redirect to dashboard
+        if (document.querySelector('.content-section:not([style*="display:none"])')?.id === 'crawler-management') {
+            showSection('dashboard');
+        }
+    } else {
+        crawlerManagementLink.style.display = 'block'; // Ensure it's visible for admins
+    }
+
     startDataRefresh();
     showSection('dashboard'); // Show default section
 }
@@ -115,6 +132,7 @@ function logout() {
     localStorage.removeItem('authToken');
     authToken = null;
     currentUsername = '';
+    currentUserIsAdmin = false; // Reset admin status on logout
     document.getElementById('loginContainer').style.display = 'flex';
     document.getElementById('dashboardContainer').style.display = 'none';
     if (refreshInterval) {
@@ -135,19 +153,24 @@ async function callAuthenticatedAPI(endpoint, method = 'GET', data = null) {
     try {
         const response = await fetch(`${API_BASE}${endpoint}`, options);
         if (response.status === 401 || response.status === 403) {
-            logout(); // Token expired or unauthorized
+            // If 401 (Unauthorized) or 403 (Forbidden), it means token is invalid/expired or user lacks permission
+            logout(); 
+            // Optionally show a specific message for 403 if needed, but logout is primary action
+            if (response.status === 403) {
+                alert("Access denied. You do not have permission to perform this action.");
+            }
             return null;
         }
         if (!response.ok) {
             const errorData = await response.json();
             console.error(`API call failed for ${endpoint}:`, response.status, errorData);
-            // Optionally show a dashboard-wide error alert
+            alert(`API Error (${response.status}): ${errorData.detail || response.statusText}`); // Show alert for other API errors
             return null;
         }
         return await response.json();
     } catch (error) {
         console.error(`Error during API call to ${endpoint}:`, error);
-        // Optionally show a dashboard-wide error alert
+        alert(`Connection error: ${error.message}`); // Show alert for network errors
         return null;
     }
 }
@@ -216,6 +239,12 @@ function getProgressBarClass(value) {
 // --- Crawler Management Tab Functions ---
 
 async function loadJobsTable() {
+    // Only load if user is admin
+    if (!currentUserIsAdmin) {
+        document.getElementById('all-jobs-table-body').innerHTML = '<tr><td colspan="9" class="text-center text-danger">Access Denied: Admin privileges required.</td></tr>';
+        return;
+    }
+
     const statusFilter = document.getElementById('jobStatusFilter').value;
     const tableBody = document.getElementById('all-jobs-table-body');
     tableBody.innerHTML = '<tr><td colspan="9" class="text-center"><i class="fas fa-spinner fa-spin me-2"></i>Loading jobs...</td></tr>';
@@ -263,6 +292,12 @@ async function loadJobsTable() {
 }
 
 async function showJobDetails(jobId) {
+    // Only allow if user is admin
+    if (!currentUserIsAdmin) {
+        alert("Access Denied: Admin privileges required to view job details.");
+        return;
+    }
+
     const jobDetailsModal = new bootstrap.Modal(document.getElementById('jobDetailsModal'));
     const modalBody = document.getElementById('jobDetailsModal').querySelector('.modal-body');
     modalBody.innerHTML = '<div class="text-center"><i class="fas fa-spinner fa-spin fa-2x"></i><p>Loading job details...</p></div>';
@@ -298,6 +333,12 @@ async function showJobDetails(jobId) {
 }
 
 async function cancelJob(jobId) {
+    // Only allow if user is admin
+    if (!currentUserIsAdmin) {
+        alert("Access Denied: Admin privileges required to cancel jobs.");
+        return;
+    }
+
     if (confirm(`Are you sure you want to cancel job ${jobId}?`)) {
         try {
             const response = await callAuthenticatedAPI(`/api/jobs/${jobId}/cancel`, 'POST');
@@ -316,6 +357,12 @@ async function cancelJob(jobId) {
 
 async function submitJob(event) {
     event.preventDefault();
+    // Only allow if user is admin
+    if (!currentUserIsAdmin) {
+        alert("Access Denied: Admin privileges required to submit jobs.");
+        return;
+    }
+
     const form = event.target;
     const submitButton = form.querySelector('button[type="submit"]');
     submitButton.disabled = true;
@@ -371,6 +418,12 @@ async function submitJob(event) {
 }
 
 async function loadSatellitesTable() {
+    // Only load if user is admin
+    if (!currentUserIsAdmin) {
+        document.getElementById('satellites-table-body').innerHTML = '<tr><td colspan="10" class="text-center text-danger">Access Denied: Admin privileges required.</td></tr>';
+        return;
+    }
+
     const tableBody = document.getElementById('satellites-table-body');
     tableBody.innerHTML = '<tr><td colspan="10" class="text-center"><i class="fas fa-spinner fa-spin me-2"></i>Loading satellites...</td></tr>';
 
@@ -418,6 +471,13 @@ async function loadSatellitesTable() {
 }
 
 async function checkGlobalPauseStatus() {
+    // Only check if user is admin
+    if (!currentUserIsAdmin) {
+        document.getElementById('global-pause-status').textContent = 'Access Denied';
+        document.getElementById('global-pause-status').className = 'badge bg-danger';
+        return;
+    }
+
     const statusElement = document.getElementById('global-pause-status');
     try {
         const response = await callAuthenticatedAPI('/api/jobs/is_paused'); // Assuming this endpoint exists and is protected
@@ -441,6 +501,12 @@ async function checkGlobalPauseStatus() {
 }
 
 async function controlAllSatellites(command) {
+    // Only allow if user is admin
+    if (!currentUserIsAdmin) {
+        alert("Access Denied: Admin privileges required to control satellites.");
+        return;
+    }
+
     if (confirm(`Are you sure you want to ${command.toLowerCase()} ALL satellites?`)) {
         try {
             const response = await callAuthenticatedAPI(`/api/satellites/control/all/${command}`, 'POST');
@@ -459,6 +525,12 @@ async function controlAllSatellites(command) {
 }
 
 async function controlSingleSatellite(crawlerId, command) {
+    // Only allow if user is admin
+    if (!currentUserIsAdmin) {
+        alert("Access Denied: Admin privileges required to control satellites.");
+        return;
+    }
+
     if (confirm(`Are you sure you want to ${command.toLowerCase()} satellite ${crawlerId}?`)) {
         try {
             const response = await callAuthenticatedAPI(`/api/satellites/control/${crawlerId}/${command}`, 'POST');
@@ -490,22 +562,35 @@ function formatUptime(seconds) {
 
 function startDataRefresh() {
     loadStats(); // Load immediately for overview
-    loadJobsTable(); // Load jobs for crawler management
-    loadSatellitesTable(); // Load satellites for crawler management
-    checkGlobalPauseStatus(); // Check global pause status
+    // Only load crawler management data if user is admin
+    if (currentUserIsAdmin) {
+        loadJobsTable(); 
+        loadSatellitesTable(); 
+        checkGlobalPauseStatus(); 
+    }
 
     if (refreshInterval) {
         clearInterval(refreshInterval); // Clear any existing interval
     }
     refreshInterval = setInterval(() => {
         loadStats();
-        loadJobsTable();
-        loadSatellitesTable();
-        checkGlobalPauseStatus();
+        // Only refresh crawler management data if user is admin
+        if (currentUserIsAdmin) {
+            loadJobsTable();
+            loadSatellitesTable();
+            checkGlobalPauseStatus();
+        }
     }, 10000); // Refresh all data every 10 seconds
 }
 
 function showSection(sectionId) {
+    // If trying to access crawler-management and not admin, redirect
+    if (sectionId === 'crawler-management' && !currentUserIsAdmin) {
+        alert("Access Denied: Admin privileges required to access Crawler Management.");
+        showSection('dashboard'); // Redirect to dashboard
+        return;
+    }
+
     // Hide all content sections
     document.querySelectorAll('.content-section').forEach(section => {
         section.style.display = 'none';
