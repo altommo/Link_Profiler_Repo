@@ -674,3 +674,55 @@ class CrawlerHealthResponse(BaseModel):
     current_job_id: Optional[str] = None
     error_rate: float
     uptime_seconds: float
+
+class SEOMetricsResponse(BaseModel): # New Pydantic model for SEOMetrics
+    url: str
+    http_status: Optional[int] = None
+    response_time_ms: Optional[float] = None
+    page_size_bytes: Optional[int] = None
+    title_length: int = 0
+    meta_description_length: int = 0
+    h1_count: int = 0
+    h2_count: int = 0
+    internal_links: int = 0
+    external_links: int = 0
+    images_count: int = 0
+    images_without_alt: int = 0
+    has_canonical: bool = False
+    has_robots_meta: bool = False
+    has_schema_markup: bool = False
+    broken_links: List[str] = Field(default_factory=list)
+    performance_score: Optional[float] = None
+    mobile_friendly: Optional[bool] = None
+    accessibility_score: Optional[float] = None
+    audit_timestamp: Optional[datetime] = None
+    seo_score: float = 0.0
+    issues: List[str] = Field(default_factory=list)
+    structured_data_types: List[str] = Field(default_factory=list)
+    og_title: Optional[str] = None
+    og_description: Optional[str] = None
+    twitter_title: Optional[str] = None
+    twitter_description: Optional[str] = None
+    validation_issues: List[str] = Field(default_factory=list)
+    ai_content_classification: Optional[str] = None
+    ai_content_score: Optional[float] = None
+    ocr_text: Optional[str] = None
+    nlp_entities: List[str] = Field(default_factory=list)
+    nlp_sentiment: Optional[str] = None
+    nlp_topics: List[str] = Field(default_factory=list)
+    video_transcription: Optional[str] = None
+    video_topics: List[str] = Field(default_factory=list)
+    ai_suggestions: List[str] = Field(default_factory=list)
+    ai_semantic_keywords: List[str] = Field(default_factory=list)
+    ai_readability_score: Optional[float] = None
+
+    @classmethod
+    def from_seo_metrics(cls, metrics: SEOMetrics):
+        metrics_dict = serialize_model(metrics)
+        if isinstance(metrics_dict.get('audit_timestamp'), str):
+            try:
+                metrics_dict['audit_timestamp'] = datetime.fromisoformat(metrics_dict['audit_timestamp'])
+            except ValueError:
+                logger.warning(f"Could not parse audit_timestamp string: {metrics_dict.get('audit_timestamp')}")
+                metrics_dict['audit_timestamp'] = None
+        return cls(**metrics_dict)
