@@ -723,7 +723,7 @@ class WebCrawler:
             total_links_found=total_links_found_count,
             backlinks_found=len(backlinks_found_list),
             failed_urls_count=len(self.failed_urls),
-            is_final_summary=True,  # Flag to identify this as the summary result
+            is_final_summary=True,  # Flag to indicate this as the summary result
             crawl_duration_seconds=final_crawl_duration,
             errors=crawl_errors_list,
             # Store the actual backlinks found in the links_found field of the summary result
