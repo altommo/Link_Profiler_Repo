@@ -621,9 +621,16 @@ class WebCrawler:
         
         last_crawl_result: Optional[CrawlResult] = None
 
-        self.logger.info(f"Starting crawl for job {job_id} with initial seeds: {initial_seed_urls}")
+        self.logger.info(f"Job {job_id}: Starting crawl for {target_url}")
+        self.logger.info(f"Job {job_id}: Seed URLs: {initial_seed_urls}")
+        self.logger.info(f"Job {job_id}: Config - max_pages: {self.config.max_pages}, max_depth: {self.config.max_depth}")
+        self.logger.info(f"Job {job_id}: Target domain: {target_domain}")
+        self.logger.info(f"Job {job_id}: Total URLs in queue after seeding: {urls_to_visit.qsize()}")
+
 
         while not urls_to_visit.empty() and pages_crawled_count < self.config.max_pages:
+            self.logger.info(f"Job {job_id}: Queue size: {urls_to_visit.qsize()}, Crawled: {pages_crawled_count}/{self.config.max_pages}")
+
             current_job = self.db.get_crawl_job(job_id) # Use passed job_id
             if current_job:
                 if current_job.status == CrawlStatus.PAUSED:
@@ -651,7 +658,7 @@ class WebCrawler:
                             )
 
             url, current_depth = await urls_to_visit.get()
-            self.logger.debug(f"Retrieved URL from queue: {url} (Depth: {current_depth})")
+            self.logger.info(f"Job {job_id}: Processing URL: {url} at depth {current_depth}")
             
             if url in self.crawled_urls:
                 self.logger.debug(f"Skipping {url}: Already crawled.")
