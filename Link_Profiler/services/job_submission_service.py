@@ -6,10 +6,12 @@ from typing import Dict, List, Optional, Any
 import asyncio # Import asyncio
 
 import redis.asyncio as redis
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field # Keep BaseModel for type hinting incoming request
 
 # Import core models
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, CrawlConfig, serialize_model
+# Import CrawlConfigRequest from schemas for accurate type hinting
+from Link_Profiler.api.schemas import CrawlConfigRequest, StartCrawlRequest # Import StartCrawlRequest as well
 
 # Import job coordinator and its dependencies
 from Link_Profiler.queue_system.job_coordinator import JobCoordinator
@@ -88,20 +90,20 @@ async def get_coordinator() -> JobCoordinator:
     return _job_coordinator
 
 # --- Queue Submission Function ---
-async def submit_crawl_to_queue(request: BaseModel) -> Dict[str, str]: # Use BaseModel for request type hint
+async def submit_crawl_to_queue(request: StartCrawlRequest) -> Dict[str, str]: # Use StartCrawlRequest for request type hint
     """
     Submits a crawl job to the Redis queue.
     """
     job_id = str(uuid.uuid4())
     
-    # Create a CrawlConfig object from the request config dictionary
-    # Assuming request has a 'config' attribute that is a dict
-    # Convert Pydantic model to dictionary using .dict() or .model_dump()
-    # Using .dict() for Pydantic v1 compatibility, .model_dump() for v2
-    if hasattr(request.config, 'model_dump'): # Pydantic v2
-        crawl_config_dict = request.config.model_dump()
-    else: # Pydantic v1
-        crawl_config_dict = request.config.dict()
+    # Convert CrawlConfigRequest Pydantic model to a dictionary
+    # If request.config is None, default to an empty dictionary
+    crawl_config_dict = request.config.model_dump() if request.config else {}
+    
+    # Ensure job_type is present in the config dictionary, even if not explicitly set in request.config
+    # This handles cases where job_type might be inferred or set by default in the API endpoint.
+    # For now, we'll assume job_type is passed correctly in request.config from the API.
+    # If job_type is not in crawl_config_dict, CrawlConfig will use its default or raise error.
 
     crawl_config = CrawlConfig(**crawl_config_dict)
 
