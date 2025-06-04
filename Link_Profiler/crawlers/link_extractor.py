@@ -92,12 +92,13 @@ class LinkExtractor:
     def _determine_link_type(self, rel_attributes: List[str]) -> LinkType:
         """Determines the primary link type based on 'rel' attributes."""
         # Prioritize sponsored over nofollow if both are present
+        # The order of checks here is crucial for prioritization
         if 'sponsored' in rel_attributes:
             return LinkType.SPONSORED
+        if 'ugc' in rel_attributes: # UGC should be checked before nofollow if it's a distinct type
+            return LinkType.UGC
         if 'nofollow' in rel_attributes:
             return LinkType.NOFOLLOW
-        if 'ugc' in rel_attributes:
-            return LinkType.UGC
         if 'canonical' in rel_attributes: # Link tags can have rel="canonical"
             return LinkType.CANONICAL
         if 'redirect' in rel_attributes: # Not a standard rel, but for internal tracking
