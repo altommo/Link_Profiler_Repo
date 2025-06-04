@@ -13,7 +13,7 @@ import redis.asyncio as redis
 import random # New: Import random for simulated video analysis
 
 from Link_Profiler.config.config_loader import config_loader
-from Link_Profiler.core.models import Domain, LinkProfile, ContentGapAnalysisResult # New: Import ContentGapAnalysisResult
+from Link_Profiler.core.models import Domain, LinkProfile, ContentGapAnalysisResult, SEOMetrics # New: Import SEOMetrics
 
 logger = logging.getLogger(__name__)
 

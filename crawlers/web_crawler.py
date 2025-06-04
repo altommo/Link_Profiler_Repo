@@ -5,7 +5,7 @@ from urllib.parse import urlparse # Added for domain extraction
 
 # ADD these imports at the top
 from utils.circuit_breaker import ResilienceManager, CircuitBreakerOpenError
-from Link_Profiler.core.models import CrawlResult, CrawlConfig, Link, CrawlJob # Corrected imports
+from Link_Profiler.core.models import CrawlResult, CrawlConfig, Link, CrawlJob, SEOMetrics # Corrected imports, added SEOMetrics
 # ADD this import
 from utils.adaptive_rate_limiter import MLRateLimiter
 # ADD this import
@@ -13,9 +13,12 @@ from queue_system.smart_crawler_queue import SmartCrawlQueue, Priority
 # ADD these imports
 from monitoring.crawler_metrics import crawler_metrics
 from monitoring.health_monitor import HealthMonitor
+# ADD this import for AI Service
+from Link_Profiler.services.ai_service import AIService
+
 
 class WebCrawler:
-    def __init__(self, config: CrawlConfig, crawl_queue: SmartCrawlQueue = None):
+    def __init__(self, config: CrawlConfig, crawl_queue: SmartCrawlQueue = None, ai_service: AIService = None):
         self.config = config
         # ADD this line in __init__
         self.resilience_manager = ResilienceManager()
@@ -26,6 +29,8 @@ class WebCrawler:
         # ADD these lines
         self.metrics = crawler_metrics
         self.health_monitor = HealthMonitor(self.metrics)
+        # ADD this line for AI Service
+        self.ai_service = ai_service
         # ... rest of existing init code
     
     async def __aenter__(self):
@@ -124,6 +129,18 @@ class WebCrawler:
             crawl_timestamp=datetime.now()
         )
         
+        # --- New: AI Content Quality Assessment ---
+        if self.ai_service and result.content and result.status_code == 200:
+            ai_score, ai_classification = await self.ai_service.assess_content_quality(result.content, result.url)
+            if ai_score is not None and ai_classification is not None:
+                if result.seo_metrics is None:
+                    result.seo_metrics = SEOMetrics(url=result.url)
+                result.seo_metrics.ai_content_score = ai_score
+                result.seo_metrics.ai_content_classification = ai_classification
+                # Recalculate SEO score if AI metrics are added
+                result.seo_metrics.calculate_seo_score()
+        # --- End New: AI Content Quality Assessment ---
+
         # Pass the result to the rate limiter after the request
         await self.rate_limiter.adaptive_wait(domain, result) # This second call is for learning from the response
 
@@ -223,4 +240,3 @@ class WebCrawler:
                 pages_crawled=len(crawled_urls),
                 is_final_summary=True
             )
-

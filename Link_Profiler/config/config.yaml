@@ -179,16 +179,17 @@ ai:
   enabled: false
   openrouter_api_key: "" # Your OpenRouter API key
   models: # Map task types to specific models available on OpenRouter
-    content_scoring: "mistralai/mistral-7b-instruct"
-    content_classification: "mistralai/mistral-7b-instruct"
-    content_gap_analysis: "mistralai/mistral-7b-instruct"
-    keyword_research: "mistralai/mistral-7b-instruct"
-    technical_seo_analysis: "mistralai/mistral-7b-instruct"
-    competitor_analysis: "mistralai/mistral-7b-instruct"
-    content_generation: "mistralai/mistral-7b-instruct"
+    content_scoring: "anthropic/claude-3-haiku"
+    content_classification: "anthropic/claude-3-haiku"
+    content_gap_analysis: "openai/gpt-4-turbo"
+    keyword_research: "google/gemini-pro"
+    technical_seo_analysis: "anthropic/claude-3-5-sonnet"
+    competitor_analysis: "openai/gpt-4"
+    content_generation: "anthropic/claude-3-5-sonnet"
     domain_value_analysis: "mistralai/mistral-7b-instruct"
-    content_nlp_analysis: "mistralai/mistral-7b-instruct"
+    content_nlp_analysis: "anthropic/claude-3-haiku"
     topic_clustering: "mistralai/mistral-7b-instruct"
+    content_quality_assessment: "anthropic/claude-3-haiku" # Added for content quality assessment
 
 # Technical Auditor (Lighthouse CLI)
 technical_auditor:
@@ -248,7 +249,7 @@ historical_data:
 local_seo:
   nominatim_api: # New: OpenStreetMap Nominatim API
     enabled: false
-    base_url: "https://nominatim.openstreetmap.org/search"
+    base_url: "https://nominatim.openstreetmap.org/search",
     user_agent: "LinkProfilerApp/1.0 (your_email@example.com)" # Required for Nominatim
 
 # Notifications & Alerting
