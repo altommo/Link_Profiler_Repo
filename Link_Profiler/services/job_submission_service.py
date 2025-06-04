@@ -96,17 +96,51 @@ async def submit_crawl_to_queue(request: StartCrawlRequest) -> Dict[str, str]: #
     """
     job_id = str(uuid.uuid4())
     
-    # Explicitly create a dictionary from the request.config Pydantic model
-    # This ensures CrawlConfig receives keyword arguments from a plain dict.
+    # Explicitly extract attributes from CrawlConfigRequest into a dictionary
+    # This is the most robust way to ensure a plain dictionary is passed.
     if request.config is not None:
-        # Use .model_dump() for Pydantic v2, or .dict() for Pydantic v1
-        if hasattr(request.config, 'model_dump'):
-            crawl_config_kwargs = request.config.model_dump()
-        else:
-            crawl_config_kwargs = request.config.dict()
+        # Manually extract attributes to ensure compatibility
+        crawl_config_kwargs = {
+            "max_depth": request.config.max_depth,
+            "max_pages": request.config.max_pages,
+            "delay_seconds": request.config.delay_seconds,
+            "timeout_seconds": request.config.timeout_seconds,
+            "user_agent": request.config.user_agent,
+            "respect_robots_txt": request.config.respect_robots_txt,
+            "follow_redirects": request.config.follow_redirects,
+            "extract_images": request.config.extract_images,
+            "extract_pdfs": request.config.extract_pdfs,
+            "max_file_size_mb": request.config.max_file_size_mb,
+            "allowed_domains": request.config.allowed_domains,
+            "blocked_domains": request.config.blocked_domains,
+            "custom_headers": request.config.custom_headers,
+            "max_retries": request.config.max_retries,
+            "retry_delay_seconds": request.config.retry_delay_seconds,
+            "user_agent_rotation": request.config.user_agent_rotation,
+            "request_header_randomization": request.config.request_header_randomization,
+            "human_like_delays": request.config.human_like_delays,
+            "stealth_mode": request.config.stealth_mode,
+            "browser_fingerprint_randomization": request.config.browser_fingerprint_randomization,
+            "ml_rate_optimization": request.config.ml_rate_optimization,
+            "captcha_solving_enabled": request.config.captcha_solving_enabled,
+            "anomaly_detection_enabled": request.config.anomaly_detection_enabled,
+            "use_proxies": request.config.use_proxies,
+            "proxy_list": request.config.proxy_list,
+            "proxy_region": request.config.proxy_region,
+            "render_javascript": request.config.render_javascript,
+            "browser_type": request.config.browser_type,
+            "headless_browser": request.config.headless_browser,
+            "extract_image_text": request.config.extract_image_text,
+            "crawl_web3_content": request.config.crawl_web3_content,
+            "crawl_social_media": request.config.crawl_social_media,
+            # Ensure job_type is passed from the request's config
+            "job_type": request.config.job_type if hasattr(request.config, 'job_type') else "unknown" # Add job_type explicitly
+        }
     else:
-        crawl_config_kwargs = {} # Default to empty dict if no config provided
-
+        # If no config is provided, use default values or an empty dict
+        # Note: CrawlConfig dataclass has default values, so an empty dict is fine.
+        crawl_config_kwargs = {} 
+    
     # Create a CrawlConfig object from the dictionary
     # The CrawlConfig dataclass will handle default values for missing keys
     crawl_config = CrawlConfig(**crawl_config_kwargs)
