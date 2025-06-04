@@ -13,6 +13,8 @@ import json
 from pydantic import BaseModel, Field # Import BaseModel and Field from pydantic
 
 
+# --- Enums ---
+# Moved Enum definitions to the top to ensure they are defined before use
 class LinkType(enum.Enum):
     """Types of links we can discover"""
     FOLLOW = "follow"
@@ -54,6 +56,68 @@ class SpamLevel(enum.Enum):
     CONFIRMED_SPAM = "confirmed_spam"
 
 
+class AlertSeverity(enum.Enum): # Defined here, so it's available for AlertRule
+    """Severity levels for alerts."""
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+class AlertChannel(enum.Enum): # Defined here, so it's available for AlertRule
+    """Supported notification channels for alerts."""
+    WEBHOOK = "webhook"
+    EMAIL = "email"
+    SLACK = "slack"
+    DASHBOARD = "dashboard" # For in-app notifications
+
+
+# Changed CrawlConfig to Pydantic BaseModel and moved its definition up
+class CrawlConfig(BaseModel):
+    """Configuration for crawling operations"""
+    max_depth: int = Field(3, description="Maximum depth to crawl from seed URLs.")
+    max_pages: int = Field(1000, description="Maximum number of pages to crawl.")
+    delay_seconds: float = Field(1.0, description="Delay between requests to the same domain in seconds.")
+    timeout_seconds: int = Field(30, description="Timeout for HTTP requests in seconds.")
+    user_agent: str = Field("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)", description="Changed default user agent to Googlebot") # Changed default user agent to Googlebot
+    respect_robots_txt: bool = Field(True, description="Whether to respect robots.txt rules.")
+    follow_redirects: bool = Field(True, description="Whether to follow HTTP redirects.")
+    extract_images: bool = Field(True, description="Whether to extract image links.")
+    extract_pdfs: bool = Field(False, description="Whether to extract links from PDF documents.")
+    max_file_size_mb: int = Field(10, description="Maximum file size to download in MB.")
+    allowed_domains: Optional[List[str]] = Field(None, description="List of domains explicitly allowed to crawl. If empty, all domains are allowed unless blocked.")
+    blocked_domains: Optional[List[str]] = Field(None, description="List of domains explicitly blocked from crawling.")
+    custom_headers: Optional[Dict[str, str]] = Field(None, description="Custom HTTP headers to send with requests.")
+    max_retries: int = Field(3, description="Maximum number of retries for failed URL fetches.")
+    retry_delay_seconds: float = Field(5.0, description="Delay between retries in seconds.")
+    user_agent_rotation: bool = Field(False, description="Whether to rotate user agents from a pool.")
+    request_header_randomization: bool = Field(False, description="Whether to randomize other request headers (Accept, Accept-Language, etc.).")
+    human_like_delays: bool = Field(False, description="Whether to add small random delays to mimic human browsing behavior.")
+    stealth_mode: bool = Field(True, description="Whether to enable Playwright stealth mode for browser-based crawling.")
+    browser_fingerprint_randomization: bool = Field(False, description="Whether to randomize browser fingerprint properties (e.g., device scale, mobile, touch, screen dimensions, timezone, locale, color scheme) for Playwright.")
+    ml_rate_optimization: bool = Field(False, description="Whether to enable machine learning-based rate optimization for adaptive delays.")
+    captcha_solving_enabled: bool = Field(False, description="Whether to enable CAPTCHA solving for browser-based crawls.")
+    anomaly_detection_enabled: bool = Field(False, description="Whether to enable real-time anomaly detection.")
+    use_proxies: bool = Field(False, description="Whether to use proxies for crawling.")
+    proxy_list: Optional[List[Dict[str, str]]] = Field(None, description="List of proxy configurations (e.g., [{'url': 'http://user:pass@ip:port', 'region': 'us-east'}]).")
+    proxy_region: Optional[str] = Field(None, description="Desired proxy region for this crawl job. If not specified, any available proxy will be used.")
+    render_javascript: bool = Field(False, description="Whether to use a headless browser to render JavaScript content for crawling.")
+    browser_type: Optional[str] = Field("chromium", description="Browser type for headless rendering (chromium, firefox, webkit). Only applicable if render_javascript is true.")
+    headless_browser: bool = Field(True, description="Whether the browser should run in headless mode. Only applicable if render_javascript is true.")
+    extract_image_text: bool = Field(False, description="Whether to perform OCR on images to extract text.")
+    crawl_web3_content: bool = Field(False, description="Whether to crawl Web3 content (e.g., IPFS, blockchain data).")
+    crawl_social_media: bool = Field(False, description="Whether to crawl social media content.")
+    extract_video_content: bool = Field(False, description="Whether to extract and analyze video content") # New: Whether to extract and analyze video content
+    job_type: str = Field("unknown", description="The type of job this configuration is for (e.g., 'backlink_discovery', 'technical_audit').") # Added job_type to CrawlConfig
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
+        extra = "allow" # Allow extra fields for flexibility if needed
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'CrawlConfig':
+        return cls(**data)
+
+
+# --- Data Models ---
 @dataclass
 class Domain:
     """Represents a domain with its metrics"""
@@ -662,18 +726,9 @@ class KeywordSuggestion:
 
 
 # New: Alerting Models
-class AlertSeverity(Enum):
-    """Severity levels for alerts."""
-    INFO = "info"
-    WARNING = "warning"
-    CRITICAL = "critical"
-
-class AlertChannel(Enum):
-    """Supported notification channels for alerts."""
-    WEBHOOK = "webhook"
-    EMAIL = "email"
-    SLACK = "slack"
-    DASHBOARD = "dashboard" # For in-app notifications
+# AlertSeverity and AlertChannel are defined above CrawlJob and CrawlConfig
+# to ensure they are available when CrawlJob and CrawlConfig are defined.
+# This resolves the F821 errors.
 
 @dataclass
 class AlertRule:
@@ -961,7 +1016,7 @@ def serialize_model(obj) -> Dict:
             value = getattr(obj, field_name)
             if isinstance(value, datetime):
                 result[field_name] = value.isoformat()
-            elif isinstance(value, Enum):
+            elif isinstance(value, enum.Enum): # Use enum.Enum here
                 result[field_name] = value.value
             elif isinstance(value, set):
                 result[field_name] = list(value)
@@ -984,7 +1039,7 @@ def serialize_model(obj) -> Dict:
         return [serialize_model(item) for item in obj]
     elif isinstance(obj, datetime): # Handle top-level datetime
         return obj.isoformat()
-    elif isinstance(obj, Enum): # Handle top-level Enum
+    elif isinstance(obj, enum.Enum): # Handle top-level Enum
         return obj.value
     elif isinstance(obj, set): # Handle top-level set
         return list(obj)
