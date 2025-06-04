@@ -606,9 +606,20 @@ class WebCrawler:
         start_crawl_time = time.time() # Overall crawl start time
         target_domain = urlparse(target_url).netloc
         
+        # Handle empty seed URLs by using target URL
+        if not initial_seed_urls:
+            self.logger.info(f"Job {job_id}: No seed URLs provided, using target URL as starting seed")
+            initial_seed_urls = [target_url]
+        elif not any(initial_seed_urls):  # Handle list of empty strings
+            self.logger.info(f"Job {job_id}: All seed URLs empty, using target URL as starting seed")
+            initial_seed_urls = [target_url]
+
+        self.logger.info(f"Job {job_id}: Final seed URLs: {initial_seed_urls}")
+
         urls_to_visit = asyncio.Queue()
         for url in initial_seed_urls:
             await urls_to_visit.put((url, 0))
+            self.logger.info(f"Job {job_id}: Added seed URL to queue: {url}") # Debug log for seed URLs
             
         self.crawled_urls.clear()
         self.failed_urls.clear()
