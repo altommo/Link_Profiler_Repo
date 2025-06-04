@@ -5,24 +5,16 @@ from typing import Annotated, Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 
 # Import global instances and utility functions
-try:
-    from Link_Profiler.main import logger
-    from Link_Profiler.api.queue_endpoints import get_coordinator, submit_crawl_to_queue
-except ImportError:
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(level=logging.INFO)
-    # Dummy implementations for testing
-    async def get_coordinator():
-        raise RuntimeError("Coordinator not available for testing.")
-    async def submit_crawl_to_queue(request):
-        raise RuntimeError("Submit function not available for testing.")
+# Removed direct import of submit_crawl_to_queue and get_coordinator from main.py
+from Link_Profiler.main import logger
+from Link_Profiler.services.job_submission_service import get_coordinator, submit_crawl_to_queue # New: Import from job_submission_service
 
 
 # Import shared Pydantic models and dependencies
 from Link_Profiler.api.schemas import (
     JobStatusResponse, QueueStatsResponse, CrawlerHealthResponse,
 )
-from Link_Profiler.api.queue_endpoints import QueueCrawlRequest # Corrected import path for QueueCrawlRequest
+from Link_Profiler.api.schemas import QueueCrawlRequest # Corrected import path for QueueCrawlRequest
 
 from Link_Profiler.api.dependencies import get_current_user
 

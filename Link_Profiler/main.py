@@ -15,7 +15,7 @@ import logging # Import logging early
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if project_root and project_root not in sys.path:
-    sys.sys.path.insert(0, project_root)
+    sys.path.insert(0, project_root)
     print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
 else:
     print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
@@ -89,6 +89,11 @@ db = Database(db_url=DATABASE_URL)
 connection_manager = ConnectionManager() # Initialize connection_manager early
 auth_service_instance = AuthService(db) # Initialize AuthService early
 
+# Initialize Redis connection pool and client (moved up to ensure it's defined before lifespan)
+import redis.asyncio as redis
+redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
+redis_client: Optional[redis.Redis] = redis.Redis(connection_pool=redis_pool) # Make redis_client optional
+
 # Now import other FastAPI and application modules
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -99,7 +104,6 @@ from typing import List, Optional, Dict, Any, Union, Annotated
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
-import redis.asyncio as redis
 import json
 import uuid
 import asyncio
@@ -133,7 +137,9 @@ from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text, # Re-added for middleware
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
-from Link_Profiler.api.queue_endpoints import submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies # Added set_coordinator_dependencies
+# Removed direct import of submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies
+# from Link_Profiler.api.queue_endpoints import submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies # Added set_coordinator_dependencies
+from Link_Profiler.services.job_submission_service import submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies # New: Import from job_submission_service
 
 
 # New: Import API Clients
@@ -150,11 +156,6 @@ from Link_Profiler.clients.news_api_client import NewsAPIClient
 # from Link_Profiler.clients.nominatim_client import NominatimClient
 # from Link_Profiler.clients.security_trails_client import SecurityTrailsClient
 # from Link_Profiler.clients.ssl_labs_client import SSLLabsClient
-
-
-# Initialize Redis connection pool and client (moved after db and auth_service_instance)
-redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
-redis_client: Optional[redis.Redis] = redis.Redis(connection_pool=redis_pool) # Make redis_client optional
 
 
 # Initialize ClickHouse Loader conditionally
@@ -245,7 +246,7 @@ keyword_service_instance = KeywordService(
     keyword_scraper=keyword_scraper_instance,
     google_trends_client=google_trends_client_instance, # New: Pass google_trends_client_instance
     redis_client=redis_client, # Pass redis_client for caching
-    cache_ttl=API_CACHE_TTL
+    cache_ttl=API_CACHE_TTL # Pass cache_ttl
 )
 
 # New: Initialize LinkHealthService
@@ -405,20 +406,24 @@ async def lifespan(app: FastAPI):
             entered_contexts.append(await cm.__aenter__())
         
         logger.info("Application startup: Pinging Redis.")
-        global redis_client # Explicitly declare intent to modify global variable
+        # The global redis_client is already defined at the top level.
         if redis_client: # Only try to ping if client was initialized
             try:
                 await redis_client.ping()
                 logger.info("Redis connection successful.")
             except Exception as e:
                 logger.error(f"Failed to connect to Redis: {e}")
-                redis_client = None # Set to None if connection fails
+                # Do not set redis_client to None here, as it's a global variable
+                # and might be used by other services. Let the service handle its own
+                # connection status.
         else:
             logger.warning("Redis client not initialized. Skipping Redis ping.")
         
         # Set dependencies for queue_endpoints before getting coordinator
-        from Link_Profiler.api.queue_endpoints import set_coordinator_dependencies as set_job_coordinator_dependencies # Import here to avoid circular dependency
-        set_job_coordinator_dependencies(
+        # Import set_coordinator_dependencies and get_coordinator from the new service
+        # to avoid circular imports with queue_endpoints.py
+        # from Link_Profiler.api.queue_endpoints import set_coordinator_dependencies as set_job_coordinator_dependencies # Import here to avoid circular dependency
+        set_coordinator_dependencies(
             redis_client=redis_client,
             config_loader=config_loader,
             db=db,
@@ -428,9 +433,9 @@ async def lifespan(app: FastAPI):
 
         # Initialize and start JobCoordinator background tasks
         # This call will now handle its own __aenter__ and task creation
-        from Link_Profiler.api.queue_endpoints import get_coordinator as get_job_coordinator_instance
+        # from Link_Profiler.api.queue_endpoints import get_coordinator as get_job_coordinator_instance
         try:
-            await get_job_coordinator_instance()
+            await get_coordinator() # Use the get_coordinator from job_submission_service
             logger.info("JobCoordinator successfully initialized and background tasks started via get_coordinator.")
         except Exception as e:
             logger.error(f"Failed to initialize JobCoordinator during lifespan startup: {e}", exc_info=True)
@@ -470,7 +475,7 @@ app = FastAPI(
     lifespan=lifespan # Register the lifespan context manager
 )
 
-# Initialize Jinja2Templates
+# Initialize Jinja2Templates (moved up to ensure it's defined before routes use it)
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates"))
 
 # --- Static Files ---
