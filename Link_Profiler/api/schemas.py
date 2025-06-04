@@ -51,7 +51,6 @@ class UserResponse(BaseModel):
 # Token model is already defined in core.models, so we can just import it.
 # If it was a Pydantic model specific to the API response, it would be here.
 # For now, assuming core.models.Token is sufficient.
-# If it needs to be a Pydantic BaseModel for API response, it should be defined here.
 # Let's define it here to be explicit about API response models.
 class Token(BaseModel):
     access_token: str

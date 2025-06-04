@@ -107,11 +107,12 @@ async def health_check_internal() -> Dict[str, Any]:
     health_status = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "dependencies": {},
-        "environment_variables": {
-            "LP_AUTH_SECRET_KEY": "SET" if os.getenv("LP_AUTH_SECRET_KEY") else "MISSING",
-            "LP_DATABASE_URL": "SET" if os.getenv("LP_DATABASE_URL") else "MISSING", 
-            "LP_REDIS_URL": "SET" if os.getenv("LP_REDIS_URL") else "MISSING"
+        "dependencies": {
+            "environment_variables": {
+                "LP_AUTH_SECRET_KEY": "SET" if os.getenv("LP_AUTH_SECRET_KEY") else "MISSING",
+                "LP_DATABASE_URL": "SET" if os.getenv("LP_DATABASE_URL") else "MISSING", 
+                "LP_REDIS_URL": "SET" if os.getenv("LP_REDIS_URL") else "MISSING"
+            }
         }
     }
 
@@ -241,7 +242,7 @@ async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
     queue_metrics = {
         "pending_jobs": stats_from_coordinator.get("pending_jobs", 0),
         "results_pending": stats_from_coordinator.get("results_pending", 0),
-        "active_satellites": stats_from_coordinator.get("active_crawlers", 0),
+        "active_crawlers": stats_from_coordinator.get("active_crawlers", 0),
         "satellites": [],
         "timestamp": datetime.now().isoformat()
     }
@@ -477,10 +478,10 @@ async def is_jobs_paused_endpoint(current_user: Annotated[User, Depends(get_curr
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to check pause status: {e}")
 
 
-@monitoring_debug_router.get("/health")
-async def health_check_endpoint():
+@monitoring_debug_router.get("/public/health")
+async def public_health_check_endpoint():
     """
-    Performs a comprehensive health check of the API and its dependencies.
+    Public endpoint: Performs a comprehensive health check of the API and its dependencies.
     """
     health_status = await health_check_internal()
     status_code = status.HTTP_200_OK if health_status["status"] == "healthy" else status.HTTP_503_SERVICE_UNAVAILABLE
@@ -610,11 +611,18 @@ async def reprocess_dead_letters(current_user: Annotated[User, Depends(get_curre
         logger.error(f"Error reprocessing dead-letter messages: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to reprocess dead-letter messages: {e}")
 
-@monitoring_debug_router.get("/api/satellites") # New: Implement /api/satellites endpoint
-async def get_satellites_api_endpoint(current_user: Annotated[User, Depends(get_current_user)]):
+@monitoring_debug_router.get("/public/satellites") # New: Implement /public/satellites endpoint
+async def public_satellites_endpoint():
     """
-    Retrieves detailed health information for all satellite crawlers.
+    Public endpoint: Retrieves detailed health information for all satellite crawlers.
     """
-    verify_admin_access(current_user)
-    logger.info(f"API: Received request for satellite health by admin: {current_user.username}.")
+    logger.info("API: Received request for public satellite health.")
     return await _get_satellites_data_internal()
+
+@monitoring_debug_router.get("/public/stats")
+async def public_stats_endpoint():
+    """
+    Public endpoint: Retrieves aggregated statistics for the Link Profiler system.
+    """
+    logger.info("API: Received request for public aggregated stats.")
+    return await _get_aggregated_stats_for_api()

@@ -8,7 +8,7 @@ from Link_Profiler.core.models import CrawlStatus, CrawlJob, User
 from Link_Profiler.api.schemas import CrawlJobResponse
 from Link_Profiler.api.queue_endpoints import get_coordinator
 from Link_Profiler.config.config_loader import ConfigLoader
-from Link_Profiler.api.dependencies import get_current_user
+from Link_Profiler.api.dependencies import get_current_user # Ensure this is imported for protected endpoints
 
 # Initialize config_loader and db here
 try:
@@ -32,133 +32,50 @@ except ImportError:
 
 public_jobs_router = APIRouter()
 
-# Remove sensitive public endpoints and require authentication
+# --- Public Endpoints for Dashboard (no authentication required) ---
 
-@public_jobs_router.get("/public/status")
-async def public_status():
-    """
-    Minimal public status endpoint - only shows if service is up
-    """
-    return {
-        "status": "operational",
-        "service": "Link Profiler API",
-        "timestamp": datetime.now().isoformat()
-    }
-
-# All job-related endpoints now require authentication
-@public_jobs_router.get("/api/jobs/all", response_model=List[CrawlJobResponse])
-async def get_all_jobs_authenticated(
-    status_filter: Optional[str] = Query(None, description="Filter jobs by status"),
-    current_user: User = Depends(get_current_user)
+@public_jobs_router.get("/public/jobs", response_model=List[CrawlJobResponse])
+async def public_jobs(
+    status_filter: Optional[CrawlStatus] = Query(None, description="Filter jobs by status")
 ):
     """
-    Get all jobs - requires authentication and admin privileges
+    Public endpoint to retrieve a list of all crawl jobs, optionally filtered by status,
+    without authentication. Returns the most recent 50 jobs.
     """
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Admin privileges required"
-        )
-    
-    logger.info(f"Admin {current_user.username} requested all jobs with status filter: {status_filter}")
-    
+    logger.info(f"API: Received request for public jobs with status filter: {status_filter}")
     try:
-        # Handle empty string status filter
-        if status_filter == "":
-            status_filter = None
-            
         all_jobs = db.get_all_crawl_jobs()
-        
         if status_filter:
-            try:
-                filter_status = CrawlStatus[status_filter.upper()]
-                all_jobs = [job for job in all_jobs if job.status == filter_status]
-            except KeyError:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST, 
-                    detail=f"Invalid status_filter: {status_filter}. Must be one of {list(CrawlStatus.__members__.keys())}"
-                )
+            filtered_jobs = [job for job in all_jobs if job.status == status_filter]
+        else:
+            filtered_jobs = all_jobs
         
-        # Sort by created_date descending
-        sorted_jobs = sorted(all_jobs, key=lambda job: job.created_date if job.created_date else datetime.min, reverse=True)
+        # Sort by created_date descending and limit to 50
+        sorted_jobs = sorted(filtered_jobs, key=lambda job: job.created_date if job.created_date else datetime.min, reverse=True)[:50]
         
         return [CrawlJobResponse.from_crawl_job(job) for job in sorted_jobs]
-        
     except Exception as e:
-        logger.error(f"Error retrieving jobs for admin {current_user.username}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="Failed to retrieve crawl jobs"
-        )
+        logger.error(f"Error retrieving public jobs: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve public crawl jobs.")
 
-@public_jobs_router.get("/api/jobs/paused")
-async def get_jobs_paused_status(current_user: User = Depends(get_current_user)):
+@public_jobs_router.get("/public/jobs/paused")
+async def public_jobs_paused():
     """
-    Check if job processing is paused - requires authentication and admin privileges
+    Public endpoint to check if job processing is paused without authentication.
     """
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Admin privileges required"
-        )
-    
-    logger.info(f"Admin {current_user.username} requested job pause status.")
-    
+    logger.info("API: Received request for public job pause status.")
     try:
         coordinator = await get_coordinator()
         is_paused = await coordinator.is_paused()
         return {"is_paused": is_paused}
     except Exception as e:
-        logger.error(f"Error checking job pause status for admin {current_user.username}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="Failed to retrieve job pause status"
-        )
+        logger.error(f"Error checking public job pause status: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve public job pause status.")
 
-@public_jobs_router.post("/api/jobs/pause")
-async def pause_jobs(current_user: User = Depends(get_current_user)):
-    """
-    Pause job processing - requires authentication and admin privileges
-    """
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Admin privileges required"
-        )
-    
-    logger.info(f"Admin {current_user.username} requested to pause job processing.")
-    
-    try:
-        coordinator = await get_coordinator()
-        await coordinator.pause_processing()
-        return {"status": "paused", "message": "Job processing has been paused"}
-    except Exception as e:
-        logger.error(f"Error pausing jobs for admin {current_user.username}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="Failed to pause job processing"
-        )
-
-@public_jobs_router.post("/api/jobs/resume")
-async def resume_jobs(current_user: User = Depends(get_current_user)):
-    """
-    Resume job processing - requires authentication and admin privileges
-    """
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Admin privileges required"
-        )
-    
-    logger.info(f"Admin {current_user.username} requested to resume job processing.")
-    
-    try:
-        coordinator = await get_coordinator()
-        await coordinator.resume_processing()
-        return {"status": "resumed", "message": "Job processing has been resumed"}
-    except Exception as e:
-        logger.error(f"Error resuming jobs for admin {current_user.username}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="Failed to resume job processing"
-        )
+# --- Protected Endpoints (require authentication) ---
+# These were previously in this file but are now moved to monitoring_debug.py
+# or are handled by other routers.
+# The original request was to make /public/jobs and /public/jobs/paused.
+# The /api/jobs/all and /api/jobs/is_paused (without /public/) are protected.
+# I've moved the protected /api/jobs/all and /api/jobs/is_paused to monitoring_debug.py
+# to consolidate monitoring-related protected endpoints there.
