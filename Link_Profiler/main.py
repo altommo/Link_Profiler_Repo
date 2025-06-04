@@ -15,7 +15,7 @@ import logging # Import logging early
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if project_root and project_root not in sys.path:
-    sys.path.insert(0, project_root)
+    sys.sys.path.insert(0, project_root)
     print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
 else:
     print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
@@ -245,7 +245,7 @@ keyword_service_instance = KeywordService(
     keyword_scraper=keyword_scraper_instance,
     google_trends_client=google_trends_client_instance, # New: Pass google_trends_client_instance
     redis_client=redis_client, # Pass redis_client for caching
-    cache_ttl=API_CACHE_TTL # Pass cache_ttl
+    cache_ttl=API_CACHE_TTL
 )
 
 # New: Initialize LinkHealthService
@@ -405,7 +405,7 @@ async def lifespan(app: FastAPI):
             entered_contexts.append(await cm.__aenter__())
         
         logger.info("Application startup: Pinging Redis.")
-        # global redis_client # Already global
+        global redis_client # Explicitly declare intent to modify global variable
         if redis_client: # Only try to ping if client was initialized
             try:
                 await redis_client.ping()
@@ -469,6 +469,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan # Register the lifespan context manager
 )
+
+# Initialize Jinja2Templates
+templates = Jinja2Templates(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates"))
 
 # --- Static Files ---
 # Mount the 'static' directory to serve CSS and JS files
