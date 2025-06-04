@@ -302,6 +302,40 @@ queue_system:
   max_queue_size: 100000 # Maximum number of tasks in the queue
   domain_max_concurrent: 2 # Max concurrent requests per domain in the smart queue
 
+# Satellite Crawler settings
+satellite:
+  id: "default-satellite-1" # Unique ID for this satellite instance. Change for each instance.
+  heartbeat_interval: 5 # Seconds between heartbeats
+  logging: # Satellite-specific logging configuration
+    level: INFO
+    config:
+      version: 1
+      disable_existing_loggers: False
+      formatters:
+        standard:
+          format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+      handlers:
+        console:
+          class: logging.StreamHandler
+          formatter: standard
+          level: INFO
+        file:
+          class: logging.handlers.RotatingFileHandler
+          formatter: standard
+          filename: "satellite_crawler.log"
+          maxBytes: 10485760
+          backupCount: 5
+          level: INFO
+      loggers:
+        Link_Profiler:
+          handlers: [console, file]
+          level: INFO
+          propagate: False
+        # Add other loggers specific to satellite if needed
+      root:
+        handlers: [console, file]
+        level: INFO
+
 # Authentication settings
 auth:
   secret_key: "xKroXcaIePQydhdhS4GMhdMfTsjhKzthaoL5OmU5MBA" # REQUIRED: This is your generated key

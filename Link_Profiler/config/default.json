@@ -337,6 +337,48 @@
     "max_queue_size": 100000,
     "domain_max_concurrent": 2
   },
+  "satellite": {
+    "id": "default-satellite-1",
+    "heartbeat_interval": 5,
+    "logging": {
+      "level": "INFO",
+      "config": {
+        "version": 1,
+        "disable_existing_loggers": false,
+        "formatters": {
+          "standard": {
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+          }
+        },
+        "handlers": {
+          "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+            "level": "INFO"
+          },
+          "file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "standard",
+            "filename": "satellite_crawler.log",
+            "maxBytes": 10485760,
+            "backupCount": 5,
+            "level": "INFO"
+          }
+        },
+        "loggers": {
+          "Link_Profiler": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": false
+          }
+        },
+        "root": {
+          "handlers": ["console", "file"],
+          "level": "INFO"
+        }
+      }
+    }
+  },
   "auth": {
     "secret_key": "xKroXcaIePQydhdhS4GMhdMfTsjhKzthaoL5OmU5MBA",
     "algorithm": "HS256",
@@ -345,9 +387,5 @@
   "system": {
     "current_code_version": "1.0.3",
     "version_control_enabled": false
-  },
-  "api_cache": {
-    "enabled": true,
-    "ttl": 3600
   }
 }

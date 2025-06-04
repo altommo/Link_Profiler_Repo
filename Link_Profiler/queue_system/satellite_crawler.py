@@ -1,689 +1,363 @@
-"""
-Satellite Crawler responsible for fetching and processing crawl jobs from Redis.
-"""
-import logging
 import asyncio
+import logging
 import os
-import redis.asyncio as redis
+import sys
 import uuid
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
 import json
-import sys # Import sys for exit
-import enum # Import enum
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional
 
-from Link_Profiler.database.database import Database
-from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, CrawlResult, CrawlError, LinkType, SpamLevel, URL, Domain, SEOMetrics, SERPResult, KeywordSuggestion, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlConfig, serialize_model
+import redis.asyncio as redis
+import aiohttp # For potential future API calls from satellite
+import psutil # For CPU/Memory usage in heartbeat
+
+# --- Robust Project Root Discovery ---
+# Assuming this file is at Link_Profiler/queue_system/satellite_crawler.py
+# The project root (containing setup.py) is two levels up from this file.
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+if project_root and project_root not in sys.path:
+    sys.path.insert(0, project_root)
+    print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
+else:
+    print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
+
+# Import necessary components from the Link_Profiler package
+from Link_Profiler.config.config_loader import ConfigLoader
+from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config
 from Link_Profiler.crawlers.web_crawler import WebCrawler
-from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
-from Link_Profiler.crawlers.serp_crawler import SERPCrawler
-from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
-from Link_Profiler.crawlers.social_media_crawler import SocialMediaCrawler
-from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
-from Link_Profiler.services.ai_service import AIService
-from Link_Profiler.services.link_health_service import LinkHealthService
-from Link_Profiler.services.serp_service import SERPService
-from Link_Profiler.services.keyword_service import KeywordService
-from Link_Profiler.services.social_media_service import SocialMediaService
-from Link_Profiler.services.web3_service import Web3Service
-from Link_Profiler.services.link_building_service import LinkBuildingService
-from Link_Profiler.services.report_service import ReportService
-from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
-from Link_Profiler.config.config_loader import ConfigLoader, config_loader
-from Link_Profiler.utils.user_agent_manager import user_agent_manager
-from Link_Profiler.utils.proxy_manager import proxy_manager
-from Link_Profiler.utils.content_validator import ContentValidator
-from Link_Profiler.utils.anomaly_detector import AnomalyDetector
-from Link_Profiler.utils.api_rate_limiter import APIRateLimiter
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, CrawlStatus, serialize_model, CrawlError, SEOMetrics
+from Link_Profiler.services.ai_service import AIService # Import AIService for WebCrawler
+from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue # Import SmartCrawlQueue for WebCrawler
 
-# New import for Playwright browser management
-from playwright.async_api import async_playwright, Browser
+# --- Configuration and Logging Setup ---
+config_loader = ConfigLoader()
+# Load config from the Link_Profiler/config directory
+config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
 
-# New import for SmartCrawlQueue
-from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue
-
-
+# Setup logging for the satellite
+satellite_log_level = config_loader.get("satellite.logging.level", "INFO")
+satellite_logging_config = config_loader.get("satellite.logging.config", get_default_logging_config(satellite_log_level))
+setup_logging(satellite_logging_config)
 logger = logging.getLogger(__name__)
 
 class SatelliteCrawler:
-    """
-    Satellite Crawler responsible for fetching and processing crawl jobs from Redis.
-    """
-    def __init__(self, redis_url: str, crawler_id: str = None, region: str = "default", database_url: Optional[str] = None):
-        self.redis_url = redis_url
-        self.crawler_id = crawler_id if crawler_id else f"satellite-{uuid.uuid4().hex[:8]}"
-        self.region = region
-        self.logger = logging.getLogger(f"{__name__}.{self.crawler_id}")
-        
-        self.redis_client: Optional[redis.Redis] = None
-        self.db: Optional[Database] = None
-        self.clickhouse_loader: Optional[ClickHouseLoader] = None
-        self.web_crawler: Optional[WebCrawler] = None
-        self.technical_auditor: Optional[TechnicalAuditor] = None
-        self.serp_crawler: Optional[SERPCrawler] = None
-        self.keyword_scraper: Optional[KeywordScraper] = None
-        self.social_media_crawler: Optional[SocialMediaCrawler] = None
-        self.playwright_instance = None # To hold the Playwright context manager
-        self.playwright_browser: Optional[Browser] = None # To hold the launched browser instance
-
-        # Retrieve configurations
+    def __init__(self):
+        self.crawler_id = config_loader.get("satellite.id", str(uuid.uuid4()))
+        self.redis_url = config_loader.get("redis.url")
+        self.heartbeat_interval = config_loader.get("satellite.heartbeat_interval", 5)
         self.job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs")
         self.result_queue_name = config_loader.get("queue.result_queue_name", "crawl_results")
         self.dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name", "dead_letter_queue")
-        self.heartbeat_interval = config_loader.get("queue.heartbeat_interval", 30)
-        self.stale_timeout = config_loader.get("queue.stale_timeout", 60)
-        self.max_retries = config_loader.get("queue.max_retries", 3)
-        self.retry_delay = config_loader.get("queue.retry_delay", 5)
-        self.clickhouse_enabled = config_loader.get("clickhouse.enabled", False)
-        self.code_version = config_loader.get("system.current_code_version", "unknown") # New: Read current code version
-        self.version_control_enabled = config_loader.get("system.version_control_enabled", False) # New: Load version control flag
+        self.control_channel_prefix = "crawler_control" # For specific commands
+        self.global_control_channel = "crawler_control:all" # For global commands
+        self.current_code_version = config_loader.get("system.current_code_version", "unknown")
+        self.processing_paused = False # Local flag for pausing job processing
 
-        # Database initialization
-        # Prioritize passed database_url, then config, then hardcoded fallback
-        resolved_database_url = database_url or config_loader.get("database.url", "postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db")
-        self.db = Database(db_url=resolved_database_url)
-        self.logger.info(f"SatelliteCrawler: Initialized Database with URL: {resolved_database_url.split('@')[-1]}") # Log without password
+        self.redis_client: Optional[redis.Redis] = None
+        self.web_crawler: Optional[WebCrawler] = None
+        self.ai_service: Optional[AIService] = None # AI service for content analysis
+        self.smart_crawl_queue: Optional[SmartCrawlQueue] = None # Smart crawl queue for internal use by WebCrawler
 
-        # Initialize ClickHouse Loader if enabled
-        if self.clickhouse_enabled:
-            self.clickhouse_loader = ClickHouseLoader(
-                host=config_loader.get("clickhouse.host"),
-                port=config_loader.get("clickhouse.port"),
-                user=config_loader.get("clickhouse.user"),
-                password=config_loader.get("clickhouse.password"),
-                database=config_loader.get("clickhouse.database")
-            )
-            self.logger.info("SatelliteCrawler: ClickHouseLoader initialized.")
-        else:
-            self.logger.info("SatelliteCrawler: ClickHouse integration disabled.")
+        self.jobs_processed = 0
+        self.current_job_id: Optional[str] = None
+        self.running = True
+        self._start_time = datetime.now() # For uptime calculation
 
-        # Initialize services that the crawler might interact with
-        # These are passed to WebCrawler, so they need to be initialized first
-        self.domain_analyzer_service = DomainAnalyzerService(self.db, None, None) # Needs proper init later
-        self.ai_service = AIService() # Needs proper init later
-        self.link_health_service = LinkHealthService(self.db)
-        self.serp_service = SERPService(None, None, None, None) # Needs proper init later
-        self.keyword_service = KeywordService(None, None, None, None) # Needs proper init later
-        self.social_media_service = SocialMediaService(None, None, None, None, None, None) # Needs proper init later
-        self.web3_service = Web3Service(None, None) # Needs proper init later
-        self.link_building_service = LinkBuildingService(self.db, None, None, None, None, None) # Needs proper init later
-        self.report_service = ReportService(self.db)
-
-        # Initialize SmartCrawlQueue here, it needs redis_client which will be set in __aenter__
-        self.smart_crawl_queue: Optional[SmartCrawlQueue] = None
-
-        # Initialize web_crawler here, but pass playwright_browser as None initially
-        # It will be set in __aenter__ if browser_crawler is enabled
-        self.web_crawler = WebCrawler(
-            database=self.db,
-            redis_client=self.redis_client, # Will be set in __aenter__
-            clickhouse_loader=self.clickhouse_loader,
-            config=config_loader.get("crawler", {}), # Pass the raw dict, with default empty dict
-            anti_detection_config=config_loader.get("anti_detection", {}), # Default empty dict
-            proxy_config=config_loader.get("proxy", {}), # Default empty dict
-            quality_assurance_config=config_loader.get("quality_assurance", {}), # Default empty dict
-            domain_analyzer_service=self.domain_analyzer_service,
-            ai_service=self.ai_service,
-            link_health_service=self.link_health_service,
-            serp_service=self.serp_service,
-            keyword_service=self.keyword_service,
-            social_media_service=self.social_media_service,
-            web3_service=self.web3_service,
-            link_building_service=self.link_building_service,
-            report_service=self.report_service,
-            playwright_browser=None, # Initialise as None, set in __aenter__
-            crawl_queue=self.smart_crawl_queue # Pass the SmartCrawlQueue instance
-        )
-        self.technical_auditor = TechnicalAuditor(
-            lighthouse_path=config_loader.get("technical_auditor.lighthouse_path")
-        )
-        self.serp_crawler = SERPCrawler(
-            headless=config_loader.get("serp_crawler.playwright.headless", True), # Added default
-            browser_type=config_loader.get("serp_crawler.playwright.browser_type", "chromium") # Added default
-        )
-        self.keyword_scraper = KeywordScraper()
-        self.social_media_crawler = SocialMediaCrawler()
-
-        self.running_jobs: Dict[str, asyncio.Task] = {}
-        self.last_heartbeat_time = datetime.now()
-        self.total_jobs_completed = 0 # New counter
-        self.total_errors_encountered = 0 # New counter
-        self.is_locally_paused = False # New: Local pause flag
-        self.shutdown_event = asyncio.Event() # New: Event to signal graceful shutdown
+        logger.info(f"Satellite Crawler '{self.crawler_id}' initialized.")
+        logger.info(f"Redis URL: {self.redis_url}")
+        logger.info(f"Current Code Version: {self.current_code_version}")
 
     async def __aenter__(self):
-        self.logger.info(f"SatelliteCrawler {self.crawler_id} entering context.")
-        
-        # --- Redis Connection ---
+        self.redis_client = redis.Redis(connection_pool=redis.ConnectionPool.from_url(self.redis_url))
         try:
-            self.redis_client = redis.Redis(connection_pool=redis.ConnectionPool.from_url(self.redis_url))
             await self.redis_client.ping()
-            self.logger.info(f"SatelliteCrawler {self.crawler_id} connected to Redis.")
-        except redis.exceptions.ConnectionError as e:
-            self.logger.critical(f"SatelliteCrawler {self.crawler_id} FAILED to connect to Redis at {self.redis_url}: {e}. Exiting.", exc_info=True)
-            sys.exit(1) # Exit if Redis connection fails, allowing process manager to restart
-        except redis.exceptions.AuthenticationError as e:
-            self.logger.critical(f"SatelliteCrawler {self.crawler_id} FAILED to authenticate with Redis at {self.redis_url}: {e}. Check password. Exiting.", exc_info=True)
-            sys.exit(1) # Exit if Redis authentication fails
+            logger.info("Connected to Redis successfully.")
         except Exception as e:
-            self.logger.critical(f"SatelliteCrawler {self.crawler_id} encountered unexpected error connecting to Redis at {self.redis_url}: {e}. Exiting.", exc_info=True)
-            sys.exit(1) # Exit for any other unexpected Redis error
+            logger.error(f"Failed to connect to Redis: {e}")
+            raise
 
-        # --- Start: Uniqueness check for crawler_id ---
-        original_crawler_id = self.crawler_id
-        # An ID is considered active if its last heartbeat is within the stale_timeout
-        
-        # Get the current timestamp
-        now_timestamp = datetime.now().timestamp()
-        # Calculate the cutoff for stale heartbeats
-        stale_cutoff = (datetime.now() - timedelta(seconds=self.stale_timeout)).timestamp()
+        # Initialize AI Service
+        self.ai_service = AIService()
+        await self.ai_service.__aenter__() # Enter AI service context
 
-        # Check if this crawler_id exists in the sorted set with a recent score
-        # zscore returns the score (timestamp) of the member
-        existing_score = await self.redis_client.zscore("crawler_heartbeats_sorted", self.crawler_id)
-
-        if existing_score is not None and existing_score >= stale_cutoff:
-            # The crawler_id is already present and its heartbeat is fresh
-            self.logger.warning(f"Crawler ID '{self.crawler_id}' is already active. Generating a new unique ID.")
-            # Append a short unique suffix
-            self.crawler_id = f"{original_crawler_id}-{uuid.uuid4().hex[:4]}"
-            self.logger = logging.getLogger(f"{__name__}.{self.crawler_id}") # Update logger name
-            self.logger.info(f"New unique Crawler ID generated: '{self.crawler_id}'")
-        # --- End: Uniqueness check for crawler_id ---
-
-        # Initialize database connection (ping to ensure it's up)
-        self.db.ping()
-        self.logger.info(f"SatelliteCrawler {self.crawler_id} connected to PostgreSQL.")
-
-        if self.clickhouse_loader:
-            await self.clickhouse_loader.__aenter__()
-            self.logger.info(f"SatelliteCrawler {self.crawler_id} connected to ClickHouse.")
-
-        # Initialize SmartCrawlQueue after redis_client is available
+        # Initialize SmartCrawlQueue for internal use by WebCrawler
+        # Note: This SmartCrawlQueue is for the WebCrawler's internal link discovery,
+        # not the main job queue managed by the coordinator.
         self.smart_crawl_queue = SmartCrawlQueue(redis_client=self.redis_client)
-        # Load any persisted tasks from Redis into the in-memory queue
-        await self.smart_crawl_queue.load_persisted_tasks()
-        self.logger.info(f"SatelliteCrawler {self.crawler_id}: SmartCrawlQueue initialized and loaded persisted tasks.")
-        # Assign the initialized smart_crawl_queue to web_crawler
-        self.web_crawler.crawl_queue = self.smart_crawl_queue
+        await self.smart_crawl_queue.__aenter__()
 
-        # Initialize services that are asynchronous context managers
-        await self.ai_service.__aenter__()
-        await self.serp_service.__aenter__()
-        await self.keyword_service.__aenter__()
-        await self.social_media_service.__aenter__()
-        await self.web3_service.__aenter__()
-        await self.web_crawler.__aenter__() # This one is a context manager
-        await self.serp_crawler.__aenter__() # This one is a context manager
+        # Initialize WebCrawler with loaded config and AI service
+        crawler_config_data = config_loader.get("crawler", {})
+        # Ensure ml_rate_optimization is set based on rate_limiting config
+        crawler_config_data['ml_rate_optimization'] = config_loader.get("rate_limiting.ml_enhanced", False)
+        # Pass relevant anti_detection settings to CrawlConfig
+        crawler_config_data['user_agent_rotation'] = config_loader.get("anti_detection.user_agent_rotation", False)
+        crawler_config_data['request_header_randomization'] = config_loader.get("anti_detection.request_header_randomization", False)
+        crawler_config_data['human_like_delays'] = config_loader.get("anti_detection.human_like_delays", False)
+        crawler_config_data['stealth_mode'] = config_loader.get("anti_detection.stealth_mode", False)
+        crawler_config_data['browser_fingerprint_randomization'] = config_loader.get("anti_detection.browser_fingerprint_randomization", False)
+        crawler_config_data['captcha_solving_enabled'] = config_loader.get("anti_detection.captcha_solving_enabled", False)
+        crawler_config_data['anomaly_detection_enabled'] = config_loader.get("anti_detection.anomaly_detection_enabled", False)
+        crawler_config_data['use_proxies'] = config_loader.get("proxy.use_proxies", False)
+        crawler_config_data['proxy_list'] = config_loader.get("proxy.proxy_list", [])
+        crawler_config_data['render_javascript'] = config_loader.get("browser_crawler.enabled", False)
+        crawler_config_data['browser_type'] = config_loader.get("browser_crawler.browser_type", "chromium")
+        crawler_config_data['headless_browser'] = config_loader.get("browser_crawler.headless", True)
 
-        # Conditionally launch Playwright browser for WebCrawler
-        browser_crawler_enabled = config_loader.get("browser_crawler.enabled", False)
-        self.logger.debug(f"Satellite startup: browser_crawler.enabled is configured as: {browser_crawler_enabled}") # Added debug log
-        if browser_crawler_enabled:
-            browser_type = config_loader.get("browser_crawler.browser_type", "chromium")
-            headless = config_loader.get("browser_crawler.headless", True)
-            self.logger.info(f"Satellite startup: Launching global Playwright browser ({browser_type}, headless={headless})...")
-            self.playwright_instance = await async_playwright().start() # Store playwright_instance
-            if browser_type == "chromium":
-                self.playwright_browser = await self.playwright_instance.chromium.launch(headless=headless)
-            elif browser_type == "firefox":
-                self.playwright_browser = await self.playwright_instance.firefox.launch(headless=headless)
-            elif browser_type == "webkit":
-                self.playwright_browser = await self.playwright_instance.webkit.launch(headless=headless)
-            else:
-                raise ValueError(f"Unsupported browser type for WebCrawler: {browser_type}")
-            
-            # Assign the launched browser to the web_crawler instance
-            self.web_crawler.playwright_browser = self.playwright_browser
-            self.logger.info("Playwright browser launched and assigned to WebCrawler.")
-        else:
-            self.logger.info("Playwright browser for WebCrawler is disabled by configuration.")
+        main_crawl_config = CrawlConfig(**crawler_config_data)
+        self.web_crawler = WebCrawler(config=main_crawl_config, crawl_queue=self.smart_crawl_queue, ai_service=self.ai_service)
+        await self.web_crawler.__aenter__() # Enter WebCrawler context
 
+        # Start background tasks
+        asyncio.create_task(self._heartbeat_loop())
+        asyncio.create_task(self._control_command_listener())
+        asyncio.create_task(self._global_control_command_listener())
+
+        logger.info(f"Satellite Crawler '{self.crawler_id}' started successfully.")
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self.logger.info(f"SatelliteCrawler {self.crawler_id} exiting context.")
-        
-        # Cancel all running jobs
-        for job_id, task in list(self.running_jobs.items()):
-            if not task.done():
-                self.logger.info(f"Cancelling running job {job_id}...")
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    self.logger.info(f"Job {job_id} cancelled.")
-                except Exception as e:
-                    self.logger.error(f"Error during cancellation of job {job_id}: {e}")
-
-        # Close connections and exit contexts in reverse order for async context managers
-        await self.serp_crawler.__aexit__(exc_type, exc_val, exc_tb)
-        await self.web_crawler.__aexit__(exc_type, exc_val, exc_tb)
-        await self.web3_service.__aexit__(exc_type, exc_val, exc_tb)
-        await self.social_media_service.__aexit__(exc_type, exc_val, exc_tb)
-        await self.keyword_service.__aexit__(exc_type, exc_val, exc_tb)
-        await self.serp_service.__aexit__(exc_type, exc_val, exc_tb)
-        await self.ai_service.__aexit__(exc_type, exc_val, exc_tb)
-
-        if self.clickhouse_loader:
-            await self.clickhouse_loader.__aexit__(exc_type, exc_val, exc_tb)
-
+        self.running = False
+        logger.info(f"Satellite Crawler '{self.crawler_id}' shutting down...")
+        if self.web_crawler:
+            await self.web_crawler.__aexit__(exc_type, exc_val, exc_tb)
+        if self.ai_service:
+            await self.ai_service.__aexit__(exc_type, exc_val, exc_tb)
+        if self.smart_crawl_queue:
+            await self.smart_crawl_queue.__aexit__(exc_type, exc_val, exc_tb)
         if self.redis_client:
             await self.redis_client.close()
-            self.logger.info(f"SatelliteCrawler {self.crawler_id} disconnected from Redis.")
-        
-        # Close Playwright browser if it was launched
-        if self.playwright_browser:
-            self.logger.info("Satellite shutdown: Closing Playwright browser.")
-            await self.playwright_browser.close()
-            if self.playwright_instance: # Also stop the playwright_instance itself
-                await self.playwright_instance.stop()
-
-
-    async def _send_heartbeat(self):
-        """Sends a periodic heartbeat to Redis."""
-        try:
-            heartbeat_data = {
-                "crawler_id": self.crawler_id,
-                "region": self.region,
-                "status": "active",
-                "running_jobs": len(self.running_jobs),
-                "timestamp": datetime.now().isoformat(),
-                "total_jobs_completed": self.total_jobs_completed,
-                "total_errors_encountered": self.total_errors_encountered,
-                "is_locally_paused": self.is_locally_paused, # Include local pause status
-            }
-            
-            # Only include code_version if version control is enabled
-            if self.version_control_enabled:
-                heartbeat_data["code_version"] = self.code_version
-                self.logger.debug(f"Heartbeat for {self.crawler_id}: Sending code_version '{self.code_version}'.") # New debug log
-            else:
-                self.logger.debug(f"Heartbeat for {self.crawler_id}: Version control disabled, not sending code_version.")
-
-            # Store detailed heartbeat data in a separate key with an expiry
-            # The expiry should be longer than the stale_timeout to allow for recovery
-            await self.redis_client.set(
-                f"crawler_details:{self.crawler_id}", 
-                json.dumps(heartbeat_data), 
-                ex=self.stale_timeout * 2
-            )
-
-            # Use a sorted set to track active crawlers and their last heartbeat time
-            # The member is the crawler_id, and the score is the timestamp.
-            # This ensures only one entry per crawler_id in the sorted set.
-            await self.redis_client.zadd(
-                "crawler_heartbeats_sorted", 
-                {self.crawler_id: datetime.now().timestamp()}
-            )
-            
-            self.last_heartbeat_time = datetime.now()
-            self.logger.debug(f"Heartbeat sent for {self.crawler_id}. Running jobs: {len(self.running_jobs)}")
-            self.logger.info(f"Heartbeat successfully sent to Redis for {self.crawler_id}.")
-        except Exception as e:
-            self.logger.error(f"Failed to send heartbeat for {self.crawler_id}: {e}")
-
-    async def _control_command_listener(self):
-        """Listens for control commands from Redis."""
-        control_key_individual = f"crawler_control:{self.crawler_id}"
-        control_key_global = "crawler_control:all"
-        
-        while not self.shutdown_event.is_set():
-            try:
-                # Check for individual commands first
-                command_json = await self.redis_client.get(control_key_individual)
-                if command_json:
-                    await self._process_control_command(command_json.decode('utf-8'), control_key_individual)
-                    continue # Process one command at a time
-
-                # Then check for global commands
-                command_json = await self.redis_client.get(control_key_global)
-                if command_json:
-                    await self._process_control_command(command_json.decode('utf-8'), control_key_global)
-                    
-                await asyncio.sleep(5) # Check for commands every 5 seconds
-            except Exception as e:
-                self.logger.error(f"Error in control command listener: {e}", exc_info=True)
-                await asyncio.sleep(10) # Longer sleep on error
-
-    async def _process_control_command(self, command_json: str, redis_key: str):
-        """Processes a single control command."""
-        try:
-            command_data = json.loads(command_json)
-            command = command_data.get("command")
-            
-            self.logger.info(f"Received control command '{command}' from Redis key '{redis_key}'.")
-
-            if command == "PAUSE":
-                self.is_locally_paused = True
-                self.logger.info(f"Satellite {self.crawler_id} paused job processing locally.")
-            elif command == "RESUME":
-                self.is_locally_paused = False
-                self.logger.info(f"Satellite {self.crawler_id} resumed job processing locally.")
-            elif command == "SHUTDOWN":
-                self.logger.info(f"Satellite {self.crawler_id} received SHUTDOWN command. Initiating graceful exit.")
-                self.shutdown_event.set() # Signal main loop to stop
-            elif command == "RESTART":
-                self.logger.info(f"Satellite {self.crawler_id} received RESTART command. Initiating restart sequence.")
-                # For a true restart, you'd typically rely on an external process manager (e.g., Docker, systemd)
-                # to re-launch the process after it exits. Here, we just exit.
-                self.shutdown_event.set() # Signal main loop to stop
-                # Set an exit code that might be interpreted by a process manager as a restart signal
-                sys.exit(1) 
-            else:
-                self.logger.warning(f"Unknown control command received: {command}")
-            
-            # Delete the command from Redis after processing
-            await self.redis_client.delete(redis_key)
-            self.logger.debug(f"Control command deleted from Redis key '{redis_key}'.")
-
-        except json.JSONDecodeError:
-            self.logger.error(f"Invalid JSON control command received from '{redis_key}': {command_json}")
-            await self.redis_client.delete(redis_key) # Clear invalid command
-        except Exception as e:
-            self.logger.error(f"Error processing control command '{command_json}' from '{redis_key}': {e}", exc_info=True)
-
-    async def _process_job(self, job_data: Dict):
-        """Processes a single job."""
-        job_id = job_data.get("id")
-        job_type = job_data.get("job_type")
-        target_url = job_data.get("target_url")
-        initial_seed_urls = job_data.get("initial_seed_urls", []) # Get initial_seed_urls
-        config_dict = job_data.get("config", {})
-        
-        self.logger.info(f"Processing job {job_id} (Type: {job_type}, Target: {target_url})")
-        
-        job = CrawlJob.from_dict(job_data)
-        job.status = CrawlStatus.IN_PROGRESS
-        job.started_date = datetime.now()
-        self.logger.debug(f"Job {job_id}: Updating job status to IN_PROGRESS in DB.")
-        self.db.update_crawl_job(job)
-        self.running_jobs[job_id] = asyncio.current_task() # Store the task for cancellation
-
-        try:
-            result_data = {}
-            if job_type == "backlink_discovery":
-                self.logger.debug(f"Job {job_id}: Calling web_crawler.start_crawl for {target_url} with seeds {initial_seed_urls}.")
-                
-                # Call start_crawl which now returns a single CrawlResult summary
-                final_crawl_summary: CrawlResult = await self.web_crawler.start_crawl(target_url, initial_seed_urls, job_id)
-                
-                self.logger.debug(f"Job {job_id}: Received final crawl summary: {final_crawl_summary.pages_crawled} pages, {final_crawl_summary.backlinks_found} backlinks.")
-
-                if final_crawl_summary:
-                    # Update job statistics from the final summary
-                    job.urls_crawled = final_crawl_summary.pages_crawled
-                    job.links_found = final_crawl_summary.backlinks_found # Use backlinks_found from summary
-                    job.errors_count = final_crawl_summary.failed_urls_count # Use failed_urls_count from summary
-                    job.error_log.extend(final_crawl_summary.errors) # Extend with CrawlError objects
-                    job.completed_date = datetime.now()
-                    job.status = CrawlStatus.COMPLETED
-                    
-                    # Store the backlinks found in the job results
-                    if final_crawl_summary.links_found: # links_found in CrawlResult now holds target backlinks
-                        job.results['backlinks'] = [serialize_model(link) for link in final_crawl_summary.links_found]
-                    
-                    job.results['crawl_summary'] = {
-                        'pages_crawled': final_crawl_summary.pages_crawled,
-                        'total_links_found': final_crawl_summary.total_links_found,
-                        'backlinks_found': final_crawl_summary.backlinks_found,
-                        'failed_urls_count': final_crawl_summary.failed_urls_count,
-                        'crawl_duration_seconds': final_crawl_summary.crawl_duration_seconds,
-                        'errors_summary': [serialize_model(err) for err in final_crawl_summary.errors]
-                    }
-                    
-                    self.logger.info(f"Job {job_id} (backlink_discovery) completed: {job.urls_crawled} pages, {job.links_found} backlinks to target, {job.errors_count} errors.")
-                else:
-                    # This case should ideally not be reached with the fix in web_crawler.py
-                    job.status = CrawlStatus.FAILED
-                    job.error_log.append(CrawlError(
-                        timestamp=datetime.now(),
-                        url=target_url,
-                        error_type="NoFinalCrawlResult",
-                        message="WebCrawler did not return a final crawl summary result (unexpected)."
-                    ))
-                    self.logger.error(f"Job {job_id} (backlink_discovery) failed: No final crawl summary result.")
-
-            elif job_type == "link_health_audit":
-                source_urls_to_audit = config_dict.get("source_urls_to_audit", [])
-                audit_results = await self.link_health_service.audit_links_batch(source_urls_to_audit)
-                result_data = {"audit_results": [serialize_model(res) for res in audit_results]}
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"Job {job_id} (link_health_audit) completed successfully.")
-            elif job_type == "technical_audit":
-                urls_to_audit = config_dict.get("urls_to_audit_tech", [])
-                audit_results = await self.technical_auditor.run_batch_audit(urls_to_audit)
-                result_data = {"technical_audit_results": audit_results}
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"Job {job_id} (technical_audit) completed successfully.")
-            elif job_type == "full_seo_audit":
-                urls_to_audit = config_dict.get("urls_to_audit_full_seo", [])
-                # Orchestrate calls to technical_auditor and link_health_service
-                tech_audit_results = await self.technical_auditor.run_batch_audit(urls_to_audit)
-                link_audit_results = await self.link_health_service.audit_links_batch(urls_to_audit)
-                result_data = {
-                    "technical_audit_results": tech_audit_results,
-                    "link_health_audit_results": [serialize_model(res) for res in link_audit_results]
-                }
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"Job {job_id} (full_seo_audit) completed successfully.")
-            elif job_type == "domain_analysis":
-                domain_names = config_dict.get("domain_names_to_analyze", [])
-                min_value_score = config_dict.get("min_value_score")
-                limit = config_dict.get("limit")
-                analysis_results = await self.domain_analyzer_service.analyze_domains_batch(
-                    domain_names=domain_names,
-                    min_value_score=min_value_score,
-                    limit=limit
-                )
-                result_data = {"domain_analysis_results": [serialize_model(res) for res in analysis_results]}
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"Job {job_id} (domain_analysis) completed successfully.")
-            elif job_type == "web3_crawl":
-                web3_identifier = config_dict.get("web3_content_identifier")
-                web3_data = await self.web3_service.crawl_web3_content(web3_identifier)
-                result_data = {"web3_data": web3_data}
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"Job {job_id} (web3_crawl) completed successfully.")
-            elif job_type == "social_media_crawl":
-                social_query = config_dict.get("social_media_query")
-                platforms = config_dict.get("platforms")
-                social_data = await self.social_media_service.crawl_social_media(social_query, platforms)
-                result_data = {"social_media_data": social_data}
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"Job {job_id} (social_media_crawl) completed successfully.")
-            elif job_type == "content_gap_analysis":
-                target_url_cga = config_dict.get("target_url_for_content_gap")
-                competitor_urls_cga = config_dict.get("competitor_urls_for_content_gap")
-                cga_result = await self.ai_service.perform_content_gap_analysis(target_url_cga, competitor_urls_cga)
-                result_data = serialize_model(cga_result)
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"Job {job_id} (content_gap_analysis) completed successfully.")
-            elif job_type == "prospect_identification":
-                # Extract parameters from config_dict
-                target_domain = config_dict.get("target_domain")
-                competitor_domains = config_dict.get("competitor_domains", [])
-                keywords = config_dict.get("keywords", [])
-                min_domain_authority = config_dict.get("min_domain_authority")
-                max_spam_score = config_dict.get("max_spam_score")
-                num_serp_results_to_check = config_dict.get("num_serp_results_to_check")
-                num_competitor_backlinks_to_check = config_dict.get("num_competitor_backlinks_to_check")
-
-                prospects = await self.link_building_service.identify_link_prospects(
-                    target_domain=target_domain,
-                    competitor_domains=competitor_domains,
-                    keywords=keywords,
-                    min_domain_authority=min_domain_authority,
-                    max_spam_score=max_spam_score,
-                    num_serp_results_to_check=num_serp_results_to_check,
-                    num_competitor_backlinks_to_check=num_competitor_backlinks_to_check
-                )
-                result_data = {"link_prospects": [serialize_model(p) for p in prospects]}
-                job.status = CrawlStatus.COMPLETED
-                self.logger.info(f"Job {job_id} (prospect_identification) completed successfully.")
-            elif job_type == "report_generation":
-                report_type = config_dict.get("report_job_type")
-                report_target_identifier = config_dict.get("report_target_identifier")
-                report_format = config_dict.get("report_format")
-                report_config = config_dict.get("config", {}) # Additional config for report generation
-
-                file_path = await self.report_service.generate_report(
-                    report_type=report_type,
-                    target_identifier=report_target_identifier,
-                    output_format=report_format,
-                    report_config=report_config
-                )
-                result_data = {"report_file_path": file_path}
-                job.status = CrawlStatus.COMPLETED
-                job.results = result_data # Store file path in job results
-                job.file_path = file_path # Also store in dedicated field
-                self.logger.info(f"Job {job_id} (report_generation) completed successfully. File: {file_path}")
-            else:
-                raise ValueError(f"Unknown job type: {job_type}")
-
-            job.results = result_data
-            job.completed_date = datetime.now()
-            # Calculate duration here
-            if job.started_date:
-                job.duration_seconds = (job.completed_date - job.started_date).total_seconds()
-            else:
-                job.duration_seconds = 0.0
-            self.logger.debug(f"Job {job_id}: Final status before DB update: {job.status.value}. Job ID: {job.id}")
-            self.db.update_crawl_job(job)
-            self.logger.info(f"Job {job_id} finished. Status: {job.status.value}")
-            self.total_jobs_completed += 1 # Increment on successful completion
-
-        except asyncio.CancelledError:
-            self.logger.warning(f"Job {job_id} was cancelled.")
-            job.status = CrawlStatus.CANCELLED
-            job.completed_date = datetime.now()
-            if job.started_date:
-                job.duration_seconds = (job.completed_date - job.started_date).total_seconds()
-            else:
-                job.duration_seconds = 0.0
-            job.error_log.append(CrawlError(
-                timestamp=datetime.now(),
-                url=target_url,
-                error_type="CancelledError",
-                message="Job was cancelled by system shutdown or manual intervention."
-            ))
-            self.logger.debug(f"Job {job_id}: Final status before DB update: {job.status.value}. Job ID: {job.id}")
-            self.db.update_crawl_job(job)
-            self.total_errors_encountered += 1 # Increment on cancellation
-        except Exception as e:
-            self.logger.error(f"Error processing job {job_id}: {e}", exc_info=True)
-            job.status = CrawlStatus.FAILED
-            job.completed_date = datetime.now()
-            if job.started_date:
-                job.duration_seconds = (job.completed_date - job.started_date).total_seconds()
-            else:
-                job.duration_seconds = 0.0
-            job.errors_count += 1
-            job.error_log.append(CrawlError(
-                timestamp=datetime.now(),
-                url=target_url,
-                error_type=e.__class__.__name__,
-                message=str(e)
-            ))
-            self.logger.debug(f"Job {job_id}: Final status before DB update: {job.status.value}. Job ID: {job.id}")
-            self.db.update_crawl_job(job)
-            # Optionally push to dead-letter queue
-            job_data["dead_letter_reason"] = str(e)
-            job_data["dead_letter_timestamp"] = datetime.now().isoformat()
-            # Convert enum values to strings before JSON serialization
-            job_data_serializable = {}
-            for key, value in job_data.items():
-                if isinstance(value, enum.Enum): # Check if it's an Enum instance
-                    job_data_serializable[key] = value.value
-                elif isinstance(value, datetime): # Handle datetime objects
-                    job_data_serializable[key] = value.isoformat()
-                elif isinstance(value, CrawlConfig): # Handle CrawlConfig Pydantic model
-                    job_data_serializable[key] = value.model_dump()
-                elif isinstance(value, list) and value and isinstance(value[0], CrawlError): # Handle list of CrawlError objects
-                    job_data_serializable[key] = [serialize_model(item) for item in value]
-                else:
-                    job_data_serializable[key] = value
-            
-            await self.redis_client.rpush(self.dead_letter_queue_name, json.dumps(job_data_serializable))
-            self.logger.warning(f"Job {job_id} moved to dead-letter queue.")
-            self.total_errors_encountered += 1 # Increment on failure
-        finally:
-            self.running_jobs.pop(job_id, None) # Remove job from running list
-
-    async def _fetch_and_process_jobs(self):
-        """Continuously fetches and processes jobs from the queue."""
-        while not self.shutdown_event.is_set():
-            try:
-                # Check for global pause flag
-                if await self.redis_client.exists("processing_paused"):
-                    self.logger.info("Global job processing is paused. Waiting...")
-                    await asyncio.sleep(self.heartbeat_interval)
-                    continue
-                
-                # Check for local pause flag
-                if self.is_locally_paused:
-                    self.logger.info(f"Satellite {self.crawler_id} is locally paused. Waiting...")
-                    await asyncio.sleep(self.heartbeat_interval)
-                    continue
-
-                # Fetch job from sorted set (lowest score/priority first)
-                # Use ZPOPMAX to get highest priority (lowest score)
-                # Or ZPOPMIN to get lowest priority (lowest score)
-                # Assuming lower score means higher priority for ZADD
-                job_raw = await self.redis_client.zpopmin(self.job_queue_name, count=1)
-                
-                if job_raw:
-                    job_data_str = job_raw[0][0].decode('utf-8')
-                    job_data = json.loads(job_data_str)
-                    job_id = job_data.get("id")
-                    
-                    # Check if job is scheduled for future
-                    scheduled_at_str = job_data.get("scheduled_at")
-                    if scheduled_at_str:
-                        scheduled_at = datetime.fromisoformat(scheduled_at_str)
-                        if scheduled_at > datetime.now():
-                            # Re-add to queue with original score and wait
-                            await self.redis_client.zadd(self.job_queue_name, {job_data_str: scheduled_at.timestamp()})
-                            self.logger.debug(f"Job {job_id} is scheduled for future. Re-queued and waiting.")
-                            await asyncio.sleep(1) # Small sleep to avoid busy-waiting
-                            continue
-
-                    # Check for max retries
-                    current_retries = job_data.get("retries", 0)
-                    if current_retries >= self.max_retries:
-                        self.logger.warning(f"Job {job_id} exceeded max retries ({self.max_retries}). Moving to dead-letter queue.")
-                        job_data["dead_letter_reason"] = "Exceeded max retries"
-                        job_data["dead_letter_timestamp"] = datetime.now().isoformat()
-                        await self.redis_client.rpush(self.dead_letter_queue_name, json.dumps(job_data))
-                        continue
-
-                    # Process the job in a separate task
-                    asyncio.create_task(self._process_job(job_data))
-                else:
-                    self.logger.debug("No jobs in queue. Waiting...")
-                    await asyncio.sleep(1) # Short sleep to avoid busy-waiting
-            except Exception as e:
-                self.logger.error(f"Error fetching or processing job: {e}", exc_info=True)
-                await asyncio.sleep(5) # Longer sleep on error
-
-    async def start(self):
-        """Starts the satellite crawler's main loop."""
-        self.logger.info(f"SatelliteCrawler {self.crawler_id} starting main loop.")
-        
-        # Start heartbeat task
-        asyncio.create_task(self._heartbeat_loop())
-        
-        # Start control command listener task
-        asyncio.create_task(self._control_command_listener())
-
-        # Start job fetching and processing loop
-        await self._fetch_and_process_jobs()
-        
-        # If we reach here, it means shutdown_event was set
-        self.logger.info(f"SatelliteCrawler {self.crawler_id} main loop exited gracefully.")
+        logger.info(f"Satellite Crawler '{self.crawler_id}' shutdown complete.")
 
     async def _heartbeat_loop(self):
-        """Runs the heartbeat in a continuous loop."""
-        while not self.shutdown_event.is_set():
-            await self._send_heartbeat()
-            await asyncio.sleep(self.heartbeat_interval)
+        """Sends periodic heartbeats to the coordinator."""
+        heartbeat_key_sorted = config_loader.get("queue.heartbeat_queue_sorted_name", "crawler_heartbeats_sorted")
+        heartbeat_details_key = f"crawler_details:{self.crawler_id}"
+        
+        while self.running:
+            try:
+                timestamp = datetime.now().timestamp()
+                
+                # Store detailed heartbeat data in a separate key
+                heartbeat_data = {
+                    "id": self.crawler_id,
+                    "last_seen": datetime.now().isoformat(),
+                    "status": "running" if not self.processing_paused else "paused",
+                    "jobs_processed": self.jobs_processed,
+                    "current_job_id": self.current_job_id,
+                    "cpu_usage": psutil.cpu_percent(interval=None),
+                    "memory_usage": psutil.virtual_memory().percent,
+                    "code_version": self.current_code_version,
+                    "uptime_seconds": (datetime.now() - self._start_time).total_seconds()
+                }
+                await self.redis_client.set(heartbeat_details_key, json.dumps(heartbeat_data), ex=self.heartbeat_interval * 3) # Expire after 3 intervals
+                
+                # Update sorted set with timestamp for quick active crawler lookup
+                await self.redis_client.zadd(heartbeat_key_sorted, {self.crawler_id: timestamp})
+                
+                logger.debug(f"Heartbeat sent for '{self.crawler_id}'.")
+            except Exception as e:
+                logger.error(f"Error sending heartbeat for '{self.crawler_id}': {e}")
+            finally:
+                await asyncio.sleep(self.heartbeat_interval)
+
+    async def _control_command_listener(self):
+        """Listens for specific control commands from the coordinator."""
+        control_key = f"{self.control_channel_prefix}:{self.crawler_id}"
+        logger.info(f"Listening for control commands on key: {control_key}")
+        while self.running:
+            try:
+                command_data_json = await self.redis_client.get(control_key)
+                if command_data_json:
+                    command_data = json.loads(command_data_json)
+                    command = command_data.get("command")
+                    logger.info(f"Received command: {command} for crawler {self.crawler_id}")
+                    await self._execute_command(command)
+                    await self.redis_client.delete(control_key) # Acknowledge and remove command
+            except Exception as e:
+                logger.error(f"Error in control command listener for '{self.crawler_id}': {e}")
+            finally:
+                await asyncio.sleep(1) # Check frequently
+
+    async def _global_control_command_listener(self):
+        """Listens for global control commands from the coordinator."""
+        logger.info(f"Listening for global control commands on key: {self.global_control_channel}")
+        while self.running:
+            try:
+                command_data_json = await self.redis_client.get(self.global_control_channel)
+                if command_data_json:
+                    command_data = json.loads(command_data_json)
+                    command = command_data.get("command")
+                    logger.info(f"Received global command: {command}")
+                    await self._execute_command(command)
+                    # Do NOT delete the global command here, coordinator will manage its lifecycle
+            except Exception as e:
+                logger.error(f"Error in global control command listener for '{self.crawler_id}': {e}")
+            finally:
+                await asyncio.sleep(5) # Check less frequently for global commands
+
+    async def _execute_command(self, command: str):
+        """Executes a received control command."""
+        if command == "PAUSE":
+            self.processing_paused = True
+            logger.info(f"Crawler '{self.crawler_id}' paused job processing.")
+        elif command == "RESUME":
+            self.processing_paused = False
+            logger.info(f"Crawler '{self.crawler_id}' resumed job processing.")
+        elif command == "SHUTDOWN":
+            logger.info(f"Crawler '{self.crawler_id}' received SHUTDOWN command. Exiting.")
+            self.running = False
+        elif command == "RESTART":
+            logger.info(f"Crawler '{self.crawler_id}' received RESTART command. Initiating restart.")
+            # A simple way to restart is to exit and rely on external process manager (e.g., Docker, systemd)
+            # to restart the script. For a more graceful in-process restart, you'd need more complex logic.
+            self.running = False
+            # Optionally, re-execute the current script
+            # os.execv(sys.executable, ['python'] + sys.argv)
+        else:
+            logger.warning(f"Unknown command received: {command}")
+
+    async def run(self):
+        """Main loop for the satellite crawler."""
+        logger.info(f"Satellite Crawler '{self.crawler_id}' main loop started.")
+        
+        while self.running:
+            if self.processing_paused:
+                logger.debug("Processing paused. Waiting...")
+                await asyncio.sleep(5)
+                continue
+
+            try:
+                # Blocking pop from the job queue with a timeout
+                # ZPOPMAX pops the highest score (highest priority)
+                job_data_list = await self.redis_client.bzpopmax(self.job_queue_name, timeout=1)
+                
+                if job_data_list:
+                    _queue_name, job_json, _score = job_data_list
+                    job_dict = json.loads(job_json)
+                    job = CrawlJob.from_dict(job_dict)
+                    self.current_job_id = job.id
+                    logger.info(f"Pulled job {job.id} (type: {job.job_type}) for {job.target_url} from queue.")
+
+                    # Execute the crawl job
+                    result_summary = await self._execute_crawl_job(job)
+                    
+                    # Send result back to coordinator
+                    await self._send_result_to_coordinator(job, result_summary)
+                    
+                    self.jobs_processed += 1
+                    self.current_job_id = None
+                else:
+                    logger.debug("No jobs in queue. Waiting...")
+                    await asyncio.sleep(1) # Short sleep if no jobs to avoid busy-waiting
+
+            except Exception as e:
+                logger.error(f"Error in main satellite loop for '{self.crawler_id}': {e}", exc_info=True)
+                # If an error occurs while processing a job, mark it as failed and send to DLQ
+                if self.current_job_id:
+                    failed_job = CrawlJob(
+                        id=self.current_job_id,
+                        target_url=job.target_url if 'job' in locals() else "unknown",
+                        job_type=job.job_type if 'job' in locals() else "unknown",
+                        status=CrawlStatus.FAILED,
+                        created_date=job.created_date if 'job' in locals() else datetime.now(),
+                        config=job.config if 'job' in locals() else CrawlConfig(),
+                        error_log=[CrawlError(url=job.target_url if 'job' in locals() else "unknown", error_type="SatelliteProcessingError", message=str(e))]
+                    )
+                    await self._send_result_to_coordinator(failed_job, {"error_message": str(e)})
+                    self.current_job_id = None
+                await asyncio.sleep(5) # Wait before retrying main loop
+
+    async def _execute_crawl_job(self, job: CrawlJob) -> Dict[str, Any]:
+        """Executes the actual crawl using the WebCrawler."""
+        logger.info(f"Executing crawl for job {job.id}: {job.target_url}")
+        try:
+            # The WebCrawler's start_crawl method now handles the internal queueing
+            # and crawling logic based on the provided initial_seed_urls and config.
+            # It returns a final CrawlResult summary.
+            final_crawl_result = await self.web_crawler.start_crawl(
+                target_url=job.target_url,
+                initial_seed_urls=job.initial_seed_urls,
+                job_id=job.id
+            )
+            
+            # Prepare summary for coordinator
+            summary = {
+                "job_id": job.id,
+                "status": CrawlStatus.COMPLETED.value,
+                "urls_crawled": final_crawl_result.pages_crawled,
+                "links_found": final_crawl_result.total_links_found, # Assuming WebCrawler tracks this
+                "progress_percentage": 100.0,
+                "results": serialize_model(final_crawl_result), # Send the full result object
+                "error_message": None
+            }
+            logger.info(f"Job {job.id} completed by satellite. Crawled {final_crawl_result.pages_crawled} pages.")
+            return summary
+
+        except Exception as e:
+            logger.error(f"Crawl job {job.id} failed during execution: {e}", exc_info=True)
+            error_summary = {
+                "job_id": job.id,
+                "status": CrawlStatus.FAILED.value,
+                "urls_crawled": 0,
+                "links_found": 0,
+                "progress_percentage": job.progress_percentage, # Keep last known progress
+                "error_message": str(e),
+                "failed_url": job.target_url,
+                "error_log": [serialize_model(CrawlError(url=job.target_url, error_type="CrawlExecutionError", message=str(e)))]
+            }
+            return error_summary
+
+    async def _send_result_to_coordinator(self, job: CrawlJob, result_summary: Dict[str, Any]):
+        """Sends the job result summary back to the coordinator."""
+        try:
+            # Add some satellite metadata to the result
+            result_summary["satellite_id"] = self.crawler_id
+            result_summary["satellite_version"] = self.current_code_version
+            
+            await self.redis_client.rpush(self.result_queue_name, json.dumps(result_summary))
+            logger.info(f"Result for job {job.id} sent to coordinator.")
+        except Exception as e:
+            logger.error(f"Failed to send result for job {job.id} to coordinator: {e}", exc_info=True)
+            # If result cannot be sent, push to dead letter queue
+            await self._send_to_dead_letter_queue(job.id, result_summary, f"Failed to send result: {e}")
+
+    async def _send_to_dead_letter_queue(self, job_id: str, original_data: Dict[str, Any], reason: str):
+        """Pushes a failed job or result to the dead-letter queue."""
+        dlq_message = {
+            "job_id": job_id,
+            "original_data": original_data,
+            "dead_letter_reason": reason,
+            "dead_letter_timestamp": datetime.now().isoformat()
+        }
+        try:
+            await self.redis_client.rpush(self.dead_letter_queue_name, json.dumps(dlq_message))
+            logger.error(f"Job {job_id} pushed to dead-letter queue. Reason: {reason}")
+        except Exception as e:
+            logger.critical(f"CRITICAL: Failed to push job {job_id} to dead-letter queue: {e}", exc_info=True)
+
+# --- Main execution block ---
+async def main():
+    satellite = SatelliteCrawler()
+    async with satellite:
+        await satellite.run()
+
+if __name__ == "__main__":
+    # Ensure the project root is in sys.path for imports to work
+    # This is duplicated from the top of the file to ensure it runs even if the script is executed directly
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    # Set up basic logging for the main function before full config is loaded
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Satellite Crawler stopped by user (KeyboardInterrupt).")
+    except Exception as e:
+        logger.critical(f"Satellite Crawler encountered a critical error: {e}", exc_info=True)
+        sys.exit(1)
+

@@ -140,6 +140,10 @@ from Link_Profiler.monitoring.prometheus_metrics import (
 # Import from the new service module
 from Link_Profiler.services.job_submission_service import submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies
 
+# New: Import WebCrawler and SmartCrawlQueue
+from Link_Profiler.crawlers.web_crawler import WebCrawler
+from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue, Priority
+
 
 # New: Import API Clients
 from Link_Profiler.clients.google_search_console_client import GSCClient
@@ -331,6 +335,34 @@ crawl_service_for_lifespan = CrawlService(
 ) 
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service) # Corrected class name
 
+# --- New: Instantiate SmartCrawlQueue and WebCrawler ---
+# Load crawler-specific configuration
+crawler_config_data = config_loader.get("crawler", {})
+# Ensure ml_rate_optimization is set based on rate_limiting config
+crawler_config_data['ml_rate_optimization'] = config_loader.get("rate_limiting.ml_enhanced", False)
+# Pass relevant anti_detection settings to CrawlConfig
+crawler_config_data['user_agent_rotation'] = config_loader.get("anti_detection.user_agent_rotation", False)
+crawler_config_data['request_header_randomization'] = config_loader.get("anti_detection.request_header_randomization", False)
+crawler_config_data['human_like_delays'] = config_loader.get("anti_detection.human_like_delays", False)
+crawler_config_data['stealth_mode'] = config_loader.get("anti_detection.stealth_mode", False)
+crawler_config_data['browser_fingerprint_randomization'] = config_loader.get("anti_detection.browser_fingerprint_randomization", False)
+crawler_config_data['captcha_solving_enabled'] = config_loader.get("anti_detection.captcha_solving_enabled", False)
+crawler_config_data['anomaly_detection_enabled'] = config_loader.get("anti_detection.anomaly_detection_enabled", False)
+crawler_config_data['use_proxies'] = config_loader.get("proxy.use_proxies", False)
+crawler_config_data['proxy_list'] = config_loader.get("proxy.proxy_list", [])
+crawler_config_data['render_javascript'] = config_loader.get("browser_crawler.enabled", False)
+crawler_config_data['browser_type'] = config_loader.get("browser_crawler.browser_type", "chromium")
+crawler_config_data['headless_browser'] = config_loader.get("browser_crawler.headless", True)
+
+main_crawl_config = CrawlConfig(**crawler_config_data)
+
+# Create SmartCrawlQueue instance
+smart_crawl_queue = SmartCrawlQueue(redis_client=redis_client)
+
+# Create WebCrawler instance, passing the SmartCrawlQueue
+main_web_crawler = WebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance)
+# --- End New Instantiation ---
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -360,7 +392,8 @@ async def lifespan(app: FastAPI):
         dns_client_instance, # New: Add DNSClient to lifespan
         reddit_client_instance, # New: Add RedditClient
         youtube_client_instance, # New: Add YouTubeClient
-        news_api_client_instance # New: Add NewsAPIClient
+        news_api_client_instance, # New: Add NewsAPIClient
+        main_web_crawler # Add the main_web_crawler to the lifespan context
     ]
 
     # Conditionally add ClickHouseLoader to context managers
