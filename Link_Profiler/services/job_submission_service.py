@@ -105,7 +105,7 @@ async def submit_crawl_to_queue(request: StartCrawlRequest) -> Dict[str, str]: #
     job = CrawlJob(
         id=job_id,
         target_url=request.target_url,
-        job_type=crawl_config.job_type, # Use job_type from config
+        job_type=request.job_type, # Get job_type directly from the StartCrawlRequest
         status=CrawlStatus.PENDING,
         created_date=datetime.now(),
         config=crawl_config, # Pass the CrawlConfig object directly
