@@ -24,6 +24,8 @@ else:
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query
 from fastapi.middleware.cors import CORSMiddleware # New: Import CORSMiddleware
+from fastapi.templating import Jinja2Templates # Add this for template rendering
+from fastapi.responses import HTMLResponse # Add this for HTML responses
 from typing import List, Optional, Dict, Any, Union, Annotated
 import logging
 from urllib.parse import urlparse
@@ -93,6 +95,9 @@ from Link_Profiler.clients.news_api_client import NewsAPIClient
 # Initialize and load config once using the absolute path
 config_loader = ConfigLoader()
 config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
+
+# Initialize templates
+templates = Jinja2Templates(directory=os.path.join(project_root, "templates"))
 
 # Setup logging using the loaded configuration
 logging_config = config_loader.get("logging.config", get_default_logging_config(config_loader.get("logging.level", "INFO")))
