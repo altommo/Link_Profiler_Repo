@@ -635,6 +635,14 @@ class WebCrawler:
             return True
             
         return False
+    
+    async def _extract_links_from_html(self, source_url: str, html_content: str) -> List[Backlink]:
+        """Extract links from HTML content"""
+        try:
+            return await self.link_extractor.extract_links(source_url, html_content)
+        except Exception as e:
+            self.logger.error(f"Error extracting links from {source_url}: {e}")
+            return []
 
     async def start_crawl(self, target_url: str, initial_seed_urls: List[str], job_id: str) -> CrawlResult: # Changed return type to CrawlResult
         """
