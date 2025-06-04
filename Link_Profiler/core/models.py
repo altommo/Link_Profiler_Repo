@@ -1025,7 +1025,7 @@ def serialize_model(obj) -> Dict:
             elif isinstance(value, list) and value and (hasattr(value[0], '__dataclass_fields__') or isinstance(value[0], BaseModel)): # Handle lists of dataclasses or Pydantic models
                 result[field_name] = [serialize_model(item) for item in value]
             elif isinstance(value, BaseModel): # Handle Pydantic models
-                result[field_name] = value.model_dump(mode='json') # Use model_dump for Pydantic models
+                return value.model_dump(mode='json') # Use model_dump for Pydantic models
             else:
                 result[field_name] = value
         return result
