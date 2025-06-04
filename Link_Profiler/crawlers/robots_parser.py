@@ -87,16 +87,24 @@ class RobotsParser:
                         self.logger.info(f"Successfully fetched and parsed robots.txt for {domain}")
                     elif response.status == 404:
                         self.logger.info(f"No robots.txt found for {domain} (404 Not Found). Assuming full crawl allowed.")
-                        # For 404, parser remains empty, which means all allowed.
+                        # CRITICAL FIX: Explicitly parse a permissive robots.txt for 404
+                        parser.parse(["User-agent: *", "Allow: /"])
                     else:
                         self.logger.warning(f"Failed to fetch robots.txt for {domain}. Status: {response.status}. Defaulting to allow.")
-                        # On other errors, parser remains empty, defaulting to allow.
+                        # CRITICAL FIX: Explicitly parse a permissive robots.txt for other errors
+                        parser.parse(["User-agent: *", "Allow: /"])
             except aiohttp.ClientError as e:
                 self.logger.warning(f"Network/Client error fetching robots.txt for {domain}: {e}. Defaulting to allow.")
+                # CRITICAL FIX: Explicitly parse a permissive robots.txt on network errors
+                parser.parse(["User-agent: *", "Allow: /"])
             except asyncio.TimeoutError:
                 self.logger.warning(f"Timeout fetching robots.txt for {domain}. Defaulting to allow.")
+                # CRITICAL FIX: Explicitly parse a permissive robots.txt on timeout
+                parser.parse(["User-agent: *", "Allow: /"])
             except Exception as e:
                 self.logger.error(f"Unexpected error fetching robots.txt for {domain}: {e}. Defaulting to allow.")
+                # CRITICAL FIX: Explicitly parse a permissive robots.txt on unexpected errors
+                parser.parse(["User-agent: *", "Allow: /"])
             finally:
                 if session_to_use is not self._session and not session_to_use.closed:
                     await session_to_use.close()
@@ -121,13 +129,6 @@ class RobotsParser:
         # Ensure the parser for this domain is fetched and cached
         parser = await self._fetch_and_parse_robots_txt(domain)
         
-        # Check if parser has any rules - if empty, allow everything
-        # RobotFileParser's _rules attribute is a list of rules. If it's empty, no rules were parsed.
-        # This is the robust way to check if robots.txt was effectively empty or failed to load.
-        if not hasattr(parser, '_rules') or not parser._rules:
-            self.logger.debug(f"No robots.txt rules found for {domain} (parser is empty), allowing {url}")
-            return True
-
         # Now, use the obtained parser to check if the URL is allowed
         can_crawl = parser.can_fetch(user_agent, url)
         
