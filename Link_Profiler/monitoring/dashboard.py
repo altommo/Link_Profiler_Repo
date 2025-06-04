@@ -56,7 +56,7 @@ class MonitoringDashboard:
         self.db: Optional[Database] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self.coordinator: Optional[JobCoordinator] = None # Add coordinator instance
-        self.main_api_external_url: str = "" # Use external URL for dashboard's direct calls
+        # self.main_api_external_url: str = "" # Removed: Dashboard now served by main API
 
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Get stale_timeout from config
@@ -108,9 +108,8 @@ class MonitoringDashboard:
         else:
             self.logger.warning("MonitoringDashboard: JobCoordinator could not be initialized due to missing DB or Redis connection.")
 
-        # New: Use external URL for dashboard's direct calls to public endpoints
-        self.main_api_external_url = config_loader.get('api.external_url', 'http://localhost:8000') # Use config_loader for external URL
-        self.logger.info(f"MonitoringDashboard: Main API external URL set to {self.main_api_external_url}")
+        # self.main_api_external_url = config_loader.get('api.external_url', 'http://localhost:8000') # Removed
+        # self.logger.info(f"MonitoringDashboard: Main API external URL set to {self.main_api_external_url}") # Removed
         
         return self
 
@@ -134,25 +133,26 @@ class MonitoringDashboard:
         # if self.db and hasattr(self.db, 'close'):
         #     self.db.close()
 
-    async def _call_main_api_public(self, endpoint: str, method: str = 'GET', json_data: Optional[Dict] = None) -> Any:
-        """Helper to call the main FastAPI API's public endpoints."""
+    async def _call_main_api_authenticated(self, endpoint: str, method: str = 'GET', json_data: Optional[Dict] = None) -> Any:
+        """Helper to call the main FastAPI API's authenticated endpoints (now on the same server)."""
         headers = {
             "Content-Type": "application/json"
         }
-        url = f"{self.main_api_external_url}{endpoint}" # Use external URL for public calls
+        # Since the dashboard is now served by the main API, calls are local
+        url = f"http://localhost:{config_loader.get('api.port', 8000)}{endpoint}"
         
         try:
             async with self._session.request(method, url, headers=headers, json=json_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
                 response.raise_for_status()
                 return await response.json()
         except aiohttp.ClientResponseError as e:
-            self.logger.error(f"Public Main API call failed for {url} (Status: {e.status}): {e.message}", exc_info=True)
-            raise HTTPException(status_code=e.status, detail=f"Public Main API error: {e.message}")
+            self.logger.error(f"Authenticated Main API call failed for {url} (Status: {e.status}): {e.message}", exc_info=True)
+            raise HTTPException(status_code=e.status, detail=f"Authenticated Main API error: {e.message}")
         except aiohttp.ClientError as e:
-            self.logger.error(f"Network error calling public Main API {url}: {e}", exc_info=True)
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to public Main API: {e}")
+            self.logger.error(f"Network error calling authenticated Main API {url}: {e}", exc_info=True)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to authenticated Main API: {e}")
         except Exception as e:
-            self.logger.error(f"Unexpected error calling public Main API {url}: {e}", exc_info=True)
+            self.logger.error(f"Unexpected error calling authenticated Main API {url}: {e}", exc_info=True)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error: {e}")
 
     async def get_queue_metrics(self) -> Dict:
@@ -384,10 +384,11 @@ class MonitoringDashboard:
             return {"status": "error", "message": str(e)}
 
     async def get_api_health(self):
-        """Check API health by calling its /health endpoint"""
-        # This now calls the main API's public health endpoint
+        """Check API health by calling its /health endpoint (now local)"""
         try:
-            health_data = await self._call_main_api_public("/public/health")
+            # Call the local /health endpoint directly
+            from Link_Profiler.api.monitoring_debug import health_check_internal
+            health_data = await health_check_internal()
             return health_data
         except HTTPException as e:
             return {"status": "error", "message": e.detail, "code": e.status_code}
@@ -524,16 +525,8 @@ async def monitoring_home(request: Request):
     
     # Construct the external API base URL for the frontend JavaScript
     # Prioritize api.external_url from config, then fallback to request.url.scheme + api.host:api.port
-    main_api_external_base_url = config_loader.get('api.external_url')
-    
-    logger.debug(f"Configured api.external_url for frontend: {main_api_external_base_url}")
-
-    if not main_api_external_base_url:
-        logger.critical("CRITICAL ERROR: 'api.external_url' is not configured in config.yaml or via environment variables. "
-                        "The dashboard frontend will not be able to connect to the main API. "
-                        "Please set api.external_url to the public HTTPS URL of your main API (e.g., 'https://monitor.yspanel.com:8000').")
-        # Fallback to a potentially incorrect URL, but log a critical error
-        main_api_external_base_url = f"{request.url.scheme}://{request.url.hostname}:{config_loader.get('api.port', 8000)}"
+    # Removed: main_api_external_base_url = config_loader.get('api.external_url', 'http://localhost:8000')
+    # The dashboard is now served by the main API, so API_BASE in JS will be window.location.origin
         
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
@@ -547,7 +540,7 @@ async def monitoring_home(request: Request):
         "database_stats": all_data["database"], # Pass DB stats
         "all_jobs": [], # No longer passed from backend, frontend will fetch if needed
         "refresh_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "api_base_url": main_api_external_base_url, # Pass the external API base URL for frontend
+        "api_base_url": "", # No longer needed, JS will use window.location.origin
         # Removed: monitor_username, monitor_password, access_token, access_token_expire_minutes
     })
 
@@ -594,7 +587,7 @@ async def submit_job_from_dashboard(request: QueueCrawlRequest):
         # This call will now fail if the main API requires authentication and the dashboard doesn't provide it.
         # If you want to make job submission public, you'd need a /public/queue/submit_crawl in main.py
         # and call that here.
-        response_data = await dashboard._call_main_api_public("/api/queue/submit_crawl", method="POST", json_data=request.dict()) # Corrected endpoint
+        response_data = await dashboard._call_main_api_authenticated("/api/queue/submit_crawl", method="POST", json_data=request.dict()) # Corrected endpoint
         return response_data
     except HTTPException as e:
         raise e
@@ -608,7 +601,7 @@ async def pause_all_jobs_endpoint():
     # This endpoint now proxies the request to the main API
     # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api_public("/api/jobs/pause_all", method="POST")
+        response_data = await dashboard._call_main_api_authenticated("/api/jobs/pause_all", method="POST")
         return response_data
     except HTTPException as e:
         raise e
@@ -622,7 +615,7 @@ async def resume_all_jobs_endpoint():
     # This endpoint now proxies the request to the main API
     # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api_public("/api/jobs/resume_all", method="POST")
+        response_data = await dashboard._call_main_api_authenticated("/api/jobs/resume_all", method="POST")
         return response_data
     except HTTPException as e:
         raise e
@@ -636,7 +629,7 @@ async def is_jobs_paused_endpoint():
     # This endpoint now proxies the request to the main API
     # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api_public("/api/jobs/is_paused", method="GET")
+        response_data = await dashboard._call_main_api_authenticated("/api/jobs/is_paused", method="GET")
         return response_data
     except HTTPException as e:
         raise e
@@ -651,7 +644,7 @@ async def cancel_job_endpoint(job_id: str):
     # This endpoint now proxies the request to the main API
     # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api_public(f"/api/jobs/{job_id}/cancel", method="POST")
+        response_data = await dashboard._call_main_api_authenticated(f"/api/jobs/{job_id}/cancel", method="POST")
         return response_data
     except HTTPException as e:
         raise e
@@ -665,7 +658,7 @@ async def control_all_satellites_endpoint(command: str):
     # This endpoint now proxies the request to the main API
     # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api_public(f"/api/satellites/control/all/{command}", method="POST")
+        response_data = await dashboard._call_main_api_authenticated(f"/api/satellites/control/all/{command}", method="POST")
         return response_data
     except HTTPException as e:
         raise e
@@ -679,7 +672,7 @@ async def control_single_satellite_endpoint(crawler_id: str, command: str):
     # This endpoint now proxies the request to the main API
     # This endpoint is still protected, so it will fail if no auth
     try:
-        response_data = await dashboard._call_main_api_public(f"/api/satellites/control/{crawler_id}/{command}", method="POST")
+        response_data = await dashboard._call_main_api_authenticated(f"/api/satellites/control/{crawler_id}/{command}", method="POST")
         return response_data
     except HTTPException as e:
         raise e

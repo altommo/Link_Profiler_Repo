@@ -14,7 +14,7 @@ import time
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if project_root and project_root not in sys.path:
-    sys.path.insert(0, project_root) # Corrected: sys.path instead of sys.sys.path
+    sys.path.insert(0, project_root)
     print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
 else:
     print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
@@ -547,14 +547,14 @@ app.include_router(competitive_analysis_router)
 app.include_router(link_building_router)
 app.include_router(ai_router)
 app.include_router(reports_router)
-app.include_router(monitoring_debug_router) # Uncommented this line
+app.include_router(monitoring_debug_router)
 app.include_router(websocket_router)
 app.include_router(queue_router)
 app.include_router(public_jobs_router)
 
 
 # --- Additional API Endpoints (not part of routers yet) ---
-
+# These remain as they are protected and not intended for public access via the new public_jobs_router
 @app.get("/api/jobs/all", response_model=List[CrawlJobResponse])
 async def get_all_jobs(
     status_filter: Optional[CrawlStatus] = Query(None, description="Filter jobs by status"),
@@ -599,14 +599,19 @@ async def get_job_details(
         logger.error(f"Error retrieving job details for {job_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve job details.")
 
-# --- Minimal Public Endpoint ---
-@app.get("/public/health")
-async def get_public_health_minimal():
-    """
-    Minimal public health check - only shows basic service status
-    """
-    return {
-        "status": "operational",
-        "service": "Link Profiler API",
-        "timestamp": datetime.now().isoformat()
-    }
+# --- Dashboard Frontend Routes ---
+@app.get("/", response_class=HTMLResponse)
+async def dashboard_home(request: Request):
+    """Main dashboard - requires authentication via JavaScript"""
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
+@app.get("/api/dashboard/stats")
+async def get_dashboard_stats(current_user: User = Depends(get_current_user)):
+    """API endpoint for dashboard statistics - protected by authentication"""
+    try:
+        # Get all the data for dashboard
+        stats = await _get_aggregated_stats_for_api()
+        return stats
+    except Exception as e:
+        logger.error(f"Error getting dashboard stats: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get dashboard statistics")

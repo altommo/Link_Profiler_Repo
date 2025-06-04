@@ -1,85 +1,757 @@
-
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Link Profiler Monitor</title>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Link Profiler - System Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .card { background: white; padding: 20px; margin: 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .metric { display: inline-block; margin: 10px; padding: 15px; background: #e3f2fd; border-radius: 4px; min-width: 150px; text-align: center; }
-        .metric h3 { margin: 0 0 5px 0; color: #1976d2; }
-        .metric .value { font-size: 24px; font-weight: bold; color: #333; }
-        .satellite { background: #f0f8f0; margin: 5px 0; padding: 10px; border-radius: 4px; border-left: 4px solid #4caf50; }
-        .satellite.offline { background: #fef0f0; border-left-color: #f44336; }
-        .job-row { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #eee; }
-        .status-completed { color: #4caf50; font-weight: bold; }
-        .status-failed { color: #f44336; font-weight: bold; }
-        .refresh-info { color: #666; font-size: 12px; float: right; }
-        h1 { color: #333; }
-        h2 { color: #555; border-bottom: 2px solid #ddd; padding-bottom: 5px; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            color: #333;
+            margin: 0;
+            display: flex;
+            min-height: 100vh;
+            flex-direction: column;
+        }
+        
+        .login-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .login-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            max-width: 400px;
+            width: 100%;
+            padding: 2rem;
+        }
+        
+        .dashboard-container {
+            display: none; /* Hidden by default, shown after login */
+            flex: 1;
+            display: flex;
+        }
+        
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+            padding: 1rem 1.5rem;
+        }
+        
+        .sidebar {
+            width: 250px;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding-top: 20px;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            flex-shrink: 0;
+        }
+        
+        .sidebar .nav-link {
+            color: #ecf0f1;
+            padding: 12px 20px;
+            border-left: 4px solid transparent;
+            transition: all 0.3s ease;
+        }
+        
+        .sidebar .nav-link:hover {
+            background-color: #34495e;
+            border-left-color: #1abc9c;
+        }
+        
+        .sidebar .nav-link.active {
+            background-color: #16a085;
+            border-left-color: #2ecc71;
+            font-weight: bold;
+        }
+        
+        .content-area {
+            flex-grow: 1;
+            padding: 20px;
+            background-color: #f8f9fa;
+            overflow-y: auto;
+        }
+        
+        .card {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        }
+        
+        .metric-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+        
+        .status-badge {
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+        }
+        
+        .status-healthy {
+            background: linear-gradient(135deg, #56ab2f, #a8e6cf);
+            color: #2d5a3d;
+        }
+        
+        .status-unhealthy {
+            background: linear-gradient(135deg, #ff416c, #ff4b2b);
+            color: white;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 50px;
+            padding: 0.75rem 2rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .form-control {
+            border-radius: 10px;
+            border: 1px solid #e0e6ed;
+            padding: 0.75rem 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+        
+        .alert {
+            border-radius: 10px;
+            border: none;
+        }
+        
+        .satellite-status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        .satellite-status-healthy { background-color: #28a745; }
+        .satellite-status-stale { background-color: #ffc107; }
+        .satellite-status-disconnected { background-color: #dc3545; }
+        .satellite-status-unknown { background-color: #6c757d; }
+
+        .logo-text {
+            font-size: 1.8rem;
+            font-weight: bold;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
     </style>
-    <script>
-        // Auto-refresh every 30 seconds
-        setTimeout(() => window.location.reload(), 30000);
-    </script>
 </head>
 <body>
-    <div class="container">
-        <h1>🔗 Link Profiler Monitor <span class="refresh-info">Last updated: {{ refresh_time }}</span></h1>
-        
-        <div class="card">
-            <h2>📊 Queue Metrics</h2>
-            <div class="metric">
-                <h3>Pending Jobs</h3>
-                <div class="value">{{ queue_metrics.pending_jobs or 0 }}</div>
+    <!-- Login Container -->
+    <div id="loginContainer" class="login-container">
+        <div class="login-card">
+            <div class="text-center mb-4">
+                <div class="logo-text">🔗 Link Profiler</div>
+                <p class="text-muted mt-2">System Monitoring Dashboard</p>
             </div>
-            <div class="metric">
-                <h3>Active Satellites</h3>
-                <div class="value">{{ queue_metrics.active_satellites or 0 }}</div>
-            </div>
-            <div class="metric">
-                <h3>Results Pending</h3>
-                <div class="value">{{ queue_metrics.results_pending or 0 }}</div>
-            </div>
-            <div class="metric">
-                <h3>Success Rate</h3>
-                <div class="value">{{ "%.1f"|format(performance_stats.success_rate or 0) }}%</div>
-            </div>
-        </div>
-        
-        <div class="card">
-            <h2>🛰️ Satellite Crawlers</h2>
-            {% if queue_metrics.satellites %}
-                {% for satellite in queue_metrics.satellites %}
-                <div class="satellite">
-                    <strong>{{ satellite.crawler_id }}</strong> 
-                    ({{ satellite.region or 'unknown' }})
-                    - Last seen: {{ satellite.last_seen.strftime('%H:%M:%S') if satellite.last_seen else 'Never' }}
-                    {% if satellite.current_job %}
-                    - Processing: {{ satellite.current_job }}
-                    {% endif %}
+            
+            <div id="loginAlert" class="alert alert-danger d-none" role="alert"></div>
+            
+            <form id="loginForm">
+                <div class="mb-3">
+                    <label for="username" class="form-label">Username</label>
+                    <input type="text" class="form-control" id="username" required>
                 </div>
-                {% endfor %}
-            {% else %}
-                <p>No active satellites detected</p>
-            {% endif %}
-        </div>
-        
-        <div class="card">
-            <h2>📈 Recent Jobs</h2>
-            {% for job in job_history[:10] %}
-            <div class="job-row">
-                <span>{{ job.job_id }}</span>
-                <span class="status-{{ job.status }}">{{ job.status.upper() }}</span>
-                <span>{{ job.urls_crawled }} URLs</span>
-                <span>{{ job.links_found }} links</span>
-                <span>{{ job.duration_seconds }}s</span>
-            </div>
-            {% endfor %}
+                <div class="mb-3">
+                    <label for="password" class="form-label">Password</label>
+                    <input type="password" class="form-control" id="password" required>
+                </div>
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="fas fa-sign-in-alt me-2"></i>Login
+                </button>
+            </form>
         </div>
     </div>
+
+    <!-- Dashboard Container -->
+    <div id="dashboardContainer" class="dashboard-container">
+        <!-- Navigation -->
+        <nav class="navbar navbar-expand-lg navbar-dark">
+            <div class="container-fluid">
+                <span class="navbar-brand">
+                    🔗 Link Profiler
+                </span>
+                <span class="navbar-text text-white me-3">Welcome, <span id="loggedInUsername"></span>!</span>
+                <button class="btn btn-outline-light btn-sm" onclick="logout()">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+            </div>
+        </nav>
+
+        <div class="d-flex flex-grow-1">
+            <!-- Sidebar -->
+            <div class="sidebar">
+                <ul class="nav flex-column">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#dashboard" data-section="dashboard">
+                            <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#domain-analysis" data-section="domain-analysis">
+                            <i class="fas fa-globe me-2"></i>Domain Analysis
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#backlink-explorer" data-section="backlink-explorer">
+                            <i class="fas fa-link me-2"></i>Backlink Explorer
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#serp-tracking" data-section="serp-tracking">
+                            <i class="fas fa-search me-2"></i>SERP Tracking
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#keywords" data-section="keywords">
+                            <i class="fas fa-key me-2"></i>Keywords
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#competitive-analysis" data-section="competitive-analysis">
+                            <i class="fas fa-users me-2"></i>Competitive Analysis
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#link-building" data-section="link-building">
+                            <i class="fas fa-handshake me-2"></i>Link Building
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#reports" data-section="reports">
+                            <i class="fas fa-file-alt me-2"></i>Reports
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#crawler-management" data-section="crawler-management">
+                            <i class="fas fa-cogs me-2"></i>Crawler Management
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#settings" data-section="settings">
+                            <i class="fas fa-cog me-2"></i>Settings
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Content Area -->
+            <div class="content-area">
+                <!-- Dashboard Section -->
+                <div id="dashboard" class="content-section">
+                    <h2 class="mb-4">Dashboard Overview</h2>
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="fas fa-heartbeat text-primary me-2"></i>System Status
+                                    </h5>
+                                    <div id="systemStatus" class="d-flex align-items-center">
+                                        <span class="status-badge status-healthy">
+                                            <i class="fas fa-check-circle me-1"></i>All Systems Operational
+                                        </span>
+                                        <small class="text-muted ms-3" id="lastUpdated">Last updated: --</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row mb-4">
+                        <div class="col-lg-3 col-md-6 mb-3">
+                            <div class="card metric-card">
+                                <div class="card-body text-center">
+                                    <i class="fas fa-tasks fa-2x mb-3"></i>
+                                    <div class="metric-value" id="pendingJobs">--</div>
+                                    <div>Pending Jobs</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-3 col-md-6 mb-3">
+                            <div class="card metric-card">
+                                <div class="card-body text-center">
+                                    <i class="fas fa-satellite fa-2x mb-3"></i>
+                                    <div class="metric-value" id="activeSatellites">--</div>
+                                    <div>Active Crawlers</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-3 col-md-6 mb-3">
+                            <div class="card metric-card">
+                                <div class="card-body text-center">
+                                    <i class="fas fa-chart-line fa-2x mb-3"></i>
+                                    <div class="metric-value" id="successRate">--</div>
+                                    <div>Success Rate</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-3 col-md-6 mb-3">
+                            <div class="card metric-card">
+                                <div class="card-body text-center">
+                                    <i class="fas fa-database fa-2x mb-3"></i>
+                                    <div class="metric-value" id="totalProfiles">--</div>
+                                    <div>Link Profiles</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-lg-8 mb-4">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5 class="mb-0">
+                                        <i class="fas fa-satellite-dish text-primary me-2"></i>Crawler Status
+                                    </h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="satelliteStatus">
+                                        <div class="text-center text-muted">
+                                            <i class="fas fa-spinner fa-spin me-2"></i>Loading satellite status...
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-4 mb-4">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5 class="mb-0">
+                                        <i class="fas fa-server text-primary me-2"></i>System Resources
+                                    </h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <small class="text-muted">CPU Usage</small>
+                                        <div class="progress" style="height: 8px;">
+                                            <div id="cpuProgress" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+                                        </div>
+                                        <small id="cpuText">--</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <small class="text-muted">Memory Usage</small>
+                                        <div class="progress" style="height: 8px;">
+                                            <div id="memoryProgress" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+                                        </div>
+                                        <small id="memoryText">--</small>
+                                    </div>
+                                    <div>
+                                        <small class="text-muted">Disk Usage</small>
+                                        <div class="progress" style="height: 8px;">
+                                            <div id="diskProgress" class="progress-bar bg-success" role="progressbar" style="width: 0%"></div>
+                                        </div>
+                                        <small id="diskText">--</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Domain Analysis Section -->
+                <div id="domain-analysis" class="content-section" style="display:none;">
+                    <h2 class="mb-4">Domain Analysis</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <p>Content for Domain Analysis will go here.</p>
+                            <p>Coming soon!</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Backlink Explorer Section -->
+                <div id="backlink-explorer" class="content-section" style="display:none;">
+                    <h2 class="mb-4">Backlink Explorer</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <p>Content for Backlink Explorer will go here.</p>
+                            <p>Coming soon!</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SERP Tracking Section -->
+                <div id="serp-tracking" class="content-section" style="display:none;">
+                    <h2 class="mb-4">SERP Tracking</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <p>Content for SERP Tracking will go here.</p>
+                            <p>Coming soon!</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Keywords Section -->
+                <div id="keywords" class="content-section" style="display:none;">
+                    <h2 class="mb-4">Keywords</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <p>Content for Keywords will go here.</p>
+                            <p>Coming soon!</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Competitive Analysis Section -->
+                <div id="competitive-analysis" class="content-section" style="display:none;">
+                    <h2 class="mb-4">Competitive Analysis</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <p>Content for Competitive Analysis will go here.</p>
+                            <p>Coming soon!</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Link Building Section -->
+                <div id="link-building" class="content-section" style="display:none;">
+                    <h2 class="mb-4">Link Building</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <p>Content for Link Building will go here.</p>
+                            <p>Coming soon!</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Reports Section -->
+                <div id="reports" class="content-section" style="display:none;">
+                    <h2 class="mb-4">Reports</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <p>Content for Reports will go here.</p>
+                            <p>Coming soon!</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Crawler Management Section -->
+                <div id="crawler-management" class="content-section" style="display:none;">
+                    <h2 class="mb-4">Crawler Management</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <p>Content for Crawler Management will go here.</p>
+                            <p>Coming soon!</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings Section -->
+                <div id="settings" class="content-section" style="display:none;">
+                    <h2 class="mb-4">Settings</h2>
+                    <div class="card">
+                        <div class="card-body">
+                            <p>Content for Settings will go here.</p>
+                            <p>Coming soon!</p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Determine API_BASE dynamically based on the current host
+        const API_BASE = window.location.origin;
+        
+        let authToken = localStorage.getItem('authToken');
+        let refreshInterval;
+        let currentUsername = '';
+
+        // DOMContentLoaded: Check for token and show appropriate screen
+        document.addEventListener('DOMContentLoaded', function() {
+            if (authToken) {
+                verifyToken();
+            } else {
+                document.getElementById('loginContainer').style.display = 'flex';
+            }
+
+            // Add event listeners for sidebar navigation
+            document.querySelectorAll('.sidebar .nav-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const sectionId = this.dataset.section;
+                    showSection(sectionId);
+                });
+            });
+        });
+
+        // Login form submission
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            await login();
+        });
+
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const loginAlert = document.getElementById('loginAlert');
+
+            try {
+                const response = await fetch(`${API_BASE}/auth/token`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    authToken = data.access_token;
+                    localStorage.setItem('authToken', authToken);
+                    
+                    // Verify the user is admin and get username
+                    const userResponse = await callAuthenticatedAPI('/users/me');
+                    
+                    if (userResponse && userResponse.is_admin) {
+                        currentUsername = userResponse.username;
+                        document.getElementById('loggedInUsername').textContent = currentUsername;
+                        showDashboard();
+                    } else {
+                        showError('Access denied. Admin privileges required.');
+                        logout(); // Clear token if not admin
+                    }
+                } else {
+                    showError(data.detail || 'Login failed');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                showError('Connection error. Please try again.');
+            }
+        }
+
+        async function verifyToken() {
+            try {
+                const userData = await callAuthenticatedAPI('/users/me');
+
+                if (userData && userData.is_admin) {
+                    currentUsername = userData.username;
+                    document.getElementById('loggedInUsername').textContent = currentUsername;
+                    showDashboard();
+                } else {
+                    logout();
+                }
+            } catch (error) {
+                logout();
+            }
+        }
+
+        function showDashboard() {
+            document.getElementById('loginContainer').style.display = 'none';
+            document.getElementById('dashboardContainer').style.display = 'flex'; // Use flex for layout
+            startDataRefresh();
+            showSection('dashboard'); // Show default section
+        }
+
+        function showError(message) {
+            const loginAlert = document.getElementById('loginAlert');
+            loginAlert.textContent = message;
+            loginAlert.classList.remove('d-none');
+            setTimeout(() => {
+                loginAlert.classList.add('d-none');
+            }, 5000);
+        }
+
+        function logout() {
+            localStorage.removeItem('authToken');
+            authToken = null;
+            currentUsername = '';
+            document.getElementById('loginContainer').style.display = 'flex';
+            document.getElementById('dashboardContainer').style.display = 'none';
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        }
+
+        async function callAuthenticatedAPI(endpoint, method = 'GET', data = null) {
+            const headers = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            };
+            const options = { method, headers };
+            if (data) {
+                options.body = JSON.stringify(data);
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, options);
+                if (response.status === 401 || response.status === 403) {
+                    logout(); // Token expired or unauthorized
+                    return null;
+                }
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error(`API call failed for ${endpoint}:`, response.status, errorData);
+                    // Optionally show a dashboard-wide error alert
+                    return null;
+                }
+                return await response.json();
+            } catch (error) {
+                console.error(`Error during API call to ${endpoint}:`, error);
+                // Optionally show a dashboard-wide error alert
+                return null;
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const stats = await callAuthenticatedAPI('/api/dashboard/stats'); // New endpoint
+                if (!stats) return;
+
+                // Update metrics
+                document.getElementById('pendingJobs').textContent = stats.queue_metrics?.pending_jobs || 0;
+                document.getElementById('activeSatellites').textContent = stats.queue_metrics?.active_crawlers || 0;
+                document.getElementById('successRate').textContent = (stats.performance_stats?.success_rate || 0).toFixed(1) + '%';
+                document.getElementById('totalProfiles').textContent = stats.data_summaries?.total_link_profiles || 0;
+
+                // Update system status
+                const isHealthy = stats.api_health?.status === 'healthy' && 
+                                  stats.redis?.status === 'connected' && 
+                                  stats.database?.status === 'connected';
+                const statusElement = document.getElementById('systemStatus');
+                const badgeClass = isHealthy ? 'status-healthy' : 'status-unhealthy';
+                const icon = isHealthy ? 'fa-check-circle' : 'fa-exclamation-triangle';
+                const text = isHealthy ? 'All Systems Operational' : 'System Issues Detected';
+                
+                statusElement.innerHTML = `
+                    <span class="status-badge ${badgeClass}">
+                        <i class="fas ${icon} me-1"></i>${text}
+                    </span>
+                    <small class="text-muted ms-3">Last updated: ${new Date().toLocaleTimeString()}</small>
+                `;
+
+                // Update system resources
+                if (stats.system) {
+                    updateProgressBar('cpuProgress', 'cpuText', stats.system.cpu_percent, '%');
+                    updateProgressBar('memoryProgress', 'memoryText', stats.system.memory?.percent, '%');
+                    updateProgressBar('diskProgress', 'diskText', stats.system.disk?.percent, '%');
+                }
+
+                // Update satellites
+                updateSatellites(stats.queue_metrics?.satellites || []);
+
+            } catch (error) {
+                console.error('Error loading stats:', error);
+                // If error is due to authentication, logout is handled by callAuthenticatedAPI
+            }
+        }
+
+        function updateProgressBar(progressId, textId, value, suffix = '') {
+            const progressBar = document.getElementById(progressId);
+            const textElement = document.getElementById(textId);
+            
+            if (value !== undefined && value !== null) {
+                progressBar.style.width = value + '%';
+                progressBar.className = 'progress-bar ' + getProgressBarClass(value);
+                textElement.textContent = value.toFixed(1) + suffix;
+            }
+        }
+
+        function getProgressBarClass(value) {
+            if (value < 50) return 'bg-success';
+            if (value < 80) return 'bg-warning';
+            return 'bg-danger';
+        }
+
+        function updateSatellites(satellites) {
+            const container = document.getElementById('satelliteStatus');
+            
+            if (satellites.length === 0) {
+                container.innerHTML = '<div class="text-center text-muted">No active crawlers</div>';
+                return;
+            }
+
+            const satelliteHTML = satellites.map(satellite => {
+                const statusClass = `satellite-status-${satellite.status || 'unknown'}`;
+                return `
+                    <div class="d-flex justify-content-between align-items-center mb-2 p-2 rounded" style="background: #f8f9fa;">
+                        <div>
+                            <strong>${satellite.crawler_id || 'Unknown'}</strong>
+                            <small class="text-muted d-block">${satellite.region || 'Unknown region'}</small>
+                        </div>
+                        <div class="text-end">
+                            <span class="satellite-status-indicator ${statusClass}"></span>${(satellite.status || 'Unknown').toUpperCase()}
+                            <small class="text-muted d-block">Jobs: ${satellite.jobs_processed || 0}</small>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = satelliteHTML;
+        }
+
+        function startDataRefresh() {
+            loadStats(); // Load immediately
+            if (refreshInterval) {
+                clearInterval(refreshInterval); // Clear any existing interval
+            }
+            refreshInterval = setInterval(loadStats, 10000); // Refresh every 10 seconds
+        }
+
+        function showSection(sectionId) {
+            // Hide all content sections
+            document.querySelectorAll('.content-section').forEach(section => {
+                section.style.display = 'none';
+            });
+
+            // Show the requested section
+            const activeSection = document.getElementById(sectionId);
+            if (activeSection) {
+                activeSection.style.display = 'block';
+            }
+
+            // Update active class in sidebar
+            document.querySelectorAll('.sidebar .nav-link').forEach(link => {
+                link.classList.remove('active');
+            });
+            document.querySelector(`.sidebar .nav-link[data-section="${sectionId}"]`).classList.add('active');
+        }
+    </script>
 </body>
 </html>
