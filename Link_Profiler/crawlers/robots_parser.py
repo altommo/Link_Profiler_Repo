@@ -121,12 +121,14 @@ class RobotsParser:
         # Ensure the parser for this domain is fetched and cached
         parser = await self._fetch_and_parse_robots_txt(domain)
         
-        # CRITICAL FIX: If the parser is empty (meaning robots.txt was 404 or failed to fetch),
-        # it implies full crawl is allowed. RobotFileParser's can_fetch will return True for empty.
-        # So, we just need to ensure we always return the result of parser.can_fetch.
-        # The previous logic had an explicit 'return True' for 404, but the parser itself
-        # should handle this. The issue was likely a misinterpretation of the parser's state.
-        
+        # Check if parser has any rules - if empty, allow everything
+        # RobotFileParser's _rules attribute is a list of rules. If it's empty, no rules were parsed.
+        # This is the robust way to check if robots.txt was effectively empty or failed to load.
+        if not hasattr(parser, '_rules') or not parser._rules:
+            self.logger.debug(f"No robots.txt rules found for {domain} (parser is empty), allowing {url}")
+            return True
+
+        # Now, use the obtained parser to check if the URL is allowed
         can_crawl = parser.can_fetch(user_agent, url)
         
         if not can_crawl:
