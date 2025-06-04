@@ -613,19 +613,23 @@
                 document.getElementById('clickhouse-health-status').innerHTML = `<span class="status-indicator status-${clickhouseStatus === 'connected' ? 'healthy' : 'disconnected'}"></span>${clickhouseStatus}`;
 
 
-                // Update Job History Table (still needs auth, so will fail if not authenticated)
+                // Update Job History Table (now using public endpoint)
                 const jobHistoryTableBody = document.getElementById('job-history-table-body');
                 jobHistoryTableBody.innerHTML = '';
-                if (data.job_history && Array.isArray(data.job_history)) { // Added check for array
-                    data.job_history.forEach(job => {
+                // Fetch recent jobs for history
+                const recentJobs = await callApi('/public/jobs'); // Use public endpoint
+                if (recentJobs && Array.isArray(recentJobs)) {
+                    // Take only the first few for "Recent Job History"
+                    const displayJobs = recentJobs.slice(0, 10); 
+                    displayJobs.forEach(job => {
                         const row = jobHistoryTableBody.insertRow();
-                        const jobId = job.job_id || 'N/A';
+                        const jobId = job.id || 'N/A';
                         const targetUrl = job.target_url || 'N/A';
                         const status = job.status || 'N/A';
                         const urlsCrawled = job.urls_crawled || 0;
                         const linksFound = job.links_found || 0;
                         const durationSeconds = job.duration_seconds !== undefined && job.duration_seconds !== null ? job.duration_seconds.toFixed(2) : 'N/A';
-                        const completedAt = job.completed_at ? new Date(job.completed_at).toLocaleString() : 'N/A';
+                        const completedAt = job.completed_date ? new Date(job.completed_date).toLocaleString() : 'N/A'; // Use completed_date
 
                         row.innerHTML = `
                             <td>${jobId.substring(0, 8)}...</td>
@@ -641,13 +645,13 @@
                 }
 
 
-                // Update All Jobs Table (Jobs Tab) - still needs auth
-                loadJobsTable(data.all_jobs);
+                // Update All Jobs Table (Jobs Tab) - now using public endpoint
+                loadJobsTable(); // Call without arguments to fetch from public endpoint
 
                 // Update Satellites Table (Satellites Tab)
                 loadSatellitesTable(satellitesData.satellites); // Use data from public/satellites
 
-                // Update global pause status - still needs auth
+                // Update global pause status - now using public endpoint
                 checkGlobalPauseStatus();
 
                 document.getElementById('last-updated').textContent = `Last Updated: ${new Date().toLocaleTimeString()}`;
@@ -669,22 +673,16 @@
             return `${days}d ${hours}h ${minutes}m ${secs}s`;
         }
 
-        async function loadJobsTable(jobs = null) {
+        async function loadJobsTable() {
             const jobStatusFilter = document.getElementById('jobStatusFilter').value;
-            let fetchedJobs = jobs;
+            let fetchedJobs = [];
 
-            if (!fetchedJobs || !Array.isArray(fetchedJobs)) { // Added check for array
-                // If jobs not passed from loadStats or is not an array, fetch them
-                try {
-                    // This endpoint is still protected, so it will fail if no auth
-                    fetchedJobs = await callApi(`/api/jobs/all?status_filter=${jobStatusFilter}`);
-                } catch (error) {
-                    console.error('Error fetching all jobs:', error);
-                    fetchedJobs = []; // Fallback to empty array on error
-                }
-            } else if (jobStatusFilter) {
-                // If jobs passed, but filter is active, filter them
-                fetchedJobs = fetchedJobs.filter(job => job.status === jobStatusFilter);
+            try {
+                // Use public endpoint for all jobs
+                fetchedJobs = await callApi(`/public/jobs?status_filter=${jobStatusFilter}`);
+            } catch (error) {
+                console.error('Error fetching all jobs:', error);
+                fetchedJobs = []; // Fallback to empty array on error
             }
 
             const allJobsTableBody = document.getElementById('all-jobs-table-body');
@@ -782,8 +780,8 @@
 
         async function checkGlobalPauseStatus() {
             try {
-                // This endpoint is still protected, so it will fail if no auth
-                const response = await callApi('/api/jobs/is_paused');
+                // Use public endpoint for pause status
+                const response = await callApi('/public/jobs/paused');
                 const statusElement = document.getElementById('global-pause-status');
                 if (response.is_paused) {
                     statusElement.className = 'badge bg-warning';
