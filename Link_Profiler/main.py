@@ -524,8 +524,7 @@ from Link_Profiler.api.schemas import (
 )
 
 # Import get_current_user for dependency injection
-# Removed this import to break circular dependency
-# from Link_Profiler.api.dependencies import get_current_user
+from Link_Profiler.api.dependencies import get_current_user # Re-import get_current_user here
 from Link_Profiler.api.monitoring_debug import (
     _get_aggregated_stats_for_api, health_check_internal, _get_satellites_data_internal
 )
