@@ -96,7 +96,14 @@ async def submit_crawl_to_queue(request: BaseModel) -> Dict[str, str]: # Use Bas
     
     # Create a CrawlConfig object from the request config dictionary
     # Assuming request has a 'config' attribute that is a dict
-    crawl_config = CrawlConfig(**request.config)
+    # Convert Pydantic model to dictionary using .dict() or .model_dump()
+    # Using .dict() for Pydantic v1 compatibility, .model_dump() for v2
+    if hasattr(request.config, 'model_dump'): # Pydantic v2
+        crawl_config_dict = request.config.model_dump()
+    else: # Pydantic v1
+        crawl_config_dict = request.config.dict()
+
+    crawl_config = CrawlConfig(**crawl_config_dict)
 
     # Create a CrawlJob object
     job = CrawlJob(
