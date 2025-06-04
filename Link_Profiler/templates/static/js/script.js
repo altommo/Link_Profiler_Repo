@@ -273,7 +273,7 @@ async function loadJobsTable() {
                 <td><a href="#" onclick="showJobDetails('${job.id}')">${jobIdShort}</a></td>
                 <td>${targetUrlShort}</td>
                 <td>${job.job_type}</td>
-                <td class="job-status-${job.status.toLowerCase()}">${job.status}</td>
+                <td class="job-status-${job.status.toUpperCase()}">${job.status}</td>
                 <td>${job.progress_percentage !== undefined ? job.progress_percentage.toFixed(1) : 'N/A'}</td>
                 <td>${job.urls_crawled || 0}</td>
                 <td>${job.errors_count || 0}</td>
@@ -312,7 +312,7 @@ async function showJobDetails(jobId) {
         document.getElementById('detail-job-id').textContent = job.id || 'N/A';
         document.getElementById('detail-target-url').textContent = job.target_url || 'N/A';
         document.getElementById('detail-job-type').textContent = job.job_type || 'N/A';
-        document.getElementById('detail-status').className = `job-status-${(job.status || 'N/A').toLowerCase()}`;
+        document.getElementById('detail-status').className = `job-status-${(job.status || 'N/A').toUpperCase()}`;
         document.getElementById('detail-status').textContent = job.status || 'N/A';
         document.getElementById('detail-progress').textContent = job.progress_percentage !== undefined ? job.progress_percentage.toFixed(1) : 'N/A';
         document.getElementById('detail-urls-crawled').textContent = job.urls_crawled || 0;
