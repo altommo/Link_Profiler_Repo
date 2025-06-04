@@ -15,11 +15,11 @@ prometheus_client
 openai
 croniter
 requests
-psutil # Added for system monitoring
-pyyaml # Added for YAML configuration
-jinja2 # Added for FastAPI templating
-numpy # Added for ML rate limiter
-redis # Added for SmartCrawlQueue
+psutil
+pyyaml
+jinja2
+numpy
+redis
 
 # Authentication Dependencies
 passlib[bcrypt]
@@ -31,7 +31,6 @@ reportlab
 openpyxl
 
 # Social Media & Web3 (Hypothetical/Common Libraries for real integration)
-# Uncomment and install these if you enable the corresponding real API clients in config.yaml
 # tweepy # For Twitter/X API (e.g., pip install tweepy)
 # facebook-sdk # For Facebook Graph API (e.g., pip install facebook-sdk)
 # linkedin-api # For LinkedIn API (no official Python SDK, often direct HTTP or community libs)

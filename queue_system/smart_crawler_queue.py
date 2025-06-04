@@ -38,7 +38,6 @@ class CrawlTask:
     
     def __lt__(self, other):
         """For priority queue sorting"""
-        # First by priority, then by scheduled time
         if self.priority != other.priority:
             return self.priority < other.priority
         return self.scheduled_time < other.scheduled_time
@@ -46,7 +45,7 @@ class CrawlTask:
     def to_dict(self) -> Dict:
         """Serialize to dictionary"""
         return {
-            'url': self.url, # Corrected from 'self' to 'self.url'
+            'url': self.url,
             'priority': self.priority.value,
             'scheduled_time': self.scheduled_time,
             'retry_count': self.retry_count,
@@ -79,7 +78,7 @@ class DomainBucket:
         self.last_crawl_time = 0.0
         self.queue: List[CrawlTask] = []
         self.active_count = 0
-        self.max_concurrent = 2  # Max concurrent requests per domain
+        self.max_concurrent = 2
         
     def can_crawl_now(self) -> bool:
         """Check if this domain can be crawled now"""
@@ -129,7 +128,6 @@ class SmartCrawlQueue:
     async def enqueue_url(self, url: str, priority: Priority = Priority.NORMAL, 
                          metadata: Dict = None, job_id: str = None) -> bool:
         """Add URL to crawl queue"""
-        # Skip if already processed
         if url in self.processed_urls:
             logger.debug(f"URL already processed: {url}")
             return False
@@ -139,11 +137,9 @@ class SmartCrawlQueue:
             logger.warning(f"Invalid URL: {url}")
             return False
         
-        # Create domain bucket if needed
         if domain not in self.domain_buckets:
             self.domain_buckets[domain] = DomainBucket(domain)
         
-        # Calculate next crawl time based on domain rate limiting
         next_crawl_time = self._calculate_next_crawl_time(domain)
         
         task = CrawlTask(
@@ -154,10 +150,7 @@ class SmartCrawlQueue:
             job_id=job_id
         )
         
-        # Add to domain bucket
         self.domain_buckets[domain].add_task(task)
-        
-        # Persist to Redis
         await self._persist_task(task)
         
         self.stats['total_enqueued'] += 1
@@ -168,7 +161,6 @@ class SmartCrawlQueue:
     
     async def get_next_task(self) -> Optional[CrawlTask]:
         """Get next available task respecting domain limits"""
-        # Find domains that can be crawled now
         available_domains = [
             domain for domain, bucket in self.domain_buckets.items()
             if bucket.can_crawl_now()
@@ -177,7 +169,6 @@ class SmartCrawlQueue:
         if not available_domains:
             return None
         
-        # Select domain with highest priority task
         selected_domain = min(available_domains, 
                             key=lambda d: self.domain_buckets[d].next_priority())
         
@@ -199,15 +190,13 @@ class SmartCrawlQueue:
             self.stats['total_processed'] += 1
         else:
             self.stats['total_failed'] += 1
-            # Re-queue if retries available
             if task.retry_count < task.max_retries:
                 await self._requeue_failed_task(task)
     
     async def _requeue_failed_task(self, task: CrawlTask):
         """Re-queue failed task with backoff"""
         task.retry_count += 1
-        # Exponential backoff for retry delay
-        delay = min(300, 30 * (2 ** task.retry_count))  # Max 5 minutes
+        delay = min(300, 30 * (2 ** task.retry_count))
         task.scheduled_time = time.time() + delay
         task.priority = Priority(min(task.priority.value + 1, Priority.BULK.value))
         
@@ -251,6 +240,16 @@ class SmartCrawlQueue:
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.error(f"Failed to load persisted task: {e}")
     
+    async def __aenter__(self):
+        """Context manager entry point."""
+        await self.load_persisted_tasks()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit point."""
+        # No specific cleanup needed here as Redis client is managed externally
+        pass
+
     def get_queue_stats(self) -> Dict[str, Any]:
         """Get comprehensive queue statistics"""
         domain_stats = {}

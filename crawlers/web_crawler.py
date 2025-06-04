@@ -162,8 +162,18 @@ class WebCrawler:
             if 'start_time' not in self.crawl_queue.stats:
                 self.crawl_queue.stats['start_time'] = datetime.now()
 
-            for url in initial_seed_urls:
-                await self.crawl_queue.enqueue_url(url, Priority.HIGH, job_id=job_id)
+            try: # Add error handling for enqueue operation
+                for url in initial_seed_urls:
+                    await self.crawl_queue.enqueue_url(url, Priority.HIGH, job_id=job_id)
+            except Exception as e:
+                logger.error(f"Failed to enqueue initial URLs for job {job_id}: {e}")
+                return CrawlResult(
+                    url=target_url,
+                    status_code=500,
+                    error_message=f"Failed to enqueue initial URLs: {e}",
+                    pages_crawled=0,
+                    is_final_summary=True
+                )
             
             while True:
                 task = await self.crawl_queue.get_next_task()
