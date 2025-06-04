@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 
 # Import global instances and utility functions
 # Removed direct import of submit_crawl_to_queue and get_coordinator from main.py
-from Link_Profiler.main import logger
+# from Link_Profiler.main import logger # Removed direct import of logger from main.py
+logger = logging.getLogger(__name__) # Get logger directly
+
 from Link_Profiler.services.job_submission_service import get_coordinator, submit_crawl_to_queue # New: Import from job_submission_service
 
 
@@ -51,7 +53,12 @@ async def schedule_crawl_endpoint(request: StartCrawlRequest, current_user: Anno
     Note: Scheduling functionality needs to be implemented in the job submission service.
     """
     logger.info(f"API: Received request to schedule job for {request.target_url} by user: {current_user.username}.")
-    # TODO: Implement scheduling functionality
+    if not request.scheduled_at and not request.cron_schedule:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Either 'scheduled_at' or 'cron_schedule' must be provided for scheduling.")
+    
+    if request.cron_schedule and not request.scheduled_at:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="For recurring jobs, 'scheduled_at' must be provided for the initial run time.")
+
     return await submit_crawl_to_queue(request)
 
 @queue_router.get("/job_status/{job_id}", response_model=JobStatusResponse)

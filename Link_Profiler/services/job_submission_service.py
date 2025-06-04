@@ -18,6 +18,7 @@ from Link_Profiler.database.database import Database
 from Link_Profiler.services.alert_service import AlertService
 from Link_Profiler.utils.connection_manager import ConnectionManager
 
+# Get logger directly for this module
 logger = logging.getLogger(__name__)
 
 # Global variables to hold initialized dependencies for JobCoordinator
