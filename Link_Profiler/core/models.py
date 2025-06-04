@@ -116,6 +116,31 @@ class CrawlConfig(BaseModel):
     def from_dict(cls, data: Dict) -> 'CrawlConfig':
         return cls(**data)
 
+    def is_domain_allowed(self, domain: str) -> bool:
+        """Check if a domain is allowed for crawling based on allowed_domains and blocked_domains."""
+        # If allowed_domains is specified, only allow domains in that list
+        if self.allowed_domains:
+            # Check for exact match or subdomain match
+            if domain in self.allowed_domains:
+                return True
+            for allowed_domain in self.allowed_domains:
+                if domain.endswith('.' + allowed_domain):
+                    return True
+            return False # Not in allowed list
+        
+        # If blocked_domains is specified, block domains in that list
+        if self.blocked_domains:
+            # Check for exact match or subdomain match
+            if domain in self.blocked_domains:
+                return False
+            for blocked_domain in self.blocked_domains:
+                if domain.endswith('.' + blocked_domain):
+                    return False
+            return True # Not in blocked list
+        
+        # If neither allowed_domains nor blocked_domains are specified, allow all
+        return True
+
 
 # --- Data Models ---
 @dataclass
