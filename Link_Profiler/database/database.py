@@ -1012,6 +1012,26 @@ class Database:
         finally:
             session.close()
 
+    def update_user_admin_status(self, username: str, is_admin: bool) -> bool:
+        """Updates the admin status of a user."""
+        session = self._get_session()
+        try:
+            orm_user = session.query(UserORM).filter_by(username=username).first()
+            if orm_user:
+                orm_user.is_admin = is_admin
+                session.commit()
+                logger.info(f"Updated admin status for user '{username}' to {is_admin}")
+                return True
+            else:
+                logger.warning(f"User '{username}' not found for admin status update.")
+                return False
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating admin status for user '{username}': {e}", exc_info=True)
+            raise
+        finally:
+            session.close()
+
     # New: Content Gap Analysis methods
     def save_content_gap_analysis_result(self, result: ContentGapAnalysisResult) -> None:
         """Saves or updates a content gap analysis result."""

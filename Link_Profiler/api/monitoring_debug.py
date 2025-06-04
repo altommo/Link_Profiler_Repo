@@ -89,6 +89,15 @@ from Link_Profiler.monitoring.prometheus_metrics import get_metrics_text
 
 monitoring_debug_router = APIRouter(tags=["Monitoring & Debug"])
 
+# --- Admin Access Verification ---
+def verify_admin_access(current_user: User):
+    """Verify that the current user has admin access"""
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Admin privileges required to access monitoring endpoints"
+        )
+
 # --- Helper function for comprehensive health check ---
 async def health_check_internal() -> Dict[str, Any]:
     """
@@ -406,9 +415,10 @@ async def _get_satellites_data_internal() -> Dict[str, Any]:
 async def get_api_stats(current_user: Annotated[User, Depends(get_current_user)]):
     """
     Retrieves aggregated statistics for the Link Profiler system.
-    This endpoint is primarily consumed by the monitoring dashboard and requires authentication.
+    This endpoint is primarily consumed by the monitoring dashboard and requires admin authentication.
     """
-    logger.info(f"API: Received request for aggregated stats by user: {current_user.username}.")
+    verify_admin_access(current_user)
+    logger.info(f"API: Received request for aggregated stats by admin: {current_user.username}.")
     return await _get_aggregated_stats_for_api()
 
 @monitoring_debug_router.get("/api/jobs/all", response_model=List[CrawlJobResponse])
@@ -421,7 +431,12 @@ async def get_all_jobs_api(
     This endpoint is primarily consumed by the monitoring dashboard and requires authentication.
     Returns the most recent 50 jobs.
     """
-    logger.info(f"API: Received request for all jobs by user: {current_user.username} (status_filter: {status_filter}).")
+    verify_admin_access(current_user)
+    logger.info(f"API: Received request for all jobs by admin: {current_user.username} (status_filter: {status_filter}).")
+    
+    # Handle empty string status filter
+    if status_filter == "":
+        status_filter = None
     try:
         all_jobs = db.get_all_crawl_jobs()
         logger.debug(f"API: Retrieved {len(all_jobs)} jobs from database before filtering.")
@@ -449,7 +464,8 @@ async def is_jobs_paused_endpoint(current_user: Annotated[User, Depends(get_curr
     Checks if global job processing is currently paused.
     This endpoint is primarily consumed by the monitoring dashboard and requires authentication.
     """
-    logger.info(f"API: Received request to check if jobs are paused by user: {current_user.username}.")
+    verify_admin_access(current_user)
+    logger.info(f"API: Received request to check if jobs are paused by admin: {current_user.username}.")
     if not redis_client:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Redis is not available.")
     
@@ -599,5 +615,6 @@ async def get_satellites_api_endpoint(current_user: Annotated[User, Depends(get_
     """
     Retrieves detailed health information for all satellite crawlers.
     """
-    logger.info(f"API: Received request for satellite health by user: {current_user.username}.")
+    verify_admin_access(current_user)
+    logger.info(f"API: Received request for satellite health by admin: {current_user.username}.")
     return await _get_satellites_data_internal()
