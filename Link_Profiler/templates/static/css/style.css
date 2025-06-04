@@ -30,13 +30,20 @@ body {
 .dashboard-container {
     display: none; /* Hidden by default, shown after login */
     flex: 1;
-    display: flex;
+    flex-direction: column; /* Changed to column to stack navbar and main-content-area */
 }
 
 .navbar {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
     box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
     padding: 1rem 1.5rem;
+    z-index: 1030; /* Ensure navbar is above other content */
+}
+
+.main-content-area { /* New class for the flex container holding sidebar and content */
+    flex: 1;
+    display: flex;
+    margin-top: 56px; /* Height of the fixed-top navbar */
 }
 
 .sidebar {
@@ -46,6 +53,10 @@ body {
     padding-top: 20px;
     box-shadow: 2px 0 10px rgba(0,0,0,0.1);
     flex-shrink: 0;
+    overflow-y: auto; /* Enable scrolling for sidebar if content overflows */
+    height: calc(100vh - 56px); /* Adjust height to fill remaining vertical space */
+    position: sticky; /* Make sidebar sticky */
+    top: 56px; /* Stick it below the navbar */
 }
 
 .sidebar .nav-link {
