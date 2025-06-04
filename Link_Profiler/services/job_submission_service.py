@@ -96,24 +96,20 @@ async def submit_crawl_to_queue(request: StartCrawlRequest) -> Dict[str, str]: #
     """
     job_id = str(uuid.uuid4())
     
-    # Convert CrawlConfigRequest Pydantic model to a dictionary
-    # Handle Optional[CrawlConfigRequest] explicitly
+    # Explicitly create a dictionary from the request.config Pydantic model
+    # This ensures CrawlConfig receives keyword arguments from a plain dict.
     if request.config is not None:
         # Use .model_dump() for Pydantic v2, or .dict() for Pydantic v1
         if hasattr(request.config, 'model_dump'):
-            crawl_config_data = request.config.model_dump()
+            crawl_config_kwargs = request.config.model_dump()
         else:
-            crawl_config_data = request.config.dict()
+            crawl_config_kwargs = request.config.dict()
     else:
-        crawl_config_data = {} # Default to empty dict if no config provided
+        crawl_config_kwargs = {} # Default to empty dict if no config provided
 
     # Create a CrawlConfig object from the dictionary
-    # Ensure job_type is present in the config dictionary, even if not explicitly set in request.config
-    # This handles cases where job_type might be inferred or set by default in the API endpoint.
-    # For now, we'll assume job_type is passed correctly in request.config from the API.
-    # If job_type is not in crawl_config_data, CrawlConfig will use its default or raise error.
-
-    crawl_config = CrawlConfig(**crawl_config_data)
+    # The CrawlConfig dataclass will handle default values for missing keys
+    crawl_config = CrawlConfig(**crawl_config_kwargs)
 
     # Create a CrawlJob object
     job = CrawlJob(
@@ -122,7 +118,7 @@ async def submit_crawl_to_queue(request: StartCrawlRequest) -> Dict[str, str]: #
         job_type=crawl_config.job_type, # Use job_type from config
         status=CrawlStatus.PENDING,
         created_date=datetime.now(),
-        config=crawl_config,
+        config=crawl_config, # Pass the CrawlConfig object directly
         initial_seed_urls=request.initial_seed_urls,
         priority=request.priority,
         scheduled_at=request.scheduled_at,
