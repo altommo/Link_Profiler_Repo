@@ -281,7 +281,9 @@ class WebCrawler:
         
         if self.config.respect_robots_txt:
             user_agent_for_robots = self.session.headers.get('User-Agent', self.config.user_agent)
+            self.logger.debug(f"Checking robots.txt for {url} with user agent: {user_agent_for_robots}")
             can_crawl = await self.robots_parser.can_fetch(url, user_agent_for_robots)
+            self.logger.debug(f"Robots.txt check for {url}: can_crawl={can_crawl}")
             if not can_crawl:
                 self.logger.warning(f"Skipping {url}: Blocked by robots.txt rules.")
                 return CrawlResult(
