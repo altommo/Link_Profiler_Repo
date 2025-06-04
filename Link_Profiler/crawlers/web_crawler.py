@@ -250,6 +250,7 @@ class WebCrawler:
         domain = parsed_url.netloc
         
         if not self.config.is_domain_allowed(domain):
+            self.logger.warning(f"Skipping {url}: Domain not allowed by config.")
             return CrawlResult(
                 url=url,
                 status_code=403,
@@ -261,6 +262,7 @@ class WebCrawler:
             user_agent_for_robots = self.session.headers.get('User-Agent', self.config.user_agent)
             can_crawl = await self.robots_parser.can_fetch(url, user_agent_for_robots)
             if not can_crawl:
+                self.logger.warning(f"Skipping {url}: Blocked by robots.txt rules.")
                 return CrawlResult(
                     url=url,
                     status_code=403,
@@ -647,16 +649,17 @@ class WebCrawler:
             url, current_depth = await urls_to_visit.get()
             
             if url in self.crawled_urls:
+                self.logger.debug(f"Skipping {url}: Already crawled.")
                 continue
             
             if current_depth >= self.config.max_depth:
                 self.logger.debug(f"Skipping {url} due to max depth ({current_depth})")
                 continue
             
-            self.crawled_urls.add(url)
-            pages_crawled_count += 1
+            # Mark as crawled before attempting to fetch to prevent re-adding to queue
+            self.crawled_urls.add(url) 
             
-            self.logger.info(f"Crawling: {url} (Depth: {current_depth}, Crawled: {pages_crawled_count}/{self.config.max_pages})")
+            self.logger.info(f"Attempting to crawl: {url} (Depth: {current_depth}, Crawled: {pages_crawled_count}/{self.config.max_pages})")
             
             result = await self.crawl_url(url, last_crawl_result)
             last_crawl_result = result
@@ -665,8 +668,13 @@ class WebCrawler:
                 self.logger.warning(f"Failed to crawl {url}: {result.error_message}")
                 self.failed_urls.add(url)
                 crawl_errors_list.append(CrawlError(url=url, error_type="CrawlError", message=result.error_message))
+                # Do NOT increment pages_crawled_count for failed attempts that didn't yield content
                 continue
             
+            # Only increment pages_crawled_count for successfully fetched pages
+            pages_crawled_count += 1 
+            self.logger.info(f"Successfully crawled: {url}. Total pages crawled: {pages_crawled_count}")
+
             total_links_found_count += len(result.links_found)
 
             target_links = [link for link in result.links_found 
