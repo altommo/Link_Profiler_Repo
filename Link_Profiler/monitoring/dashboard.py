@@ -31,7 +31,7 @@ from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, LinkProfile, Domain, serialize_model, CrawlConfig # Import CrawlConfig
 from Link_Profiler.config.config_loader import ConfigLoader
 from Link_Profiler.queue_system.job_coordinator import JobCoordinator # Import JobCoordinator
-from Link_Profiler.api.queue_endpoints import get_coordinator, QueueCrawlRequest # Corrected: Import QueueCrawlRequest from queue_endpoints
+from Link_Profiler.api.queue_endpoints import QueueCrawlRequest # Corrected: Import QueueCrawlRequest from queue_endpoints
 from Link_Profiler.api.schemas import JobStatusResponse # Corrected: Import JobStatusResponse from schemas
 
 # Initialize and load config once using the absolute path
@@ -56,12 +56,14 @@ class MonitoringDashboard:
         self.db: Optional[Database] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self.coordinator: Optional[JobCoordinator] = None # Add coordinator instance
-        # self.main_api_external_url: str = "" # Removed: Dashboard now served by main API
-
+        
         self.performance_window_seconds = config_loader.get("monitoring.performance_window", 3600)
         self.stale_timeout = config_loader.get("queue.stale_timeout", 60) # Get stale_timeout from config
         self.job_queue_name = config_loader.get("queue.job_queue_name", "crawl_jobs") # Added for is_paused endpoint
         self.dead_letter_queue_name = config_loader.get("queue.dead_letter_queue_name", "dead_letter_queue") # Added for is_paused endpoint
+        
+        # Main API URL for health checks and proxying requests
+        self.main_api_url = config_loader.get('api.external_url', 'http://localhost:8000')
         
     async def __aenter__(self):
         """Initialise aiohttp session, Redis, and Database connections."""
@@ -107,9 +109,6 @@ class MonitoringDashboard:
             self.logger.info("MonitoringDashboard: JobCoordinator instance created.")
         else:
             self.logger.warning("MonitoringDashboard: JobCoordinator could not be initialized due to missing DB or Redis connection.")
-
-        # self.main_api_external_url = config_loader.get('api.external_url', 'http://localhost:8000') # Removed
-        # self.logger.info(f"MonitoringDashboard: Main API external URL set to {self.main_api_external_url}") # Removed
         
         return self
 
@@ -139,7 +138,7 @@ class MonitoringDashboard:
             "Content-Type": "application/json"
         }
         # Since the dashboard is now served by the main API, calls are local
-        url = f"http://localhost:{config_loader.get('api.port', 8000)}{endpoint}"
+        url = f"{self.main_api_url}{endpoint}" # Use self.main_api_url
         
         try:
             async with self._session.request(method, url, headers=headers, json=json_data, timeout=aiohttp.ClientTimeout(total=10)) as response:
@@ -384,16 +383,21 @@ class MonitoringDashboard:
             return {"status": "error", "message": str(e)}
 
     async def get_api_health(self):
-        """Check API health by calling its /health endpoint (now local)"""
+        """Check API health by calling its /public/health endpoint on the main API."""
+        health_url = f"{self.main_api_url}/public/health"
         try:
-            # Call the local /health endpoint directly
-            from Link_Profiler.api.monitoring_debug import health_check_internal
-            health_data = await health_check_internal()
-            return health_data
-        except HTTPException as e:
-            return {"status": "error", "message": e.detail, "code": e.status_code}
+            async with self._session.get(health_url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                response.raise_for_status()
+                return await response.json()
+        except aiohttp.ClientResponseError as e:
+            self.logger.error(f"Main API health check failed for {health_url} (Status: {e.status}): {e.message}", exc_info=True)
+            return {"status": "unhealthy", "message": f"Main API responded with {e.status}", "code": e.status}
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Network error during Main API health check to {health_url}: {e}", exc_info=True)
+            return {"status": "unhealthy", "message": f"Could not connect to Main API: {e}"}
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            self.logger.error(f"Unexpected error during Main API health check to {health_url}: {e}", exc_info=True)
+            return {"status": "unhealthy", "message": f"Unexpected error: {e}"}
 
     async def get_redis_stats(self):
         """Get Redis statistics"""
