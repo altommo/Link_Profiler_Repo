@@ -6,6 +6,7 @@ File: Link_Profiler/main.py (formerly Link_Profiler/api/main.py)
 import os
 import sys
 import time
+import logging # Import logging early
 
 # --- Robust Project Root Discovery ---
 # Assuming this file is at Link_Profiler/Link_Profiler/main.py
@@ -21,83 +22,16 @@ else:
 
 # --- End Robust Project Root Discovery ---
 
-
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query
-from fastapi.middleware.cors import CORSMiddleware # New: Import CORSMiddleware
-from fastapi.templating import Jinja2Templates # Add this for template rendering
-from fastapi.responses import HTMLResponse # Add this for HTML responses
-from fastapi.staticfiles import StaticFiles # New: Import StaticFiles for serving CSS/JS
-from typing import List, Optional, Dict, Any, Union, Annotated
-import logging
-from urllib.parse import urlparse
-from datetime import datetime, timedelta
-from contextlib import asynccontextmanager
-import redis.asyncio as redis
-import json
-import uuid
-import asyncio
-import psutil
-import psycopg2
-
-from playwright.async_api import async_playwright, Browser
-
-from Link_Profiler.services.crawl_service import CrawlService
-from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient
-from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient
-from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
-from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService
-from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient
-from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient
-from Link_Profiler.services.link_health_service import LinkHealthService
-from Link_Profiler.services.ai_service import AIService
-from Link_Profiler.services.alert_service import AlertService
-from Link_Profiler.services.report_service import ReportService
-from Link_Profiler.services.competitive_analysis_service import CompetitiveAnalysisService
-from Link_Profiler.services.social_media_service import SocialMediaService
-from Link_Profiler.services.web3_service import Web3Service
-from Link_Profiler.services.link_building_service import LinkBuildingService
-from Link_Profiler.services.auth_service import AuthService # Import AuthService early
-from Link_Profiler.database.database import Database
-from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
-from Link_Profiler.crawlers.serp_crawler import SERPCrawler
-from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
-from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
-from Link_Profiler.crawlers.social_media_crawler import SocialMediaCrawler
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob
-from Link_Profiler.monitoring.prometheus_metrics import (
-    API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text, # Re-added for middleware
-    JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
-)
+# Import core components needed for early initialization
 from Link_Profiler.config.config_loader import ConfigLoader
+from Link_Profiler.database.database import Database
+from Link_Profiler.services.auth_service import AuthService
 from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config
-from Link_Profiler.utils.data_exporter import export_to_csv
-from Link_Profiler.utils.user_agent_manager import user_agent_manager
-from Link_Profiler.utils.proxy_manager import proxy_manager
-from Link_Profiler.utils.connection_manager import ConnectionManager, connection_manager
-
-
-# New: Import API Clients
-from Link_Profiler.clients.google_search_console_client import GSCClient
-from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient
-from Link_Profiler.clients.google_trends_client import GoogleTrendsClient
-from Link_Profiler.clients.whois_client import WHOISClient
-from Link_Profiler.clients.dns_client import DNSClient
-from Link_Profiler.clients.reddit_client import RedditClient
-from Link_Profiler.clients.youtube_client import YouTubeClient
-from Link_Profiler.clients.news_api_client import NewsAPIClient
-# from Link_Profiler.clients.wayback_machine_client import WaybackClient
-# from Link_Profiler.clients.common_crawl_client import CommonCrawlClient
-# from Link_Profiler.clients.nominatim_client import NominatimClient
-# from Link_Profiler.clients.security_trails_client import SecurityTrailsClient
-# from Link_Profiler.clients.ssl_labs_client import SSLLabsClient
-
+from Link_Profiler.utils.connection_manager import ConnectionManager
 
 # Initialize and load config once using the absolute path
 config_loader = ConfigLoader()
 config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
-
-# Initialize templates - Adjusted path to be relative to the current file's directory
-templates = Jinja2Templates(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates"))
 
 # Setup logging using the loaded configuration
 logging_config = config_loader.get("logging.config", get_default_logging_config(config_loader.get("logging.level", "INFO")))
@@ -150,13 +84,75 @@ LOG_LEVEL = config_loader.get("logging.level")
 API_CACHE_ENABLED = config_loader.get("api_cache.enabled")
 API_CACHE_TTL = config_loader.get("api_cache.ttl")
 
-# Initialize database
+# Initialize core dependencies that other modules might import
 db = Database(db_url=DATABASE_URL)
+connection_manager = ConnectionManager() # Initialize connection_manager early
+auth_service_instance = AuthService(db) # Initialize AuthService early
 
-# Initialize Auth Service (moved up to ensure it's initialized before other modules import it)
-auth_service_instance = AuthService(db)
+# Now import other FastAPI and application modules
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from typing import List, Optional, Dict, Any, Union, Annotated
+from urllib.parse import urlparse
+from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
+import redis.asyncio as redis
+import json
+import uuid
+import asyncio
+import psutil
+import psycopg2
 
-# Initialize Redis connection pool and client
+from playwright.async_api import async_playwright, Browser
+
+from Link_Profiler.services.crawl_service import CrawlService
+from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient
+from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient
+from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
+from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService
+from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient
+from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient
+from Link_Profiler.services.link_health_service import LinkHealthService
+from Link_Profiler.services.ai_service import AIService
+from Link_Profiler.services.alert_service import AlertService
+from Link_Profiler.services.report_service import ReportService
+from Link_Profiler.services.competitive_analysis_service import CompetitiveAnalysisService
+from Link_Profiler.services.social_media_service import SocialMediaService
+from Link_Profiler.services.web3_service import Web3Service
+from Link_Profiler.services.link_building_service import LinkBuildingService
+from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
+from Link_Profiler.crawlers.serp_crawler import SERPCrawler
+from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
+from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
+from Link_Profiler.crawlers.social_media_crawler import SocialMediaCrawler
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob
+from Link_Profiler.monitoring.prometheus_metrics import (
+    API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text, # Re-added for middleware
+    JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
+)
+from Link_Profiler.api.queue_endpoints import submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies # Added set_coordinator_dependencies
+
+
+# New: Import API Clients
+from Link_Profiler.clients.google_search_console_client import GSCClient
+from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient
+from Link_Profiler.clients.google_trends_client import GoogleTrendsClient
+from Link_Profiler.clients.whois_client import WHOISClient
+from Link_Profiler.clients.dns_client import DNSClient
+from Link_Profiler.clients.reddit_client import RedditClient
+from Link_Profiler.clients.youtube_client import YouTubeClient
+from Link_Profiler.clients.news_api_client import NewsAPIClient
+# from Link_Profiler.clients.wayback_machine_client import WaybackClient
+# from Link_Profiler.clients.common_crawl_client import CommonCrawlClient
+# from Link_Profiler.clients.nominatim_client import NominatimClient
+# from Link_Profiler.clients.security_trails_client import SecurityTrailsClient
+# from Link_Profiler.clients.ssl_labs_client import SSLLabsClient
+
+
+# Initialize Redis connection pool and client (moved after db and auth_service_instance)
 redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
 redis_client: Optional[redis.Redis] = redis.Redis(connection_pool=redis_pool) # Make redis_client optional
 
@@ -409,7 +405,7 @@ async def lifespan(app: FastAPI):
             entered_contexts.append(await cm.__aenter__())
         
         logger.info("Application startup: Pinging Redis.")
-        global redis_client # Declare intent to modify global variable
+        # global redis_client # Already global
         if redis_client: # Only try to ping if client was initialized
             try:
                 await redis_client.ping()
