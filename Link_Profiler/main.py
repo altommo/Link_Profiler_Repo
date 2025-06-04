@@ -56,7 +56,7 @@ from Link_Profiler.services.competitive_analysis_service import CompetitiveAnaly
 from Link_Profiler.services.social_media_service import SocialMediaService
 from Link_Profiler.services.web3_service import Web3Service
 from Link_Profiler.services.link_building_service import LinkBuildingService
-from Link_Profiler.services.auth_service import AuthService
+from Link_Profiler.services.auth_service import AuthService # Import AuthService early
 from Link_Profiler.database.database import Database
 from Link_Profiler.database.clickhouse_loader import ClickHouseLoader
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler
@@ -68,7 +68,6 @@ from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text, # Re-added for middleware
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
-from Link_Profiler.api.queue_endpoints import submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies # Added set_coordinator_dependencies
 from Link_Profiler.config.config_loader import ConfigLoader
 from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config
 from Link_Profiler.utils.data_exporter import export_to_csv
@@ -153,6 +152,9 @@ API_CACHE_TTL = config_loader.get("api_cache.ttl")
 
 # Initialize database
 db = Database(db_url=DATABASE_URL)
+
+# Initialize Auth Service (moved up to ensure it's initialized before other modules import it)
+auth_service_instance = AuthService(db)
 
 # Initialize Redis connection pool and client
 redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
@@ -263,9 +265,6 @@ ai_service_instance = AIService()
 
 # New: Initialize Alert Service
 alert_service_instance = AlertService(db, connection_manager) # Pass connection_manager here
-
-# New: Initialize Auth Service
-auth_service_instance = AuthService(db)
 
 # New: Initialize Report Service
 report_service_instance = ReportService(db)
@@ -422,7 +421,8 @@ async def lifespan(app: FastAPI):
             logger.warning("Redis client not initialized. Skipping Redis ping.")
         
         # Set dependencies for queue_endpoints before getting coordinator
-        set_coordinator_dependencies(
+        from Link_Profiler.api.queue_endpoints import set_coordinator_dependencies as set_job_coordinator_dependencies # Import here to avoid circular dependency
+        set_job_coordinator_dependencies(
             redis_client=redis_client,
             config_loader=config_loader,
             db=db,

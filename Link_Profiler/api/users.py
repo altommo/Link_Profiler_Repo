@@ -3,12 +3,8 @@ from fastapi import APIRouter, Depends
 from typing import Annotated
 
 # Import the globally initialized logger from main.py
-try:
-    from Link_Profiler.main import logger
-except ImportError:
-    # Fallback for testing or if main.py is not yet fully initialized
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(level=logging.INFO)
+# Removed try...except ImportError block
+from Link_Profiler.main import logger
 
 # Import Pydantic models from the shared schemas file
 from Link_Profiler.api.schemas import UserResponse

@@ -5,22 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 # Import the globally initialized instances from main.py
-try:
-    from Link_Profiler.main import auth_service_instance, logger, config_loader
-except ImportError:
-    # Fallback for testing or if main.py is not yet fully initialized
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(level=logging.INFO)
-    # Create dummy instances for testing if needed
-    class DummyAuthService:
-        async def register_user(self, username, email, password): return None
-        async def authenticate_user(self, username, password): return None
-        def create_access_token(self, data, expires_delta): return "dummy_token"
-        access_token_expire_minutes = 30
-    auth_service_instance = DummyAuthService()
-    class DummyConfigLoader:
-        def get(self, key, default=None): return default
-    config_loader = DummyConfigLoader()
+# Removed try...except ImportError block
+from Link_Profiler.main import auth_service_instance, logger, config_loader
 
 
 # Import Pydantic models from the shared schemas file
