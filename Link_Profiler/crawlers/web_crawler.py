@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup
 
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
-    CrawlJob, ContentType, serialize_model, SEOMetrics, CrawlResult
+    CrawlJob, ContentType, serialize_model, SEOMetrics, CrawlResult, CrawlError # Import CrawlError
 )
 from Link_Profiler.database.database import Database
 from .link_extractor import LinkExtractor
@@ -309,10 +309,7 @@ class WebCrawler:
                             "width": random.randint(1366, 1920),
                             "height": random.randint(768, 1080)
                         },
-                        "timezone_id": random.choice([
-                            "America/New_York", "Europe/London", "Asia/Tokyo",
-                            "America/Los_Angeles", "Europe/Berlin", "Asia/Shanghai"
-                        ]),
+                        "timezone_id": random.choice(["America/New_York", "Europe/London", "Asia/Tokyo", "America/Los_Angeles", "Europe/Berlin", "Asia/Shanghai"]),
                         "locale": random.choice(["en-US", "en-GB", "fr-FR", "de-DE", "ja-JP"]),
                         "color_scheme": random.choice(["light", "dark"]),
                     })
@@ -582,82 +579,6 @@ class WebCrawler:
                 anomaly_flags=["Unexpected Error"]
             )
     
-    async def _extract_links_from_html(self, source_url: str, html_content: str) -> List[Backlink]:
-        """Extract links from HTML content"""
-        try:
-            return await self.link_extractor.extract_links(source_url, html_content)
-        except Exception as e:
-            self.logger.error(f"Error extracting links from {source_url}: {e}")
-            return []
-    
-    async def start_crawl(self, target_url: str, initial_seed_urls: List[str], job_id: str) -> AsyncGenerator[CrawlResult, None]: # Added job_id
-        """
-        Crawl web to find backlinks to target URL/domain.
-        Starts with initial_seed_urls and explores up to max_depth.
-        """
-        target_domain = urlparse(target_url).netloc
-        
-        urls_to_visit = asyncio.Queue()
-        for url in initial_seed_urls:
-            await urls_to_visit.put((url, 0))
-            
-        self.crawled_urls.clear()
-        self.failed_urls.clear()
-        crawled_count = 0
-        
-        last_crawl_result: Optional[CrawlResult] = None
-
-        while not urls_to_visit.empty() and crawled_count < self.config.max_pages:
-            current_job = self.db.get_crawl_job(job_id) # Use passed job_id
-            if current_job:
-                if current_job.status == CrawlStatus.PAUSED:
-                    self.logger.info(f"Crawler for job {job_id} paused. Waiting to resume...")
-                    while True:
-                        await asyncio.sleep(5)
-                        rechecked_job = self.db.get_crawl_job(job_id)
-                        if rechecked_job and rechecked_job.status == CrawlStatus.IN_PROGRESS:
-                            self.logger.info(f"Crawler for job {job_id} resumed.")
-                            break
-                        elif rechecked_job and rechecked_job.status == CrawlStatus.STOPPED:
-                            self.logger.info(f"Crawler for job {job_id} stopped during pause.")
-                            return
-
-            url, current_depth = await urls_to_visit.get()
-            
-            if url in self.crawled_urls:
-                continue
-            
-            if current_depth >= self.config.max_depth:
-                self.logger.debug(f"Skipping {url} due to max depth ({current_depth})")
-                continue
-            
-            self.crawled_urls.add(url)
-            crawled_count += 1
-            
-            self.logger.info(f"Crawling: {url} (Depth: {current_depth}, Crawled: {crawled_count}/{self.config.max_pages})")
-            
-            result = await self.crawl_url(url, last_crawl_result)
-            last_crawl_result = result
-
-            if result.error_message:
-                self.logger.warning(f"Failed to crawl {url}: {result.error_message}")
-                self.failed_urls.add(url)
-                continue
-            
-            target_links = [link for link in result.links_found 
-                            if self._is_link_to_target(link, target_url, target_domain)]
-            
-            if target_links:
-                result.links_found = target_links
-                yield result
-            
-            for link in result.links_found:
-                parsed_link_url = urlparse(link.target_url)
-                if self.config.is_domain_allowed(parsed_link_url.netloc):
-                    if link.target_url not in self.crawled_urls and \
-                       crawled_count + urls_to_visit.qsize() < self.config.max_pages:
-                        await urls_to_visit.put((link.target_url, current_depth + 1))
-    
     def _is_link_to_target(self, link: Backlink, target_url: str, target_domain: str) -> bool:
         """Check if a link points to our target URL or domain"""
         link_domain = urlparse(link.target_url).netloc
@@ -672,3 +593,112 @@ class WebCrawler:
             return True
             
         return False
+
+    async def start_crawl(self, target_url: str, initial_seed_urls: List[str], job_id: str) -> CrawlResult: # Changed return type to CrawlResult
+        """
+        Crawl web to find backlinks to target URL/domain.
+        Starts with initial_seed_urls and returns a final summary result.
+        """
+        start_crawl_time = time.time() # Overall crawl start time
+        target_domain = urlparse(target_url).netloc
+        
+        urls_to_visit = asyncio.Queue()
+        for url in initial_seed_urls:
+            await urls_to_visit.put((url, 0))
+            
+        self.crawled_urls.clear()
+        self.failed_urls.clear()
+        
+        # Track crawl statistics
+        pages_crawled_count = 0
+        total_links_found_count = 0
+        backlinks_found_list: List[Backlink] = [] # Store actual Backlink objects
+        crawl_errors_list: List[CrawlError] = [] # Store CrawlError objects
+        
+        last_crawl_result: Optional[CrawlResult] = None
+
+        while not urls_to_visit.empty() and pages_crawled_count < self.config.max_pages:
+            current_job = self.db.get_crawl_job(job_id) # Use passed job_id
+            if current_job:
+                if current_job.status == CrawlStatus.PAUSED:
+                    self.logger.info(f"Crawler for job {job_id} paused. Waiting to resume...")
+                    while True:
+                        await asyncio.sleep(5)
+                        rechecked_job = self.db.get_crawl_job(job_id)
+                        if rechecked_job and rechecked_job.status == CrawlStatus.IN_PROGRESS:
+                            self.logger.info(f"Crawler for job {job_id} resumed.")
+                            break
+                        elif rechecked_job and rechecked_job.status == CrawlStatus.STOPPED:
+                            self.logger.info(f"Crawler for job {job_id} stopped during pause.")
+                            # Return a partial summary if stopped
+                            return CrawlResult(
+                                url=target_url,
+                                status_code=200, # Indicate successful stop
+                                pages_crawled=pages_crawled_count,
+                                total_links_found=total_links_found_count,
+                                backlinks_found=len(backlinks_found_list),
+                                failed_urls_count=len(self.failed_urls),
+                                is_final_summary=True,
+                                crawl_duration_seconds=time.time() - start_crawl_time,
+                                errors=crawl_errors_list,
+                                error_message="Crawl stopped by command."
+                            )
+
+            url, current_depth = await urls_to_visit.get()
+            
+            if url in self.crawled_urls:
+                continue
+            
+            if current_depth >= self.config.max_depth:
+                self.logger.debug(f"Skipping {url} due to max depth ({current_depth})")
+                continue
+            
+            self.crawled_urls.add(url)
+            pages_crawled_count += 1
+            
+            self.logger.info(f"Crawling: {url} (Depth: {current_depth}, Crawled: {pages_crawled_count}/{self.config.max_pages})")
+            
+            result = await self.crawl_url(url, last_crawl_result)
+            last_crawl_result = result
+
+            if result.error_message:
+                self.logger.warning(f"Failed to crawl {url}: {result.error_message}")
+                self.failed_urls.add(url)
+                crawl_errors_list.append(CrawlError(url=url, error_type="CrawlError", message=result.error_message))
+                continue
+            
+            total_links_found_count += len(result.links_found)
+
+            target_links = [link for link in result.links_found 
+                            if self._is_link_to_target(link, target_url, target_domain)]
+            
+            if target_links:
+                backlinks_found_list.extend(target_links)
+                self.logger.info(f"Found {len(target_links)} backlinks to target on {url}.")
+            
+            for link in result.links_found:
+                parsed_link_url = urlparse(link.target_url)
+                if self.config.is_domain_allowed(parsed_link_url.netloc):
+                    if link.target_url not in self.crawled_urls and \
+                       pages_crawled_count + urls_to_visit.qsize() < self.config.max_pages:
+                        await urls_to_visit.put((link.target_url, current_depth + 1))
+        
+        # CRITICAL FIX: Always return a final summary result at the end
+        final_crawl_duration = time.time() - start_crawl_time
+        final_summary_result = CrawlResult(
+            url=target_url, # The target URL for which the crawl was performed
+            status_code=200, # Indicate successful completion of the crawl process
+            pages_crawled=pages_crawled_count,
+            total_links_found=total_links_found_count,
+            backlinks_found=len(backlinks_found_list),
+            failed_urls_count=len(self.failed_urls),
+            is_final_summary=True,  # Flag to identify this as the summary result
+            crawl_duration_seconds=final_crawl_duration,
+            errors=crawl_errors_list,
+            # Store the actual backlinks found in the links_found field of the summary result
+            links_found=backlinks_found_list, 
+            crawl_timestamp=datetime.now()
+        )
+        
+        self.logger.info(f"Crawl for job {job_id} finished. Crawled {pages_crawled_count} pages, found {len(backlinks_found_list)} backlinks to target.")
+        return final_summary_result # Return the single summary result

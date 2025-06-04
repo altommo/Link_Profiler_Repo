@@ -389,32 +389,45 @@ class SatelliteCrawler:
             result_data = {}
             if job_type == "backlink_discovery":
                 self.logger.debug(f"Job {job_id}: Calling web_crawler.start_crawl for {target_url} with seeds {initial_seed_urls}.")
-                crawl_result_generator = self.web_crawler.start_crawl(target_url, initial_seed_urls, job_id)
                 
-                final_crawl_result = None
-                async for crawl_res in crawl_result_generator:
-                    self.logger.debug(f"Job {job_id}: Received intermediate crawl result: {crawl_res.pages_crawled} pages, {crawl_res.total_links_found} links.")
-                    final_crawl_result = crawl_res 
+                # Call start_crawl which now returns a single CrawlResult summary
+                final_crawl_summary: CrawlResult = await self.web_crawler.start_crawl(target_url, initial_seed_urls, job_id)
                 
-                self.logger.debug(f"Job {job_id}: Final crawl result after loop: {final_crawl_result}")
+                self.logger.debug(f"Job {job_id}: Received final crawl summary: {final_crawl_summary.pages_crawled} pages, {final_crawl_summary.backlinks_found} backlinks.")
 
-                if final_crawl_result:
-                    result_data = serialize_model(final_crawl_result)
-                    job.urls_crawled = final_crawl_result.pages_crawled
-                    job.links_found = final_crawl_result.total_links_found
-                    job.errors_count = len(final_crawl_result.errors)
-                    job.error_log.extend(final_crawl_result.errors)
+                if final_crawl_summary:
+                    # Update job statistics from the final summary
+                    job.urls_crawled = final_crawl_summary.pages_crawled
+                    job.links_found = final_crawl_summary.backlinks_found # Use backlinks_found from summary
+                    job.errors_count = final_crawl_summary.failed_urls_count # Use failed_urls_count from summary
+                    job.error_log.extend(final_crawl_summary.errors) # Extend with CrawlError objects
+                    job.completed_date = datetime.now()
                     job.status = CrawlStatus.COMPLETED
-                    self.logger.info(f"Job {job_id} (backlink_discovery) completed successfully.")
+                    
+                    # Store the backlinks found in the job results
+                    if final_crawl_summary.links_found: # links_found in CrawlResult now holds target backlinks
+                        job.results['backlinks'] = [serialize_model(link) for link in final_crawl_summary.links_found]
+                    
+                    job.results['crawl_summary'] = {
+                        'pages_crawled': final_crawl_summary.pages_crawled,
+                        'total_links_found': final_crawl_summary.total_links_found,
+                        'backlinks_found': final_crawl_summary.backlinks_found,
+                        'failed_urls_count': final_crawl_summary.failed_urls_count,
+                        'crawl_duration_seconds': final_crawl_summary.crawl_duration_seconds,
+                        'errors_summary': [serialize_model(err) for err in final_crawl_summary.errors]
+                    }
+                    
+                    self.logger.info(f"Job {job_id} (backlink_discovery) completed: {job.urls_crawled} pages, {job.links_found} backlinks to target, {job.errors_count} errors.")
                 else:
+                    # This case should ideally not be reached with the fix in web_crawler.py
                     job.status = CrawlStatus.FAILED
                     job.error_log.append(CrawlError(
                         timestamp=datetime.now(),
                         url=target_url,
-                        error_type="NoCrawlResult",
-                        message="WebCrawler did not return a final crawl result."
+                        error_type="NoFinalCrawlResult",
+                        message="WebCrawler did not return a final crawl summary result (unexpected)."
                     ))
-                    self.logger.error(f"Job {job_id} (backlink_discovery) failed: No final crawl result.")
+                    self.logger.error(f"Job {job_id} (backlink_discovery) failed: No final crawl summary result.")
 
             elif job_type == "link_health_audit":
                 source_urls_to_audit = config_dict.get("source_urls_to_audit", [])
