@@ -46,7 +46,7 @@ class CrawlTask:
     def to_dict(self) -> Dict:
         """Serialize to dictionary"""
         return {
-            'url': self,
+            'url': self.url, # Corrected from 'self' to 'self.url'
             'priority': self.priority.value,
             'scheduled_time': self.scheduled_time,
             'retry_count': self.retry_count,
@@ -122,7 +122,8 @@ class SmartCrawlQueue:
             'total_enqueued': 0,
             'total_processed': 0,
             'total_failed': 0,
-            'queue_size': 0
+            'queue_size': 0,
+            'start_time': time.time() # Added start_time for queue's operational duration
         }
         
     async def enqueue_url(self, url: str, priority: Priority = Priority.NORMAL, 

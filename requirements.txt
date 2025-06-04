@@ -18,6 +18,8 @@ requests
 psutil # Added for system monitoring
 pyyaml # Added for YAML configuration
 jinja2 # Added for FastAPI templating
+numpy # Added for ML rate limiter
+redis # Added for SmartCrawlQueue
 
 # Authentication Dependencies
 passlib[bcrypt]
