@@ -102,17 +102,29 @@ async def submit_crawl_to_queue(request: StartCrawlRequest) -> Dict[str, str]: #
     crawl_config = request.config if request.config is not None else CrawlConfig()
 
     # Create a CrawlJob object
+    # Since StartCrawlRequest doesn't have job_type, priority, scheduled_at, cron_schedule,
+    # and CrawlJob doesn't have initial_seed_urls, we'll store it in config
+    job_config = {}
+    if hasattr(crawl_config, '__dict__'):
+        # Use serialize_model to properly convert the CrawlConfig to a dict
+        from Link_Profiler.core.models import serialize_model
+        job_config = serialize_model(crawl_config)
+    else:
+        job_config = crawl_config if isinstance(crawl_config, dict) else {}
+    
+    # Add initial_seed_urls to config since CrawlJob doesn't have this field
+    job_config['initial_seed_urls'] = request.initial_seed_urls
+    
     job = CrawlJob(
         id=job_id,
         target_url=request.target_url,
-        job_type=request.job_type, # Get job_type directly from the StartCrawlRequest
+        job_type="backlink_discovery", # Default job type
         status=CrawlStatus.PENDING,
         created_date=datetime.now(),
-        config=crawl_config, # Pass the CrawlConfig object directly
-        initial_seed_urls=request.initial_seed_urls,
-        priority=request.priority,
-        scheduled_at=request.scheduled_at,
-        cron_schedule=request.cron_schedule
+        config=job_config, # Pass config as dict
+        priority=5, # Default priority
+        scheduled_at=None, # No scheduling from StartCrawlRequest
+        cron_schedule=None # No cron scheduling from StartCrawlRequest
     )
 
     job_coordinator = await get_coordinator()

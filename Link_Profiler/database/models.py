@@ -43,6 +43,7 @@ class CrawlStatusEnum(enum.Enum):
     FAILED = "failed"
     TIMEOUT = "timeout"
     BLOCKED = "blocked"
+    CANCELLED = "cancelled"
 
 # Enum for SpamLevel
 class SpamLevelEnum(enum.Enum):
@@ -192,6 +193,13 @@ class CrawlJobORM(Base):
     results = Column(JSONB, default={})
     error_log = Column(JSONB, default=[]) # Changed to JSONB to store list of structured errors
     anomalies_detected = Column(ARRAY(String), default=[]) # New: List of detected anomalies for the job
+    
+    # New fields for scheduling
+    scheduled_at = Column(DateTime, nullable=True) # When the job should be moved to the active queue
+    cron_schedule = Column(String, nullable=True) # Cron string for recurring jobs
+    
+    # Calculated field
+    duration_seconds = Column(Float, nullable=True) # Duration of the job in seconds
 
     def __repr__(self):
         return f"<CrawlJob(id='{self.id}', target_url='{self.target_url}', status='{self.status}')>"

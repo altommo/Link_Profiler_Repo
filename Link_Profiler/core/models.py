@@ -41,6 +41,7 @@ class CrawlStatus(Enum):
     FAILED = "failed"
     TIMEOUT = "timeout"
     BLOCKED = "blocked"
+    CANCELLED = "cancelled"
 
 
 class SpamLevel(Enum):
@@ -400,7 +401,7 @@ class CrawlJob:
     @property
     def is_completed(self) -> bool:
         """Check if job is completed"""
-        return self.status in [CrawlStatus.COMPLETED, CrawlStatus.FAILED, CrawlStatus.STOPPED] # Added STOPPED
+        return self.status in [CrawlStatus.COMPLETED, CrawlStatus.FAILED, CrawlStatus.STOPPED, CrawlStatus.CANCELLED] # Added STOPPED and CANCELLED
     
     def add_error(self, url: str, error_type: str, message: str, details: Optional[str] = None) -> None:
         """Add a structured error to the job log"""

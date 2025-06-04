@@ -87,7 +87,12 @@ class JobCoordinator:
         """Submit a new crawl job to the queue (either immediate or scheduled)"""
         
         # Add job to database first (authoritative source)
-        self.db.add_crawl_job(job)
+        try:
+            self.db.add_crawl_job(job)
+            logger.info(f"JobCoordinator: Successfully added job {job.id} to database")
+        except Exception as e:
+            logger.error(f"JobCoordinator: Failed to add job {job.id} to database: {e}", exc_info=True)
+            raise  # Don't proceed to Redis if DB insertion fails
         
         job_message = serialize_model(job)
 
@@ -147,11 +152,24 @@ class JobCoordinator:
                     job = self.db.get_crawl_job(job_id)
                     
                     if job:
+                        logger.debug(f"Found job {job_id} in database for result processing. Status: {job.status}")
                         await self._update_job_progress(job, result_json)
                         # Update in-memory cache after DB update
                         self.active_jobs_cache[job_id] = job
                     else:
-                        logger.warning(f"Received result for unknown or deleted job ID: {job_id}. Data: {result_json}")
+                        logger.error(f"CRITICAL: Received result for unknown job ID: {job_id}. Job not found in database!")
+                        logger.error(f"Result data: {result_json}")
+                        # Try to check if job exists in Redis but not DB
+                        try:
+                            # Check all active jobs in database for debugging
+                            all_jobs = self.db.get_all_crawl_jobs()
+                            logger.error(f"Total jobs in database: {len(all_jobs)}")
+                            recent_jobs = [j for j in all_jobs if j.created_date and (datetime.now() - j.created_date).total_seconds() < 3600]  # Jobs created in last hour
+                            logger.error(f"Recent jobs in database (last hour): {len(recent_jobs)}")
+                            for recent_job in recent_jobs[-5:]:  # Log last 5 recent jobs
+                                logger.error(f"Recent job: ID={recent_job.id[:8]}..., Status={recent_job.status}, Target={recent_job.target_url}")
+                        except Exception as debug_e:
+                            logger.error(f"Error during debugging: {debug_e}")
                 
             except Exception as e:
                 logger.error(f"Error processing results: {e}", exc_info=True)
@@ -159,6 +177,8 @@ class JobCoordinator:
     
     async def _update_job_progress(self, job: CrawlJob, result_data: Dict):
         """Update job progress from satellite results and persist to DB"""
+        
+        logger.debug(f"Updating job {job.id} progress. Current status: {job.status}")
         
         # Update job metrics
         job.urls_crawled = result_data.get("urls_crawled", job.urls_crawled)

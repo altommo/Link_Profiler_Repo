@@ -126,6 +126,8 @@ class Database:
             data['error_log'] = [CrawlError.from_dict(err_data) for err_data in error_log_data]
             # Convert status enum
             data['status'] = CrawlStatusEnum(orm_obj.status)
+            # Remove duration_seconds from data since it's a calculated property in the dataclass
+            data.pop('duration_seconds', None)
             return CrawlJob(**data)
         elif isinstance(orm_obj, SEOMetricsORM):
             return SEOMetrics(**data)
@@ -210,11 +212,23 @@ class Database:
         data = serialize_model(dc_obj) # Use the serialize_model utility
         
         # Special handling for enums and sets for ORM
-        for key, value in data.items():
+        def convert_value(value):
             if isinstance(value, enum.Enum):
-                data[key] = value.value # Store enum value as string
-            if isinstance(value, set):
-                data[key] = list(value) # Convert set to list for ARRAY type in ORM
+                return value.value # Store enum value as string
+            elif isinstance(value, set):
+                return list(value) # Convert set to list for ARRAY type in ORM
+            elif isinstance(value, dict):
+                # Recursively convert nested dictionaries
+                return {k: convert_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                # Recursively convert lists
+                return [convert_value(v) for v in value]
+            else:
+                return value
+        
+        # Apply conversion recursively to all data
+        for key, value in data.items():
+            data[key] = convert_value(value)
 
         if isinstance(dc_obj, Domain):
             return DomainORM(**data)
@@ -260,6 +274,8 @@ class Database:
                 data['error_log'] = [serialize_model(err) for err in dc_obj.error_log] # Store as list of dicts
             # Convert status enum to value
             data['status'] = dc_obj.status.value
+            # Calculate and store duration_seconds
+            data['duration_seconds'] = dc_obj.duration_seconds
             return CrawlJobORM(**data)
         elif isinstance(dc_obj, SEOMetrics):
             return SEOMetricsORM(**data)
@@ -453,6 +469,8 @@ class Database:
             orm_job = self._to_orm(job)
             session.add(orm_job)
             session.commit()
+            # Force session to commit and flush to ensure data is persisted
+            session.flush()
             # After commit, refresh the ORM object to ensure it reflects the database state
             # This is crucial for scoped_session to see the latest data if another session committed it.
             session.refresh(orm_job)
@@ -463,6 +481,7 @@ class Database:
         except Exception as e:
             session.rollback()
             logger.error(f"DB: Error adding crawl job {job.id}: {e}", exc_info=True)
+            raise  # Re-raise the exception to ensure the calling code knows about the failure
         finally:
             session.close()
 
@@ -470,6 +489,8 @@ class Database:
         """Retrieves a crawl job by its ID."""
         session = self._get_session()
         try:
+            # Force session to expire all instances to ensure fresh data from DB
+            session.expire_all()
             orm_job = session.query(CrawlJobORM).filter_by(id=job_id).first()
             if orm_job:
                 logger.debug(f"DB: Retrieved single job {job_id} from DB. Status: {orm_job.status}")
