@@ -6,12 +6,16 @@ from urllib.parse import urlparse # Added for domain extraction
 # ADD these imports at the top
 from utils.circuit_breaker import ResilienceManager, CircuitBreakerOpenError
 from Link_Profiler.core.models import CrawlResult, CrawlConfig, Link, CrawlJob # Corrected imports
+# ADD this import
+from utils.adaptive_rate_limiter import MLRateLimiter
 
 class WebCrawler:
     def __init__(self, config: CrawlConfig):
         self.config = config
         # ADD this line in __init__
         self.resilience_manager = ResilienceManager()
+        # REPLACE the existing AdaptiveRateLimiter with MLRateLimiter
+        self.rate_limiter = MLRateLimiter()
         # ... rest of existing init code
     
     async def crawl_url(self, url: str, last_crawl_result: Optional[CrawlResult] = None) -> CrawlResult:
@@ -54,6 +58,12 @@ class WebCrawler:
         content = ""
         links_found = []
         
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc
+
+        # REPLACE the existing rate limiter wait with:
+        await self.rate_limiter.adaptive_wait(domain) # Wait before the request
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=self.config.timeout_seconds, headers={"User-Agent": self.config.user_agent}) as response:
@@ -62,11 +72,9 @@ class WebCrawler:
                     
                     # Simulate link extraction (replace with actual parsing)
                     # For now, just add some dummy links
-                    parsed_url = urlparse(url)
-                    base_domain = parsed_url.netloc
                     
-                    links_found.append(Link(target_url=f"http://{base_domain}/new_page_1"))
-                    links_found.append(Link(target_url=f"http://{base_domain}/new_page_2"))
+                    links_found.append(Link(target_url=f"http://{domain}/new_page_1"))
+                    links_found.append(Link(target_url=f"http://{domain}/new_page_2"))
                     
                     if status_code >= 400:
                         error_message = f"HTTP Error: {status_code}"
@@ -83,7 +91,7 @@ class WebCrawler:
             
         crawl_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         
-        return CrawlResult(
+        result = CrawlResult(
             url=url,
             status_code=status_code,
             content=content,
@@ -92,6 +100,11 @@ class WebCrawler:
             crawl_time_ms=crawl_time_ms,
             crawl_timestamp=datetime.now()
         )
+        
+        # Pass the result to the rate limiter after the request
+        await self.rate_limiter.adaptive_wait(domain, result) # This second call is for learning from the response
+
+        return result
 
     async def start_crawl(self, target_url: str, initial_seed_urls: List[str], job_id: str) -> CrawlResult:
         """
