@@ -24,12 +24,10 @@ def main():
     username = sys.argv[1]
     action = sys.argv[2].lower()
     
-    # Load configuration
-    config_loader = ConfigLoader()
-    config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
+    # Hardcoded database credentials - correct ones from your setup
+    DATABASE_URL = "postgresql://linkprofiler:secure_password_123@localhost:5432/link_profiler_db"
     
     # Initialize database
-    DATABASE_URL = config_loader.get("database.url")
     db = Database(db_url=DATABASE_URL)
     
     try:
