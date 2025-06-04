@@ -124,7 +124,8 @@ class CrawlConfig(BaseModel):
             if domain in self.allowed_domains:
                 return True
             for allowed_domain in self.allowed_domains:
-                if domain.endswith('.' + allowed_domain):
+                # Handle subdomains: e.g., if allowed_domain is 'example.com', 'sub.example.com' is allowed
+                if domain.endswith('.' + allowed_domain) or domain == allowed_domain:
                     return True
             return False # Not in allowed list
         
@@ -134,7 +135,8 @@ class CrawlConfig(BaseModel):
             if domain in self.blocked_domains:
                 return False
             for blocked_domain in self.blocked_domains:
-                if domain.endswith('.' + blocked_domain):
+                # Handle subdomains: e.g., if blocked_domain is 'example.com', 'sub.example.com' is blocked
+                if domain.endswith('.' + blocked_domain) or domain == blocked_domain:
                     return False
             return True # Not in blocked list
         

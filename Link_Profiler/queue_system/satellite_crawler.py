@@ -567,7 +567,21 @@ class SatelliteCrawler:
             # Optionally push to dead-letter queue
             job_data["dead_letter_reason"] = str(e)
             job_data["dead_letter_timestamp"] = datetime.now().isoformat()
-            await self.redis_client.rpush(self.dead_letter_queue_name, json.dumps(job_data))
+            # Convert enum values to strings before JSON serialization
+            job_data_serializable = {}
+            for key, value in job_data.items():
+                if isinstance(value, enum.Enum): # Check if it's an Enum instance
+                    job_data_serializable[key] = value.value
+                elif isinstance(value, datetime): # Handle datetime objects
+                    job_data_serializable[key] = value.isoformat()
+                elif isinstance(value, CrawlConfig): # Handle CrawlConfig Pydantic model
+                    job_data_serializable[key] = value.model_dump()
+                elif isinstance(value, list) and value and isinstance(value[0], CrawlError): # Handle list of CrawlError objects
+                    job_data_serializable[key] = [serialize_model(item) for item in value]
+                else:
+                    job_data_serializable[key] = value
+            
+            await self.redis_client.rpush(self.dead_letter_queue_name, json.dumps(job_data_serializable))
             self.logger.warning(f"Job {job_id} moved to dead-letter queue.")
             self.total_errors_encountered += 1 # Increment on failure
         finally:
