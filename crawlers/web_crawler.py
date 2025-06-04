@@ -2,6 +2,10 @@ import asyncio
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from urllib.parse import urlparse # Added for domain extraction
+import logging # Import logging
+
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
 
 # ADD these imports at the top
 from utils.circuit_breaker import ResilienceManager, CircuitBreakerOpenError
