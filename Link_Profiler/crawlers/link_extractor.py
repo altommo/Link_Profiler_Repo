@@ -1,12 +1,13 @@
 """
-Link Extractor - Extracts links from HTML content.
+Link Extractor - Extracts various types of links from HTML content.
 File: Link_Profiler/crawlers/link_extractor.py
 """
 
+import asyncio
+import logging
 from typing import List, Optional # Added Optional import
 from urllib.parse import urljoin, urlparse
-from bs4 import BeautifulSoup
-import logging
+from bs4 import BeautifulSoup, Tag # Import Tag
 import uuid # Import uuid
 
 from Link_Profiler.core.models import Backlink, LinkType # Absolute import
@@ -90,23 +91,39 @@ class LinkExtractor:
 
     def _determine_link_type(self, rel_attributes: List[str]) -> LinkType:
         """Determines the primary link type based on 'rel' attributes."""
-        if 'nofollow' in rel_attributes:
-            return LinkType.NOFOLLOW
+        # Prioritize sponsored over nofollow if both are present
         if 'sponsored' in rel_attributes:
             return LinkType.SPONSORED
+        if 'nofollow' in rel_attributes:
+            return LinkType.NOFOLLOW
         if 'ugc' in rel_attributes:
             return LinkType.UGC
-        return LinkType.FOLLOW
+        if 'canonical' in rel_attributes: # Link tags can have rel="canonical"
+            return LinkType.CANONICAL
+        if 'redirect' in rel_attributes: # Not a standard rel, but for internal tracking
+            return LinkType.REDIRECT
+        
+        return LinkType.FOLLOW # Default to follow if no specific rel attribute is found
 
-    def _get_context_text(self, tag, max_length: int = 100) -> str:
+    def _get_context_text(self, tag: Tag, max_length: int = 100) -> str:
         """Extracts surrounding text for context."""
         # This is a simplified approach. A more robust solution might involve
         # traversing the DOM or using regex on the raw HTML.
         context = ""
-        if tag.previous_sibling and hasattr(tag.previous_sibling, 'get_text'):
-            context += tag.previous_sibling.get_text(strip=True) + " "
+        # Check if previous_sibling exists and is a NavigableString (text) or Tag
+        if tag.previous_sibling:
+            if isinstance(tag.previous_sibling, str):
+                context += tag.previous_sibling.strip() + " "
+            elif isinstance(tag.previous_sibling, Tag):
+                context += tag.previous_sibling.get_text(strip=True) + " "
+        
         context += tag.get_text(strip=True) # The anchor text itself
-        if tag.next_sibling and hasattr(tag.next_sibling, 'get_text'):
-            context += " " + tag.next_sibling.get_text(strip=True)
+        
+        # Check if next_sibling exists and is a NavigableString (text) or Tag
+        if tag.next_sibling:
+            if isinstance(tag.next_sibling, str):
+                context += " " + tag.next_sibling.strip()
+            elif isinstance(tag.next_sibling, Tag):
+                context += " " + tag.next_sibling.get_text(strip=True)
         
         return context.strip()[:max_length]
