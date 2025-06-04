@@ -441,3 +441,41 @@ class AIService:
             "transcription": simulated_transcription,
             "topics": simulated_topics
         }
+
+    async def assess_content_quality(self, content: str, url: str) -> Tuple[Optional[float], Optional[str]]:
+        """
+        Assesses the quality of the given content and provides a classification.
+        Returns a tuple of (quality_score, classification_string).
+        """
+        if not self.enabled or not self.openrouter_client:
+            self.logger.warning("AI service is disabled. Cannot assess content quality.")
+            return None, None
+
+        prompt = f"""
+        Analyze the following web page content from URL: {url}.
+        Assess its overall quality, originality, depth, and relevance.
+        Provide a JSON response with two keys:
+        - "quality_score": An integer score from 0 to 100, where 100 is excellent quality.
+        - "classification": A single word classification: "excellent", "good", "average", "low_quality", "spam".
+
+        Content:
+        ---
+        {content[:8000]} # Limit content length for prompt
+        ---
+        """
+        cache_key = f"ai_content_quality_assessment:{url}:{hash(content[:1000])}" # Cache based on URL and partial content
+        result = await self._call_ai_with_cache("content_quality_assessment", prompt, cache_key, max_tokens=200)
+        
+        if result:
+            score = result.get("quality_score")
+            classification = result.get("classification")
+            if isinstance(score, (int, float)) and isinstance(classification, str):
+                classification = classification.lower()
+                if classification not in ["excellent", "good", "average", "low_quality", "spam"]:
+                    classification = "average" # Default to average if AI gives unexpected classification
+                self.logger.info(f"Content quality for {url}: Score={score}, Classification={classification}")
+                return float(score), classification
+            else:
+                self.logger.warning(f"AI returned invalid format for content quality assessment for {url}: {result}")
+        self.logger.warning(f"AI content quality assessment failed for {url}. Returning None, None.")
+        return None, None

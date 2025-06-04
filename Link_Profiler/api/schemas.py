@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 # Import from core.models for shared data structures and serialization
-from Link_Profiler.core.models import User, Token, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink # Added CrawlJob, LinkProfile, Backlink
+from Link_Profiler.core.models import User, Token, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics # Added SEOMetrics
 
 # Get logger from main.py (assuming main.py sets up logging globally)
 # This import is safe as schemas.py does not import main.py at the top level
@@ -61,7 +61,7 @@ class Token(BaseModel):
 class CrawlConfigRequest(BaseModel):
     max_depth: int = Field(3, description="Maximum depth to crawl from seed URLs.")
     max_pages: int = Field(1000, description="Maximum number of pages to crawl.")
-    delay_seconds: float = Field(1.0, description="Delay between requests to the same domain in seconds.")
+    # delay_seconds: float = Field(1.0, description="Delay between requests to the same domain in seconds.") # Removed
     timeout_seconds: int = Field(30, description="Timeout for HTTP requests in seconds.")
     user_agent: str = Field("LinkProfiler/1.0", description="User-Agent string for the crawler.")
     respect_robots_txt: bool = Field(True, description="Whether to respect robots.txt rules.")
@@ -79,7 +79,7 @@ class CrawlConfigRequest(BaseModel):
     human_like_delays: bool = Field(False, description="Whether to add small random delays to mimic human browsing behavior.")
     stealth_mode: bool = Field(True, description="Whether to enable Playwright stealth mode for browser-based crawling.")
     browser_fingerprint_randomization: bool = Field(False, description="Whether to randomize browser fingerprint properties (e.g., device scale, mobile, touch, screen dimensions, timezone, locale, color scheme) for Playwright.")
-    ml_rate_optimization: bool = Field(False, description="Whether to enable machine learning-based rate optimization for adaptive delays.")
+    # ml_rate_optimization: bool = Field(False, description="Whether to enable machine learning-based rate optimization for adaptive delays.") # Removed
     captcha_solving_enabled: bool = Field(False, description="Whether to enable CAPTCHA solving for browser-based crawls.")
     anomaly_detection_enabled: bool = Field(False, description="Whether to enable real-time anomaly detection.")
     use_proxies: bool = Field(False, description="Whether to use proxies for crawling.")
@@ -367,6 +367,7 @@ class KeywordSuggestionResponse(BaseModel):
     data_timestamp: datetime
 
     @classmethod
+
     def from_keyword_suggestion(cls, suggestion: KeywordSuggestion):
         suggestion_dict = serialize_model(suggestion)
         if isinstance(suggestion_dict.get('data_timestamp'), str):

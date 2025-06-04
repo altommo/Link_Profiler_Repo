@@ -592,6 +592,7 @@ class SEOMetrics:
     twitter_description: Optional[str] = None
     validation_issues: List[str] = field(default_factory=list) # Issues found by ContentValidator
     ai_content_classification: Optional[str] = None # New: AI-driven content classification (e.g., "high_quality", "spam")
+    ai_content_score: Optional[float] = None # New: AI-driven content quality score (0-100)
     ocr_text: Optional[str] = None # New: Extracted text from images via OCR
     nlp_entities: List[str] = field(default_factory=list) # New: Entities extracted via NLP
     nlp_sentiment: Optional[str] = None # New: Sentiment extracted via NLP (positive, neutral, negative)
@@ -600,7 +601,6 @@ class SEOMetrics:
     video_topics: List[str] = field(default_factory=list) # New: Topics extracted from video content
 
     # AI-generated insights
-    ai_content_score: Optional[float] = None # AI-driven content quality score (0-100)
     ai_suggestions: List[str] = field(default_factory=list) # AI-generated improvement suggestions
     ai_semantic_keywords: List[str] = field(default_factory=list) # AI-identified semantic keywords
     ai_readability_score: Optional[float] = None # AI-assessed readability score
@@ -748,7 +748,6 @@ class AlertRule:
     # Anomaly-based conditions (for "anomaly_detected" trigger_type)
     anomaly_type_filter: Optional[str] = None # e.g., "captcha_spike", "crawl_rate_drop", "content_quality_drop"
     
-    # Notification settings
     severity: AlertSeverity = AlertSeverity.WARNING
     notification_channels: List[AlertChannel] = field(default_factory=lambda: [AlertChannel.DASHBOARD])
     notification_recipients: List[str] = field(default_factory=list) # e.g., email addresses, Slack channel IDs, webhook URLs (if not global)

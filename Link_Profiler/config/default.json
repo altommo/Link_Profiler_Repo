@@ -8,60 +8,43 @@
   "crawler": {
     "max_depth": 3,
     "max_pages": 1000,
-    "delay_seconds": 1.0,
-    "timeout_seconds": 30,
+    "user_agent": "LinkProfilerBot/1.0 (+http://linkprofiler.com/bot.html)",
     "respect_robots_txt": true,
     "follow_redirects": true,
     "extract_images": true,
     "extract_pdfs": false,
     "max_file_size_mb": 10,
-    "user_agent_rotation": false,
-    "render_javascript": false,
-    "extract_image_text": false,
-    "crawl_web3_content": false,
-    "crawl_social_media": false,
+    "max_retries": 3,
+    "retry_delay_seconds": 5.0,
     "extract_video_content": false
   },
   "anti_detection": {
+    "user_agent_rotation": true,
+    "consistent_ua_per_domain": true,
+    "request_header_randomization": true,
+    "human_like_delays": true,
+    "random_delay_range": [0.5, 2.0],
     "stealth_mode": true,
-    "fingerprint_randomization": false,
-    "human_like_delays": false,
-    "request_header_randomization": false,
     "browser_fingerprint_randomization": false,
-    "ml_rate_optimization": false,
+    "captcha_solving_enabled": false,
     "anomaly_detection_enabled": false
   },
-  "rate_limiter": {
-    "history_size": 10,
-    "success_factor": 0.9,
-    "failure_factor": 1.5,
+  "rate_limiting": {
+    "ml_enhanced": true,
     "min_delay": 0.1,
-    "max_delay": 60.0
+    "max_delay": 30.0,
+    "learning_rate": 0.1,
+    "aggression_factor": 0.8
   },
-  "proxy_management": {
-    "enabled": false,
+  "proxy": {
+    "use_proxies": false,
     "proxy_list": [],
     "proxy_retry_delay_seconds": 300
   },
-  "captcha_solving": {
-    "enabled": false,
-    "api_key": "your_captcha_solving_api_key_here"
-  },
-  "anomaly_detection": {
-    "enabled": false,
-    "error_rate_threshold": 0.20,
-    "empty_content_threshold": 100,
-    "low_link_count_threshold": 2,
-    "captcha_spike_threshold": 3,
-    "captcha_time_window_seconds": 60,
-    "crawl_rate_drop_threshold": 0.5,
-    "history_window_size": 100,
-    "unexpected_status_codes": [403, 407, 429, 500, 502, 503, 504]
-  },
   "browser_crawler": {
-    "enabled": false,
-    "headless": true,
-    "browser_type": "chromium"
+    "enabled": true,
+    "browser_type": "chromium",
+    "headless": true
   },
   "social_media_crawler": {
     "enabled": false,
@@ -74,21 +57,30 @@
     "data_quality_scoring": true
   },
   "queue": {
-    "max_retries": 3,
-    "retry_delay": 5,
-    "priority_levels": [1, 5, 10],
-    "heartbeat_interval": 30,
-    "stale_timeout": 60,
-    "dead_letter_queue_name": "dead_letter_queue"
+    "job_queue_name": "crawl_jobs",
+    "result_queue_name": "crawl_results",
+    "dead_letter_queue_name": "dead_letter_queue",
+    "scheduler_interval": 5,
+    "heartbeat_queue_sorted_name": "crawler_heartbeats_sorted"
   },
   "monitoring": {
-    "dashboard_refresh": 30,
-    "max_job_history": 100,
-    "performance_window": 3600
+    "monitor_port": 8001,
+    "performance_window": 3600,
+    "max_job_history": 50,
+    "monitor_auth": {
+      "username": "monitor_user",
+      "password": "monitor_secure_password_123"
+    },
+    "enabled": true,
+    "metrics_interval": 30,
+    "health_check_interval": 60,
+    "alert_cooldown": 300
   },
   "api": {
     "host": "0.0.0.0",
-    "port": 8000
+    "port": 8000,
+    "external_url": "https://api.yspanel.com",
+    "internal_url": "http://localhost:8000"
   },
   "logging": {
     "level": "INFO",
@@ -169,28 +161,42 @@
   "domain_api": {
     "abstract_api": {
       "enabled": false,
-      "api_key": "your_abstract_api_key_here"
+      "api_key": ""
     },
     "real_api": {
       "enabled": false,
-      "api_key": "your_real_domain_api_key_here"
+      "api_key": ""
+    },
+    "whois_json_api": {
+      "enabled": false,
+      "base_url": "https://www.whois-json.com/api/v1/whois",
+      "api_key": ""
+    },
+    "dns_over_https_api": {
+      "enabled": false,
+      "cloudflare_url": "https://cloudflare-dns.com/dns-query",
+      "google_url": "https://dns.google/resolve"
     }
   },
   "backlink_api": {
     "gsc_api": {
-      "enabled": false
+      "enabled": false,
+      "credentials_file": "credentials.json",
+      "token_file": "token.json"
     },
     "openlinkprofiler_api": {
-      "enabled": false
+      "enabled": false,
+      "base_url": "http://www.openlinkprofiler.org/api/index.php"
     },
     "real_api": {
       "enabled": false,
-      "api_key": "your_real_backlink_api_key_here"
+      "api_key": "",
+      "base_url": "https://api.example-backlink-provider.com"
     }
   },
   "serp_crawler": {
     "playwright": {
-      "enabled": false,
+      "enabled": true,
       "headless": true,
       "browser_type": "chromium"
     }
@@ -198,60 +204,150 @@
   "serp_api": {
     "real_api": {
       "enabled": false,
-      "api_key": "your_real_serp_api_key_here"
+      "api_key": "",
+      "base_url": "https://api.example-serp-provider.com"
+    },
+    "pagespeed_insights_api": {
+      "enabled": false,
+      "api_key": "",
+      "base_url": "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
     }
-  },
-  "keyword_scraper": {
-    "enabled": false
   },
   "keyword_api": {
     "real_api": {
       "enabled": false,
-      "api_key": "your_real_keyword_api_key_here"
+      "api_key": "",
+      "base_url": "https://api.example-keyword-research.com"
     },
     "metrics_api": {
       "enabled": false,
-      "api_key": "your_keyword_metrics_api_key_here"
+      "api_key": "",
+      "base_url": "https://api.example-keyword-metrics.com"
+    },
+    "google_trends_api": {
+      "enabled": false
     }
   },
-  "technical_auditor": {
-    "lighthouse_path": "lighthouse"
-  },
-  "clickhouse": {
-    "enabled": false,
-    "host": "localhost",
-    "port": 9000,
-    "user": "default",
-    "password": "",
-    "database": "default"
-  },
   "ai": {
-    "openrouter_api_key": "your_openrouter_key_here",
-    "cache_ttl": 3600,
     "enabled": false,
+    "openrouter_api_key": "",
     "models": {
       "content_scoring": "anthropic/claude-3-haiku",
+      "content_classification": "anthropic/claude-3-haiku",
       "content_gap_analysis": "openai/gpt-4-turbo",
       "keyword_research": "google/gemini-pro",
       "technical_seo_analysis": "anthropic/claude-3-5-sonnet",
       "competitor_analysis": "openai/gpt-4",
       "content_generation": "anthropic/claude-3-5-sonnet",
-      "content_classification": "anthropic/claude-3-haiku",
+      "domain_value_analysis": "mistralai/mistral-7b-instruct",
       "content_nlp_analysis": "anthropic/claude-3-haiku",
-      "video_analysis": "anthropic/claude-3-haiku"
+      "topic_clustering": "mistralai/mistral-7b-instruct",
+      "content_quality_assessment": "anthropic/claude-3-haiku"
+    }
+  },
+  "technical_auditor": {
+    "lighthouse_path": "lighthouse",
+    "ssl_labs_api": {
+      "enabled": false,
+      "base_url": "https://api.ssllabs.com/api/v3/analyze"
     },
-    "content_classification_enabled": false,
-    "content_nlp_analysis_enabled": false,
-    "video_analysis_enabled": false
+    "security_trails_api": {
+      "enabled": false,
+      "api_key": "",
+      "base_url": "https://api.securitytrails.com/v1"
+    }
+  },
+  "social_media_crawler": {
+    "enabled": false,
+    "platforms": ["twitter", "facebook", "linkedin", "reddit", "youtube"],
+    "twitter_api_key": "",
+    "twitter_api_secret": "",
+    "twitter_bearer_token": "",
+    "facebook_app_id": "",
+    "facebook_app_secret": "",
+    "linkedin_client_id": "",
+    "linkedin_client_secret": "",
+    "reddit_api": {
+      "enabled": false,
+      "client_id": "",
+      "client_secret": "",
+      "user_agent": "LinkProfilerBot/1.0"
+    },
+    "youtube_api": {
+      "enabled": false,
+      "api_key": "",
+      "base_url": "https://www.googleapis.com/youtube/v3"
+    },
+    "news_api": {
+      "enabled": false,
+      "api_key": "",
+      "base_url": "https://newsapi.org/v2"
+    }
+  },
+  "web3_crawler": {
+    "enabled": false,
+    "ipfs_gateway_url": "https://ipfs.io/ipfs/",
+    "blockchain_node_url": "https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID",
+    "etherscan_api_key": "",
+    "opensea_api_key": ""
+  },
+  "historical_data": {
+    "wayback_machine_api": {
+      "enabled": false,
+      "base_url": "http://web.archive.org/cdx/search/cdx"
+    },
+    "common_crawl_api": {
+      "enabled": false,
+      "base_url": "https://index.commoncrawl.org"
+    }
+  },
+  "local_seo": {
+    "nominatim_api": {
+      "enabled": false,
+      "base_url": "https://nominatim.openstreetmap.org/search",
+      "user_agent": "LinkProfilerApp/1.0 (your_email@example.com)"
+    }
+  },
+  "notifications": {
+    "webhooks": {
+      "enabled": true,
+      "urls": []
+    },
+    "email": {
+      "enabled": false,
+      "smtp_server": "",
+      "smtp_port": 587,
+      "smtp_username": "",
+      "smtp_password": "",
+      "sender_email": ""
+    },
+    "slack": {
+      "enabled": false,
+      "webhook_url": ""
+    }
+  },
+  "circuit_breaker": {
+    "failure_threshold": 5,
+    "recovery_timeout": 60,
+    "success_threshold": 3,
+    "timeout_duration": 30
+  },
+  "queue_system": {
+    "redis_url": "redis://:redis_secure_pass_456@127.0.0.1:6379/0",
+    "max_queue_size": 100000,
+    "domain_max_concurrent": 2
+  },
+  "auth": {
+    "secret_key": "xKroXcaIePQydhdhS4GMhdMfTsjhKzthaoL5OmU5MBA",
+    "algorithm": "HS256",
+    "access_token_expire_minutes": 30
+  },
+  "system": {
+    "current_code_version": "1.0.3",
+    "version_control_enabled": false
   },
   "api_cache": {
     "enabled": true,
     "ttl": 3600
-  },
-  "api_rate_limiter": {
-    "enabled": true,
-    "requests_per_second": 1.0,
-    "max_retries": 3,
-    "retry_backoff_factor": 0.5
   }
 }
