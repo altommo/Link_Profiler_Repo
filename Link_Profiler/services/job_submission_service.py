@@ -97,17 +97,17 @@ async def submit_crawl_to_queue(request: StartCrawlRequest) -> Dict[str, str]: #
     job_id = str(uuid.uuid4())
     
     # Convert CrawlConfigRequest Pydantic model to a dictionary
-    # If request.config is None, default to an empty dictionary
-    # Use .model_dump() for Pydantic v2, or .dict() for Pydantic v1
-    # Ensure it's a dictionary before passing to CrawlConfig
-    if request.config:
-        if hasattr(request.config, 'model_dump'): # Pydantic v2
+    # Handle Optional[CrawlConfigRequest] explicitly
+    if request.config is not None:
+        # Use .model_dump() for Pydantic v2, or .dict() for Pydantic v1
+        if hasattr(request.config, 'model_dump'):
             crawl_config_data = request.config.model_dump()
-        else: # Pydantic v1
+        else:
             crawl_config_data = request.config.dict()
     else:
-        crawl_config_data = {}
-    
+        crawl_config_data = {} # Default to empty dict if no config provided
+
+    # Create a CrawlConfig object from the dictionary
     # Ensure job_type is present in the config dictionary, even if not explicitly set in request.config
     # This handles cases where job_type might be inferred or set by default in the API endpoint.
     # For now, we'll assume job_type is passed correctly in request.config from the API.
