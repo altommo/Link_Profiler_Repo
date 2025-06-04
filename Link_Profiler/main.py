@@ -141,7 +141,7 @@ from Link_Profiler.monitoring.prometheus_metrics import (
 from Link_Profiler.services.job_submission_service import submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies
 
 # New: Import WebCrawler and SmartCrawlQueue
-from Link_Profiler.crawlers.web_crawler import WebCrawler
+from Link_Profiler.crawlers.web_crawler import EnhancedWebCrawler # Changed to EnhancedWebCrawler
 from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue, Priority
 
 
@@ -360,7 +360,7 @@ main_crawl_config = CrawlConfig(**crawler_config_data)
 smart_crawl_queue = SmartCrawlQueue(redis_client=redis_client)
 
 # Create WebCrawler instance, passing the SmartCrawlQueue
-main_web_crawler = WebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance)
+main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, browser=playwright_browser_instance) # Changed to EnhancedWebCrawler
 # --- End New Instantiation ---
 
 

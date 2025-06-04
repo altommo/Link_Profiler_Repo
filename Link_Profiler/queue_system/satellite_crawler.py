@@ -25,10 +25,10 @@ else:
 # Import necessary components from the Link_Profiler package
 from Link_Profiler.config.config_loader import ConfigLoader
 from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config
-from Link_Profiler.crawlers.web_crawler import WebCrawler
+from Link_Profiler.crawlers.web_crawler import EnhancedWebCrawler # Changed to EnhancedWebCrawler
 from Link_Profiler.core.models import CrawlConfig, CrawlJob, CrawlStatus, serialize_model, CrawlError, SEOMetrics
 from Link_Profiler.services.ai_service import AIService # Import AIService for WebCrawler
-from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue # Import SmartCrawlQueue for WebCrawler
+from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue # Import SmartCrawlQueue for internal use by WebCrawler
 
 # --- Configuration and Logging Setup ---
 config_loader = ConfigLoader()
@@ -55,7 +55,7 @@ class SatelliteCrawler:
         self.processing_paused = False # Local flag for pausing job processing
 
         self.redis_client: Optional[redis.Redis] = None
-        self.web_crawler: Optional[WebCrawler] = None
+        self.web_crawler: Optional[EnhancedWebCrawler] = None # Changed to EnhancedWebCrawler
         self.ai_service: Optional[AIService] = None # AI service for content analysis
         self.smart_crawl_queue: Optional[SmartCrawlQueue] = None # Smart crawl queue for internal use by WebCrawler
 
@@ -106,7 +106,7 @@ class SatelliteCrawler:
         crawler_config_data['headless_browser'] = config_loader.get("browser_crawler.headless", True)
 
         main_crawl_config = CrawlConfig(**crawler_config_data)
-        self.web_crawler = WebCrawler(config=main_crawl_config, crawl_queue=self.smart_crawl_queue, ai_service=self.ai_service)
+        self.web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=self.smart_crawl_queue, ai_service=self.ai_service) # Changed to EnhancedWebCrawler
         await self.web_crawler.__aenter__() # Enter WebCrawler context
 
         # Start background tasks

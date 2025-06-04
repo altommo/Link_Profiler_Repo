@@ -541,6 +541,7 @@ class OutreachCampaignCreateRequest(BaseModel):
 
 class OutreachCampaignResponse(BaseModel):
     id: str
+
     name: str
     target_domain: str
     status: str

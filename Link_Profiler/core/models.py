@@ -907,152 +907,146 @@ class OutreachEvent:
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered_data)
 
-@dataclass
-class ReportJob:
-    """Represents a job for generating a report."""
+# New: Pydantic models for AI features
+class ContentGenerationRequest(BaseModel):
+    topic: str = Field(..., description="The topic for which to generate content ideas.")
+    num_ideas: int = Field(5, description="Number of content ideas to generate.")
+
+class CompetitorStrategyAnalysisRequest(BaseModel):
+    primary_domain: str = Field(..., description="The primary domain for analysis.")
+    competitor_domains: List[str] = Field(..., description="List of competitor domains.")
+
+class ReportScheduleRequest(BaseModel):
+    report_type: str = Field(..., description="Type of report (e.g., 'link_profile_pdf', 'all_backlinks_excel').")
+    target_identifier: str = Field(..., description="Identifier for the report target (e.g., URL, 'all').")
+    format: str = Field(..., description="Format of the report (e.g., 'pdf', 'excel').")
+    scheduled_at: Optional[datetime] = Field(None, description="Specific UTC datetime to run the report (ISO format).")
+    cron_schedule: Optional[str] = Field(None, description="Cron string for recurring reports (e.g., '0 0 * * *').")
+    config: Optional[Dict] = Field(None, description="Optional configuration for report generation.")
+
+class ReportJobResponse(BaseModel):
     id: str
-    report_type: str # e.g., "link_profile_pdf", "all_backlinks_excel"
-    target_identifier: str # e.g., a URL, or "all" for a full dump
-    format: str # e.g., "pdf", "excel"
-    status: CrawlStatus = CrawlStatus.PENDING
-    created_date: datetime = field(default_factory=datetime.now)
-    started_date: Optional[datetime] = None
-    completed_date: Optional[datetime] = None
-    file_path: Optional[str] = None # Path to the generated report file
-    error_message: Optional[str] = None
-    config: Dict = field(default_factory=dict) # Any specific config for report generation
-    
-    # For scheduling
-    scheduled_at: Optional[datetime] = None
-    cron_schedule: Optional[str] = None
+    report_type: str
+    target_identifier: str
+    format: str
+    status: CrawlStatus
+    created_date: datetime
+    completed_date: Optional[datetime]
+    file_path: Optional[str]
+    error_message: Optional[str]
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'ReportJob':
-        """Create a ReportJob instance from a dictionary."""
-        if 'status' in data and isinstance(data['status'], str):
-            data['status'] = CrawlStatus(data['status'])
-        if 'created_date' in data and isinstance(data['created_date'], str):
-            data['created_date'] = datetime.fromisoformat(data['created_date'])
-        if 'started_date' in data and isinstance(data['started_date'], str):
-            data['started_date'] = datetime.fromisoformat(data['started_date'])
-        if 'completed_date' in data and isinstance(data['completed_date'], str):
-            data['completed_date'] = datetime.fromisoformat(data['completed_date'])
-        if 'scheduled_at' in data and isinstance(data['scheduled_at'], str):
-            data['scheduled_at'] = datetime.fromisoformat(data['scheduled_at'])
-        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
-        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
-        return cls(**filtered_data)
+    def from_report_job(cls, job: ReportJob):
+        job_dict = serialize_model(job)
+        # job_dict['status'] = job.status.value # Handled by use_enum_values
+        if isinstance(job_dict.get('created_date'), str):
+            job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
+        if isinstance(job_dict.get('completed_date'), str):
+            job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
+        return cls(**job_dict)
 
-@dataclass
-class DomainIntelligence:
-    """
-    Represents aggregated intelligence for a domain, combining various data points
-    beyond basic WHOIS and authority scores. This could include social signals,
-    historical data summaries, content quality assessments, etc.
-    """
+class DomainHistoryResponse(BaseModel): # New Pydantic model for DomainHistory
     domain_name: str
-    last_updated: datetime = field(default_factory=datetime.now)
-    # Aggregated metrics
-    total_social_mentions: int = 0
-    avg_sentiment_score: float = 0.0 # e.g., -1.0 to 1.0
-    top_social_platforms: List[str] = field(default_factory=list)
-    # Content quality insights
-    avg_content_quality_score: float = 0.0 # From AI analysis
-    content_gaps_identified: int = 0
-    # Technical SEO summary
-    avg_performance_score: float = 0.0
-    avg_accessibility_score: float = 0.0
-    broken_links_ratio: float = 0.0
-    # Other derived insights
-    estimated_traffic_trend: List[float] = field(default_factory=list) # Monthly trend
-    competitor_overlap_score: float = 0.0 # How much it overlaps with known competitors
-    # Raw data summaries (can be JSONB in ORM)
-    social_data_summary: Dict[str, Any] = field(default_factory=dict)
-    content_data_summary: Dict[str, Any] = field(default_factory=dict)
-    technical_data_summary: Dict[str, Any] = field(default_factory=dict)
-    
-    @classmethod
-    def from_dict(cls, data: Dict) -> 'DomainIntelligence':
-        """Create a DomainIntelligence instance from a dictionary."""
-        if 'last_updated' in data and isinstance(data['last_updated'], str):
-            data['last_updated'] = datetime.fromisoformat(data['last_updated'])
-        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
-        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
-        return cls(**filtered_data)
-
-@dataclass
-class SocialMention:
-    """Represents a single mention of a brand/keyword on a social media platform."""
-    id: str
-    query: str # The keyword/brand name that was searched for
-    platform: str # e.g., "twitter", "reddit", "youtube", "newsapi"
-    mention_url: str # URL of the post/article
-    mention_text: str # Content of the mention (e.g., tweet text, article title/snippet)
-    author: Optional[str] = None # Author/username
-    published_date: datetime = field(default_factory=datetime.now)
-    sentiment: Optional[str] = None # e.g., "positive", "neutral", "negative"
-    engagement_score: Optional[float] = None # e.g., likes + shares + comments
-    raw_data: Dict[str, Any] = field(default_factory=dict) # Full raw data from the API/scrape
+    snapshot_date: datetime
+    authority_score: float
+    trust_score: float
+    spam_score: float
+    total_backlinks: int
+    referring_domains: int
 
     @classmethod
-    def from_dict(cls, data: Dict) -> 'SocialMention':
-        """Create a SocialMention instance from a dictionary."""
-        if 'published_date' in data and isinstance(data['published_date'], str):
-            data['published_date'] = datetime.fromisoformat(data['published_date'])
-        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
-        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
-        return cls(**filtered_data)
+    def from_domain_history(cls, history: DomainHistory):
+        history_dict = serialize_model(history)
+        if isinstance(history_dict.get('snapshot_date'), str):
+            try:
+                history_dict['snapshot_date'] = datetime.fromisoformat(history_dict['snapshot_date'])
+            except ValueError:
+                logger.warning(f"Could not parse snapshot_date string: {history_dict.get('snapshot_date')}")
+                history_dict['snapshot_date'] = None
+        return cls(**history_dict)
 
+# New: Pydantic models for Queue Endpoints
+class QueueStatsResponse(BaseModel):
+    pending_jobs: int
+    results_pending: int
+    active_satellites: int
+    satellite_crawlers: Dict[str, Any] # Detailed info about each satellite
+    timestamp: datetime
 
-# Utility functions for model operations
-def serialize_model(obj) -> Dict:
-    """Serialize dataclass to dictionary"""
-    if hasattr(obj, '__dataclass_fields__'):
-        result = {}
-        for field_name, field_def in obj.__dataclass_fields__.items():
-            value = getattr(obj, field_name)
-            if isinstance(value, datetime):
-                result[field_name] = value.isoformat()
-            elif isinstance(value, enum.Enum): # Use enum.Enum here
-                result[field_name] = value.value
-            elif isinstance(value, set):
-                result[field_name] = list(value)
-            elif isinstance(value, dict): # Handle nested dictionaries
-                result[field_name] = serialize_model(value)
-            elif hasattr(value, '__dataclass_fields__'): # Handle nested dataclasses
-                result[field_name] = serialize_model(value)
-            elif isinstance(value, list) and value and (hasattr(value[0], '__dataclass_fields__') or isinstance(value[0], BaseModel)): # Handle lists of dataclasses or Pydantic models
-                result[field_name] = [serialize_model(item) for item in value]
-            elif isinstance(value, BaseModel): # Handle Pydantic models
-                return value.model_dump(mode='json') # Use model_dump for Pydantic models
-            else:
-                result[field_name] = value
-        return result
-    elif isinstance(obj, BaseModel): # Handle top-level Pydantic models
-        return obj.model_dump(mode='json')
-    elif isinstance(obj, dict): # Handle top-level dictionaries
-        return {key: serialize_model(value) for key, value in obj.items()}
-    elif isinstance(obj, list): # Handle top-level lists
-        return [serialize_model(item) for item in obj]
-    elif isinstance(obj, datetime): # Handle top-level datetime
-        return obj.isoformat()
-    elif isinstance(obj, enum.Enum): # Handle top-level Enum
-        return obj.value
-    elif isinstance(obj, set): # Handle top-level set
-        return list(obj)
-    return obj
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: CrawlStatus
+    progress_percentage: float
+    message: Optional[str] = None
+    errors: List[str] = Field(default_factory=list)
+    results_summary: Dict[str, Any] = Field(default_factory=dict)
+    last_updated: datetime
 
+    class Config:
+        use_enum_values = True
 
-def create_link_profile_from_backlinks(target_url: str, backlinks: List[Backlink]) -> LinkProfile:
-    """
-    Create a LinkProfile from a list of backlinks.
-    Note: This function no longer calculates authority/trust/spam scores,
-    as that logic is moved to the service layer where it can access domain data.
-    """
-    profile = LinkProfile(target_url=target_url)
-    
-    for backlink in backlinks:
-        profile.add_backlink(backlink)
-    
-    # Removed profile.calculate_metrics() call
-    return profile
+class CrawlerHealthResponse(BaseModel):
+    crawler_id: str
+    status: str
+    last_seen: datetime
+    cpu_usage: float
+    memory_usage: float
+    jobs_processed: int
+    current_job_id: Optional[str] = None
+    error_rate: float
+    uptime_seconds: float
+
+class SEOMetricsResponse(BaseModel): # New Pydantic model for SEOMetrics
+    url: str
+    http_status: Optional[int] = None
+    response_time_ms: Optional[float] = None
+    page_size_bytes: Optional[int] = None
+    title_length: int = 0
+    meta_description_length: int = 0
+    h1_count: int = 0
+    h2_count: int = 0
+    internal_links: int = 0
+    external_links: int = 0
+    images_count: int = 0
+    images_without_alt: int = 0
+    has_canonical: bool = False
+    has_robots_meta: bool = False
+    has_schema_markup: bool = False
+    broken_links: List[str] = Field(default_factory=list)
+    performance_score: Optional[float] = None
+    mobile_friendly: Optional[bool] = None
+    accessibility_score: Optional[float] = None
+    audit_timestamp: Optional[datetime] = None
+    seo_score: float = 0.0
+    issues: List[str] = Field(default_factory=list)
+    structured_data_types: List[str] = Field(default_factory=list)
+    og_title: Optional[str] = None
+    og_description: Optional[str] = None
+    twitter_title: Optional[str] = None
+    twitter_description: Optional[str] = None
+    validation_issues: List[str] = Field(default_factory=list)
+    ai_content_classification: Optional[str] = None
+    ai_content_score: Optional[float] = None
+    ocr_text: Optional[str] = None
+    nlp_entities: List[str] = Field(default_factory=list)
+    nlp_sentiment: Optional[str] = None
+    nlp_topics: List[str] = Field(default_factory=list)
+    video_transcription: Optional[str] = None
+    video_topics: List[str] = Field(default_factory=list)
+    ai_suggestions: List[str] = Field(default_factory=list)
+    ai_semantic_keywords: List[str] = Field(default_factory=list)
+    ai_readability_score: Optional[float] = None
+
+    @classmethod
+    def from_seo_metrics(cls, metrics: SEOMetrics):
+        metrics_dict = serialize_model(metrics)
+        if isinstance(metrics_dict.get('audit_timestamp'), str):
+            try:
+                metrics_dict['audit_timestamp'] = datetime.fromisoformat(metrics_dict['audit_timestamp'])
+            except ValueError:
+                logger.warning(f"Could not parse audit_timestamp string: {metrics_dict.get('audit_timestamp')}")
+                metrics_dict['audit_timestamp'] = None
+        return cls(**metrics_dict)
