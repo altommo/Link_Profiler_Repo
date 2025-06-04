@@ -5,11 +5,9 @@ from typing import Annotated, Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 
 # Import global instances and utility functions
-# Removed direct import of submit_crawl_to_queue and get_coordinator from main.py
-# from Link_Profiler.main import logger # Removed direct import of logger from main.py
 logger = logging.getLogger(__name__) # Get logger directly
 
-from Link_Profiler.services.job_submission_service import get_coordinator, submit_crawl_to_queue # New: Import from job_submission_service
+from Link_Profiler.services.job_submission_service import get_coordinator, submit_crawl_to_queue
 
 
 # Import shared Pydantic models and dependencies

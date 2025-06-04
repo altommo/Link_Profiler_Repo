@@ -6,28 +6,15 @@ import logging
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import CrawlStatus, CrawlJob, User
 from Link_Profiler.api.schemas import CrawlJobResponse
-from Link_Profiler.api.queue_endpoints import get_coordinator
+from Link_Profiler.api.queue_endpoints import get_coordinator # This import is fine as it's not from main.py
 from Link_Profiler.config.config_loader import ConfigLoader
 from Link_Profiler.api.dependencies import get_current_user # Ensure this is imported for protected endpoints
 
 # Initialize config_loader and db here
-try:
-    from Link_Profiler.main import db, config_loader, logger
-except ImportError:
-    # Fallback for testing or if main.py is not yet fully initialized
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
     
-    class DummyDB:
-        def get_all_crawl_jobs(self) -> List[CrawlJob]:
-            logger.warning("Using DummyDB in public_jobs.py. Database not properly initialized.")
-            return []
-    db = DummyDB()
-
-    class DummyConfigLoader:
-        def get(self, key, default=None):
-            return default
-    config_loader = DummyConfigLoader()
+# These are now imported from main.py, so no need for dummy classes here.
+# from Link_Profiler.main import db, config_loader 
 
 
 public_jobs_router = APIRouter()
@@ -44,6 +31,8 @@ async def public_jobs(
     """
     logger.info(f"API: Received request for public jobs with status filter: {status_filter}")
     try:
+        # Import db from main.py here to avoid circular dependency at module level
+        from Link_Profiler.main import db 
         all_jobs = db.get_all_crawl_jobs()
         if status_filter:
             filtered_jobs = [job for job in all_jobs if job.status == status_filter]

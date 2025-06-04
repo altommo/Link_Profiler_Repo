@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 # Import the globally initialized instances from main.py
-# Removed try...except ImportError block
 from Link_Profiler.main import auth_service_instance, logger, config_loader
 
 

@@ -3,7 +3,6 @@ from fastapi import APIRouter, Depends
 from typing import Annotated
 
 # Import the globally initialized logger from main.py
-# Removed try...except ImportError block
 from Link_Profiler.main import logger
 
 # Import Pydantic models from the shared schemas file
