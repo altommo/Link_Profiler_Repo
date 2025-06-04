@@ -26,6 +26,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, 
 from fastapi.middleware.cors import CORSMiddleware # New: Import CORSMiddleware
 from fastapi.templating import Jinja2Templates # Add this for template rendering
 from fastapi.responses import HTMLResponse # Add this for HTML responses
+from fastapi.staticfiles import StaticFiles # New: Import StaticFiles for serving CSS/JS
 from typing import List, Optional, Dict, Any, Union, Annotated
 import logging
 from urllib.parse import urlparse
@@ -472,6 +473,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan # Register the lifespan context manager
 )
+
+# --- Static Files ---
+# Mount the 'static' directory to serve CSS and JS files
+app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "static")), name="static")
 
 # --- CORS Middleware ---
 # New: Add CORSMiddleware to allow cross-origin requests from the monitoring dashboard
