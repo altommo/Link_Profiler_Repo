@@ -137,9 +137,8 @@ from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text, # Re-added for middleware
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
-# Removed direct import of submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies
-# from Link_Profiler.api.queue_endpoints import submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies # Added set_coordinator_dependencies
-from Link_Profiler.services.job_submission_service import submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies # New: Import from job_submission_service
+# Import from the new service module
+from Link_Profiler.services.job_submission_service import submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies
 
 
 # New: Import API Clients
@@ -525,7 +524,8 @@ from Link_Profiler.api.schemas import (
 )
 
 # Import get_current_user for dependency injection
-from Link_Profiler.api.dependencies import get_current_user
+# Removed this import to break circular dependency
+# from Link_Profiler.api.dependencies import get_current_user
 from Link_Profiler.api.monitoring_debug import (
     _get_aggregated_stats_for_api, health_check_internal, _get_satellites_data_internal
 )
