@@ -47,97 +47,20 @@ from Link_Profiler.services.web3_service import Web3Service
 from Link_Profiler.services.link_building_service import LinkBuildingService
 from Link_Profiler.services.report_service import ReportService
 
+# ADD these imports at the top
+from Link_Profiler.utils.circuit_breaker import ResilienceManager, CircuitBreakerOpenError
+from Link_Profiler.utils.adaptive_rate_limiter import MLRateLimiter
+from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue, Priority
+from Link_Profiler.monitoring.crawler_metrics import crawler_metrics
+from Link_Profiler.monitoring.health_monitor import HealthMonitor
+
 
 class CrawlerError(Exception):
     """Custom exception for crawler errors"""
     pass
 
 
-class AdaptiveRateLimiter:
-    """
-    Adaptive rate limiter to respect website policies and react to server responses.
-    Adjusts delay based on HTTP status codes and response times.
-    Can incorporate a history of past interactions for more informed decisions.
-    """
-    
-    def __init__(self, initial_delay_seconds: float = 1.0, ml_rate_optimization_enabled: bool = False, rate_limiter_config: Dict = None):
-        self.domain_delays: Dict[str, float] = {}
-        self.initial_delay = initial_delay_seconds
-        self.last_request_time: Dict[str, float] = {}
-        self.logger = logging.getLogger(__name__ + ".AdaptiveRateLimiter")
-
-        self.ml_rate_optimization_enabled = ml_rate_optimization_enabled
-        self.rate_limiter_config = rate_limiter_config or {}
-        self.history_size = self.rate_limiter_config.get("history_size", 10)
-        self.success_factor = self.rate_limiter_config.get("success_factor", 0.9)
-        self.failure_factor = self.rate_limiter_config.get("failure_factor", 1.5)
-        self.min_delay = self.rate_limiter_config.get("min_delay", 0.1)
-        self.max_delay = self.rate_limiter_config.get("max_delay", 60.0)
-
-        self.domain_history: Dict[str, deque[Tuple[int, int]]] = {}
-
-    async def wait_if_needed(self, domain: str, last_crawl_result: Optional['CrawlResult'] = None) -> None:
-        """
-        Wait if needed to respect rate limits, adapting based on last crawl result and history.
-        """
-        current_delay = self.domain_delays.get(domain, self.initial_delay)
-
-        if last_crawl_result:
-            if domain not in self.domain_history:
-                self.domain_history[domain] = deque(maxlen=self.history_size)
-            self.domain_history[domain].append((last_crawl_result.status_code, last_crawl_result.crawl_time_ms))
-
-            if self.ml_rate_optimization_enabled:
-                recent_history = self.domain_history[domain]
-                successful_responses = [r for r in recent_history if 200 <= r[0] < 400]
-                # failed_responses = [r for r in recent_history if r[0] >= 400 or r[0] == 0] # Not directly used in calculation below
-
-                success_ratio = len(successful_responses) / len(recent_history) if recent_history else 1.0
-                avg_response_time = sum(r[1] for r in successful_responses) / len(successful_responses) if successful_responses else 0
-
-                if last_crawl_result.status_code == 429:
-                    current_delay *= self.failure_factor * 2
-                    self.logger.warning(f"ML Rate Limiter: Doubling delay for {domain} due to 429. New delay: {current_delay:.2f}s")
-                elif last_crawl_result.status_code >= 500 or last_crawl_result.status_code == 0:
-                    current_delay *= self.failure_factor
-                    self.logger.warning(f"ML Rate Limiter: Increasing delay for {domain} due to {last_crawl_result.status_code}. New delay: {current_delay:.2f}s")
-                elif success_ratio < 0.7:
-                    current_delay *= self.failure_factor
-                    self.logger.info(f"ML Rate Limiter: Increasing delay for {domain} due to low success ratio ({success_ratio:.1f}). New delay: {current_delay:.2f}s")
-                elif avg_response_time > 3000:
-                    current_delay *= (1 + (avg_response_time / 10000))
-                    self.logger.info(f"ML Rate Limiter: Increasing delay for {domain} due to high avg response time ({avg_response_time}ms). New delay: {current_delay:.2f}s")
-                else:
-                    current_delay = max(self.initial_delay, current_delay * self.success_factor)
-                    self.logger.debug(f"ML Rate Limiter: Decreasing delay for {domain} due to good performance. New delay: {current_delay:.2f}s")
-            else:
-                if last_crawl_result.status_code == 429:
-                    current_delay *= 2.0
-                    self.logger.warning(f"Adaptive Rate Limiter: Doubling delay for {domain} due to 429. New delay: {current_delay:.2f}s")
-                elif 500 <= last_crawl_result.status_code < 600:
-                    current_delay *= 1.5
-                    self.logger.warning(f"Adaptive Rate Limiter: Increasing delay for {domain} due to {last_crawl_result.status_code}. New delay: {current_delay:.2f}s")
-                elif last_crawl_result.crawl_time_ms > 5000:
-                    current_delay *= 1.2
-                    self.logger.info(f"Adaptive Rate Limiter: Increasing delay for {domain} due to slow response ({last_crawl_result.crawl_time_ms}ms). New delay: {current_delay:.2f}s")
-                else:
-                    current_delay = max(self.initial_delay, current_delay * 0.9)
-                    self.logger.debug(f"Adaptive Rate Limiter: Decreasing delay for {domain} due to good response. New delay: {current_delay:.2f}s")
-            
-            current_delay = max(self.min_delay, min(current_delay, self.max_delay))
-
-        self.domain_delays[domain] = current_delay
-
-        now = time.time()
-        last_time = self.last_request_time.get(domain, 0)
-        time_since_last = now - last_time
-        
-        if time_since_last < current_delay:
-            wait_time = current_delay - time_since_last
-            self.logger.debug(f"Waiting {wait_time:.2f}s for {domain} to respect rate limit.")
-            await asyncio.sleep(wait_time)
-        
-        self.last_request_time[domain] = time.time()
+# REMOVED AdaptiveRateLimiter class as it's replaced by MLRateLimiter in utils/adaptive_rate_limiter.py
 
 
 class WebCrawler:
@@ -160,7 +83,8 @@ class WebCrawler:
                  web3_service: Web3Service, 
                  link_building_service: LinkBuildingService, 
                  report_service: ReportService, 
-                 playwright_browser: Optional[Browser] = None):
+                 playwright_browser: Optional[Browser] = None,
+                 crawl_queue: SmartCrawlQueue = None): # ADD this parameter
         
         self.db = database
         self.redis_client = redis_client
@@ -180,11 +104,15 @@ class WebCrawler:
         self.report_service = report_service
         self.playwright_browser = playwright_browser
         
-        self.rate_limiter = AdaptiveRateLimiter(
-            initial_delay_seconds=self.config.delay_seconds,
-            ml_rate_optimization_enabled=self.anti_detection_config.get("ml_rate_optimization", False),
-            rate_limiter_config=config_loader.get("rate_limiter") # Still uses global config_loader for rate_limiter config
-        )
+        # REPLACE the existing AdaptiveRateLimiter with MLRateLimiter
+        self.rate_limiter = MLRateLimiter()
+
+        # ADD these lines
+        self.resilience_manager = ResilienceManager()
+        self.crawl_queue = crawl_queue
+        self.metrics = crawler_metrics
+        self.health_monitor = HealthMonitor(self.metrics)
+        
         self.robots_parser = RobotsParser()
         self.link_extractor = LinkExtractor()
         self.content_parser = ContentParser()
@@ -253,16 +181,47 @@ class WebCrawler:
             headers=headers
         )
         await self.robots_parser.__aenter__()
+        # ADD this line after existing __aenter__ code
+        await self.health_monitor.start_monitoring()
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
+        # ADD this line before existing __aexit__ code
+        self.health_monitor.stop_monitoring()
         if self.session:
             await self.session.close()
         await self.robots_parser.__aexit__(exc_type, exc_val, exc_tb)
     
     async def crawl_url(self, url: str, last_crawl_result: Optional[CrawlResult] = None) -> CrawlResult:
-        """Crawl a single URL and extract links"""
+        """REPLACE the entire crawl_url method with this resilient version"""
+        try:
+            return await self.resilience_manager.execute_with_resilience(
+                self._crawl_url_internal, url, last_crawl_result
+            )
+        except CircuitBreakerOpenError as e:
+            self.logger.warning(f"Circuit breaker open for {url}: {e}")
+            return CrawlResult(
+                url=url,
+                status_code=503,
+                error_message=str(e),
+                crawl_time_ms=0,
+                crawl_timestamp=datetime.now(),
+                anomaly_flags=["Circuit Breaker Open"]
+            )
+        except Exception as e:
+            self.logger.error(f"Resilience manager error for {url}: {e}", exc_info=True)
+            return CrawlResult(
+                url=url,
+                status_code=500,
+                error_message=f"Resilience manager error: {str(e)}",
+                crawl_time_ms=0,
+                crawl_timestamp=datetime.now(),
+                anomaly_flags=["Resilience Manager Error"]
+            )
+    
+    async def _crawl_url_internal(self, url: str, last_crawl_result: Optional[CrawlResult] = None) -> CrawlResult:
+        """RENAME your existing crawl_url method to this name"""
         start_time = time.time()
         current_crawl_timestamp = datetime.now()
         parsed_url = urlparse(url)
@@ -270,14 +229,19 @@ class WebCrawler:
         
         self.logger.debug(f"Attempting to crawl_url: {url}")
 
+        # Track request start
+        request_context = await self.metrics.track_request_start(url)
+
         if not self.config.is_domain_allowed(domain):
             self.logger.warning(f"Skipping {url}: Domain '{domain}' not allowed by config.")
-            return CrawlResult(
+            result = CrawlResult(
                 url=url,
                 status_code=403,
                 error_message=f"Domain '{domain}' not allowed by config",
                 crawl_timestamp=current_crawl_timestamp
             )
+            await self.metrics.track_request_complete(url, result, request_context)
+            return result
         
         if self.config.respect_robots_txt:
             user_agent_for_robots = self.session.headers.get('User-Agent', self.config.user_agent)
@@ -286,14 +250,19 @@ class WebCrawler:
             self.logger.debug(f"Robots.txt check for {url}: can_crawl={can_crawl}")
             if not can_crawl:
                 self.logger.warning(f"Skipping {url}: Blocked by robots.txt rules.")
-                return CrawlResult(
+                result = CrawlResult(
                     url=url,
                     status_code=403,
                     error_message="Blocked by robots.txt rules",
                     crawl_timestamp=current_crawl_timestamp
                 )
+                await self.metrics.track_request_complete(url, result, request_context)
+                return result
         
-        await self.rate_limiter.wait_if_needed(domain, last_crawl_result)
+        # REPLACE this line
+        # await self.rate_limiter.wait_if_needed(domain, last_crawl_result)
+        # WITH this line
+        await self.rate_limiter.adaptive_wait(domain, last_crawl_result)
         
         # Random delays
         if self.anti_detection_config.get("human_like_delays", False) and self.anti_detection_config.get("random_delay_range"):
@@ -505,7 +474,7 @@ class WebCrawler:
                         if "CAPTCHA detected" in validation_issues or "Cloudflare 'Attention Required' page" in validation_issues:
                             if self.config.captcha_solving_enabled:
                                 self.logger.info(f"CAPTCHA detected on {url}. Attempting to solve via external service (simulated).")
-                                return CrawlResult(
+                                result = CrawlResult(
                                     url=url,
                                     status_code=status_code,
                                     error_message="CAPTCHA_DETECTED_AND_SOLVING_ATTEMPTED",
@@ -513,9 +482,11 @@ class WebCrawler:
                                     crawl_timestamp=current_crawl_timestamp,
                                     validation_issues=validation_issues
                                 )
+                                await self.metrics.track_request_complete(url, result, request_context)
+                                return result
                             else:
                                 self.logger.warning(f"CAPTCHA detected on {url}, but captcha_solving is disabled. Marking as blocked.")
-                                return CrawlResult(
+                                result = CrawlResult(
                                     url=url,
                                     status_code=status_code,
                                     error_message="CAPTCHA_DETECTED_AND_SOLVING_DISABLED",
@@ -523,6 +494,8 @@ class WebCrawler:
                                     crawl_timestamp=current_crawl_timestamp,
                                     validation_issues=validation_issues
                                 )
+                                await self.metrics.track_request_complete(url, result, request_context)
+                                return result
                 
                 if self.anti_detection_config.get("anomaly_detection_enabled", False): # Use self.anti_detection_config
                     current_crawl_result = CrawlResult(
@@ -544,8 +517,7 @@ class WebCrawler:
                         seo_metrics.ai_content_classification = classification
                         self.logger.debug(f"AI content classification for {url}: {classification}")
 
-
-            return CrawlResult(
+            result = CrawlResult(
                 url=url,
                 status_code=status_code,
                 content=content, # Keep original content (str or bytes)
@@ -559,11 +531,13 @@ class WebCrawler:
                 validation_issues=validation_issues,
                 anomaly_flags=anomaly_flags
             )
+            await self.metrics.track_request_complete(url, result, request_context)
+            return result
                 
         except asyncio.TimeoutError:
             if current_proxy:
                 proxy_manager.mark_proxy_bad(current_proxy, reason="timeout")
-            return CrawlResult(
+            result = CrawlResult(
                 url=url,
                 status_code=408,
                 content=b"", # No content on timeout
@@ -572,10 +546,12 @@ class WebCrawler:
                 crawl_timestamp=current_crawl_timestamp,
                 anomaly_flags=["Request Timeout"]
             )
+            await self.metrics.track_request_complete(url, result, request_context)
+            raise # Re-raise to be caught by resilience manager
         except aiohttp.ClientProxyConnectionError as e:
             if current_proxy:
                 proxy_manager.mark_proxy_bad(current_proxy, reason=f"proxy_connection_error: {e}")
-            return CrawlResult(
+            result = CrawlResult(
                 url=url,
                 status_code=502,
                 content=b"", # No content on proxy error
@@ -584,10 +560,12 @@ class WebCrawler:
                 crawl_timestamp=current_crawl_timestamp,
                 anomaly_flags=["Proxy Connection Error"]
             )
+            await self.metrics.track_request_complete(url, result, request_context)
+            raise # Re-raise to be caught by resilience manager
         except aiohttp.ClientResponseError as e:
             if current_proxy and e.status in [403, 407, 429, 500, 502, 503, 504]:
                 proxy_manager.mark_proxy_bad(current_proxy, reason=f"http_status_{e.status}")
-            return CrawlResult(
+            result = CrawlResult(
                 url=url,
                 status_code=e.status,
                 content=b"", # No content on HTTP error
@@ -596,10 +574,12 @@ class WebCrawler:
                 crawl_timestamp=current_crawl_timestamp,
                 anomaly_flags=[f"HTTP Error {e.status}"]
             )
+            await self.metrics.track_request_complete(url, result, request_context)
+            raise # Re-raise to be caught by resilience manager
         except aiohttp.ClientError as e:
             if current_proxy:
                 proxy_manager.mark_proxy_bad(current_proxy, reason=f"client_error: {e}")
-            return CrawlResult(
+            result = CrawlResult(
                 url=url,
                 status_code=0,
                 content=b"", # No content on network error
@@ -608,10 +588,12 @@ class WebCrawler:
                 crawl_timestamp=current_crawl_timestamp,
                 anomaly_flags=["Network Error"]
             )
+            await self.metrics.track_request_complete(url, result, request_context)
+            raise # Re-raise to be caught by resilience manager
         except Exception as e:
             if current_proxy:
                 proxy_manager.mark_proxy_bad(current_proxy, reason=f"unexpected_error: {e}")
-            return CrawlResult(
+            result = CrawlResult(
                 url=url,
                 status_code=500,
                 content=b"", # No content on unexpected error
@@ -620,6 +602,8 @@ class WebCrawler:
                 crawl_timestamp=current_crawl_timestamp,
                 anomaly_flags=["Unexpected Error"]
             )
+            await self.metrics.track_request_complete(url, result, request_context)
+            raise # Re-raise to be caught by resilience manager
     
     def _is_link_to_target(self, link: Backlink, target_url: str, target_domain: str) -> bool:
         """Check if a link points to our target URL or domain"""
@@ -662,10 +646,10 @@ class WebCrawler:
 
         self.logger.info(f"Job {job_id}: Final seed URLs: {initial_seed_urls}")
 
-        urls_to_visit = asyncio.Queue()
-        for url in initial_seed_urls:
-            await urls_to_visit.put((url, 0))
-            self.logger.info(f"Job {job_id}: Added seed URL to queue: {url}") # Debug log for seed URLs
+        # urls_to_visit = asyncio.Queue() # REMOVED
+        # for url in initial_seed_urls: # REMOVED
+        #     await urls_to_visit.put((url, 0)) # REMOVED
+        #     self.logger.info(f"Job {job_id}: Added seed URL to queue: {url}") # Debug log for seed URLs # REMOVED
             
         self.crawled_urls.clear()
         self.failed_urls.clear()
@@ -682,15 +666,18 @@ class WebCrawler:
         self.logger.info(f"Job {job_id}: Seed URLs: {initial_seed_urls}")
         self.logger.info(f"Job {job_id}: Config - max_pages: {self.config.max_pages}, max_depth: {self.config.max_depth}")
         self.logger.info(f"Job {job_id}: Target domain: {target_domain}")
-        self.logger.info(f"Job {job_id}: Total URLs in queue after seeding: {urls_to_visit.qsize()}")
+        # self.logger.info(f"Job {job_id}: Total URLs in queue after seeding: {urls_to_visit.qsize()}") # REMOVED
 
-
-        while not urls_to_visit.empty() and pages_crawled_count < self.config.max_pages:
-            self.logger.info(f"Job {job_id}: Queue size: {urls_to_visit.qsize()}, Crawled: {pages_crawled_count}/{self.config.max_pages}")
-
-            current_job = self.db.get_crawl_job(job_id) # Use passed job_id
-            if current_job:
-                if current_job.status == CrawlStatus.PAUSED:
+        # REPLACE the existing URL queue logic with:
+        if self.crawl_queue:
+            # Use smart queue system
+            self.logger.info(f"Job {job_id}: Using SmartCrawlQueue.")
+            for url in initial_seed_urls:
+                await self.crawl_queue.enqueue_url(url, Priority.HIGH, job_id=job_id)
+            
+            while pages_crawled_count < self.config.max_pages:
+                current_job = self.db.get_crawl_job(job_id)
+                if current_job and current_job.status == CrawlStatus.PAUSED:
                     self.logger.info(f"Crawler for job {job_id} paused. Waiting to resume...")
                     while True:
                         await asyncio.sleep(5)
@@ -714,51 +701,148 @@ class WebCrawler:
                                 error_message="Crawl stopped by command."
                             )
 
-            url, current_depth = await urls_to_visit.get()
-            self.logger.info(f"Job {job_id}: Processing URL: {url} at depth {current_depth}")
-            
-            if url in self.crawled_urls:
-                self.logger.debug(f"Skipping {url}: Already crawled.")
-                continue
-            
-            if current_depth >= self.config.max_depth:
-                self.logger.debug(f"Skipping {url} due to max depth ({current_depth})")
-                continue
-            
-            # Mark as crawled before attempting to fetch to prevent re-adding to queue
-            self.crawled_urls.add(url) 
-            
-            self.logger.info(f"Attempting to crawl: {url} (Depth: {current_depth}, Crawled: {pages_crawled_count}/{self.config.max_pages})")
-            
-            result = await self.crawl_url(url, last_crawl_result)
-            last_crawl_result = result
+                task = await self.crawl_queue.get_next_task()
+                if not task:
+                    self.logger.debug(f"Job {job_id}: No more tasks in SmartCrawlQueue. Breaking loop.")
+                    break # No more tasks to process
 
-            if result.error_message:
-                self.logger.warning(f"Failed to crawl {url}: {result.error_message}")
-                self.failed_urls.add(url)
-                crawl_errors_list.append(CrawlError(url=url, error_type="CrawlError", message=result.error_message))
-                # Do NOT increment pages_crawled_count for failed attempts that didn't yield content
-                continue
-            
-            # Only increment pages_crawled_count for successfully fetched pages
-            pages_crawled_count += 1 
-            self.logger.info(f"Successfully crawled: {url}. Total pages crawled: {pages_crawled_count}")
+                url = task.url
+                current_depth = task.metadata.get('depth', 0) # Assuming depth is stored in metadata
 
-            total_links_found_count += len(result.links_found)
+                self.logger.info(f"Job {job_id}: Processing URL: {url} at depth {current_depth}")
+                
+                if url in self.crawled_urls:
+                    self.logger.debug(f"Skipping {url}: Already crawled.")
+                    await self.crawl_queue.mark_task_completed(task, success=True) # Mark as completed even if skipped
+                    continue
+                
+                if current_depth >= self.config.max_depth:
+                    self.logger.debug(f"Skipping {url} due to max depth ({current_depth})")
+                    await self.crawl_queue.mark_task_completed(task, success=True) # Mark as completed even if skipped
+                    continue
+                
+                # Mark as crawled before attempting to fetch to prevent re-adding to queue
+                self.crawled_urls.add(url) 
+                
+                self.logger.info(f"Attempting to crawl: {url} (Depth: {current_depth}, Crawled: {pages_crawled_count}/{self.config.max_pages})")
+                
+                result = await self._crawl_url_internal(url, last_crawl_result) # Call internal method
+                last_crawl_result = result
 
-            target_links = [link for link in result.links_found 
-                            if self._is_link_to_target(link, target_url, target_domain)]
-            
-            if target_links:
-                backlinks_found_list.extend(target_links)
-                self.logger.info(f"Found {len(target_links)} backlinks to target on {url}.")
-            
-            for link in result.links_found:
-                parsed_link_url = urlparse(link.target_url)
-                if self.config.is_domain_allowed(parsed_link_url.netloc):
-                    if link.target_url not in self.crawled_urls and \
-                       pages_crawled_count + urls_to_visit.qsize() < self.config.max_pages:
-                        await urls_to_visit.put((link.target_url, current_depth + 1))
+                if result.error_message:
+                    self.logger.warning(f"Failed to crawl {url}: {result.error_message}")
+                    self.failed_urls.add(url)
+                    crawl_errors_list.append(CrawlError(url=url, error_type="CrawlError", message=result.error_message))
+                    await self.crawl_queue.mark_task_completed(task, success=False) # Mark as failed for retry
+                    # Do NOT increment pages_crawled_count for failed attempts that didn't yield content
+                    continue
+                
+                # Only increment pages_crawled_count for successfully fetched pages
+                pages_crawled_count += 1 
+                self.logger.info(f"Successfully crawled: {url}. Total pages crawled: {pages_crawled_count}")
+                await self.crawl_queue.mark_task_completed(task, success=True) # Mark as successfully completed
+
+                total_links_found_count += len(result.links_found)
+
+                target_links = [link for link in result.links_found 
+                                if self._is_link_to_target(link, target_url, target_domain)]
+                
+                if target_links:
+                    backlinks_found_list.extend(target_links)
+                    self.logger.info(f"Found {len(target_links)} backlinks to target on {url}.")
+                
+                for link in result.links_found:
+                    parsed_link_url = urlparse(link.target_url)
+                    if self.config.is_domain_allowed(parsed_link_url.netloc):
+                        # Enqueue new links with incremented depth
+                        await self.crawl_queue.enqueue_url(
+                            link.target_url, 
+                            Priority.NORMAL, 
+                            metadata={'depth': current_depth + 1}, 
+                            job_id=job_id
+                        )
+        else:
+            # Fallback to existing queue logic if SmartCrawlQueue is not provided
+            self.logger.warning(f"Job {job_id}: SmartCrawlQueue not provided. Falling back to basic queue logic.")
+            urls_to_visit = asyncio.Queue()
+            for url in initial_seed_urls:
+                await urls_to_visit.put((url, 0))
+                self.logger.info(f"Job {job_id}: Added seed URL to basic queue: {url}")
+
+            while not urls_to_visit.empty() and pages_crawled_count < self.config.max_pages:
+                self.logger.info(f"Job {job_id}: Basic Queue size: {urls_to_visit.qsize()}, Crawled: {pages_crawled_count}/{self.config.max_pages}")
+
+                current_job = self.db.get_crawl_job(job_id) # Use passed job_id
+                if current_job:
+                    if current_job.status == CrawlStatus.PAUSED:
+                        self.logger.info(f"Crawler for job {job_id} paused. Waiting to resume...")
+                        while True:
+                            await asyncio.sleep(5)
+                            rechecked_job = self.db.get_crawl_job(job_id)
+                            if rechecked_job and rechecked_job.status == CrawlStatus.IN_PROGRESS:
+                                self.logger.info(f"Crawler for job {job_id} resumed.")
+                                break
+                            elif rechecked_job and rechecked_job.status == CrawlStatus.STOPPED:
+                                self.logger.info(f"Crawler for job {job_id} stopped during pause.")
+                                # Return a partial summary if stopped
+                                return CrawlResult(
+                                    url=target_url,
+                                    status_code=200, # Indicate successful stop
+                                    pages_crawled=pages_crawled_count,
+                                    total_links_found=total_links_found_count,
+                                    backlinks_found=len(backlinks_found_list),
+                                    failed_urls_count=len(self.failed_urls),
+                                    is_final_summary=True,
+                                    crawl_duration_seconds=time.time() - start_crawl_time,
+                                    errors=crawl_errors_list,
+                                    error_message="Crawl stopped by command."
+                                )
+
+                url, current_depth = await urls_to_visit.get()
+                self.logger.info(f"Job {job_id}: Processing URL: {url} at depth {current_depth}")
+                
+                if url in self.crawled_urls:
+                    self.logger.debug(f"Skipping {url}: Already crawled.")
+                    continue
+                
+                if current_depth >= self.config.max_depth:
+                    self.logger.debug(f"Skipping {url} due to max depth ({current_depth})")
+                    continue
+                
+                # Mark as crawled before attempting to fetch to prevent re-adding to queue
+                self.crawled_urls.add(url) 
+                
+                self.logger.info(f"Attempting to crawl: {url} (Depth: {current_depth}, Crawled: {pages_crawled_count}/{self.config.max_pages})")
+                
+                result = await self._crawl_url_internal(url, last_crawl_result) # Call internal method
+                last_crawl_result = result
+
+                if result.error_message:
+                    self.logger.warning(f"Failed to crawl {url}: {result.error_message}")
+                    self.failed_urls.add(url)
+                    crawl_errors_list.append(CrawlError(url=url, error_type="CrawlError", message=result.error_message))
+                    # Do NOT increment pages_crawled_count for failed attempts that didn't yield content
+                    continue
+                
+                # Only increment pages_crawled_count for successfully fetched pages
+                pages_crawled_count += 1 
+                self.logger.info(f"Successfully crawled: {url}. Total pages crawled: {pages_crawled_count}")
+
+                total_links_found_count += len(result.links_found)
+
+                target_links = [link for link in result.links_found 
+                                if self._is_link_to_target(link, target_url, target_domain)]
+                
+                if target_links:
+                    backlinks_found_list.extend(target_links)
+                    self.logger.info(f"Found {len(target_links)} backlinks to target on {url}.")
+                
+                for link in result.links_found:
+                    parsed_link_url = urlparse(link.target_url)
+                    if self.config.is_domain_allowed(parsed_link_url.netloc):
+                        if link.target_url not in self.crawled_urls and \
+                           pages_crawled_count + urls_to_visit.qsize() < self.config.max_pages:
+                            await urls_to_visit.put((link.target_url, current_depth + 1))
         
         # CRITICAL FIX: Always return a final summary result at the end
         final_crawl_duration = time.time() - start_crawl_time
