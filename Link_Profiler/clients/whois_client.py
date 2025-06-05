@@ -7,9 +7,12 @@ import logging
 import asyncio
 from typing import Dict, Any, Optional
 import aiohttp
+import json
+import random
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +21,17 @@ class WHOISClient:
     Client for fetching WHOIS data from WHOIS-JSON.com.
     Offers a free tier with limits.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None):
         self.logger = logging.getLogger(__name__ + ".WHOISClient")
         self.base_url = config_loader.get("domain_api.whois_json_api.base_url")
         self.api_key = config_loader.get("domain_api.whois_json_api.api_key") # Optional, for higher limits
         self.enabled = config_loader.get("domain_api.whois_json_api.enabled", False)
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
+            self.session_manager = global_session_manager
+            logger.warning("No SessionManager provided to WHOISClient. Falling back to global SessionManager.")
 
         if not self.enabled:
             self.logger.info("WHOIS-JSON.com API is disabled by configuration.")
@@ -32,16 +40,14 @@ class WHOISClient:
         """Initialise aiohttp session."""
         if self.enabled:
             self.logger.info("Entering WHOISClient context.")
-            if self._session is None or self._session.closed:
-                self._session = aiohttp.ClientSession()
+            await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close aiohttp session."""
-        if self.enabled and self._session and not self._session.closed:
+        if self.enabled:
             self.logger.info("Exiting WHOISClient context. Closing aiohttp session.")
-            await self._session.close()
-            self._session = None
+            await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     @api_rate_limited(service="whois_json_api", api_client_type="whois_client", endpoint="get_domain_info")
     async def get_domain_info(self, domain: str) -> Optional[Dict[str, Any]]:
@@ -65,13 +71,16 @@ class WHOISClient:
 
         self.logger.info(f"Calling WHOIS-JSON.com API for domain: {domain}...")
         try:
-            async with self._session.get(endpoint, params=params, timeout=10) as response:
+            async with await self.session_manager.get(endpoint, params=params, timeout=10) as response:
                 response.raise_for_status() # Raise an exception for HTTP errors
                 data = await response.json()
                 self.logger.info(f"WHOIS data for {domain} fetched successfully.")
                 return data
         except aiohttp.ClientError as e:
             self.logger.error(f"Network/API error fetching WHOIS data for {domain}: {e}", exc_info=True)
+            return self._simulate_whois_data(domain) # Fallback to simulation on error
+        except asyncio.TimeoutError:
+            self.logger.error(f"WHOIS-JSON.com API request for {domain} timed out.")
             return self._simulate_whois_data(domain) # Fallback to simulation on error
         except Exception as e:
             self.logger.error(f"Unexpected error fetching WHOIS data for {domain}: {e}", exc_info=True)
@@ -109,3 +118,4 @@ class WHOISClient:
                 "organization": f"Org {random.randint(1, 100)}",
                 "country": random.choice(["US", "CA", "GB", "DE", "AU"])
             }
+

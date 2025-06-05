@@ -12,6 +12,7 @@ import random
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.user_agent_manager import user_agent_manager
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +22,15 @@ class SocialMediaCrawler:
     (where allowed and feasible) or by integrating with official APIs.
     This class demonstrates where real API calls or library usage would go.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__)
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
+            self.session_manager = global_session_manager
+            logger.warning("No SessionManager provided to SocialMediaCrawler. Falling back to global SessionManager.")
+
         self.enabled = config_loader.get("social_media_crawler.enabled", False)
         self.platforms_config = config_loader.get("social_media_crawler.platforms", [])
 
@@ -33,9 +40,9 @@ class SocialMediaCrawler:
         self.facebook_app_secret = config_loader.get("social_media_crawler.facebook_app_secret")
         self.linkedin_client_id = config_loader.get("social_media_crawler.linkedin_client_id")
         self.linkedin_client_secret = config_loader.get("social_media_crawler.linkedin_client_secret")
-        self.reddit_client_id = config_loader.get("social_media_crawler.reddit_client_id")
-        self.reddit_client_secret = config_loader.get("social_media_crawler.reddit_client_secret")
-        self.reddit_user_agent = config_loader.get("social_media_crawler.reddit_user_agent", "LinkProfilerBot/1.0")
+        self.reddit_client_id = config_loader.get("social_media_crawler.reddit_api.client_id")
+        self.reddit_client_secret = config_loader.get("social_media_crawler.reddit_api.client_secret")
+        self.reddit_user_agent = config_loader.get("social_media_crawler.reddit_api.user_agent", "LinkProfilerBot/1.0")
 
 
         if not self.enabled:
@@ -45,24 +52,14 @@ class SocialMediaCrawler:
         """Initialise aiohttp session."""
         if self.enabled:
             self.logger.info("Entering SocialMediaCrawler context.")
-            if self._session is None or self._session.closed:
-                headers = {}
-                if config_loader.get("anti_detection.request_header_randomization", False):
-                    headers.update(user_agent_manager.get_random_headers())
-                elif config_loader.get("crawler.user_agent_rotation", False):
-                    headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-                else:
-                    headers['User-Agent'] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" # Generic browser UA
-
-                self._session = aiohttp.ClientSession(headers=headers)
+            await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close aiohttp session."""
-        if self.enabled and self._session and not self._session.closed:
+        if self.enabled:
             self.logger.info("Exiting SocialMediaCrawler context. Closing aiohttp session.")
-            await self._session.close()
-            self._session = None
+            await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     async def scrape_platform(self, platform: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
@@ -142,30 +139,9 @@ class SocialMediaCrawler:
                 results = self._simulate_posts(platform, query, limit)
 
             elif platform == "reddit":
-                if not self.reddit_client_id or not self.reddit_client_secret:
-                    self.logger.warning("Reddit Client ID/Secret not configured. Simulating Reddit data.")
-                    return self._simulate_posts(platform, query, limit)
-                
-                # Example: Reddit API (PRAW library is common, or direct HTTP)
-                # endpoint = "https://oauth.reddit.com/r/all/search"
-                # headers = {"User-Agent": self.reddit_user_agent, "Authorization": "Bearer YOUR_ACCESS_TOKEN"}
-                # params = {"q": query, "limit": limit, "sort": "new"}
-                # async with self._session.get(endpoint, headers=headers, params=params, timeout=10) as response:
-                #     response.raise_for_status()
-                #     data = await response.json()
-                #     for post in data.get("data", {}).get("children", []):
-                #         post_data = post.get("data", {})
-                #         results.append({
-                #             "platform": "reddit",
-                #             "post_id": post_data.get("id"),
-                #             "text": post_data.get("title"),
-                #             "author": post_data.get("author"),
-                #             "score": post_data.get("score"),
-                #             "comments": post_data.get("num_comments"),
-                #             "timestamp": datetime.fromtimestamp(post_data.get("created_utc")).isoformat(),
-                #             "url": f"https://reddit.com{post_data.get('permalink')}"
-                #         })
-                self.logger.info(f"Real Reddit API integration is a placeholder. Simulating data for '{query}'.")
+                # Reddit API is handled by RedditClient, not directly here.
+                # This branch should ideally not be reached if RedditClient is used.
+                self.logger.warning("Reddit scraping via generic crawler is not implemented. Use RedditClient.")
                 results = self._simulate_posts(platform, query, limit)
 
             else:
@@ -184,6 +160,7 @@ class SocialMediaCrawler:
 
     def _simulate_posts(self, platform: str, query: str, limit: int) -> List[Dict[str, Any]]:
         """Helper to generate simulated posts."""
+        self.logger.info(f"Simulating {platform} posts for '{query}' (limit: {limit}).")
         simulated_results = []
         for i in range(limit):
             simulated_results.append({
@@ -237,3 +214,4 @@ class SocialMediaCrawler:
         except Exception as e:
             self.logger.error(f"Unexpected error while fetching profile for {username} on {platform}: {e}", exc_info=True)
             return None
+

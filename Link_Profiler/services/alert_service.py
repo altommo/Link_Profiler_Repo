@@ -221,3 +221,39 @@ class AlertService:
         Sends the alert notification through the configured channels using AlertManager.
         """
         await self.alert_manager.dispatch_alert(alert)
+
+    def _check_threshold_condition(self, value: Union[int, float], threshold: Union[int, float], operator: str) -> bool:
+        """Helper to evaluate a threshold condition."""
+        if operator == ">":
+            return value > threshold
+        elif operator == "<":
+            return value < threshold
+        elif operator == ">=":
+            return value >= threshold
+        elif operator == "<=":
+            return value <= threshold
+        elif operator == "==":
+            return value == threshold
+        elif operator == "!=":
+            return value != threshold
+        else:
+            self.logger.error(f"Unsupported comparison operator: {operator}")
+            return False
+
+    def _get_nested_metric(self, data: Dict[str, Any], metric_name: str) -> Optional[Union[int, float]]:
+        """
+        Retrieves a nested metric value from a dictionary using dot notation.
+        e.g., "performance_score" or "seo_metrics.domain_authority"
+        """
+        parts = metric_name.split('.')
+        current_value = data
+        for part in parts:
+            if isinstance(current_value, dict) and part in current_value:
+                current_value = current_value[part]
+            else:
+                return None # Metric not found
+        
+        if isinstance(current_value, (int, float)):
+            return current_value
+        return None # Value is not a number
+

@@ -5,8 +5,8 @@ from typing import Annotated
 
 # Import required modules directly instead of from main.py to avoid circular import
 from Link_Profiler.services.auth_service import AuthService
-from Link_Profiler.database.database import Database
-from Link_Profiler.config.config_loader import ConfigLoader
+from Link_Profiler.database.database import db # Use the global db instance
+from Link_Profiler.config.config_loader import config_loader # Use the global config_loader instance
 from Link_Profiler.core.models import User
 
 # Initialize logger
@@ -16,15 +16,8 @@ logger = logging.getLogger(__name__)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
 # Initialize auth service locally to avoid circular imports
-config_loader = ConfigLoader()
-if not config_loader._is_loaded:
-    import os
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
-
-DATABASE_URL = config_loader.get("database.url")
-db = Database(db_url=DATABASE_URL)
-auth_service_instance = AuthService(db)
+# These are already singletons initialized in main.py, so just reference them
+auth_service_instance = AuthService(db) # Pass the db singleton
 
 # --- Dependency for current user authentication ---
 async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> User:
@@ -50,3 +43,4 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> Use
             detail="Internal server error during authentication.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+

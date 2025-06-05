@@ -28,9 +28,9 @@ class PageSpeedClient:
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
-            self.session_manager = LocalSessionManager()
-            logger.warning("No SessionManager provided to PageSpeedClient. Falling back to local SessionManager.")
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
+            self.session_manager = global_session_manager
+            logger.warning("No SessionManager provided to PageSpeedClient. Falling back to global SessionManager.")
 
         if not self.enabled:
             self.logger.info("PageSpeed Insights API is disabled by configuration.")
@@ -96,3 +96,4 @@ class PageSpeedClient:
         except Exception as e:
             self.logger.error(f"Unexpected error fetching PageSpeed Insights for {url}: {e}. Returning None.", exc_info=True)
             return None
+

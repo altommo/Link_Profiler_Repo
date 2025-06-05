@@ -13,6 +13,7 @@ import praw # Requires pip install praw
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +22,20 @@ class RedditClient:
     Client for interacting with the Reddit API using PRAW.
     Note: PRAW is synchronous, so API calls are wrapped in `asyncio.to_thread`.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".RedditClient")
         self.client_id = config_loader.get("social_media_crawler.reddit_api.client_id")
         self.client_secret = config_loader.get("social_media_crawler.reddit_api.client_secret")
         self.user_agent = config_loader.get("social_media_crawler.reddit_api.user_agent", "LinkProfilerBot/1.0")
         self.enabled = config_loader.get("social_media_crawler.reddit_api.enabled", False)
         self.reddit: Optional[praw.Reddit] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
+            self.session_manager = global_session_manager
+            logger.warning("No SessionManager provided to RedditClient. Falling back to global SessionManager.")
+
 
         if not self.enabled:
             self.logger.info("Reddit API is disabled by configuration.")
@@ -39,6 +47,7 @@ class RedditClient:
         """Initialise PRAW Reddit instance."""
         if self.enabled:
             self.logger.info("Entering RedditClient context. Initialising PRAW.")
+            await self.session_manager.__aenter__() # Ensure session manager is entered
             try:
                 # PRAW initialization is synchronous
                 self.reddit = await asyncio.to_thread(
@@ -57,8 +66,10 @@ class RedditClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """No explicit close method for PRAW, but good practice for context."""
-        self.logger.info("Exiting RedditClient context.")
-        self.reddit = None # Clear instance
+        if self.enabled:
+            self.logger.info("Exiting RedditClient context.")
+            self.reddit = None # Clear instance
+            await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     @api_rate_limited(service="reddit_api", api_client_type="reddit_client", endpoint="search_mentions")
     async def search_mentions(self, query: str, limit: int = 100) -> List[Dict[str, Any]]:
@@ -117,3 +128,4 @@ class RedditClient:
                 'engagement_score': random.randint(1, 1000)
             })
         return simulated_results
+

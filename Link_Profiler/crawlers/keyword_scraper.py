@@ -31,9 +31,9 @@ class KeywordScraper:
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
-            self.session_manager = LocalSessionManager()
-            logger.warning("No SessionManager provided to KeywordScraper. Falling back to local SessionManager.")
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
+            self.session_manager = global_session_manager
+            logger.warning("No SessionManager provided to KeywordScraper. Falling back to global SessionManager.")
 
         self.pytrends_client: Optional[TrendReq] = None
 
@@ -70,6 +70,9 @@ class KeywordScraper:
         except aiohttp.ClientError as e:
             self.logger.warning(f"Error fetching Google suggestions for '{query}': {e}")
             return []
+        except asyncio.TimeoutError:
+            self.logger.warning(f"Google suggestions fetch for '{query}' timed out.")
+            return []
         except Exception as e:
             self.logger.error(f"Unexpected error in Google suggestions fetch for '{query}': {e}", exc_info=True)
             return []
@@ -89,6 +92,9 @@ class KeywordScraper:
                 return suggestions
         except aiohttp.ClientError as e:
             self.logger.warning(f"Error fetching Bing suggestions for '{query}': {e}")
+            return []
+        except asyncio.TimeoutError:
+            self.logger.warning(f"Bing suggestions fetch for '{query}' timed out.")
             return []
         except Exception as e:
             self.logger.error(f"Unexpected error in Bing suggestions fetch for '{query}': {e}", exc_info=True)
@@ -178,15 +184,18 @@ class KeywordScraper:
 
             keyword_suggestions.append(
                 KeywordSuggestion(
-                    seed_keyword=seed_keyword,
-                    suggested_keyword=suggested_keyword_lower,
-                    search_volume_monthly=search_volume,
-                    cpc_estimate=cpc_estimate,
-                    keyword_trend=trends.get(suggested_keyword_lower, []),
-                    competition_level=competition_level,
-                    data_timestamp=datetime.now()
+                    keyword=suggested_keyword_lower, # Changed from suggested_keyword
+                    search_volume=search_volume, # Changed from search_volume_monthly
+                    cpc=cpc_estimate, # Changed from cpc_estimate
+                    competition=competition_level, # Changed from competition_level
+                    difficulty=random.randint(1, 100), # New field
+                    relevance=round(random.uniform(0.1, 1.0), 2), # New field
+                    source="Scraper", # New field
+                    # keyword_trend is already handled by trends
+                    # data_timestamp is not in KeywordSuggestion dataclass
                 )
             )
         
         self.logger.info(f"Generated {len(keyword_suggestions)} enriched keyword suggestions for '{seed_keyword}'.")
         return keyword_suggestions
+

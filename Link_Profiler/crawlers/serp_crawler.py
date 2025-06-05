@@ -191,12 +191,13 @@ class SERPCrawler:
                     results.append(
                         SERPResult(
                             keyword=keyword,
-                            position=len(results) + 1, # Position based on extraction order
-                            result_url=result_url,
-                            title_text=title_text.strip(),
-                            snippet_text=snippet_text.strip(),
-                            rich_features=rich_features,
-                            crawl_timestamp=datetime.now()
+                            rank=len(results) + 1, # Position based on extraction order
+                            url=result_url,
+                            title=title_text.strip(),
+                            snippet=snippet_text.strip(),
+                            position_type="organic", # Default to organic
+                            domain=urlparse(result_url).netloc, # Extract domain
+                            timestamp=datetime.now()
                         )
                     )
         return results
@@ -236,12 +237,13 @@ class SERPCrawler:
                     results.append(
                         SERPResult(
                             keyword=keyword,
-                            position=len(results) + 1,
-                            result_url=result_url,
-                            title_text=title_text.strip(),
-                            snippet_text=snippet_text.strip(),
-                            rich_features=rich_features,
-                            crawl_timestamp=datetime.now()
+                            rank=len(results) + 1,
+                            url=result_url,
+                            title=title_text.strip(),
+                            snippet=snippet_text.strip(),
+                            position_type="organic", # Default to organic
+                            domain=urlparse(result_url).netloc, # Extract domain
+                            timestamp=datetime.now()
                         )
                     )
         return results
@@ -264,18 +266,22 @@ class SERPCrawler:
 
             # New: Check for CAPTCHA after navigation
             page_content = await page.content()
-            page_status = page.status()
-            validation_issues = self.content_validator.validate_crawl_result(page.url, page_content, page_status)
+            page_status = page.status() # This is the HTTP status of the main response
             
             # Create a dummy CrawlResult for anomaly detection
+            # Note: CrawlResult expects content_type as an Enum, not a string
             temp_crawl_result = CrawlResult(
                 url=page.url,
                 status_code=page_status,
-                content=page_content,
-                links_found=[], # Not relevant for SERP page itself
-                crawl_time_ms=int(page_load_time * 1000),
-                content_type="text/html",
-                validation_issues=validation_issues
+                content_type=ContentType.HTML, # Assuming HTML for SERP pages
+                html_content=page_content,
+                load_time_ms=int(page_load_time * 1000),
+                error_message=None, # No error yet
+                timestamp=datetime.now(),
+                metadata={},
+                seo_metrics=None, # Not relevant here
+                anomaly_flags=[],
+                validation_issues=self.content_validator.detect_bot_indicators(page_content) # Use detect_bot_indicators
             )
 
             if config_loader.get("anti_detection.anomaly_detection_enabled", False):
@@ -285,7 +291,8 @@ class SERPCrawler:
                     # Decide how to handle anomalies for SERP. For now, just log and proceed.
                     # In a real system, this might trigger a retry with a new proxy/fingerprint.
 
-            if "CAPTCHA detected" in validation_issues or "Cloudflare 'Attention Required' page" in validation_issues:
+            if any("CAPTCHA" in issue for issue in temp_crawl_result.validation_issues) or \
+               any("Cloudflare 'Attention Required' page" in issue for issue in temp_crawl_result.validation_issues):
                 if config_loader.get("anti_detection.captcha_solving_enabled", False):
                     self.logger.warning(f"CAPTCHA detected on SERP for '{keyword}'. Attempting to solve (simulated).")
                     # In a real scenario, you'd send the page content/screenshot to a CAPTCHA solving service API here.
@@ -323,14 +330,15 @@ async def main():
     async with SERPCrawler(headless=True) as crawler:
         results = await crawler.get_serp_data(keyword, num_results=5, search_engine="google")
         for r in results:
-            print(f"Pos: {r.position}, Title: {r.title_text}, URL: {r.result_url}, Snippet: {r.snippet_text[:50]}...")
-            print(f"  Rich Features: {r.rich_features}, Load Time: {r.page_load_time:.2f}s")
+            print(f"Pos: {r.rank}, Title: {r.title}, URL: {r.url}, Snippet: {r.snippet[:50]}...")
+            # print(f"  Rich Features: {r.rich_features}, Load Time: {r.page_load_time:.2f}s") # Removed rich_features and page_load_time from SERPResult
 
         print("\n--- Bing Search ---")
         results_bing = await crawler.get_serp_data(keyword, num_results=5, search_engine="bing")
         for r in results_bing:
-            print(f"Pos: {r.position}, Title: {r.title_text}, URL: {r.result_url}, Snippet: {r.snippet_text[:50]}...")
-            print(f"  Rich Features: {r.rich_features}, Load Time: {r.page_load_time:.2f}s")
+            print(f"Pos: {r.rank}, Title: {r.title}, URL: {r.url}, Snippet: {r.snippet[:50]}...")
+            # print(f"  Rich Features: {r.rich_features}, Load Time: {r.page_load_time:.2f}s") # Removed rich_features and page_load_time from SERPResult
 
 if __name__ == "__main__":
     asyncio.run(main())
+

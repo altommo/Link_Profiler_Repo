@@ -29,9 +29,9 @@ class DNSClient:
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
-            self.session_manager = LocalSessionManager()
-            logger.warning("No SessionManager provided to DNSClient. Falling back to local SessionManager.")
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
+            self.session_manager = global_session_manager
+            logger.warning("No SessionManager provided to DNSClient. Falling back to global SessionManager.")
 
         self.providers = []
         if self.cloudflare_url:
@@ -95,6 +95,9 @@ class DNSClient:
         except aiohttp.ClientError as e:
             self.logger.error(f"Network/Client error resolving DNS for {domain}: {e}. Returning None.")
             return None
+        except asyncio.TimeoutError:
+            self.logger.error(f"DNS resolution for {domain} timed out.")
+            return None
         except Exception as e:
             self.logger.error(f"Unexpected error resolving DNS for {domain}: {e}. Returning None.", exc_info=True)
             return None
@@ -131,6 +134,10 @@ class DNSClient:
         except aiohttp.ClientError as e:
             self.logger.error(f"Network/Client error fetching all DNS records for {domain}: {e}. Returning empty list.")
             return []
+        except asyncio.TimeoutError:
+            self.logger.error(f"DNS records fetch for {domain} timed out.")
+            return []
         except Exception as e:
             self.logger.error(f"Unexpected error fetching all DNS records for {domain}: {e}. Returning empty list.", exc_info=True)
             return []
+

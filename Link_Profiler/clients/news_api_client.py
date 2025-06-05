@@ -12,6 +12,7 @@ import random
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +21,17 @@ class NewsAPIClient:
     Client for fetching news articles from NewsAPI.org.
     Requires an API key.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".NewsAPIClient")
         self.api_key = config_loader.get("social_media_crawler.news_api.api_key")
         self.base_url = config_loader.get("social_media_crawler.news_api.base_url")
         self.enabled = config_loader.get("social_media_crawler.news_api.enabled", False)
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
+            self.session_manager = global_session_manager
+            logger.warning("No SessionManager provided to NewsAPIClient. Falling back to global SessionManager.")
 
         if not self.enabled:
             self.logger.info("NewsAPI.org is disabled by configuration.")
@@ -37,16 +43,14 @@ class NewsAPIClient:
         """Initialise aiohttp session."""
         if self.enabled:
             self.logger.info("Entering NewsAPIClient context.")
-            if self._session is None or self._session.closed:
-                self._session = aiohttp.ClientSession()
+            await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close aiohttp session."""
-        if self.enabled and self._session and not self._session.closed:
+        if self.enabled:
             self.logger.info("Exiting NewsAPIClient context. Closing aiohttp session.")
-            await self._session.close()
-            self._session = None
+            await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     @api_rate_limited(service="news_api", api_client_type="news_api_client", endpoint="search_news")
     async def search_news(self, query: str, sort_by: str = 'publishedAt', language: str = 'en', page_size: int = 20) -> List[Dict[str, Any]]:
@@ -78,7 +82,7 @@ class NewsAPIClient:
         self.logger.info(f"Calling NewsAPI.org for news search: '{query}' (page_size: {page_size})...")
         results = []
         try:
-            async with self._session.get(endpoint, params=params, timeout=15) as response:
+            async with await self.session_manager.get(endpoint, params=params, timeout=15) as response:
                 response.raise_for_status()
                 data = await response.json()
                 
@@ -97,6 +101,9 @@ class NewsAPIClient:
             return results
         except aiohttp.ClientError as e:
             self.logger.error(f"Network/API error searching NewsAPI.org for '{query}': {e}", exc_info=True)
+            return self._simulate_articles(query, page_size) # Fallback to simulation on error
+        except asyncio.TimeoutError:
+            self.logger.error(f"NewsAPI.org search for {query} timed out.")
             return self._simulate_articles(query, page_size) # Fallback to simulation on error
         except Exception as e:
             self.logger.error(f"Unexpected error searching NewsAPI.org for '{query}': {e}", exc_info=True)
@@ -118,3 +125,4 @@ class NewsAPIClient:
                 'content': f"Full content of the simulated news article about {query}..."
             })
         return simulated_results
+

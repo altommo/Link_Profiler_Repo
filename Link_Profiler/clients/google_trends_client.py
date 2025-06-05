@@ -29,9 +29,9 @@ class GoogleTrendsClient:
         self.session_manager = session_manager # Store the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
-            self.session_manager = LocalSessionManager()
-            logger.warning("No SessionManager provided to GoogleTrendsClient. Falling back to local SessionManager.")
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
+            self.session_manager = global_session_manager
+            logger.warning("No SessionManager provided to GoogleTrendsClient. Falling back to global SessionManager.")
 
         self.pytrends_client: Optional[TrendReq] = None
 
@@ -106,3 +106,4 @@ class GoogleTrendsClient:
                 await asyncio.sleep(random.uniform(0.5, 1.0)) # Default delay
 
         return trends_data
+
