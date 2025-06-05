@@ -23,6 +23,7 @@ from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.core.models import Domain, LinkProfile, ContentGapAnalysisResult, SEOMetrics # New: Import SEOMetrics
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
+from Link_Profiler.database.database import Database # Import Database for DB operations
 
 logger = logging.getLogger(__name__)
 
@@ -117,11 +118,11 @@ class AIService:
     Service for providing various AI-powered functionalities using OpenRouter.
     Includes caching for expensive AI calls.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
+    def __init__(self, database: Database, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
         self.logger = logging.getLogger(__name__)
+        self.db = database # Store database instance
         self.enabled = config_loader.get("ai.enabled", False)
         self.openrouter_api_key = config_loader.get("ai.openrouter_api_key")
-        self.cache_ttl = config_loader.get("ai.cache_ttl", 3600) # Default 1 hour
         self.models = config_loader.get("ai.models", {})
         self.session_manager = session_manager # Store the injected session manager
         if self.session_manager is None:
@@ -151,6 +152,9 @@ class AIService:
             self.logger.info("AI Service is disabled by configuration.")
             self.openrouter_client = None
             self.redis_client = None
+
+        self.allow_live = config_loader.get("ai.ai_service.allow_live", False)
+        self.staleness_threshold = timedelta(hours=config_loader.get("ai.ai_service.staleness_threshold_hours", 24))
 
     async def __aenter__(self):
         """Ensure session manager and OpenRouter client are entered."""
@@ -200,12 +204,31 @@ class AIService:
                 return None
         return None
 
-    async def score_content(self, content: str, target_keyword: str) -> Dict[str, Any]:
+    async def score_content(self, content: str, target_keyword: str, source: str = "cache") -> Dict[str, Any]:
         """
         Analyzes content for SEO optimization and provides a score and suggestions.
         Returns a dictionary with seo_score, keyword_density_score, readability_score,
         semantic_keywords, and improvement_suggestions.
         """
+        cache_key = f"ai_content_score:{target_keyword}:{hash(content)}" # Simple hash for content
+        
+        # For AI services, we'll primarily use the internal Redis cache for "cache" source.
+        # Live calls will bypass this cache and update it.
+        if source == "cache":
+            cached_result = await self._call_ai_with_cache("content_scoring", "", cache_key) # Pass empty prompt for cache check
+            if cached_result:
+                return cached_result
+
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live AI content scoring not allowed by configuration. Returning default scores.")
+            return {
+                "seo_score": 50,
+                "keyword_density_score": 50,
+                "readability_score": 50,
+                "semantic_keywords": [],
+                "improvement_suggestions": ["AI analysis unavailable."]
+            }
+
         prompt = f"""
         Analyze the following content for SEO optimization targeting the keyword '{target_keyword}'.
         Provide a JSON response with the following keys:
@@ -220,7 +243,6 @@ class AIService:
         {content}
         ---
         """
-        cache_key = f"ai_content_score:{target_keyword}:{hash(content)}" # Simple hash for content
         result = await self._call_ai_with_cache("content_scoring", prompt, cache_key, max_tokens=1500)
         
         if result is None:
@@ -234,11 +256,21 @@ class AIService:
             }
         return result
 
-    async def classify_content(self, content: str, target_keyword: str) -> Optional[str]:
+    async def classify_content(self, content: str, target_keyword: str, source: str = "cache") -> Optional[str]:
         """
         Classifies the content based on its quality and relevance to a target keyword.
         Possible classifications: "high_quality", "low_quality", "spam", "irrelevant".
         """
+        cache_key = f"ai_content_classification:{target_keyword}:{hash(content)}"
+        if source == "cache":
+            cached_result = await self._call_ai_with_cache("content_classification", "", cache_key)
+            if cached_result and "classification" in cached_result:
+                return cached_result["classification"]
+
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live AI content classification not allowed by configuration. Returning None.")
+            return None
+
         prompt = f"""
         Classify the following content based on its quality and relevance to the target keyword '{target_keyword}'.
         Consider factors like depth, originality, readability, and topical alignment.
@@ -250,7 +282,6 @@ class AIService:
         {content}
         ---
         """
-        cache_key = f"ai_content_classification:{target_keyword}:{hash(content)}"
         result = await self._call_ai_with_cache("content_classification", prompt, cache_key, max_tokens=50) # Small max_tokens for single word
         
         if result and "classification" in result:
@@ -264,11 +295,54 @@ class AIService:
         self.logger.warning(f"AI content classification failed for keyword '{target_keyword}'. Returning None.")
         return None
 
-    async def analyze_content_gaps(self, target_url: str, competitor_urls: List[str]) -> ContentGapAnalysisResult:
+    async def analyze_content_gaps(self, target_url: str, competitor_urls: List[str], source: str = "cache") -> ContentGapAnalysisResult:
         """
         Analyzes content gaps between a target URL and its competitors.
         Returns a ContentGapAnalysisResult object with insights.
         """
+        cached_result = self.db.get_latest_content_gap_analysis_result(target_url)
+        now = datetime.utcnow()
+
+        if source == "live" and self.allow_live:
+            if not cached_result or (now - cached_result.last_fetched_at) > self.staleness_threshold:
+                self.logger.info(f"Live fetch requested or cache stale for {target_url}. Fetching live content gap analysis.")
+                live_result = await self._fetch_live_content_gap_analysis(target_url, competitor_urls)
+                if live_result:
+                    self.db.save_content_gap_analysis_result(live_result)
+                    return live_result
+                else:
+                    self.logger.warning(f"Live fetch failed for {target_url}. Returning cached data if available.")
+                    return cached_result
+            else:
+                self.logger.info(f"Live fetch requested for {target_url}, but cache is fresh. Fetching live anyway.")
+                live_result = await self._fetch_live_content_gap_analysis(target_url, competitor_urls)
+                if live_result:
+                    self.db.save_content_gap_analysis_result(live_result)
+                    return live_result
+                else:
+                    self.logger.warning(f"Live fetch failed for {target_url}. Returning cached data.")
+                    return cached_result
+        else:
+            self.logger.info(f"Returning cached content gap analysis for {target_url}.")
+            if cached_result:
+                return cached_result
+            else:
+                self.logger.warning(f"No cached content gap analysis found for {target_url}. Returning empty result.")
+                return ContentGapAnalysisResult(
+                    target_url=target_url,
+                    competitor_urls=competitor_urls,
+                    missing_topics=[],
+                    missing_keywords=[],
+                    content_format_gaps=[],
+                    actionable_insights=["No cached AI analysis available."],
+                    last_fetched_at=datetime.utcnow() # Set last_fetched_at for new empty result
+                )
+
+    async def _fetch_live_content_gap_analysis(self, target_url: str, competitor_urls: List[str]) -> Optional[ContentGapAnalysisResult]:
+        """
+        Fetches content gap analysis directly from AI.
+        """
+        self.logger.info(f"Fetching LIVE content gap analysis for {target_url}.")
         prompt = f"""
         Perform a content gap analysis for the target URL '{target_url}' against its competitors: {', '.join(competitor_urls)}.
         Identify topics, keywords, or content formats present in competitors but missing from the target.
@@ -282,15 +356,8 @@ class AIService:
         result_dict = await self._call_ai_with_cache("content_gap_analysis", prompt, cache_key, max_tokens=2000)
         
         if result_dict is None:
-            self.logger.warning(f"AI content gap analysis failed for {target_url}. Returning default empty result.")
-            return ContentGapAnalysisResult(
-                target_url=target_url,
-                competitor_urls=competitor_urls,
-                missing_topics=[],
-                missing_keywords=[],
-                content_format_gaps=[],
-                actionable_insights=["AI analysis unavailable."]
-            )
+            self.logger.warning(f"AI content gap analysis failed for {target_url}. Returning None.")
+            return None
         
         # Ensure lists are actual lists and not None
         result_dict["missing_topics"] = result_dict.get("missing_topics", [])
@@ -301,16 +368,27 @@ class AIService:
         return ContentGapAnalysisResult(
             target_url=target_url,
             competitor_urls=competitor_urls,
+            last_fetched_at=datetime.utcnow(), # Set last_fetched_at for live data
             **result_dict
         )
 
-    async def perform_topic_clustering(self, texts: List[str], num_clusters: int = 5) -> Dict[str, List[str]]:
+    async def perform_topic_clustering(self, texts: List[str], num_clusters: int = 5, source: str = "cache") -> Dict[str, List[str]]:
         """
         Simulates AI-powered topic clustering for a list of texts.
         Returns a dictionary where keys are cluster names/topics and values are lists of texts belonging to that cluster.
         """
+        cache_key = f"ai_topic_clustering:{hash(tuple(texts))}:{num_clusters}"
+        if source == "cache":
+            cached_result = await self._call_ai_with_cache("topic_clustering", "", cache_key)
+            if cached_result:
+                return cached_result
+
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live AI topic clustering not allowed by configuration. Returning simulated clusters.")
+            return {"Simulated Topic 1": texts[:min(len(texts), 2)], "Simulated Topic 2": texts[min(len(texts), 2):]}
+
         if not self.enabled or not self.openrouter_client:
-            self.logger.warning("AI service is disabled. Cannot perform topic clustering.")
+            self.logger.warning("AI service is disabled. Cannot perform topic clustering. Returning simulated clusters.")
             return {"Simulated Topic 1": texts[:min(len(texts), 2)], "Simulated Topic 2": texts[min(len(texts), 2):]}
 
         prompt = f"""
@@ -322,7 +400,6 @@ class AIService:
         Texts:
         {json.dumps(texts)}
         """
-        cache_key = f"ai_topic_clustering:{hash(tuple(texts))}:{num_clusters}"
         result = await self._call_ai_with_cache("topic_clustering", prompt, cache_key, max_tokens=2000)
 
         if result is None:
@@ -342,16 +419,25 @@ class AIService:
         return cleaned_result
 
 
-    async def suggest_semantic_keywords(self, primary_keyword: str) -> List[str]:
+    async def suggest_semantic_keywords(self, primary_keyword: str, source: str = "cache") -> List[str]:
         """
         Generates a list of semantically related keywords.
         """
+        cache_key = f"ai_semantic_keywords:{primary_keyword}"
+        if source == "cache":
+            cached_result = await self._call_ai_with_cache("keyword_research", "", cache_key)
+            if cached_result and "keywords" in cached_result:
+                return cached_result["keywords"]
+
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live AI semantic keyword suggestion not allowed by configuration. Returning empty list.")
+            return []
+
         prompt = f"""
         Generate a list of 10-15 semantically related keywords for the primary keyword '{primary_keyword}'.
         Focus on long-tail variations, related concepts, and user intent.
         Provide the response as a JSON object with a single key "keywords" which is a list of strings.
         """
-        cache_key = f"ai_semantic_keywords:{primary_keyword}"
         result = await self._call_ai_with_cache("keyword_research", prompt, cache_key, max_tokens=500)
         
         if result is None:
@@ -359,10 +445,20 @@ class AIService:
             return []
         return result.get("keywords", [])
 
-    async def analyze_technical_seo(self, url: str, html_content: str, lighthouse_report: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    async def analyze_technical_seo(self, url: str, html_content: str, lighthouse_report: Optional[Dict[str, Any]], source: str = "cache") -> Dict[str, Any]:
         """
         Analyzes technical SEO aspects of a page, combining HTML and Lighthouse data.
         """
+        cache_key = f"ai_tech_seo:{url}:{hash(html_content[:1000])}" # Cache based on URL and partial content
+        if source == "cache":
+            cached_result = await self._call_ai_with_cache("technical_seo_analysis", "", cache_key)
+            if cached_result:
+                return cached_result
+
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live AI technical SEO analysis not allowed by configuration. Returning default.")
+            return {"technical_issues": [], "technical_suggestions": [], "overall_technical_score": 50}
+
         prompt = f"""
         Analyze the technical SEO of the following page.
         URL: {url}
@@ -374,7 +470,6 @@ class AIService:
         - "technical_suggestions": List of actionable suggestions to fix them.
         - "overall_technical_score": An integer score from 0 to 100.
         """
-        cache_key = f"ai_tech_seo:{url}:{hash(html_content[:1000])}" # Cache based on URL and partial content
         result = await self._call_ai_with_cache("technical_seo_analysis", prompt, cache_key, max_tokens=1500)
         
         if result is None:
@@ -382,10 +477,20 @@ class AIService:
             return {"technical_issues": [], "technical_suggestions": [], "overall_technical_score": 50}
         return result
 
-    async def analyze_competitors(self, primary_domain: str, competitor_domains: List[str]) -> Dict[str, Any]:
+    async def analyze_competitors(self, primary_domain: str, competitor_domains: List[str], source: str = "cache") -> Dict[str, Any]:
         """
         Analyzes competitor strategies based on their domains.
         """
+        cache_key = f"ai_competitor_analysis:{primary_domain}:{hash(tuple(competitor_domains))}"
+        if source == "cache":
+            cached_result = await self._call_ai_with_cache("competitor_analysis", "", cache_key)
+            if cached_result:
+                return cached_result
+
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live AI competitor analysis not allowed by configuration. Returning default.")
+            return {"competitor_strengths": {}, "competitor_weaknesses": {}, "strategic_recommendations": ["AI analysis unavailable."]}
+
         prompt = f"""
         Analyze the competitive landscape for '{primary_domain}' against these competitors: {', '.join(competitor_domains)}.
         Based on general SEO knowledge and common strategies, provide a JSON response with:
@@ -393,7 +498,6 @@ class AIService:
         - "competitor_weaknesses": Dict of competitor_domain -> list of weaknesses.
         - "strategic_recommendations": List of strategic recommendations for the primary domain.
         """
-        cache_key = f"ai_competitor_analysis:{primary_domain}:{hash(tuple(competitor_domains))}"
         result = await self._call_ai_with_cache("competitor_analysis", prompt, cache_key, max_tokens=1500)
         
         if result is None:
@@ -401,16 +505,25 @@ class AIService:
             return {"competitor_strengths": {}, "competitor_weaknesses": {}, "strategic_recommendations": ["AI analysis unavailable."]}
         return result
 
-    async def generate_content_ideas(self, topic: str, num_ideas: int = 5) -> List[str]:
+    async def generate_content_ideas(self, topic: str, num_ideas: int = 5, source: str = "cache") -> List[str]:
         """
         Generates content ideas for a given topic.
         """
+        cache_key = f"ai_content_ideas:{topic}:{num_ideas}"
+        if source == "cache":
+            cached_result = await self._call_ai_with_cache("content_generation", "", cache_key)
+            if cached_result and "ideas" in cached_result:
+                return cached_result["ideas"]
+
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live AI content idea generation not allowed by configuration. Returning empty list.")
+            return []
+
         prompt = f"""
         Generate {num_ideas} unique and engaging content ideas for the topic '{topic}'.
         Focus on ideas that are SEO-friendly and address user intent.
         Provide the response as a JSON object with a single key "ideas" which is a list of strings.
         """
-        cache_key = f"ai_content_ideas:{topic}:{num_ideas}"
         result = await self._call_ai_with_cache("content_generation", prompt, cache_key, max_tokens=1000)
         
         if result is None:
@@ -418,10 +531,47 @@ class AIService:
             return []
         return result.get("ideas", [])
 
-    async def analyze_domain_value(self, domain_name: str, domain_info: Optional[Domain], link_profile_summary: Optional[LinkProfile]) -> Dict[str, Any]:
+    async def analyze_domain_value(self, domain_name: str, domain_info: Optional[Domain], link_profile_summary: Optional[LinkProfile], source: str = "cache") -> Dict[str, Any]:
         """
         Performs an AI-driven analysis of a domain's value, combining various data points.
         """
+        # For domain value, we might not cache the AI result directly in Redis,
+        # but rather store the DomainIntelligence object in the DB.
+        # So, for "cache" source, we'd retrieve from DB.
+        cached_domain_intelligence = self.db.get_domain_intelligence(domain_name)
+        now = datetime.utcnow()
+
+        if source == "live" and self.allow_live:
+            if not cached_domain_intelligence or (now - cached_domain_intelligence.last_fetched_at) > self.staleness_threshold:
+                self.logger.info(f"Live fetch requested or cache stale for {domain_name}. Fetching live AI domain value analysis.")
+                live_result = await self._fetch_live_domain_value_analysis(domain_name, domain_info, link_profile_summary)
+                if live_result:
+                    # Update DomainIntelligence in DB (handled by DomainAnalyzerService)
+                    return live_result
+                else:
+                    self.logger.warning(f"Live fetch failed for {domain_name}. Returning cached data if available.")
+                    return cached_domain_intelligence.to_dict() if cached_domain_intelligence else {"value_adjustment": 0, "reasons": ["No cached AI analysis available."], "details": {}}
+            else:
+                self.logger.info(f"Live fetch requested for {domain_name}, but cache is fresh. Fetching live anyway.")
+                live_result = await self._fetch_live_domain_value_analysis(domain_name, domain_info, link_profile_summary)
+                if live_result:
+                    return live_result
+                else:
+                    self.logger.warning(f"Live fetch failed for {domain_name}. Returning cached data.")
+                    return cached_domain_intelligence.to_dict() if cached_domain_intelligence else {"value_adjustment": 0, "reasons": ["No cached AI analysis available."], "details": {}}
+        else:
+            self.logger.info(f"Returning cached AI domain value analysis for {domain_name}.")
+            if cached_domain_intelligence:
+                return cached_domain_intelligence.to_dict()
+            else:
+                self.logger.warning(f"No cached AI domain value analysis found for {domain_name}. Returning default.")
+                return {"value_adjustment": 0, "reasons": ["No cached AI analysis available."], "details": {}}
+
+    async def _fetch_live_domain_value_analysis(self, domain_name: str, domain_info: Optional[Domain], link_profile_summary: Optional[LinkProfile]) -> Dict[str, Any]:
+        """
+        Fetches AI domain value analysis directly from AI.
+        """
+        self.logger.info(f"Fetching LIVE AI domain value analysis for {domain_name}.")
         domain_details = json.dumps(domain_info.to_dict()) if domain_info else "N/A"
         link_profile_details = json.dumps(link_profile_summary.to_dict()) if link_profile_summary else "N/A"
 
@@ -442,13 +592,28 @@ class AIService:
         if result is None:
             self.logger.warning(f"AI domain value analysis failed for '{domain_name}'. Returning default adjustment.")
             return {"value_adjustment": 0, "reasons": ["AI analysis unavailable."], "details": {}}
+        result['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
         return result
 
-    async def analyze_content_nlp(self, content: str) -> Dict[str, Any]:
+    async def analyze_content_nlp(self, content: str, source: str = "cache") -> Dict[str, Any]:
         """
         Performs Natural Language Processing (NLP) on content to extract entities, sentiment, and topics.
         Returns a dictionary with "entities", "sentiment", and "topics".
         """
+        cache_key = f"ai_content_nlp:{hash(content)}"
+        if source == "cache":
+            cached_result = await self._call_ai_with_cache("content_nlp_analysis", "", cache_key)
+            if cached_result:
+                return cached_result
+
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live AI content NLP analysis not allowed by configuration. Returning default.")
+            return {
+                "entities": [],
+                "sentiment": "neutral",
+                "topics": []
+            }
+
         prompt = f"""
         Perform Natural Language Processing (NLP) on the following content.
         Extract the most important entities (people, organizations, locations, key concepts).
@@ -464,7 +629,6 @@ class AIService:
         {content[:4000]} # Limit content length for prompt
         ---
         """
-        cache_key = f"ai_content_nlp:{hash(content)}"
         result = await self._call_ai_with_cache("content_nlp_analysis", prompt, cache_key, max_tokens=700)
         
         if result is None:
@@ -482,11 +646,11 @@ class AIService:
         if sentiment not in ["positive", "neutral", "negative"]:
             sentiment = "neutral"
         result["sentiment"] = sentiment
-
+        result['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
         return result
 
     async def analyze_video_content(self, video_url: str, video_data: Optional[bytes] = None, 
-                                  max_frames: int = 10) -> Dict[str, Any]:
+                                  max_frames: int = 10, source: str = "cache") -> Dict[str, Any]:
         """
         Real video content analysis using OpenAI Vision API.
         Extracts frames from video and analyzes them with GPT-4 Vision.
@@ -499,6 +663,13 @@ class AIService:
         Returns:
             Dictionary with transcription, topics, and analysis
         """
+        # Video analysis results are not typically cached in Redis directly,
+        # but might be part of a larger CrawlResult or DomainIntelligence object.
+        # For simplicity, we'll treat this as a live-only operation for now,
+        # but respect the allow_live flag.
+        if not self.allow_live and source == "live":
+            raise NotImplementedError("Live AI video analysis not allowed by configuration.")
+
         if not self.enabled or not self.openrouter_client:
             raise NotImplementedError("AI service is disabled. Video analysis requires AI integration.")
         
@@ -523,7 +694,9 @@ class AIService:
                 analysis_results.append(frame_analysis)
         
         # Synthesize results
-        return await self._synthesize_video_analysis(analysis_results, video_url)
+        result = await self._synthesize_video_analysis(analysis_results, video_url)
+        result['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
+        return result
     
     async def _download_video(self, video_url: str) -> Optional[bytes]:
         """Download video from URL."""
@@ -686,13 +859,26 @@ class AIService:
             "actions_detected": list(set(all_actions))
         }
 
-    async def assess_content_quality(self, content: str, url: str) -> Tuple[Optional[float], Optional[str]]:
+    async def assess_content_quality(self, content: str, url: str, source: str = "cache") -> Tuple[Optional[float], Optional[str]]:
         """
         Assesses the quality of the given content and provides a classification.
         Returns a tuple of (quality_score, classification_string).
         """
+        cache_key = f"ai_content_quality_assessment:{url}:{hash(content[:1000])}" # Cache based on URL and partial content
+        if source == "cache":
+            cached_result = await self._call_ai_with_cache("content_quality_assessment", "", cache_key)
+            if cached_result:
+                score = cached_result.get("quality_score")
+                classification = cached_result.get("classification")
+                if isinstance(score, (int, float)) and isinstance(classification, str):
+                    return float(score), classification
+                
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live AI content quality assessment not allowed by configuration. Returning None, None.")
+            return None, None
+
         if not self.enabled or not self.openrouter_client:
-            self.logger.warning("AI service is disabled. Cannot assess content quality.")
+            self.logger.warning("AI service is disabled. Cannot assess content quality. Returning None, None.")
             return None, None
 
         prompt = f"""
@@ -707,7 +893,6 @@ class AIService:
         {content[:8000]} # Limit content length for prompt
         ---
         """
-        cache_key = f"ai_content_quality_assessment:{url}:{hash(content[:1000])}" # Cache based on URL and partial content
         result = await self._call_ai_with_cache("content_quality_assessment", prompt, cache_key, max_tokens=200)
         
         if result:
