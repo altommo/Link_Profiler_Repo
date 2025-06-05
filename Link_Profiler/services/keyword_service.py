@@ -19,6 +19,9 @@ from Link_Profiler.config.config_loader import config_loader # Import config_loa
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.clients.google_trends_client import GoogleTrendsClient # New: Import GoogleTrendsClient
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.monitoring.prometheus_metrics import API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL # Import Prometheus metrics
 
 logger = logging.getLogger(__name__)
 
@@ -43,79 +46,67 @@ class SimulatedKeywordAPIClient(BaseKeywordAPIClient):
     A simulated client for Keyword Research APIs.
     Generates dummy keyword suggestion data.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
         self.logger = logging.getLogger(__name__ + ".SimulatedKeywordAPIClient")
-        self._session: Optional[aiohttp.ClientSession] = None # For simulating network calls
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to SimulatedKeywordAPIClient. Falling back to local SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to SimulatedKeywordAPIClient. Falling back to global instance.")
+
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
         self.logger.debug("Entering SimulatedKeywordAPIClient context.")
-        if self._session is None or self._session.closed:
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for client session."""
         self.logger.debug("Exiting SimulatedKeywordAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
+    @api_rate_limited(service="keyword_api", api_client_type="simulated_api", endpoint="get_keyword_suggestions")
     async def get_keyword_suggestions(self, seed_keyword: str, num_suggestions: int = 10) -> List[KeywordSuggestion]:
         """
         Simulates fetching keyword suggestions for a given seed keyword.
         """
         self.logger.info(f"Simulating API call for keyword suggestions for seed: '{seed_keyword}'")
         
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("SimulatedKeywordAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-
         try:
             # Simulate an actual HTTP request, even if it's to a dummy URL
-            async with session_to_use.get(f"http://localhost:8080/simulate_keywords/{seed_keyword}") as response:
-                pass
+            # Use resilience manager for the actual HTTP request
+            await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(f"http://localhost:8080/simulate_keywords/{seed_keyword}"),
+                url=f"http://localhost:8080/simulate_keywords/{seed_keyword}" # Pass the URL for circuit breaker naming
+            )
         except aiohttp.ClientConnectorError:
             pass
         except Exception as e:
             self.logger.warning(f"Unexpected error during simulated keyword fetch: {e}")
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
 
         suggestions = []
         for i in range(num_suggestions):
             suggested_keyword = f"{seed_keyword} {random.choice(['ideas', 'tools', 'analysis', 'strategy'])} {i+1}"
             search_volume = random.randint(100, 10000)
             cpc_estimate = round(random.uniform(0.5, 5.0), 2)
-            keyword_trend = [random.uniform(0.1, 1.0) for _ in range(12)] # 12 months of data
-            competition_level = random.choice(["Low", "Medium", "High"])
             
             suggestions.append(
                 KeywordSuggestion(
-                    seed_keyword=seed_keyword,
-                    suggested_keyword=suggested_keyword,
-                    search_volume_monthly=search_volume,
-                    cpc_estimate=cpc_estimate,
-                    keyword_trend=keyword_trend,
-                    competition_level=competition_level,
-                    data_timestamp=datetime.now()
+                    keyword=suggested_keyword,
+                    search_volume=search_volume,
+                    cpc=cpc_estimate,
+                    competition=random.uniform(0.1, 0.9), # Competition as float 0-1
+                    difficulty=random.randint(1, 100), # Difficulty as int 0-100
+                    relevance=random.uniform(0.5, 1.0),
+                    source="Simulated"
                 )
             )
         self.logger.info(f"Simulated {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
@@ -127,31 +118,34 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
     Requires an API key.
     This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str):
+    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
         self.logger = logging.getLogger(__name__ + ".RealKeywordAPIClient")
         self.api_key = api_key
         self.base_url = base_url
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to RealKeywordAPIClient. Falling back to local SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to RealKeywordAPIClient. Falling back to global instance.")
+
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
         self.logger.info("Entering RealKeywordAPIClient context.")
-        if self._session is None or self._session.closed:
-            headers = {"Authorization": f"Bearer {self.api_key}"} # Common header for API keys
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for client session."""
         self.logger.info("Exiting RealKeywordAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     @api_rate_limited(service="keyword_api", api_client_type="real_api", endpoint="suggestions")
     async def get_keyword_suggestions(self, seed_keyword: str, num_suggestions: int = 10) -> List[KeywordSuggestion]:
@@ -167,54 +161,36 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
         }
         self.logger.info(f"Attempting real API call for keyword suggestions: {endpoint}?keyword={seed_keyword}...")
 
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("RealKeywordAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {"Authorization": f"Bearer {self.api_key}"}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-        else:
-            close_session_after_use = False
-
         try:
-            async with session_to_use.get(endpoint, params=params, timeout=30) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                suggestions = []
-                # --- Replace with actual parsing logic for your chosen API ---
-                # Example: assuming 'suggestions' key with list of dicts
-                # for item in data.get("suggestions", []):
-                #     suggestions.append(
-                #         KeywordSuggestion(
-                #             seed_keyword=seed_keyword,
-                #             suggested_keyword=item.get("keyword"),
-                #             search_volume_monthly=item.get("search_volume"),
-                #             cpc_estimate=item.get("cpc"),
-                #             keyword_trend=item.get("trend", []),
-                #             competition_level=item.get("competition"),
-                #             data_timestamp=datetime.now()
-                #         )
-                #     )
-                self.logger.warning("RealKeywordAPIClient: Returning simulated data. Replace with actual API response parsing.")
-                return SimulatedKeywordAPIClient().get_keyword_suggestions(seed_keyword, num_suggestions) # Fallback to simulation
+            # Use resilience manager for the actual HTTP request
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(endpoint, params=params, timeout=30),
+                url=endpoint # Pass the endpoint for circuit breaker naming
+            )
+            response.raise_for_status()
+            data = await response.json()
+            
+            suggestions = []
+            # --- Replace with actual parsing logic for your chosen API ---
+            # Example: assuming 'suggestions' key with list of dicts
+            for item in data.get("suggestions", []):
+                suggestions.append(
+                    KeywordSuggestion(
+                        keyword=item.get("keyword"),
+                        search_volume=item.get("search_volume"),
+                        cpc=item.get("cpc"),
+                        competition=item.get("competition"),
+                        difficulty=item.get("difficulty"),
+                        relevance=item.get("relevance"),
+                        source=item.get("source", "RealAPI")
+                    )
+                )
+            self.logger.info(f"RealKeywordAPIClient: Fetched {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
+            return suggestions
 
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Error fetching real keyword suggestions for '{seed_keyword}': {e}. Returning empty list.")
-            return []
         except Exception as e:
-            self.logger.error(f"Unexpected error in real keyword fetch for '{seed_keyword}': {e}. Returning empty list.")
+            self.logger.error(f"Error fetching real keyword suggestions for '{seed_keyword}': {e}. Returning empty list.", exc_info=True)
             return []
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
 
 class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
     """
@@ -222,29 +198,32 @@ class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
     This client would fetch search volume, CPC, and competition level.
     This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str):
+    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
         self.logger = logging.getLogger(__name__ + ".RealKeywordMetricsAPIClient")
         self.api_key = api_key
         self.base_url = base_url
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to RealKeywordMetricsAPIClient. Falling back to local SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to RealKeywordMetricsAPIClient. Falling back to global instance.")
+
 
     async def __aenter__(self):
         self.logger.info("Entering RealKeywordMetricsAPIClient context.")
-        if self._session is None or self._session.closed:
-            headers = {"Authorization": f"Bearer {self.api_key}"}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         self.logger.info("Exiting RealKeywordMetricsAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     @api_rate_limited(service="keyword_api", api_client_type="metrics_api", endpoint="get_metrics")
     async def get_keyword_metrics(self, keyword: str) -> Dict[str, Any]:
@@ -256,49 +235,27 @@ class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
         params = {"keyword": keyword, "apiKey": self.api_key}
         self.logger.info(f"Attempting real API call for keyword metrics: {endpoint}?keyword={keyword}...")
 
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("RealKeywordMetricsAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {"Authorization": f"Bearer {self.api_key}"}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-
         try:
-            async with session_to_use.get(endpoint, params=params, timeout=10) as response:
-                response.raise_for_status()
-                data = await response.json()
-                # --- Replace with actual parsing logic for your chosen API ---
-                # Example:
-                # return {
-                #     "search_volume_monthly": data.get("volume"),
-                #     "cpc_estimate": data.get("cpc"),
-                #     "competition_level": data.get("competition")
-                # }
-                
-                self.logger.warning("RealKeywordMetricsAPIClient: Returning simulated metrics. Replace with actual API response parsing.")
-                # Simulate data for now
-                domain_hash = sum(ord(c) for c in keyword.lower())
-                return {
-                    "search_volume_monthly": (domain_hash % 9900) + 100, # 100-10000
-                    "cpc_estimate": round(random.uniform(0.5, 5.0), 2),
-                    "competition_level": random.choice(["Low", "Medium", "High"])
-                }
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Error fetching real keyword metrics for '{keyword}': {e}. Returning empty metrics.")
-            return {}
+            # Use resilience manager for the actual HTTP request
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(endpoint, params=params, timeout=10),
+                url=endpoint # Pass the endpoint for circuit breaker naming
+            )
+            response.raise_for_status()
+            data = await response.json()
+            # --- Replace with actual parsing logic for your chosen API ---
+            # Example:
+            return {
+                "search_volume": data.get("volume"),
+                "cpc": data.get("cpc"),
+                "competition": data.get("competition"),
+                "difficulty": data.get("difficulty"),
+                "relevance": data.get("relevance"),
+                "source": data.get("source", "RealMetricsAPI")
+            }
         except Exception as e:
-            self.logger.error(f"Unexpected error in real keyword metrics fetch for '{keyword}': {e}. Returning empty metrics.")
+            self.logger.error(f"Error fetching real keyword metrics for '{keyword}': {e}. Returning empty metrics.", exc_info=True)
             return {}
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
 
     # This client doesn't provide suggestions, only metrics for given keywords
     async def get_keyword_suggestions(self, seed_keyword: str, num_suggestions: int = 10) -> List[KeywordSuggestion]:
@@ -309,25 +266,37 @@ class KeywordService:
     """
     Service for fetching Keyword Research data.
     """
-    def __init__(self, api_client: Optional[BaseKeywordAPIClient] = None, keyword_scraper: Optional[KeywordScraper] = None, google_trends_client: Optional[GoogleTrendsClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600): # New: Accept google_trends_client
+    def __init__(self, api_client: Optional[BaseKeywordAPIClient] = None, keyword_scraper: Optional[KeywordScraper] = None, google_trends_client: Optional[GoogleTrendsClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
         self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
+        self.session_manager = session_manager # Store the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to KeywordService. Falling back to local SessionManager.")
         
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to KeywordService. Falling back to global instance.")
+
         # Determine which API client to use based on config_loader priority
         if config_loader.get("keyword_api.real_api.enabled"):
             real_api_key = config_loader.get("keyword_api.real_api.api_key")
             real_api_base_url = config_loader.get("keyword_api.real_api.base_url")
             if not real_api_key or not real_api_base_url:
                 self.logger.error("Real Keyword API enabled but API key or base_url not found in config. Falling back to simulated Keyword API.")
-                self.api_client = SimulatedKeywordAPIClient()
+                self.api_client = SimulatedKeywordAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
             else:
                 self.logger.info("Using RealKeywordAPIClient for keyword lookups.")
-                self.api_client = RealKeywordAPIClient(api_key=real_api_key, base_url=real_api_base_url)
+                self.api_client = RealKeywordAPIClient(api_key=real_api_key, base_url=real_api_base_url, session_manager=self.session_manager, resilience_manager=self.resilience_manager)
         else:
             self.logger.info("Using SimulatedKeywordAPIClient for keyword lookups.")
-            self.api_client = SimulatedKeywordAPIClient()
+            self.api_client = SimulatedKeywordAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
             
         self.keyword_scraper = keyword_scraper # Store the KeywordScraper instance
         self.google_trends_client = google_trends_client # New: Store GoogleTrendsClient instance
@@ -341,7 +310,7 @@ class KeywordService:
                 self.logger.error("Real Keyword Metrics API enabled but API key or base_url not found in config. Metrics will be simulated.")
             else:
                 self.logger.info("Using RealKeywordMetricsAPIClient for keyword metrics.")
-                self.metrics_api_client = RealKeywordMetricsAPIClient(api_key=metrics_api_key, base_url=metrics_api_base_url)
+                self.metrics_api_client = RealKeywordMetricsAPIClient(api_key=metrics_api_key, base_url=metrics_api_base_url, session_manager=self.session_manager, resilience_manager=self.resilience_manager)
 
     async def __aenter__(self):
         """Async context manager entry for KeywordService."""
@@ -366,23 +335,29 @@ class KeywordService:
         if self.google_trends_client: # New: Exit GoogleTrendsClient's context
             await self.google_trends_client.__aexit__(exc_type, exc_val, exc_tb)
 
-    async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
+    async def _get_cached_response(self, cache_key: str, service_name: str, endpoint_name: str) -> Optional[Any]:
         if self.api_cache_enabled and self.redis_client:
             try:
                 cached_data = await self.redis_client.get(cache_key)
                 if cached_data:
+                    API_CACHE_HITS_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
                     self.logger.debug(f"Cache hit for {cache_key}")
                     return json.loads(cached_data)
+                else:
+                    API_CACHE_MISSES_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
             except Exception as e:
+                API_CACHE_ERRORS_TOTAL.labels(service=service_name, endpoint=endpoint_name, error_type=type(e).__name__).inc()
                 self.logger.error(f"Error retrieving from cache for {cache_key}: {e}", exc_info=True)
         return None
 
-    async def _set_cached_response(self, cache_key: str, data: Any):
+    async def _set_cached_response(self, cache_key: str, data: Any, service_name: str, endpoint_name: str):
         if self.api_cache_enabled and self.redis_client:
             try:
                 await self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(data))
+                API_CACHE_SET_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
                 self.logger.debug(f"Cached {cache_key} with TTL {self.cache_ttl}")
             except Exception as e:
+                API_CACHE_ERRORS_TOTAL.labels(service=service_name, endpoint=endpoint_name, error_type=type(e).__name__).inc()
                 self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
 
     async def get_keyword_data(self, seed_keyword: str, num_suggestions: int = 10) -> List[KeywordSuggestion]:
@@ -392,7 +367,7 @@ class KeywordService:
         Uses caching.
         """
         cache_key = f"keyword_suggestions:{seed_keyword}:{num_suggestions}"
-        cached_result = await self._get_cached_response(cache_key)
+        cached_result = await self._get_cached_response(cache_key, "keyword_api", "get_keyword_data")
         if cached_result is not None:
             return [KeywordSuggestion.from_dict(ks_data) for ks_data in cached_result]
 
@@ -410,52 +385,56 @@ class KeywordService:
         if self.metrics_api_client and config_loader.get("keyword_api.metrics_api.enabled"):
             self.logger.info(f"Enriching keyword suggestions with metrics using RealKeywordMetricsAPIClient.")
             for suggestion in suggestions:
-                metrics_cache_key = f"keyword_metrics:{suggestion.suggested_keyword}"
-                cached_metrics = await self._get_cached_response(metrics_cache_key)
+                metrics_cache_key = f"keyword_metrics:{suggestion.keyword}" # Use suggestion.keyword
+                cached_metrics = await self._get_cached_response(metrics_cache_key, "keyword_api", "get_keyword_metrics")
                 if cached_metrics:
                     metrics = cached_metrics
                 else:
-                    metrics = await self.metrics_api_client.get_keyword_metrics(suggestion.suggested_keyword)
+                    metrics = await self.metrics_api_client.get_keyword_metrics(suggestion.keyword) # Use suggestion.keyword
                     if metrics:
-                        await self._set_cached_response(metrics_cache_key, metrics)
+                        await self._set_cached_response(metrics_cache_key, metrics, "keyword_api", "get_keyword_metrics")
 
                 if metrics:
-                    suggestion.search_volume_monthly = metrics.get("search_volume_monthly", suggestion.search_volume_monthly)
-                    suggestion.cpc_estimate = metrics.get("cpc_estimate", suggestion.cpc_estimate)
-                    suggestion.competition_level = metrics.get("competition_level", suggestion.competition_level)
+                    suggestion.search_volume = metrics.get("search_volume", suggestion.search_volume)
+                    suggestion.cpc = metrics.get("cpc", suggestion.cpc)
+                    suggestion.competition = metrics.get("competition", suggestion.competition)
+                    suggestion.difficulty = metrics.get("difficulty", suggestion.difficulty)
+                    suggestion.relevance = metrics.get("relevance", suggestion.relevance)
+                    suggestion.source = metrics.get("source", suggestion.source)
         else:
             self.logger.info("Keyword metrics API not enabled or configured. Using simulated metrics.")
             # If metrics API is not enabled, ensure simulated values are present
             for suggestion in suggestions:
-                if suggestion.search_volume_monthly is None:
-                    suggestion.search_volume_monthly = random.randint(100, 10000)
-                if suggestion.cpc_estimate is None:
-                    suggestion.cpc_estimate = round(random.uniform(0.5, 5.0), 2)
-                if suggestion.competition_level is None:
-                    suggestion.competition_level = random.choice(["Low", "Medium", "High"])
+                if suggestion.search_volume is None:
+                    suggestion.search_volume = random.randint(100, 10000)
+                if suggestion.cpc is None:
+                    suggestion.cpc = round(random.uniform(0.5, 5.0), 2)
+                if suggestion.competition is None:
+                    suggestion.competition = random.uniform(0.1, 0.9)
+                if suggestion.difficulty is None:
+                    suggestion.difficulty = random.randint(1, 100)
+                if suggestion.relevance is None:
+                    suggestion.relevance = random.uniform(0.5, 1.0)
+                if suggestion.source is None:
+                    suggestion.source = "Simulated"
 
         # New: Fetch keyword trends using GoogleTrendsClient if enabled
         if self.google_trends_client and self.google_trends_client.enabled and suggestions:
             self.logger.info(f"Fetching Google Trends for top suggestions for '{seed_keyword}'.")
             # Only fetch trends for the top 5 keywords to avoid hitting limits
-            keywords_for_trends = [s.suggested_keyword for s in suggestions[:5]]
+            keywords_for_trends = [s.keyword for s in suggestions[:5]] # Use suggestion.keyword
             if keywords_for_trends:
-                trends_data = await self.google_trends_client.get_keyword_trends(keywords_for_trends)
-                if trends_data and trends_data.get('interest_over_time'):
-                    # pytrends returns a DataFrame, convert to dict for easier processing
-                    interest_df = trends_data['interest_over_time']
-                    # Assuming interest_df has a 'date' column and keyword columns
+                trends_data = await self.google_trends_client.get_interest_over_time(keywords_for_trends)
+                if trends_data: # trends_data is a dict of keyword -> list of floats
                     for suggestion in suggestions:
-                        if suggestion.suggested_keyword in interest_df.columns:
-                            # Extract the trend for this specific keyword
-                            # Convert pandas Series to list
-                            suggestion.keyword_trend = interest_df[suggestion.suggested_keyword].tolist()
-                            self.logger.debug(f"Added trend data for {suggestion.suggested_keyword}.")
+                        if suggestion.keyword in trends_data:
+                            suggestion.keyword_trend = trends_data[suggestion.keyword]
+                            self.logger.debug(f"Added trend data for {suggestion.keyword}.")
                 else:
                     self.logger.warning(f"No trend data found from Google Trends for {keywords_for_trends}.")
             else:
                 self.logger.info("No keywords to fetch trends for.")
 
         if suggestions:
-            await self._set_cached_response(cache_key, [s.to_dict() for s in suggestions]) # Cache as list of dicts
+            await self._set_cached_response(cache_key, [s.to_dict() for s in suggestions], "keyword_api", "get_keyword_data") # Cache as list of dicts
         return suggestions
