@@ -1,153 +1,136 @@
 """
-DNS Client - Interacts with DNS over HTTPS (DoH) services like Cloudflare or Google.
+DNS Client - Performs DNS lookups (e.g., A, AAAA, NS, MX records).
 File: Link_Profiler/clients/dns_client.py
 """
 
-import logging
 import asyncio
+import logging
 from typing import List, Dict, Any, Optional
 import aiohttp
+import json
+import random
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
 
 class DNSClient:
     """
-    Client for fetching DNS records using DNS over HTTPS (DoH).
+    Client for performing DNS lookups using DNS-over-HTTPS (DoH) providers.
     Supports Cloudflare and Google DoH endpoints.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".DNSClient")
         self.cloudflare_url = config_loader.get("domain_api.dns_over_https_api.cloudflare_url")
         self.google_url = config_loader.get("domain_api.dns_over_https_api.google_url")
         self.enabled = config_loader.get("domain_api.dns_over_https_api.enabled", False)
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to DNSClient. Falling back to local SessionManager.")
 
+        self.providers = []
+        if self.cloudflare_url:
+            self.providers.append(self.cloudflare_url)
+        if self.google_url:
+            self.providers.append(self.google_url)
+        
         if not self.enabled:
             self.logger.info("DNS over HTTPS API is disabled by configuration.")
+        elif not self.providers:
+            self.logger.error("DNS over HTTPS API enabled but no provider URLs configured.")
+            self.enabled = False
 
     async def __aenter__(self):
-        """Initialise aiohttp session."""
+        """Async context manager entry for client session."""
         if self.enabled:
             self.logger.info("Entering DNSClient context.")
-            if self._session is None or self._session.closed:
-                self._session = aiohttp.ClientSession()
+            await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Close aiohttp session."""
-        if self.enabled and self._session and not self._session.closed:
-            self.logger.info("Exiting DNSClient context. Closing aiohttp session.")
-            await self._session.close()
-            self._session = None
+        """Async context manager exit for client session."""
+        if self.enabled:
+            self.logger.info("Exiting DNSClient context.")
+            await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
-    @api_rate_limited(service="dns_over_https_api", api_client_type="dns_client", endpoint="get_dns_records")
-    async def get_dns_records(self, domain: str, record_type: str = 'A', use_cloudflare: bool = True) -> Optional[Dict[str, Any]]:
+    @api_rate_limited(service="dns_over_https_api", api_client_type="dns_client", endpoint="resolve_domain")
+    async def resolve_domain(self, domain: str, record_type: str = "A") -> Optional[str]:
         """
-        Fetches DNS records for a domain using either Cloudflare or Google DoH.
-        
-        Args:
-            domain (str): The domain name to query.
-            record_type (str): The type of DNS record (e.g., 'A', 'AAAA', 'MX', 'TXT', 'NS').
-            use_cloudflare (bool): If True, uses Cloudflare's DoH. Otherwise, uses Google's.
-            
-        Returns:
-            Optional[Dict[str, Any]]: The JSON response containing DNS records, or None on failure.
+        Performs a DNS lookup for a given domain and record type.
+        Returns the first IP address found for 'A' or 'AAAA' records.
         """
         if not self.enabled:
-            self.logger.warning(f"DNS over HTTPS API is disabled. Simulating DNS records for {domain}.")
-            return self._simulate_dns_records(domain, record_type)
+            self.logger.warning("DNSClient is disabled. Cannot perform DNS lookup.")
+            return None
 
-        endpoint = self.cloudflare_url if use_cloudflare else self.google_url
-        if not endpoint:
-            self.logger.error(f"No DoH endpoint configured for {'Cloudflare' if use_cloudflare else 'Google'}. Simulating DNS records.")
-            return self._simulate_dns_records(domain, record_type)
+        if not self.providers:
+            self.logger.error("No DNS-over-HTTPS providers configured.")
+            return None
 
-        headers = {'Accept': 'application/dns-json'}
-        params = {'name': domain, 'type': record_type}
+        provider_url = random.choice(self.providers) # Randomly choose a provider
+        params = {"name": domain, "type": record_type}
+        headers = {"Accept": "application/dns-json"} # Standard for DoH JSON
 
-        self.logger.info(f"Calling {'Cloudflare' if use_cloudflare else 'Google'} DoH for {domain} ({record_type} record)...")
+        self.logger.info(f"Resolving DNS for {domain} ({record_type} record) using {provider_url}...")
+
         try:
-            async with self._session.get(endpoint, headers=headers, params=params, timeout=10) as response:
+            async with await self.session_manager.get(provider_url, params=params, headers=headers, timeout=10) as response:
                 response.raise_for_status()
                 data = await response.json()
-                self.logger.info(f"DNS records for {domain} fetched successfully from {'Cloudflare' if use_cloudflare else 'Google'}.")
-                return data
+                
+                if data and data.get("Answer"):
+                    for answer in data["Answer"]:
+                        if answer["type"] == 1 and record_type == "A": # A record
+                            return answer["data"]
+                        if answer["type"] == 28 and record_type == "AAAA": # AAAA record
+                            return answer["data"]
+                self.logger.info(f"No {record_type} record found for {domain}.")
+                return None
+
         except aiohttp.ClientError as e:
-            self.logger.error(f"Network/API error fetching DNS records for {domain} from {'Cloudflare' if use_cloudflare else 'Google'}: {e}", exc_info=True)
-            return self._simulate_dns_records(domain, record_type) # Fallback to simulation on error
+            self.logger.error(f"Network/Client error resolving DNS for {domain}: {e}. Returning None.")
+            return None
         except Exception as e:
-            self.logger.error(f"Unexpected error fetching DNS records for {domain} from {'Cloudflare' if use_cloudflare else 'Google'}: {e}", exc_info=True)
-            return self._simulate_dns_records(domain, record_type) # Fallback to simulation on error
+            self.logger.error(f"Unexpected error resolving DNS for {domain}: {e}. Returning None.", exc_info=True)
+            return None
 
-    def _simulate_dns_records(self, domain: str, record_type: str) -> Dict[str, Any]:
-        """Helper to generate simulated DNS records."""
-        self.logger.info(f"Simulating DNS records for {domain} ({record_type}).")
-        import random
+    @api_rate_limited(service="dns_over_https_api", api_client_type="dns_client", endpoint="get_all_records")
+    async def get_all_records(self, domain: str) -> List[Dict[str, Any]]:
+        """
+        Fetches all available DNS records for a given domain.
+        """
+        if not self.enabled:
+            self.logger.warning("DNSClient is disabled. Cannot fetch all DNS records.")
+            return []
 
-        response = {
-            "Status": 0, # NOERROR
-            "TC": False,
-            "RD": True,
-            "RA": True,
-            "AD": False,
-            "CD": False,
-            "Question": [{"name": domain, "type": self._get_record_type_code(record_type)}],
-            "Answer": []
-        }
+        if not self.providers:
+            self.logger.error("No DNS-over-HTTPS providers configured.")
+            return []
 
-        if record_type.upper() == 'A':
-            response["Answer"].append({
-                "name": domain,
-                "type": self._get_record_type_code('A'),
-                "TTL": 300,
-                "data": f"{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}"
-            })
-        elif record_type.upper() == 'AAAA':
-            response["Answer"].append({
-                "name": domain,
-                "type": self._get_record_type_code('AAAA'),
-                "TTL": 300,
-                "data": f"2001:0db8:{random.randint(0,9999):04x}:{random.randint(0,9999):04x}::{random.randint(1,254)}"
-            })
-        elif record_type.upper() == 'MX':
-            response["Answer"].append({
-                "name": domain,
-                "type": self._get_record_type_code('MX'),
-                "TTL": 300,
-                "data": f"10 mail.{domain}"
-            })
-        elif record_type.upper() == 'TXT':
-            response["Answer"].append({
-                "name": domain,
-                "type": self._get_record_type_code('TXT'),
-                "TTL": 300,
-                "data": f"\"v=spf1 include:_spf.google.com ~all\""
-            })
-        elif record_type.upper() == 'NS':
-            response["Answer"].append({
-                "name": domain,
-                "type": self._get_record_type_code('NS'),
-                "TTL": 300,
-                "data": f"ns1.{domain}"
-            })
-        # Add more record types as needed for simulation
+        provider_url = random.choice(self.providers)
+        params = {"name": domain, "type": "ANY"} # Request all record types
+        headers = {"Accept": "application/dns-json"}
 
-        return response
+        self.logger.info(f"Fetching all DNS records for {domain} using {provider_url}...")
 
-    def _get_record_type_code(self, record_type: str) -> int:
-        """Helper to convert record type string to DNS query code (simulated)."""
-        type_map = {
-            'A': 1, 'NS': 2, 'MD': 3, 'MF': 4, 'CNAME': 5, 'SOA': 6, 'MB': 7, 'MG': 8,
-            'MR': 9, 'NULL': 10, 'WKS': 11, 'PTR': 12, 'HINFO': 13, 'MINFO': 14,
-            'MX': 15, 'TXT': 16, 'AAAA': 28, 'SRV': 33, 'NAPTR': 35, 'OPT': 41,
-            'DS': 43, 'RRSIG': 46, 'NSEC': 47, 'DNSKEY': 48, 'NSEC3': 50,
-            'NSEC3PARAM': 51, 'TLSA': 52, 'SMIMEA': 53, 'HIP': 55, 'CDS': 59,
-            'CDNSKEY': 60, 'OPENPGPKEY': 61, 'CSYNC': 62, 'ZONEMD': 63,
-            'SVCB': 64, 'HTTPS': 65, 'SPF': 99, 'AXFR': 252, 'MAILB': 253,
-            'MAILA': 254, 'ANY': 255, 'URI': 256, 'CAA': 257, 'AVC': 258,
-            'DNAME': 39, 'OPT': 41 # OPT is pseudo-record type for EDNS
-        }
-        return type_map.get(record_type.upper(), 255) # Default to ANY if not found
+        try:
+            async with await self.session_manager.get(provider_url, params=params, headers=headers, timeout=15) as response:
+                response.raise_for_status()
+                data = await response.json()
+                
+                if data and data.get("Answer"):
+                    return data["Answer"]
+                self.logger.info(f"No DNS records found for {domain}.")
+                return []
+
+        except aiohttp.ClientError as e:
+            self.logger.error(f"Network/Client error fetching all DNS records for {domain}: {e}. Returning empty list.")
+            return []
+        except Exception as e:
+            self.logger.error(f"Unexpected error fetching all DNS records for {domain}: {e}. Returning empty list.", exc_info=True)
+            return []
