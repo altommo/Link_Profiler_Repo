@@ -22,6 +22,7 @@ from Link_Profiler.clients.google_trends_client import GoogleTrendsClient # New:
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 from Link_Profiler.monitoring.prometheus_metrics import API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL # Import Prometheus metrics
+from Link_Profiler.database.database import Database # Import Database for DB operations
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,8 @@ class SimulatedKeywordAPIClient(BaseKeywordAPIClient):
                     competition=random.uniform(0.1, 0.9), # Competition as float 0-1
                     difficulty=random.randint(1, 100), # Difficulty as int 0-100
                     relevance=random.uniform(0.5, 1.0),
-                    source="Simulated"
+                    source="Simulated",
+                    last_fetched_at=datetime.utcnow() # Set last_fetched_at for simulated data
                 )
             )
         self.logger.info(f"Simulated {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
@@ -182,7 +184,8 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
                         competition=item.get("competition"),
                         difficulty=item.get("difficulty"),
                         relevance=item.get("relevance"),
-                        source=item.get("source", "RealAPI")
+                        source=item.get("source", "RealAPI"),
+                        last_fetched_at=datetime.utcnow() # Set last_fetched_at for live data
                     )
                 )
             self.logger.info(f"RealKeywordAPIClient: Fetched {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
@@ -251,7 +254,8 @@ class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
                 "competition": data.get("competition"),
                 "difficulty": data.get("difficulty"),
                 "relevance": data.get("relevance"),
-                "source": data.get("source", "RealMetricsAPI")
+                "source": data.get("source", "RealMetricsAPI"),
+                "last_fetched_at": datetime.utcnow() # Set last_fetched_at for live data
             }
         except Exception as e:
             self.logger.error(f"Error fetching real keyword metrics for '{keyword}': {e}. Returning empty metrics.", exc_info=True)
@@ -266,11 +270,9 @@ class KeywordService:
     """
     Service for fetching Keyword Research data.
     """
-    def __init__(self, api_client: Optional[BaseKeywordAPIClient] = None, keyword_scraper: Optional[KeywordScraper] = None, google_trends_client: Optional[GoogleTrendsClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
+    def __init__(self, database: Optional[Database] = None, api_client: Optional[BaseKeywordAPIClient] = None, keyword_scraper: Optional[KeywordScraper] = None, google_trends_client: Optional[GoogleTrendsClient] = None, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
         self.logger = logging.getLogger(__name__)
-        self.redis_client = redis_client
-        self.cache_ttl = cache_ttl
-        self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
+        self.db = database # Store database instance
         self.session_manager = session_manager # Store the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
@@ -312,6 +314,9 @@ class KeywordService:
                 self.logger.info("Using RealKeywordMetricsAPIClient for keyword metrics.")
                 self.metrics_api_client = RealKeywordMetricsAPIClient(api_key=metrics_api_key, base_url=metrics_api_base_url, session_manager=self.session_manager, resilience_manager=self.resilience_manager)
 
+        self.allow_live = config_loader.get("keyword_api.keyword_service.allow_live", False)
+        self.staleness_threshold = timedelta(hours=config_loader.get("keyword_api.keyword_service.staleness_threshold_hours", 24))
+
     async def __aenter__(self):
         """Async context manager entry for KeywordService."""
         self.logger.debug("Entering KeywordService context.")
@@ -335,65 +340,27 @@ class KeywordService:
         if self.google_trends_client: # New: Exit GoogleTrendsClient's context
             await self.google_trends_client.__aexit__(exc_type, exc_val, exc_tb)
 
-    async def _get_cached_response(self, cache_key: str, service_name: str, endpoint_name: str) -> Optional[Any]:
-        if self.api_cache_enabled and self.redis_client:
-            try:
-                cached_data = await self.redis_client.get(cache_key)
-                if cached_data:
-                    API_CACHE_HITS_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
-                    self.logger.debug(f"Cache hit for {cache_key}")
-                    return json.loads(cached_data)
-                else:
-                    API_CACHE_MISSES_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
-            except Exception as e:
-                API_CACHE_ERRORS_TOTAL.labels(service=service_name, endpoint=endpoint_name, error_type=type(e).__name__).inc()
-                self.logger.error(f"Error retrieving from cache for {cache_key}: {e}", exc_info=True)
-        return None
-
-    async def _set_cached_response(self, cache_key: str, data: Any, service_name: str, endpoint_name: str):
-        if self.api_cache_enabled and self.redis_client:
-            try:
-                await self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(data))
-                API_CACHE_SET_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
-                self.logger.debug(f"Cached {cache_key} with TTL {self.cache_ttl}")
-            except Exception as e:
-                API_CACHE_ERRORS_TOTAL.labels(service=service_name, endpoint=endpoint_name, error_type=type(e).__name__).inc()
-                self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
-
-    async def get_keyword_data(self, seed_keyword: str, num_suggestions: int = 10) -> List[KeywordSuggestion]:
+    async def _fetch_live_keyword_data(self, seed_keyword: str, num_suggestions: int = 10) -> List[KeywordSuggestion]:
         """
-        Fetches keyword suggestions for a given seed keyword and enriches them with metrics.
-        Prioritizes the local KeywordScraper if available, otherwise uses the API client.
-        Uses caching.
+        Fetches keyword suggestions and enriches them with metrics directly from external APIs/scrapers.
+        This method is intended for internal use by the service when a live fetch is required.
         """
-        cache_key = f"keyword_suggestions:{seed_keyword}:{num_suggestions}"
-        cached_result = await self._get_cached_response(cache_key, "keyword_api", "get_keyword_data")
-        if cached_result is not None:
-            return [KeywordSuggestion.from_dict(ks_data) for ks_data in cached_result]
-
+        self.logger.info(f"Fetching LIVE keyword data for '{seed_keyword}'.")
         suggestions: List[KeywordSuggestion] = []
         
         if self.keyword_scraper and config_loader.get("keyword_scraper.enabled"):
-            self.logger.info(f"Using KeywordScraper to fetch keyword suggestions for '{seed_keyword}'.")
+            self.logger.info(f"Using KeywordScraper to fetch LIVE keyword suggestions for '{seed_keyword}'.")
             suggestions = await self.keyword_scraper.get_keyword_data(seed_keyword, num_suggestions)
         else:
-            self.logger.info(f"Using Keyword API client to fetch keyword suggestions for '{seed_keyword}'.")
+            self.logger.info(f"Using Keyword API client to fetch LIVE keyword suggestions for '{seed_keyword}'.")
             # Assuming self.api_client (Simulated/RealKeywordAPIClient) can get suggestions
             suggestions = await self.api_client.get_keyword_suggestions(seed_keyword, num_suggestions)
         
         # Enrich suggestions with metrics if metrics API client is enabled
         if self.metrics_api_client and config_loader.get("keyword_api.metrics_api.enabled"):
-            self.logger.info(f"Enriching keyword suggestions with metrics using RealKeywordMetricsAPIClient.")
+            self.logger.info(f"Enriching LIVE keyword suggestions with metrics using RealKeywordMetricsAPIClient.")
             for suggestion in suggestions:
-                metrics_cache_key = f"keyword_metrics:{suggestion.keyword}" # Use suggestion.keyword
-                cached_metrics = await self._get_cached_response(metrics_cache_key, "keyword_api", "get_keyword_metrics")
-                if cached_metrics:
-                    metrics = cached_metrics
-                else:
-                    metrics = await self.metrics_api_client.get_keyword_metrics(suggestion.keyword) # Use suggestion.keyword
-                    if metrics:
-                        await self._set_cached_response(metrics_cache_key, metrics, "keyword_api", "get_keyword_metrics")
-
+                metrics = await self.metrics_api_client.get_keyword_metrics(suggestion.keyword)
                 if metrics:
                     suggestion.search_volume = metrics.get("search_volume", suggestion.search_volume)
                     suggestion.cpc = metrics.get("cpc", suggestion.cpc)
@@ -402,7 +369,7 @@ class KeywordService:
                     suggestion.relevance = metrics.get("relevance", suggestion.relevance)
                     suggestion.source = metrics.get("source", suggestion.source)
         else:
-            self.logger.info("Keyword metrics API not enabled or configured. Using simulated metrics.")
+            self.logger.info("Keyword metrics API not enabled or configured. Using simulated metrics for LIVE fetch.")
             # If metrics API is not enabled, ensure simulated values are present
             for suggestion in suggestions:
                 if suggestion.search_volume is None:
@@ -420,21 +387,61 @@ class KeywordService:
 
         # New: Fetch keyword trends using GoogleTrendsClient if enabled
         if self.google_trends_client and self.google_trends_client.enabled and suggestions:
-            self.logger.info(f"Fetching Google Trends for top suggestions for '{seed_keyword}'.")
+            self.logger.info(f"Fetching LIVE Google Trends for top suggestions for '{seed_keyword}'.")
             # Only fetch trends for the top 5 keywords to avoid hitting limits
-            keywords_for_trends = [s.keyword for s in suggestions[:5]] # Use suggestion.keyword
+            keywords_for_trends = [s.keyword for s in suggestions[:5]]
             if keywords_for_trends:
                 trends_data = await self.google_trends_client.get_interest_over_time(keywords_for_trends)
                 if trends_data: # trends_data is a dict of keyword -> list of floats
                     for suggestion in suggestions:
                         if suggestion.keyword in trends_data:
                             suggestion.keyword_trend = trends_data[suggestion.keyword]
-                            self.logger.debug(f"Added trend data for {suggestion.keyword}.")
+                            self.logger.debug(f"Added LIVE trend data for {suggestion.keyword}.")
                 else:
-                    self.logger.warning(f"No trend data found from Google Trends for {keywords_for_trends}.")
+                    self.logger.warning(f"No LIVE trend data found from Google Trends for {keywords_for_trends}.")
             else:
-                self.logger.info("No keywords to fetch trends for.")
+                self.logger.info("No keywords to fetch trends for LIVE.")
+        
+        # Set last_fetched_at for all suggestions
+        now = datetime.utcnow()
+        for sug in suggestions:
+            sug.last_fetched_at = now
 
-        if suggestions:
-            await self._set_cached_response(cache_key, [s.to_dict() for s in suggestions], "keyword_api", "get_keyword_data") # Cache as list of dicts
         return suggestions
+
+    async def get_keyword_data(self, seed_keyword: str, num_suggestions: int = 10, source: str = "cache") -> List[KeywordSuggestion]:
+        """
+        Retrieves keyword suggestions for a given seed keyword.
+        Prioritizes cached data, but can fetch live if requested and allowed.
+        """
+        cached_suggestions = self.db.get_latest_keyword_suggestions_for_seed(seed_keyword)
+        
+        # Determine the latest fetch time from cached suggestions
+        latest_fetched_at = None
+        if cached_suggestions:
+            latest_fetched_at = max((sug.last_fetched_at for sug in cached_suggestions if sug.last_fetched_at), default=None)
+        
+        now = datetime.utcnow()
+
+        if source == "live" and self.allow_live:
+            if not latest_fetched_at or (now - latest_fetched_at) > self.staleness_threshold:
+                self.logger.info(f"Live fetch requested or cache stale for {seed_keyword}. Fetching live keyword data.")
+                live_suggestions = await self._fetch_live_keyword_data(seed_keyword, num_suggestions)
+                if live_suggestions:
+                    self.db.add_keyword_suggestions(live_suggestions) # Save/update the fresh data
+                    return live_suggestions
+                else:
+                    self.logger.warning(f"Live fetch failed for {seed_keyword}. Returning cached data if available.")
+                    return cached_suggestions # Fallback to cache
+            else:
+                self.logger.info(f"Live fetch requested for {seed_keyword}, but cache is fresh. Fetching live anyway.")
+                live_suggestions = await self._fetch_live_keyword_data(seed_keyword, num_suggestions)
+                if live_suggestions:
+                    self.db.add_keyword_suggestions(live_suggestions)
+                    return live_suggestions
+                else:
+                    self.logger.warning(f"Live fetch failed for {seed_keyword}. Returning cached data.")
+                    return cached_suggestions # Fallback to cache
+        else:
+            self.logger.info(f"Returning cached keyword data for {seed_keyword}.")
+            return cached_suggestions

@@ -10,9 +10,11 @@ from datetime import datetime, timedelta
 import random
 import json
 import aiohttp # New: Import aiohttp for HTTP requests
+import uuid # Import uuid for SocialMention ID
 
 from Link_Profiler.config.config_loader import config_loader
 import redis.asyncio as redis
+from Link_Profiler.database.database import Database # Import Database for DB operations
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +24,9 @@ class Web3Service:
     This class demonstrates where actual integrations with IPFS gateways,
     blockchain nodes (e.g., Ethereum, Polygon), or Web3 APIs would go.
     """
-    def __init__(self, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
+    def __init__(self, database: Database, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
         self.logger = logging.getLogger(__name__)
+        self.db = database # Store database instance
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
         self.enabled = config_loader.get("web3_crawler.enabled", False)
@@ -33,6 +36,9 @@ class Web3Service:
         self.opensea_api_key = config_loader.get("web3_crawler.opensea_api_key")
 
         self._session: Optional[aiohttp.ClientSession] = None # New: aiohttp client session
+
+        self.allow_live = config_loader.get("web3_service.allow_live", False)
+        self.staleness_threshold = timedelta(hours=config_loader.get("web3_service.staleness_threshold_hours", 24))
 
         if not self.enabled:
             self.logger.info("Web3 Service is disabled by configuration.")
@@ -73,21 +79,12 @@ class Web3Service:
             except Exception as e:
                 self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
 
-    async def crawl_web3_content(self, identifier: str) -> Dict[str, Any]:
+    async def _fetch_live_web3_content(self, identifier: str) -> Dict[str, Any]:
         """
-        Crawls Web3 content based on an identifier (e.g., IPFS hash, blockchain address).
-        This method demonstrates where real API calls or library usage would go.
+        Crawls Web3 content based on an identifier (e.g., IPFS hash, blockchain address) directly from APIs.
+        This method is intended for internal use by the service when a live fetch is required.
         """
-        if not self.enabled:
-            self.logger.warning("Web3 Service is disabled. Cannot perform crawl.")
-            return {"status": "disabled", "extracted_data": {}, "links_found_web3": []}
-
-        cache_key = f"web3_crawl:{identifier}"
-        cached_result = await self._get_cached_response(cache_key)
-        if cached_result:
-            return cached_result
-
-        self.logger.info(f"Attempting Web3 content crawl for identifier: '{identifier}'")
+        self.logger.info(f"Fetching LIVE Web3 content for identifier: '{identifier}'")
         
         extracted_data = {}
         links_found_web3 = []
@@ -190,12 +187,43 @@ class Web3Service:
             "status": "completed",
             "identifier": identifier,
             "extracted_data": extracted_data,
-            "links_found_web3": links_found_web3
+            "links_found_web3": links_found_web3,
+            "last_fetched_at": datetime.utcnow() # Set last_fetched_at for live data
         }
         
-        await self._set_cached_response(cache_key, result)
-        self.logger.info(f"Web3 crawl for '{identifier}' completed. Extracted data and {len(links_found_web3)} links.")
         return result
+
+    async def crawl_web3_content(self, identifier: str, source: str = "cache") -> Dict[str, Any]:
+        """
+        Crawls Web3 content based on an identifier (e.g., IPFS hash, blockchain address).
+        Returns a dictionary of extracted data.
+        Prioritizes cached data, but can fetch live if requested and allowed.
+        """
+        if not self.enabled:
+            self.logger.warning("Web3 Service is disabled. Cannot perform crawl.")
+            return {"status": "disabled", "extracted_data": {}, "links_found_web3": []}
+
+        # For Web3, we'll use Redis cache for "cache" source.
+        # Live calls will bypass this cache and update it.
+        cache_key = f"web3_crawl:{identifier}"
+        if source == "cache":
+            cached_result = await self._get_cached_response(cache_key)
+            if cached_result:
+                return cached_result
+
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live Web3 content crawl not allowed by configuration. Returning cached data if available.")
+            cached_result = await self._get_cached_response(cache_key)
+            return cached_result if cached_result else {"status": "live_disabled", "extracted_data": {}, "links_found_web3": []}
+
+        live_result = await self._fetch_live_web3_content(identifier)
+        if live_result:
+            await self._set_cached_response(cache_key, live_result) # Update cache
+            return live_result
+        else:
+            self.logger.warning(f"Live Web3 fetch failed for {identifier}. Returning cached data if available.")
+            cached_result = await self._get_cached_response(cache_key)
+            return cached_result if cached_result else {"status": "failed", "extracted_data": {}, "links_found_web3": []}
 
     def _simulate_blockchain_data(self, identifier: str) -> Dict[str, Any]:
         """Helper to generate simulated blockchain data."""
@@ -215,21 +243,36 @@ class Web3Service:
             "links_found_web3": [
                 f"https://simulated-explorer.io/address/{identifier}",
                 f"https://simulated-nft-marketplace.io/assets/{identifier}/{random.randint(1, 100)}"
-            ]
+            ],
+            "last_fetched_at": datetime.utcnow()
         }
 
-    async def analyze_nft_project(self, contract_address: str) -> Dict[str, Any]:
+    async def analyze_nft_project(self, contract_address: str, source: str = "cache") -> Dict[str, Any]:
         """
         Analyzes an NFT project based on its contract address using real APIs.
+        Prioritizes cached data, but can fetch live if requested and allowed.
         """
-        self.logger.info(f"Analyzing NFT project for contract: {contract_address}.")
+        cache_key = f"nft_project_analysis:{contract_address}"
+        if source == "cache":
+            cached_result = await self._get_cached_response(cache_key)
+            if cached_result:
+                return cached_result
+
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live NFT project analysis not allowed by configuration. Returning cached data if available.")
+            cached_result = await self._get_cached_response(cache_key)
+            return cached_result if cached_result else {}
+
+        self.logger.info(f"Analyzing LIVE NFT project for contract: {contract_address}.")
         if not self.enabled:
             self.logger.warning("Web3 Service is disabled. Cannot analyze NFT project.")
             return {}
         
         if not self.opensea_api_key:
             self.logger.warning("OpenSea API key not configured. Simulating NFT project analysis.")
-            return self._simulate_nft_project_data(contract_address)
+            simulated_data = self._simulate_nft_project_data(contract_address)
+            await self._set_cached_response(cache_key, simulated_data)
+            return simulated_data
 
         try:
             # Example: OpenSea API (requires API key)
@@ -241,21 +284,28 @@ class Web3Service:
                 data = await response.json()
                 
                 # Example parsing
-                return {
+                result = {
                     "contract_address": contract_address,
                     "project_name": data.get("name"),
                     "total_supply": data.get("total_supply"),
                     "floor_price_eth": data.get("stats", {}).get("floor_price"),
                     "owners_count": data.get("stats", {}).get("num_owners"),
                     "marketplace_links": [data.get("opensea_url")] if data.get("opensea_url") else [],
-                    "community_links": [data.get("external_link")] if data.get("external_link") else []
+                    "community_links": [data.get("external_link")] if data.get("external_link") else [],
+                    "last_fetched_at": datetime.utcnow()
                 }
+                await self._set_cached_response(cache_key, result)
+                return result
         except aiohttp.ClientError as e:
             self.logger.error(f"Network/API error while analyzing NFT project {contract_address}: {e}", exc_info=True)
-            return self._simulate_nft_project_data(contract_address)
+            simulated_data = self._simulate_nft_project_data(contract_address)
+            await self._set_cached_response(cache_key, simulated_data)
+            return simulated_data
         except Exception as e:
             self.logger.error(f"Unexpected error while analyzing NFT project {contract_address}: {e}", exc_info=True)
-            return self._simulate_nft_project_data(contract_address)
+            simulated_data = self._simulate_nft_project_data(contract_address)
+            await self._set_cached_response(cache_key, simulated_data)
+            return simulated_data
 
     def _simulate_nft_project_data(self, contract_address: str) -> Dict[str, Any]:
         """Helper to generate simulated NFT project data."""
@@ -273,21 +323,36 @@ class Web3Service:
             "community_links": [
                 f"https://twitter.com/simulated_nft_{random.randint(1,10)}",
                 f"https://discord.gg/simulated_nft_{random.randint(1,10)}"
-            ]
+            ],
+            "last_fetched_at": datetime.utcnow()
         }
 
-    async def analyze_defi_protocol(self, protocol_address: str) -> Dict[str, Any]:
+    async def analyze_defi_protocol(self, protocol_address: str, source: str = "cache") -> Dict[str, Any]:
         """
         Analyzes a DeFi protocol based on its contract address using real APIs.
+        Prioritizes cached data, but can fetch live if requested and allowed.
         """
-        self.logger.info(f"Analyzing DeFi protocol for contract: {protocol_address}.")
+        cache_key = f"defi_protocol_analysis:{protocol_address}"
+        if source == "cache":
+            cached_result = await self._get_cached_response(cache_key)
+            if cached_result:
+                return cached_result
+
+        if not self.allow_live and source == "live":
+            self.logger.warning("Live DeFi protocol analysis not allowed by configuration. Returning cached data if available.")
+            cached_result = await self._get_cached_response(cache_key)
+            return cached_result if cached_result else {}
+
+        self.logger.info(f"Analyzing LIVE DeFi protocol for contract: {protocol_address}.")
         if not self.enabled:
             self.logger.warning("Web3 Service is disabled. Cannot analyze DeFi protocol.")
             return {}
         
         if not self.etherscan_api_key:
             self.logger.warning("Etherscan API key not configured. Simulating DeFi protocol analysis.")
-            return self._simulate_defi_protocol_data(protocol_address)
+            simulated_data = self._simulate_defi_protocol_data(protocol_address)
+            await self._set_cached_response(cache_key, simulated_data)
+            return simulated_data
 
         try:
             # Example: Fetching TVL from a DeFi data aggregator API (e.g., DefiLlama, CoinGecko)
@@ -308,21 +373,28 @@ class Web3Service:
                 # In a real scenario, you'd parse the ABI, interact with the contract
                 # using web3.py, or query a dedicated DeFi API for TVL, audits, etc.
                 
-                return {
+                result = {
                     "contract_address": protocol_address,
                     "protocol_name": f"Real DeFi Protocol (ABI Status: {abi_status})",
                     "tvl_usd": round(random.uniform(1000000, 1000000000), 2), # Still simulated TVL
                     "audits": ["CertiK", "PeckShield"] if random.random() > 0.5 else [],
                     "website": f"https://real-defi-protocol-{random.randint(1,50)}.xyz",
                     "token_address": f"0x{random.randint(10**39, 10**40-1)}",
-                    "docs_link": f"https://docs.real-defi-protocol-{random.randint(1,50)}.xyz"
+                    "docs_link": f"https://docs.real-defi-protocol-{random.randint(1,50)}.xyz",
+                    "last_fetched_at": datetime.utcnow()
                 }
+                await self._set_cached_response(cache_key, result)
+                return result
         except aiohttp.ClientError as e:
             self.logger.error(f"Network/API error while analyzing DeFi protocol {protocol_address}: {e}", exc_info=True)
-            return self._simulate_defi_protocol_data(protocol_address)
+            simulated_data = self._simulate_defi_protocol_data(protocol_address)
+            await self._set_cached_response(cache_key, simulated_data)
+            return simulated_data
         except Exception as e:
             self.logger.error(f"Unexpected error while analyzing DeFi protocol {protocol_address}: {e}", exc_info=True)
-            return self._simulate_defi_protocol_data(protocol_address)
+            simulated_data = self._simulate_defi_protocol_data(protocol_address)
+            await self._set_cached_response(cache_key, simulated_data)
+            return simulated_data
 
     def _simulate_defi_protocol_data(self, protocol_address: str) -> Dict[str, Any]:
         """Helper to generate simulated DeFi protocol data."""
@@ -334,5 +406,6 @@ class Web3Service:
             "audits": ["CertiK", "PeckShield"] if random.random() > 0.5 else [],
             "website": f"https://simulated-defi-protocol-{random.randint(1,50)}.xyz",
             "token_address": f"0x{random.randint(10**39, 10**40-1)}",
-            "docs_link": f"https://docs.simulated-defi-protocol-{random.randint(1,50)}.xyz"
+            "docs_link": f"https://docs.simulated-defi-protocol-{random.randint(1,50)}.xyz",
+            "last_fetched_at": datetime.utcnow()
         }

@@ -10,12 +10,15 @@ from datetime import datetime, timedelta
 import random
 import json
 import redis.asyncio as redis
+import uuid # Import uuid for SocialMention ID
 
 from Link_Profiler.crawlers.social_media_crawler import SocialMediaCrawler # Import the social media crawler
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.clients.reddit_client import RedditClient # New: Import RedditClient
 from Link_Profiler.clients.youtube_client import YouTubeClient # New: Import YouTubeClient
 from Link_Profiler.clients.news_api_client import NewsAPIClient # New: Import NewsAPIClient
+from Link_Profiler.database.database import Database # Import Database for DB operations
+from Link_Profiler.core.models import SocialMention # Import SocialMention model
 
 logger = logging.getLogger(__name__)
 
@@ -24,17 +27,18 @@ class SocialMediaService:
     Service for interacting with social media platforms.
     This service orchestrates calls to various social media API clients.
     """
-    def __init__(self, social_media_crawler: Optional[SocialMediaCrawler] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600,
+    def __init__(self, database: Database, social_media_crawler: Optional[SocialMediaCrawler] = None,
                  reddit_client: Optional[RedditClient] = None, youtube_client: Optional[YouTubeClient] = None, news_api_client: Optional[NewsAPIClient] = None): # New: Accept clients
         self.logger = logging.getLogger(__name__)
+        self.db = database # Store database instance
         self.social_media_crawler = social_media_crawler
-        self.redis_client = redis_client
-        self.cache_ttl = cache_ttl
-        self.enabled = config_loader.get("social_media_crawler.enabled", False)
-
         self.reddit_client = reddit_client # New
         self.youtube_client = youtube_client # New
         self.news_api_client = news_api_client # New
+
+        self.enabled = config_loader.get("social_media_crawler.enabled", False)
+        self.allow_live = config_loader.get("social_media_service.allow_live", False)
+        self.staleness_threshold = timedelta(hours=config_loader.get("social_media_service.staleness_threshold_hours", 24))
 
         if not self.enabled:
             self.logger.info("Social Media Service is disabled by configuration.")
@@ -66,49 +70,20 @@ class SocialMediaService:
         if self.news_api_client:
             await self.news_api_client.__aexit__(exc_type, exc_val, exc_tb)
 
-    async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
-        if self.redis_client:
-            try:
-                cached_data = await self.redis_client.get(cache_key)
-                if cached_data:
-                    self.logger.debug(f"Cache hit for {cache_key}")
-                    return json.loads(cached_data)
-            except Exception as e:
-                self.logger.error(f"Error retrieving from cache for {cache_key}: {e}", exc_info=True)
-        return None
-
-    async def _set_cached_response(self, cache_key: str, data: Any):
-        if self.redis_client:
-            try:
-                await self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(data))
-                self.logger.debug(f"Cached {cache_key} with TTL {self.cache_ttl}")
-            except Exception as e:
-                self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
-
-    async def crawl_social_media(self, query: str, platforms: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def _fetch_live_social_media_data(self, query: str, platforms: Optional[List[str]] = None) -> List[SocialMention]:
         """
-        Crawls social media platforms for a given query (e.g., hashtag, username).
-        Returns a dictionary of extracted data.
+        Crawls social media platforms for a given query (e.g., hashtag, username) directly from APIs.
+        This method is intended for internal use by the service when a live fetch is required.
         """
-        if not self.enabled:
-            self.logger.warning("Social Media Service is disabled. Cannot perform crawl.")
-            return {"status": "disabled", "posts_found": 0, "extracted_data": []}
+        self.logger.info(f"Fetching LIVE social media data for query: '{query}' on platforms: {platforms or 'all'}")
 
-        cache_key = f"social_media_crawl:{query}:{'_'.join(sorted(platforms)) if platforms else 'all'}"
-        cached_result = await self._get_cached_response(cache_key)
-        if cached_result:
-            return cached_result
-
-        self.logger.info(f"Starting social media crawl for query: '{query}' on platforms: {platforms or 'all'}")
-
-        extracted_data = []
-        posts_found = 0
+        extracted_data: List[SocialMention] = []
         
         # Determine target platforms from config or provided list
         target_platforms = platforms if platforms else config_loader.get("social_media_crawler.platforms", [])
         if not target_platforms:
-            self.logger.warning("No social media platforms configured or provided for crawling.")
-            return {"status": "no_platforms_configured", "posts_found": 0, "extracted_data": []}
+            self.logger.warning("No social media platforms configured or provided for LIVE crawling.")
+            return []
 
         tasks = []
         for platform in target_platforms:
@@ -121,39 +96,87 @@ class SocialMediaService:
             elif self.social_media_crawler: # Fallback to generic crawler if specific API not enabled
                 tasks.append(self.social_media_crawler.scrape_platform(platform, query))
             else:
-                self.logger.warning(f"No client or crawler available for platform '{platform}'. Skipping.")
+                self.logger.warning(f"No client or crawler available for platform '{platform}'. Skipping LIVE fetch.")
         
         # Execute all tasks concurrently
         results_from_tasks = await asyncio.gather(*tasks, return_exceptions=True)
 
+        now = datetime.utcnow()
         for result in results_from_tasks:
             if isinstance(result, Exception):
-                self.logger.error(f"Error during social media data fetch: {result}", exc_info=True)
+                self.logger.error(f"Error during LIVE social media data fetch: {result}", exc_info=True)
                 continue
             if result:
-                extracted_data.extend(result)
-                posts_found += len(result)
+                for item in result:
+                    # Convert raw dict to SocialMention dataclass
+                    mention = SocialMention(
+                        id=str(uuid.uuid4()), # Generate ID if not present
+                        query=query,
+                        platform=item.get('platform', 'unknown'),
+                        mention_url=item.get('url', ''),
+                        mention_text=item.get('text', item.get('title', '')),
+                        author=item.get('author'),
+                        published_date=datetime.fromisoformat(item['published_at']) if item.get('published_at') else now,
+                        sentiment=item.get('sentiment'),
+                        engagement_score=item.get('engagement_score', item.get('score')),
+                        raw_data=item.get('raw_data', item), # Use raw_data if present, else the item itself
+                        last_fetched_at=now # Set last_fetched_at for live data
+                    )
+                    extracted_data.append(mention)
         
-        result = {
-            "status": "completed",
-            "query": query,
-            "platforms_crawled": target_platforms,
-            "posts_found": posts_found,
-            "extracted_data": extracted_data
-        }
-        
-        await self._set_cached_response(cache_key, result)
-        self.logger.info(f"Social media crawl for '{query}' completed. Found {posts_found} posts.")
-        return result
+        self.logger.info(f"LIVE social media crawl for '{query}' completed. Found {len(extracted_data)} posts.")
+        return extracted_data
 
-    async def get_brand_mentions(self, brand_name: str, platforms: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def crawl_social_media(self, query: str, platforms: Optional[List[str]] = None, source: str = "cache") -> List[SocialMention]:
+        """
+        Crawls social media platforms for a given query (e.g., hashtag, username).
+        Returns a list of SocialMention objects.
+        Prioritizes cached data, but can fetch live if requested and allowed.
+        """
+        if not self.enabled:
+            self.logger.warning("Social Media Service is disabled. Cannot perform crawl.")
+            return []
+
+        cached_mentions = self.db.get_latest_social_mentions_for_query(query)
+        
+        # Determine the latest fetch time from cached mentions
+        latest_fetched_at = None
+        if cached_mentions:
+            latest_fetched_at = max((sm.last_fetched_at for sm in cached_mentions if sm.last_fetched_at), default=None)
+        
+        now = datetime.utcnow()
+
+        if source == "live" and self.allow_live:
+            if not latest_fetched_at or (now - latest_fetched_at) > self.staleness_threshold:
+                self.logger.info(f"Live fetch requested or cache stale for {query}. Fetching live social media data.")
+                live_mentions = await self._fetch_live_social_media_data(query, platforms)
+                if live_mentions:
+                    self.db.add_social_mentions(live_mentions) # Save/update the fresh data
+                    return live_mentions
+                else:
+                    self.logger.warning(f"Live fetch failed for {query}. Returning cached data if available.")
+                    return cached_mentions # Fallback to cache
+            else:
+                self.logger.info(f"Live fetch requested for {query}, but cache is fresh. Fetching live anyway.")
+                live_mentions = await self._fetch_live_social_media_data(query, platforms)
+                if live_mentions:
+                    self.db.add_social_mentions(live_mentions)
+                    return live_mentions
+                else:
+                    self.logger.warning(f"Live fetch failed for {query}. Returning cached data.")
+                    return cached_mentions # Fallback to cache
+        else:
+            self.logger.info(f"Returning cached social media data for {query}.")
+            return cached_mentions
+
+    async def get_brand_mentions(self, brand_name: str, platforms: Optional[List[str]] = None, source: str = "cache") -> List[SocialMention]:
         """
         Retrieves mentions of a specific brand across social media platforms.
         This would typically leverage the `crawl_social_media` method with specific queries.
         """
         self.logger.info(f"Getting brand mentions for '{brand_name}' on platforms: {platforms or 'all'}.")
         query = f"#{brand_name} OR \"{brand_name}\"" # Example query
-        return await self.crawl_social_media(query, platforms)
+        return await self.crawl_social_media(query, platforms, source=source)
 
     async def get_b2b_link_opportunities(self, industry_keywords: List[str]) -> List[Dict[str, Any]]:
         """
