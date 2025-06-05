@@ -6,7 +6,7 @@ File: Link_Profiler/crawlers/social_media_crawler.py
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta # Import timedelta
+from datetime import datetime, timedelta  # Import timedelta
 import aiohttp
 import random
 
@@ -44,6 +44,12 @@ class SocialMediaCrawler:
         self.reddit_client_secret = config_loader.get("social_media_crawler.reddit_api.client_secret")
         self.reddit_user_agent = config_loader.get("social_media_crawler.reddit_api.user_agent", "LinkProfilerBot/1.0")
 
+        # Tokens cached after retrieval
+        self._facebook_access_token: Optional[str] = None
+        self._facebook_token_expiry: Optional[datetime] = None
+        self._linkedin_access_token: Optional[str] = None
+        self._linkedin_token_expiry: Optional[datetime] = None
+
 
         if not self.enabled:
             self.logger.info("SocialMediaCrawler is disabled by configuration.")
@@ -60,6 +66,131 @@ class SocialMediaCrawler:
         if self.enabled:
             self.logger.info("Exiting SocialMediaCrawler context. Closing aiohttp session.")
             await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
+
+    async def _get_facebook_access_token(self) -> Optional[str]:
+        """Retrieve and cache a Facebook Graph API app access token."""
+        if self._facebook_access_token and self._facebook_token_expiry and datetime.utcnow() < self._facebook_token_expiry:
+            return self._facebook_access_token
+
+        endpoint = "https://graph.facebook.com/oauth/access_token"
+        params = {
+            "client_id": self.facebook_app_id,
+            "client_secret": self.facebook_app_secret,
+            "grant_type": "client_credentials",
+        }
+
+        async with self.session_manager.get(endpoint, params=params, timeout=10) as response:
+            response.raise_for_status()
+            data = await response.json()
+            token = data.get("access_token")
+            if not token:
+                return None
+            expires_in = int(data.get("expires_in", 3600))
+            self._facebook_access_token = token
+            self._facebook_token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+            return token
+
+    async def _get_linkedin_access_token(self) -> Optional[str]:
+        """Retrieve and cache a LinkedIn API access token."""
+        if self._linkedin_access_token and self._linkedin_token_expiry and datetime.utcnow() < self._linkedin_token_expiry:
+            return self._linkedin_access_token
+
+        endpoint = "https://www.linkedin.com/oauth/v2/accessToken"
+        data = {
+            "grant_type": "client_credentials",
+            "client_id": self.linkedin_client_id,
+            "client_secret": self.linkedin_client_secret,
+        }
+
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        async with self.session_manager.post(endpoint, data=data, headers=headers, timeout=10) as response:
+            response.raise_for_status()
+            payload = await response.json()
+            token = payload.get("access_token")
+            if not token:
+                return None
+            expires_in = int(payload.get("expires_in", 3600))
+            self._linkedin_access_token = token
+            self._linkedin_token_expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+            return token
+
+    async def _fetch_twitter_posts(self, query: str, limit: int) -> List[Dict[str, Any]]:
+        """Fetch recent tweets matching a query using the Twitter API."""
+        endpoint = "https://api.twitter.com/2/tweets/search/recent"
+        headers = {"Authorization": f"Bearer {self.twitter_bearer_token}"}
+        params = {
+            "query": query,
+            "max_results": limit,
+            "tweet.fields": "created_at,author_id,public_metrics",
+        }
+        results: List[Dict[str, Any]] = []
+        async with self.session_manager.get(endpoint, headers=headers, params=params, timeout=10) as response:
+            response.raise_for_status()
+            data = await response.json()
+            for tweet in data.get("data", []):
+                metrics = tweet.get("public_metrics", {})
+                results.append({
+                    "platform": "twitter",
+                    "post_id": tweet.get("id"),
+                    "text": tweet.get("text"),
+                    "author_id": tweet.get("author_id"),
+                    "likes": metrics.get("like_count"),
+                    "retweets": metrics.get("retweet_count"),
+                    "timestamp": tweet.get("created_at"),
+                    "url": f"https://twitter.com/i/web/status/{tweet.get('id')}",
+                })
+        return results
+
+    async def _fetch_facebook_posts(self, query: str, limit: int) -> List[Dict[str, Any]]:
+        """Search Facebook pages or posts using the Graph API."""
+        token = await self._get_facebook_access_token()
+        if not token:
+            return []
+
+        endpoint = "https://graph.facebook.com/v18.0/search"
+        params = {"q": query, "type": "page", "limit": limit, "access_token": token}
+        results: List[Dict[str, Any]] = []
+        async with self.session_manager.get(endpoint, params=params, timeout=10) as response:
+            response.raise_for_status()
+            data = await response.json()
+            for page in data.get("data", []):
+                results.append({
+                    "platform": "facebook",
+                    "post_id": page.get("id"),
+                    "text": page.get("name"),
+                    "author_id": page.get("id"),
+                    "likes": None,
+                    "retweets": None,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "url": f"https://facebook.com/{page.get('id')}",
+                })
+        return results
+
+    async def _fetch_linkedin_posts(self, query: str, limit: int) -> List[Dict[str, Any]]:
+        """Search LinkedIn posts or shares."""
+        token = await self._get_linkedin_access_token()
+        if not token:
+            return []
+
+        endpoint = "https://api.linkedin.com/v2/search"
+        params = {"q": "blended", "keywords": query, "count": limit}
+        headers = {"Authorization": f"Bearer {token}"}
+        results: List[Dict[str, Any]] = []
+        async with self.session_manager.get(endpoint, headers=headers, params=params, timeout=10) as response:
+            response.raise_for_status()
+            data = await response.json()
+            for element in data.get("elements", []):
+                results.append({
+                    "platform": "linkedin",
+                    "post_id": element.get("targetUrn"),
+                    "text": element.get("title", {}).get("text"),
+                    "author_id": None,
+                    "likes": None,
+                    "retweets": None,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "url": element.get("navigationUrl"),
+                })
+        return results
 
     async def scrape_platform(self, platform: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
@@ -81,62 +212,22 @@ class SocialMediaCrawler:
                 if not self.twitter_bearer_token:
                     self.logger.warning("Twitter/X Bearer Token not configured. Simulating Twitter/X data.")
                     return self._simulate_posts(platform, query, limit)
-                
-                # Example: Twitter API v2 search endpoint
-                # Requires 'tweepy' or direct aiohttp calls
-                # endpoint = "https://api.twitter.com/2/tweets/search/recent"
-                # headers = {"Authorization": f"Bearer {self.twitter_bearer_token}"}
-                # params = {"query": query, "max_results": limit, "tweet.fields": "created_at,author_id,public_metrics"}
-                # async with self._session.get(endpoint, headers=headers, params=params, timeout=10) as response:
-                #     response.raise_for_status()
-                #     data = await response.json()
-                #     for tweet in data.get("data", []):
-                #         results.append({
-                #             "platform": "twitter",
-                #             "post_id": tweet.get("id"),
-                #             "text": tweet.get("text"),
-                #             "author_id": tweet.get("author_id"),
-                #             "likes": tweet.get("public_metrics", {}).get("like_count"),
-                #             "retweets": tweet.get("public_metrics", {}).get("retweet_count"),
-                #             "timestamp": tweet.get("created_at"),
-                #             "url": f"https://twitter.com/{tweet.get('author_id')}/status/{tweet.get('id')}" # Simplified URL
-                #         })
-                self.logger.info(f"Real Twitter/X API integration is a placeholder. Simulating data for '{query}'.")
-                results = self._simulate_posts(platform, query, limit)
+
+                results = await self._fetch_twitter_posts(query, limit)
 
             elif platform == "facebook":
                 if not self.facebook_app_id or not self.facebook_app_secret:
                     self.logger.warning("Facebook App ID/Secret not configured. Simulating Facebook data.")
                     return self._simulate_posts(platform, query, limit)
-                
-                # Example: Facebook Graph API search (requires user access token or app access token)
-                # endpoint = f"https://graph.facebook.com/v18.0/search"
-                # params = {"q": query, "type": "post", "limit": limit, "access_token": "YOUR_ACCESS_TOKEN"}
-                # async with self._session.get(endpoint, params=params, timeout=10) as response:
-                #     response.raise_for_status()
-                #     data = await response.json()
-                #     for post in data.get("data", []):
-                #         results.append({
-                #             "platform": "facebook",
-                #             "post_id": post.get("id"),
-                #             "text": post.get("message"),
-                #             "author_id": post.get("from", {}).get("id"),
-                #             "likes": post.get("likes", {}).get("count"), # Requires specific fields/permissions
-                #             "timestamp": post.get("created_time"),
-                #             "url": post.get("permalink_url") # Requires specific fields/permissions
-                #         })
-                self.logger.info(f"Real Facebook API integration is a placeholder. Simulating data for '{query}'.")
-                results = self._simulate_posts(platform, query, limit)
+
+                results = await self._fetch_facebook_posts(query, limit)
 
             elif platform == "linkedin":
                 if not self.linkedin_client_id or not self.linkedin_client_secret:
                     self.logger.warning("LinkedIn Client ID/Secret not configured. Simulating LinkedIn data.")
                     return self._simulate_posts(platform, query, limit)
-                
-                # LinkedIn API is complex (OAuth 2.0, specific permissions for content search)
-                # This would typically involve an SDK or a multi-step OAuth flow.
-                self.logger.info(f"Real LinkedIn API integration is a placeholder. Simulating data for '{query}'.")
-                results = self._simulate_posts(platform, query, limit)
+
+                results = await self._fetch_linkedin_posts(query, limit)
 
             elif platform == "reddit":
                 # Reddit API is handled by RedditClient, not directly here.
@@ -190,24 +281,82 @@ class SocialMediaCrawler:
         self.logger.info(f"Attempting to fetch profile for '{username}' on {platform}.")
         
         try:
-            # This would involve specific API calls for each platform
-            # e.g., Twitter: https://api.twitter.com/2/users/by/username/:username
-            # Facebook: https://graph.facebook.com/v18.0/:user_id
-            # LinkedIn: /v2/people
-            # Reddit: /user/:username/about
-            
-            # For now, simulate with dummy data.
-            await asyncio.sleep(random.uniform(0.2, 1.0))
+            if platform == "twitter":
+                if not self.twitter_bearer_token:
+                    self.logger.warning("Twitter/X Bearer Token not configured.")
+                    return None
 
-            return {
-                "platform": platform,
-                "username": username,
-                "followers": random.randint(100, 100000),
-                "following": random.randint(50, 5000),
-                "posts_count": random.randint(10, 1000),
-                "bio": f"Simulated bio for {username} on {platform}. Focuses on {random.choice(['tech', 'marketing', 'finance'])}.",
-                "profile_url": f"https://{platform}.com/{username}"
-            }
+                endpoint = f"https://api.twitter.com/2/users/by/username/{username}"
+                headers = {"Authorization": f"Bearer {self.twitter_bearer_token}"}
+                params = {"user.fields": "public_metrics,description"}
+                async with self.session_manager.get(endpoint, headers=headers, params=params, timeout=10) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    user = data.get("data")
+                    if not user:
+                        return None
+                    metrics = user.get("public_metrics", {})
+                    return {
+                        "platform": "twitter",
+                        "username": username,
+                        "followers": metrics.get("followers_count"),
+                        "following": metrics.get("following_count"),
+                        "posts_count": metrics.get("tweet_count"),
+                        "bio": user.get("description"),
+                        "profile_url": f"https://twitter.com/{username}"
+                    }
+
+            elif platform == "facebook":
+                if not self.facebook_app_id or not self.facebook_app_secret:
+                    self.logger.warning("Facebook credentials not configured.")
+                    return None
+
+                token = await self._get_facebook_access_token()
+                if not token:
+                    return None
+
+                endpoint = f"https://graph.facebook.com/v18.0/{username}"
+                params = {"access_token": token, "fields": "name,followers_count,link"}
+                async with self.session_manager.get(endpoint, params=params, timeout=10) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    return {
+                        "platform": "facebook",
+                        "username": data.get("name", username),
+                        "followers": data.get("followers_count"),
+                        "following": None,
+                        "posts_count": None,
+                        "bio": None,
+                        "profile_url": data.get("link") or f"https://facebook.com/{username}"
+                    }
+
+            elif platform == "linkedin":
+                if not self.linkedin_client_id or not self.linkedin_client_secret:
+                    self.logger.warning("LinkedIn credentials not configured.")
+                    return None
+
+                token = await self._get_linkedin_access_token()
+                if not token:
+                    return None
+
+                endpoint = f"https://api.linkedin.com/v2/people/(vanityName:{username})"
+                headers = {"Authorization": f"Bearer {token}"}
+                async with self.session_manager.get(endpoint, headers=headers, timeout=10) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    return {
+                        "platform": "linkedin",
+                        "username": username,
+                        "followers": data.get("followersCount"),
+                        "following": None,
+                        "posts_count": None,
+                        "bio": data.get("headline"),
+                        "profile_url": f"https://www.linkedin.com/in/{username}"
+                    }
+
+            else:
+                self.logger.warning(f"Unsupported platform for profile fetch: {platform}")
+                return None
         except aiohttp.ClientError as e:
             self.logger.error(f"Network/API error while fetching profile for {username} on {platform}: {e}", exc_info=True)
             return None
