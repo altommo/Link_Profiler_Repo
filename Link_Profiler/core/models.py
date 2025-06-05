@@ -36,6 +36,8 @@ class LinkType(str, enum.Enum):
     INTERNAL = "internal"
     EXTERNAL = "external"
     BROKEN = "broken"
+    CANONICAL = "canonical" # Added
+    REDIRECT = "redirect" # Added
 
 class ContentType(str, enum.Enum):
     HTML = "html"
@@ -211,6 +213,11 @@ class Backlink:
     # SEO metrics of the source page/domain at the time of discovery
     source_page_authority: Optional[int] = None
     source_domain_authority: Optional[int] = None
+    rel_attributes: List[str] = field(default_factory=list) # Added rel_attributes
+    context_text: Optional[str] = None # Added context_text
+    spam_level: Optional[SpamLevel] = None # Added spam_level
+    http_status: Optional[int] = None # Added http_status
+    crawl_timestamp: Optional[datetime] = None # Added crawl_timestamp
 
     def __post_init__(self):
         # Automatically set source_domain and target_domain
@@ -230,6 +237,10 @@ class Backlink:
             data['first_seen'] = datetime.fromisoformat(data['first_seen'])
         if 'last_seen' in data and isinstance(data['last_seen'], str):
             data['last_seen'] = datetime.fromisoformat(data['last_seen'])
+        if 'spam_level' in data and isinstance(data['spam_level'], str):
+            data['spam_level'] = SpamLevel(data['spam_level'])
+        if 'crawl_timestamp' in data and isinstance(data['crawl_timestamp'], str):
+            data['crawl_timestamp'] = datetime.fromisoformat(data['crawl_timestamp'])
         return cls(**data)
 
 @dataclass
@@ -245,9 +256,13 @@ class CrawlResult:
     error_message: Optional[str] = None
     timestamp: datetime = field(default_factory=datetime.now)
     metadata: Dict[str, Any] = field(default_factory=dict) # For any extra data
+    seo_metrics: Optional[SEOMetrics] = None # Added seo_metrics
 
     def to_dict(self) -> Dict[str, Any]:
-        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+        data = {k: serialize_model(v) for k, v in self.__dict__.items()}
+        if isinstance(data.get('seo_metrics'), SEOMetrics):
+            data['seo_metrics'] = data['seo_metrics'].to_dict()
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'CrawlResult':
@@ -257,6 +272,8 @@ class CrawlResult:
             data['links_found'] = [Backlink.from_dict(b) for b in data['links_found']]
         if 'timestamp' in data and isinstance(data['timestamp'], str):
             data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        if 'seo_metrics' in data and isinstance(data['seo_metrics'], dict):
+            data['seo_metrics'] = SEOMetrics.from_dict(data['seo_metrics'])
         return cls(**data)
 
 @dataclass
@@ -475,6 +492,7 @@ class CompetitiveKeywordAnalysisResult:
 class AlertRule:
     """Defines a rule for triggering alerts based on job or metric conditions."""
     id: str
+
     name: str
     description: Optional[str] = None
     condition: str # e.g., "job.status == 'failed'", "domain.authority_score < 20"

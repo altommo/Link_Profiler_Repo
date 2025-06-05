@@ -3,9 +3,8 @@ Link Extractor - Extracts various types of links from HTML content.
 File: Link_Profiler/crawlers/link_extractor.py
 """
 
-import asyncio
 import logging
-from typing import List, Optional # Added Optional import
+from typing import List, Optional
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, Tag # Import Tag
 import uuid # Import uuid
@@ -18,6 +17,9 @@ class LinkExtractor:
     """
     Extracts various types of links (href, src, etc.) from HTML content.
     """
+    def __init__(self):
+        self.logger = logging.getLogger(__name__ + ".LinkExtractor")
+
     async def extract_links(self, base_url: str, html_content: str) -> List[Backlink]:
         """
         Extracts all relevant links from the given HTML content.
@@ -104,7 +106,7 @@ class LinkExtractor:
         if 'redirect' in rel_attributes: # Not a standard rel, but for internal tracking
             return LinkType.REDIRECT
         
-        return LinkType.FOLLOW # Default to follow if no specific rel attribute is found
+        return LinkType.DOFOLLOW # Default to dofollow if no specific rel attribute is found
 
     def _get_context_text(self, tag: Tag, max_length: int = 100) -> str:
         """Extracts surrounding text for context."""
