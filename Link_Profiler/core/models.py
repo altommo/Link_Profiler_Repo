@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional, Set, Union
 from pydantic import BaseModel, Field, validator
 from urllib.parse import urlparse # Import urlparse
 import json
+from collections import defaultdict # Added missing import
 
 # Helper function for serialization
 def serialize_model(obj: Any) -> Any:
