@@ -269,11 +269,44 @@ class SmartCrawlQueue:
     
     async def bulk_enqueue(self, urls: List[str], priority: Priority = Priority.BULK, 
                           job_id: str = None) -> int:
-        """Efficiently enqueue many URLs"""
+        """Efficiently enqueue many URLs using Redis pipelines."""
         enqueued_count = 0
+        pipe = self.redis.pipeline() # Create a pipeline
+        
         for url in urls:
-            if await self.enqueue_url(url, priority, job_id=job_id):
-                enqueued_count += 1
+            if url in self.processed_urls:
+                logger.debug(f"URL already processed: {url}")
+                continue
+            
+            domain = urlparse(url).netloc
+            if not domain:
+                logger.warning(f"Invalid URL: {url}")
+                continue
+            
+            if domain not in self.domain_buckets:
+                self.domain_buckets[domain] = DomainBucket(domain)
+            
+            next_crawl_time = self._calculate_next_crawl_time(domain)
+            
+            task = CrawlTask(
+                url=url,
+                priority=priority,
+                scheduled_time=next_crawl_time,
+                metadata={}, # No metadata for bulk enqueue for simplicity
+                job_id=job_id
+            )
+            
+            self.domain_buckets[domain].add_task(task)
+            
+            # Add LPUSH command to the pipeline
+            key = f"crawl_queue:{task.job_id or 'default'}:{urlparse(task.url).netloc}"
+            pipe.lpush(key, json.dumps(task.to_dict()))
+            
+            self.stats['total_enqueued'] += 1
+            self.stats['queue_size'] += 1
+            enqueued_count += 1
+        
+        await pipe.execute() # Execute all commands in the pipeline
         
         logger.info(f"Bulk enqueued {enqueued_count}/{len(urls)} URLs")
         return enqueued_count

@@ -42,8 +42,8 @@ class HealthMonitor:
         self.thresholds = {
             'success_rate_warning': 0.8,
             'success_rate_critical': 0.5,
-            'response_time_warning': 5.0,
-            'response_time_critical': 15.0,
+            'response_time_warning': 5.0, # Added threshold for response time
+            'response_time_critical': 15.0, # Added threshold for response time
             'efficiency_warning': 50.0,
             'efficiency_critical': 20.0,
             'queue_size_warning': 10000,
