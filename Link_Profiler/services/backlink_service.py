@@ -475,7 +475,7 @@ class BacklinkService:
     """
     Service for retrieving backlink information, either from a crawler or an API.
     """
-    def __init__(self, api_client: Optional[BaseBacklinkAPIClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None, session_manager: SessionManager, resilience_manager: DistributedResilienceManager): # Removed Optional and fallback
+    def __init__(self, session_manager: SessionManager, resilience_manager: DistributedResilienceManager, api_client: Optional[BaseBacklinkAPIClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None): # Reordered arguments
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
