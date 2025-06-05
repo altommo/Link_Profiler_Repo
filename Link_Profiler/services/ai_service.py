@@ -22,6 +22,7 @@ import os
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.core.models import Domain, LinkProfile, ContentGapAnalysisResult, SEOMetrics # New: Import SEOMetrics
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class OpenRouterClient:
     Client for interacting with the OpenRouter API.
     Uses the OpenAI Python client library.
     """
-    def __init__(self, api_key: str, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
+    def __init__(self, api_key: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
         self.api_key = api_key
         self.base_url = "https://openrouter.ai/api/v1"
         self.session_manager = session_manager # Use the injected session manager
@@ -39,6 +40,13 @@ class OpenRouterClient:
             from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to OpenRouterClient. Falling back to local SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to OpenRouterClient. Falling back to global instance.")
+
 
         # OpenAI client can be initialized with a custom httpx client
         # We need to create a custom httpx client for OpenAI to use our session_manager's aiohttp session
@@ -79,12 +87,16 @@ class OpenRouterClient:
 
         try:
             self.logger.info(f"Calling OpenRouter model: {model} with prompt (first 100 chars): {prompt[:100]}...")
-            response = await self.http_client.chat.completions.create( # Use self.http_client
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"} # Request JSON response if possible
+            # Use resilience manager for the actual API call
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.http_client.chat.completions.create( # Use self.http_client
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"} # Request JSON response if possible
+                ),
+                url=self.base_url # Use base_url for circuit breaker naming
             )
             content = response.choices[0].message.content
             self.logger.info(f"Received response from {model}.")
@@ -105,7 +117,7 @@ class AIService:
     Service for providing various AI-powered functionalities using OpenRouter.
     Includes caching for expensive AI calls.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
         self.logger = logging.getLogger(__name__)
         self.enabled = config_loader.get("ai.enabled", False)
         self.openrouter_api_key = config_loader.get("ai.openrouter_api_key")
@@ -117,13 +129,20 @@ class AIService:
             from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to AIService. Falling back to local SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to AIService. Falling back to global instance.")
+
 
         if self.enabled and not self.openrouter_api_key:
             self.logger.warning("AI integration is enabled but OpenRouter API key is missing. AI features will be disabled.")
             self.enabled = False
 
         if self.enabled:
-            self.openrouter_client = OpenRouterClient(api_key=self.openrouter_api_key, session_manager=self.session_manager)
+            self.openrouter_client = OpenRouterClient(api_key=self.openrouter_api_key, session_manager=self.session_manager, resilience_manager=self.resilience_manager)
             self.redis_client = redis.Redis(
                 connection_pool=redis.ConnectionPool.from_url(config_loader.get("redis.url"))
             )

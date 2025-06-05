@@ -13,6 +13,7 @@ from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
 from Link_Profiler.clients.base_client import BaseAPIClient # Assuming this exists
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
     in the web interface. This client provides search analytics data.
     """
     
-    def __init__(self, session_manager: Optional[SessionManager] = None): # Accept session_manager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # Accept session_manager and resilience_manager
         super().__init__(session_manager) # Call BaseAPIClient's init
         self.logger = logging.getLogger(__name__ + ".GoogleSearchConsoleClient")
         self.service = None
@@ -42,6 +43,12 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
         self.credentials_file_path = config_loader.get("backlink_api.gsc_api.credentials_file", CREDENTIALS_FILE)
         self.token_file_path = config_loader.get("backlink_api.gsc_api.token_file", TOKEN_FILE)
         
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to GoogleSearchConsoleClient. Falling back to global instance.")
+
         if not self.enabled:
             self.logger.info("Google Search Console API is disabled by configuration.")
         elif not os.path.exists(self.credentials_file_path):
@@ -63,8 +70,11 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             if self._creds and self._creds.expired and self._creds.refresh_token:
                 self.logger.info("Refreshing GSC access token.")
                 try:
-                    # Use asyncio.to_thread to run the synchronous refresh
-                    await asyncio.to_thread(self._creds.refresh, Request())
+                    # Use resilience manager for the synchronous refresh
+                    await self.resilience_manager.execute_with_resilience(
+                        lambda: self._creds.refresh(Request()),
+                        url="https://oauth2.googleapis.com/token" # Representative URL for CB
+                    )
                 except Exception as e:
                     self.logger.error(f"Error refreshing GSC token: {e}")
                     self._creds = None # Invalidate credentials if refresh fails
@@ -73,9 +83,12 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
                 # This interactive flow is not suitable for a headless server.
                 # You would typically run this part once on a local machine to get token.json.
                 try:
-                    # Use asyncio.to_thread to run the synchronous OAuth flow
+                    # Use resilience manager for the synchronous OAuth flow
                     flow = InstalledAppFlow.from_client_secrets_file(self.credentials_file_path, SCOPES)
-                    self._creds = await asyncio.to_thread(flow.run_local_server, port=0)
+                    self._creds = await self.resilience_manager.execute_with_resilience(
+                        lambda: flow.run_local_server(port=0),
+                        url="https://accounts.google.com/o/oauth2/auth" # Representative URL for CB
+                    )
                     with open(self.token_file_path, 'w') as token:
                         token.write(self._creds.to_json())
                     self.logger.info(f"GSC token.json generated at {self.token_file_path}. Please restart the application if this was an interactive setup.")
@@ -132,12 +145,13 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
         }
         
         try:
-            # Use asyncio.to_thread to run the synchronous GSC API call
-            response = await asyncio.to_thread(
-                self.service.searchanalytics().query(
+            # Use resilience manager for the synchronous GSC API call
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.service.searchanalytics().query(
                     siteUrl=site_url,
                     body=request_body
-                ).execute
+                ).execute(),
+                url=f"https://www.googleapis.com/webmasters/v3/sites/{site_url}/searchAnalytics/query" # Representative URL for CB
             )
             
             rows = response.get('rows', [])
@@ -155,8 +169,11 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             return []
         
         try:
-            # Use asyncio.to_thread to run the synchronous GSC API call
-            response = await asyncio.to_thread(self.service.sites().list().execute)
+            # Use resilience manager for the synchronous GSC API call
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.service.sites().list().execute(),
+                url="https://www.googleapis.com/webmasters/v3/sites" # Representative URL for CB
+            )
             sites = response.get('siteEntry', [])
             
             self.logger.info(f"Found {len(sites)} sites in GSC account")
@@ -172,8 +189,11 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             return []
         
         try:
-            # Use asyncio.to_thread to run the synchronous GSC API call
-            response = await asyncio.to_thread(self.service.sitemaps().list(siteUrl=site_url).execute)
+            # Use resilience manager for the synchronous GSC API call
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.service.sitemaps().list(siteUrl=site_url).execute(),
+                url=f"https://www.googleapis.com/webmasters/v3/sites/{site_url}/sitemaps" # Representative URL for CB
+            )
             sitemaps = response.get('sitemap', [])
             
             self.logger.info(f"Found {len(sitemaps)} sitemaps for {site_url}")
@@ -203,9 +223,10 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
                 'siteUrl': site_url
             }
             
-            # Use asyncio.to_thread to run the synchronous GSC API call
-            response = await asyncio.to_thread(
-                self.service.urlInspection().index().inspect(body=request_body).execute
+            # Use resilience manager for the synchronous GSC API call
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.service.urlInspection().index().inspect(body=request_body).execute(),
+                url=f"https://www.googleapis.com/webmasters/v3/urlInspection/index:inspect" # Representative URL for CB
             )
             
             self.logger.info(f"URL inspection completed for {inspection_url}")
