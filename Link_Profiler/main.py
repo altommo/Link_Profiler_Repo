@@ -95,6 +95,10 @@ import redis.asyncio as redis
 redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
 redis_client: Optional[redis.Redis] = redis.Redis(connection_pool=redis_pool) # Make redis_client optional
 
+# New: Initialize SessionManager
+from Link_Profiler.utils.session_manager import SessionManager
+session_manager_instance = SessionManager()
+
 # Now import other FastAPI and application modules
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -180,8 +184,8 @@ else:
 
 
 # New: Initialize WHOISClient and DNSClient
-whois_client_instance = WHOISClient()
-dns_client_instance = DNSClient()
+whois_client_instance = WHOISClient(session_manager=session_manager_instance)
+dns_client_instance = DNSClient(session_manager=session_manager_instance)
 
 # Initialize DomainService globally, but manage its lifecycle with lifespan
 # Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > WHOIS-JSON > Simulated
@@ -192,36 +196,37 @@ domain_service_instance = DomainService(
     cache_ttl=API_CACHE_TTL, 
     database=db, 
     whois_client=whois_client_instance, 
-    dns_client=dns_client_instance
+    dns_client=dns_client_instance,
+    session_manager=session_manager_instance # Pass session manager
 )
 
 # New: Initialize GSCClient
-gsc_client_instance = GSCClient()
+gsc_client_instance = GSCClient(session_manager=session_manager_instance)
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
 # Removed 'gsc_client' argument as BacklinkService internally handles GSCBacklinkAPIClient instantiation.
 if config_loader.get("backlink_api.gsc_api.enabled"):
-    backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+    backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
 elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
     openlinkprofiler_base_url = config_loader.get("backlink_api.openlinkprofiler_api.base_url")
     if not openlinkprofiler_base_url:
         logger.warning("OpenLinkProfiler API enabled but base_url not found in config. Falling back to simulated Backlink API.")
-        backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+        backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
     else:
-        backlink_service_instance = BacklinkService(api_client=OpenLinkProfilerAPIClient(base_url=openlinkprofiler_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+        backlink_service_instance = BacklinkService(api_client=OpenLinkProfilerAPIClient(base_url=openlinkprofiler_base_url, session_manager=session_manager_instance), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
 elif config_loader.get("backlink_api.real_api.enabled"):
     real_api_key = config_loader.get("backlink_api.real_api.api_key")
     real_api_base_url = config_loader.get("backlink_api.real_api.base_url")
     if not real_api_key or not real_api_base_url:
         logger.warning("Real Backlink API enabled but API key or base_url not found in config. Falling back to simulated Backlink API.")
-        backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+        backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
     else:
-        backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=real_api_key, base_url=real_api_base_url), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+        backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=real_api_key, base_url=real_api_base_url, session_manager=session_manager_instance), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
 else:
-    backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient(), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db)
+    backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient(session_manager=session_manager_instance), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
 
 # New: Initialize PageSpeedClient
-pagespeed_client_instance = PageSpeedClient()
+pagespeed_client_instance = PageSpeedClient(session_manager=session_manager_instance)
 
 # New: Initialize SERPService and SERPCrawler
 serp_crawler_instance = None
@@ -232,27 +237,29 @@ if config_loader.get("serp_crawler.playwright.enabled"):
         browser_type=config_loader.get("serp_crawler.playwright.browser_type")
     )
 serp_service_instance = SERPService(
-    api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key"), base_url=config_loader.get("serp_api.real_api.base_url")) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(),
+    api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key"), base_url=config_loader.get("serp_api.real_api.base_url"), session_manager=session_manager_instance) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(session_manager=session_manager_instance),
     serp_crawler=serp_crawler_instance,
     pagespeed_client=pagespeed_client_instance, # New: Pass pagespeed_client_instance
     redis_client=redis_client, # Pass redis_client for caching
-    cache_ttl=API_CACHE_TTL # Pass cache_ttl
+    cache_ttl=API_CACHE_TTL, # Pass cache_ttl
+    session_manager=session_manager_instance # Pass session manager
 )
 
 # New: Initialize GoogleTrendsClient
-google_trends_client_instance = GoogleTrendsClient()
+google_trends_client_instance = GoogleTrendsClient(session_manager=session_manager_instance)
 
 # New: Initialize KeywordService and KeywordScraper
 keyword_scraper_instance = None
 if config_loader.get("keyword_scraper.enabled"):
     logger.info("Initialising KeywordScraper.")
-    keyword_scraper_instance = KeywordScraper()
+    keyword_scraper_instance = KeywordScraper(session_manager=session_manager_instance)
 keyword_service_instance = KeywordService(
-    api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key"), base_url=config_loader.get("keyword_api.real_api.base_url")) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(),
+    api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key"), base_url=config_loader.get("keyword_api.real_api.base_url"), session_manager=session_manager_instance) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(session_manager=session_manager_instance),
     keyword_scraper=keyword_scraper_instance,
     google_trends_client=google_trends_client_instance, # New: Pass google_trends_client_instance
     redis_client=redis_client, # Pass redis_client for caching
-    cache_ttl=API_CACHE_TTL # Pass cache_ttl
+    cache_ttl=API_CACHE_TTL, # Pass cache_ttl
+    session_manager=session_manager_instance # Pass session manager
 )
 
 # New: Initialize LinkHealthService
@@ -264,7 +271,7 @@ technical_auditor_instance = TechnicalAuditor(
 )
 
 # New: Initialize AI Service
-ai_service_instance = AIService()
+ai_service_instance = AIService(session_manager=session_manager_instance)
 
 # New: Initialize Alert Service
 alert_service_instance = AlertService(db, connection_manager) # Pass connection_manager here
@@ -276,28 +283,30 @@ report_service_instance = ReportService(db)
 competitive_analysis_service_instance = CompetitiveAnalysisService(db, backlink_service_instance, serp_service_instance)
 
 # New: Initialize RedditClient, YouTubeClient, NewsAPIClient
-reddit_client_instance = RedditClient()
-youtube_client_instance = YouTubeClient()
-news_api_client_instance = NewsAPIClient()
+reddit_client_instance = RedditClient(session_manager=session_manager_instance)
+youtube_client_instance = YouTubeClient(session_manager=session_manager_instance)
+news_api_client_instance = NewsAPIClient(session_manager=session_manager_instance)
 
 # New: Initialize Social Media Service and Crawler
 social_media_crawler_instance = None
 if config_loader.get("social_media_crawler.enabled"):
     logger.info("Initialising SocialMediaCrawler.")
-    social_media_crawler_instance = SocialMediaCrawler()
+    social_media_crawler_instance = SocialMediaCrawler(session_manager=session_manager_instance)
 social_media_service_instance = SocialMediaService(
     social_media_crawler=social_media_crawler_instance,
     redis_client=redis_client,
     cache_ttl=API_CACHE_TTL,
     reddit_client=reddit_client_instance, # New: Pass RedditClient
     youtube_client=youtube_client_instance, # New: Pass YouTubeClient
-    news_api_client=news_api_client_instance # New: Pass NewsAPIClient
+    news_api_client=news_api_client_instance, # New: Pass NewsAPIClient
+    session_manager=session_manager_instance # Pass session manager
 )
 
 # New: Initialize Web3 Service
 web3_service_instance = Web3Service(
     redis_client=redis_client,
-    cache_ttl=API_CACHE_TTL
+    cache_ttl=API_CACHE_TTL,
+    session_manager=session_manager_instance # Pass session manager
 )
 
 # New: Initialize Link Building Service
@@ -366,7 +375,7 @@ main_crawl_config = CrawlConfig(**crawler_config_data)
 smart_crawl_queue = SmartCrawlQueue(redis_client=redis_client)
 
 # Create WebCrawler instance, passing the SmartCrawlQueue
-main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, browser=playwright_browser_instance, resilience_manager=distributed_resilience_manager) # Changed to EnhancedWebCrawler
+main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, browser=playwright_browser_instance, resilience_manager=distributed_resilience_manager, session_manager=session_manager_instance) # Changed to EnhancedWebCrawler
 # --- End New Instantiation ---
 
 
@@ -377,6 +386,7 @@ async def lifespan(app: FastAPI):
     Ensures resources like aiohttp sessions are properly opened and closed.
     """
     context_managers = [
+        session_manager_instance, # New: Add SessionManager to lifespan
         domain_service_instance,
         backlink_service_instance,
         serp_service_instance,

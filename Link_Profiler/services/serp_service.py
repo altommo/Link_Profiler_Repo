@@ -19,6 +19,7 @@ from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the r
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient # New: Import PageSpeedClient
 from Link_Profiler.monitoring.prometheus_metrics import API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL # Import Prometheus metrics
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -43,29 +44,25 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
     A simulated client for SERP APIs.
     Generates dummy SERP data.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".SimulatedSERPAPIClient")
-        self._session: Optional[aiohttp.ClientSession] = None # For simulating network calls
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to SimulatedSERPAPIClient. Falling back to local SessionManager.")
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
         self.logger.debug("Entering SimulatedSERPAPIClient context.")
-        if self._session is None or self._session.closed:
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for client session."""
         self.logger.debug("Exiting SimulatedSERPAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     async def get_serp_results(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
         """
@@ -73,32 +70,15 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
         """
         self.logger.info(f"Simulating API call for SERP results for keyword: '{keyword}' from {search_engine}")
         
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("SimulatedSERPAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-
         try:
             # Simulate an actual HTTP request, even if it's to a dummy URL
-            async with session_to_use.get(f"http://localhost:8080/simulate_serp/{keyword}") as response:
+            async with await self.session_manager.get(f"http://localhost:8080/simulate_serp/{keyword}") as response:
                 # We don't care about the actual response, just that the request was made
                 pass
         except aiohttp.ClientConnectorError:
             pass
         except Exception as e:
             self.logger.warning(f"Unexpected error during simulated SERP fetch: {e}")
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
 
         serp_results = []
         for i in range(num_results):
@@ -133,31 +113,27 @@ class RealSERPAPIClient(BaseSERPAPIClient):
     Requires an API key.
     This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str):
+    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".RealSERPAPIClient")
         self.api_key = api_key
         self.base_url = base_url
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to RealSERPAPIClient. Falling back to local SessionManager.")
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
         self.logger.info("Entering RealSERPAPIClient context.")
-        if self._session is None or self._session.closed:
-            headers = {"Authorization": f"Bearer {self.api_key}"} # Common header for API keys
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for client session."""
         self.logger.info("Exiting RealSERPAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     @api_rate_limited(service="serp_api", api_client_type="real_api", endpoint="search")
     async def get_serp_results(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
@@ -177,24 +153,8 @@ class RealSERPAPIClient(BaseSERPAPIClient):
         }
         self.logger.info(f"Attempting real API call for SERP results: {endpoint}?q={keyword} from {search_engine}...")
 
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("RealSERPAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {"Authorization": f"Bearer {self.api_key}"}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-        else:
-            close_session_after_use = False
-
         try:
-            async with session_to_use.get(endpoint, params=params, timeout=30) as response:
+            async with await self.session_manager.get(endpoint, params=params) as response:
                 response.raise_for_status() # Raise an exception for HTTP errors
                 data = await response.json()
                 
@@ -215,7 +175,7 @@ class RealSERPAPIClient(BaseSERPAPIClient):
                 #         )
                 #     )
                 self.logger.warning("RealSERPAPIClient: Returning simulated data. Replace with actual API response parsing.")
-                return SimulatedSERPAPIClient().get_serp_results(keyword, num_results, search_engine) # Fallback to simulation
+                return SimulatedSERPAPIClient(session_manager=self.session_manager).get_serp_results(keyword, num_results, search_engine) # Fallback to simulation
 
         except aiohttp.ClientError as e:
             self.logger.error(f"Error fetching real SERP results for '{keyword}': {e}. Returning empty list.")
@@ -223,20 +183,23 @@ class RealSERPAPIClient(BaseSERPAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error in real SERP fetch for '{keyword}': {e}. Returning empty list.")
             return []
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
 
 
 class SERPService:
     """
     Service for fetching Search Engine Results Page (SERP) data.
     """
-    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None, pagespeed_client: Optional[PageSpeedClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600): # New: Accept pagespeed_client
+    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None, pagespeed_client: Optional[PageSpeedClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, session_manager: Optional[SessionManager] = None): # New: Accept session_manager
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
         self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
+        self.session_manager = session_manager # Store the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to SERPService. Falling back to local SessionManager.")
         
         # Determine which API client to use based on config_loader priority
         if config_loader.get("serp_api.real_api.enabled"):
@@ -244,13 +207,13 @@ class SERPService:
             real_api_base_url = config_loader.get("serp_api.real_api.base_url")
             if not real_api_key or not real_api_base_url:
                 self.logger.error("Real SERP API enabled but API key or base_url not found in config. Falling back to simulated SERP API.")
-                self.api_client = SimulatedSERPAPIClient()
+                self.api_client = SimulatedSERPAPIClient(session_manager=self.session_manager)
             else:
                 self.logger.info("Using RealSERPAPIClient for SERP lookups.")
-                self.api_client = RealSERPAPIClient(api_key=real_api_key, base_url=real_api_base_url)
+                self.api_client = RealSERPAPIClient(api_key=real_api_key, base_url=real_api_base_url, session_manager=self.session_manager)
         else:
             self.logger.info("Using SimulatedSERPAPIClient for SERP lookups.")
-            self.api_client = SimulatedSERPAPIClient()
+            self.api_client = SimulatedSERPAPIClient(session_manager=self.session_manager)
             
         self.serp_crawler = serp_crawler # Store the SERPCrawler instance
         self.pagespeed_client = pagespeed_client # New: Store PageSpeedClient instance
@@ -282,6 +245,8 @@ class SERPService:
                     API_CACHE_HITS_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
                     self.logger.debug(f"Cache hit for {cache_key}")
                     return json.loads(cached_data)
+                else:
+                    API_CACHE_MISSES_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
             except Exception as e:
                 API_CACHE_ERRORS_TOTAL.labels(service=service_name, endpoint=endpoint_name, error_type=type(e).__name__).inc()
                 self.logger.error(f"Error retrieving from cache for {cache_key}: {e}", exc_info=True)

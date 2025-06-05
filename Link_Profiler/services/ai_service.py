@@ -14,6 +14,7 @@ import random # New: Import random for simulated video analysis
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.core.models import Domain, LinkProfile, ContentGapAnalysisResult, SEOMetrics # New: Import SEOMetrics
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +23,33 @@ class OpenRouterClient:
     Client for interacting with the OpenRouter API.
     Uses the OpenAI Python client library.
     """
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.api_key = api_key
         self.base_url = "https://openrouter.ai/api/v1"
-        self.client = openai.OpenAI(
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to OpenRouterClient. Falling back to local SessionManager.")
+
+        # OpenAI client can be initialized with a custom http_client
+        # We need to create a custom aiohttp client for OpenAI to use our session_manager
+        self.http_client = openai.AsyncClient(
             base_url=self.base_url,
-            api_key=self.api_key
+            api_key=self.api_key,
+            http_client=self.session_manager.session # Pass the aiohttp session directly
         )
         self.logger = logging.getLogger(__name__ + ".OpenRouterClient")
+
+    async def __aenter__(self):
+        """Ensure session manager is entered."""
+        await self.session_manager.__aenter__()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Ensure session manager is exited."""
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     async def complete(self, model: str, prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> Optional[str]:
         """
@@ -41,7 +61,7 @@ class OpenRouterClient:
 
         try:
             self.logger.info(f"Calling OpenRouter model: {model} with prompt (first 100 chars): {prompt[:100]}...")
-            response = await self.client.chat.completions.create(
+            response = await self.http_client.chat.completions.create( # Use self.http_client
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=temperature,
@@ -61,29 +81,31 @@ class OpenRouterClient:
             self.logger.error(f"Unexpected error during OpenRouter API call: {e}", exc_info=True)
             return None
 
-    async def close(self):
-        """No explicit close method for openai client, but good practice for context."""
-        pass
-
 
 class AIService:
     """
     Service for providing various AI-powered functionalities using OpenRouter.
     Includes caching for expensive AI calls.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__)
         self.enabled = config_loader.get("ai.enabled", False)
         self.openrouter_api_key = config_loader.get("ai.openrouter_api_key")
         self.cache_ttl = config_loader.get("ai.cache_ttl", 3600) # Default 1 hour
         self.models = config_loader.get("ai.models", {})
+        self.session_manager = session_manager # Store the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to AIService. Falling back to local SessionManager.")
 
         if self.enabled and not self.openrouter_api_key:
             self.logger.warning("AI integration is enabled but OpenRouter API key is missing. AI features will be disabled.")
             self.enabled = False
 
         if self.enabled:
-            self.openrouter_client = OpenRouterClient(api_key=self.openrouter_api_key)
+            self.openrouter_client = OpenRouterClient(api_key=self.openrouter_api_key, session_manager=self.session_manager)
             self.redis_client = redis.Redis(
                 connection_pool=redis.ConnectionPool.from_url(config_loader.get("redis.url"))
             )
@@ -94,13 +116,19 @@ class AIService:
             self.redis_client = None
 
     async def __aenter__(self):
-        """No specific async setup needed for this class, client handles it."""
+        """Ensure session manager and OpenRouter client are entered."""
+        await self.session_manager.__aenter__()
+        if self.openrouter_client:
+            await self.openrouter_client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Close Redis connection if active."""
+        """Close Redis connection and ensure session manager and OpenRouter client are exited."""
         if self.redis_client:
             await self.redis_client.close()
+        if self.openrouter_client:
+            await self.openrouter_client.__aexit__(exc_type, exc_val, exc_tb)
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _call_ai_with_cache(self, task_type: str, prompt: str, cache_key: str, temperature: float = 0.7, max_tokens: int = 1000) -> Optional[Dict[str, Any]]:
         """
@@ -430,7 +458,7 @@ class AIService:
             return {}
 
         # For simulation, we'll generate dummy data.
-        # In a real implementation, video_data (bytes) would be sent to an API.
+        # In a real implementation, video_data (bytes) would be sent to a specialized API.
         
         simulated_transcription = f"Simulated transcription for video at {video_url}. This video discusses {random.choice(['SEO strategies', 'digital marketing trends', 'web development', 'link building techniques'])} and provides actionable insights."
         simulated_topics = random.sample(["SEO", "Marketing", "Video Content", "Analytics", "Strategy"], random.randint(1, 3))

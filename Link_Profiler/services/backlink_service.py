@@ -25,6 +25,7 @@ from Link_Profiler.monitoring.prometheus_metrics import ( # Import Prometheus me
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.database.database import Database # Import Database
 from Link_Profiler.clients.google_search_console_client import CREDENTIALS_FILE, TOKEN_FILE, SCOPES # Import GSC specific constants
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -49,29 +50,25 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
     A simulated client for backlink information APIs.
     Generates dummy backlink data.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".SimulatedBacklinkAPIClient")
-        self._session: Optional[aiohttp.ClientSession] = None # For simulating network calls
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to SimulatedBacklinkAPIClient. Falling back to local SessionManager.")
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
         self.logger.debug("Entering SimulatedBacklinkAPIClient context.")
-        if self._session is None or self._session.closed:
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for client session."""
         self.logger.debug("Exiting SimulatedBacklinkAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     async def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
         """
@@ -79,22 +76,8 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
         """
         self.logger.info(f"Simulating API call for backlinks for: {target_url}")
         
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("SimulatedBacklinkAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-
         try:
-            async with session_to_use.get(f"http://localhost:8080/simulate_backlinks/{target_url}") as response:
+            async with await self.session_manager.get(f"http://localhost:8080/simulate_backlinks/{target_url}") as response:
                 # We don't care about the actual response, just that the request was made
                 pass
         except aiohttp.ClientConnectorError:
@@ -102,9 +85,6 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
             pass
         except Exception as e:
             self.logger.warning(f"Unexpected error during simulated backlink fetch: {e}")
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
 
         # Generate some dummy backlinks
         num_backlinks = random.randint(5, 15)
@@ -163,31 +143,27 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
     A client for real backlink information APIs (e.g., Ahrefs, Moz, SEMrush).
     This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str):
+    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".RealBacklinkAPIClient")
         self.api_key = api_key
         self.base_url = base_url
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to RealBacklinkAPIClient. Falling back to local SessionManager.")
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
         self.logger.info("Entering RealBacklinkAPIClient context.")
-        if self._session is None or self._session.closed:
-            headers = {"X-API-Key": self.api_key} # Common header for API keys
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for client session."""
         self.logger.info("Exiting RealBacklinkAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     @api_rate_limited(service="backlink_api", api_client_type="real_api", endpoint="get_backlinks")
     async def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
@@ -199,24 +175,8 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
         params = {"target": target_url, "limit": 100, "apiKey": self.api_key} # Example parameters
         self.logger.info(f"Attempting real API call for backlinks: {endpoint}?target={target_url}...")
 
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("RealBacklinkAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {"X-API-Key": self.api_key}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-        else:
-            close_session_after_use = False
-
         try:
-            async with session_to_use.get(endpoint, params=params, timeout=30) as response:
+            async with await self.session_manager.get(endpoint, params=params) as response:
                 response.raise_for_status() # Raise an exception for HTTP errors
                 data = await response.json()
                 
@@ -267,39 +227,32 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error in real backlink fetch for {target_url}: {e}. Returning empty list.")
             return []
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
 
 class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
     """
     A client for OpenLinkProfiler.org API.
     This API is free with usage limits.
     """
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".OpenLinkProfilerAPIClient")
         self.base_url = base_url
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to OpenLinkProfilerAPIClient. Falling back to local SessionManager.")
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
         self.logger.info("Entering OpenLinkProfilerAPIClient context.")
-        if self._session is None or self._session.closed:
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for client session."""
         self.logger.info("Exiting OpenLinkProfilerAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     @api_rate_limited(service="backlink_api", api_client_type="openlinkprofiler_api", endpoint="get_backlinks")
     async def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
@@ -319,24 +272,8 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
         params = {"url": domain_or_url, "output": "json"}
         self.logger.info(f"Attempting OpenLinkProfiler API call for backlinks: {endpoint}?url={domain_or_url}...")
 
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("OpenLinkProfilerAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-        else:
-            close_session_after_use = False
-
         try:
-            async with session_to_use.get(endpoint, params=params, timeout=30) as response:
+            async with await self.session_manager.get(endpoint, params=params) as response:
                 response.raise_for_status()
                 data = await response.json()
                 
@@ -394,9 +331,6 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error in OpenLinkProfiler backlink fetch for {target_url}: {e}. Returning empty list.")
             return []
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
 
 
 class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
@@ -404,10 +338,16 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
     A client for Google Search Console API.
     Requires OAuth 2.0 authentication setup.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".GSCBacklinkAPIClient")
         self.service = None
         self._creds = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to GSCBacklinkAPIClient. Falling back to local SessionManager.")
 
     async def __aenter__(self):
         """Authenticates and builds the GSC service."""
@@ -528,38 +468,44 @@ class BacklinkService:
     """
     Service for retrieving backlink information, either from a crawler or an API.
     """
-    def __init__(self, api_client: Optional[BaseBacklinkAPIClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None):
+    def __init__(self, api_client: Optional[BaseBacklinkAPIClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
         self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
         self.db = database # New: Store database instance
+        self.session_manager = session_manager # Store the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to BacklinkService. Falling back to local SessionManager.")
         
         # Determine which API client to use based on config_loader priority
         if config_loader.get("backlink_api.gsc_api.enabled"):
             # GSC API client handles its own authentication and potential failures
             self.logger.info("Using GSCBacklinkAPIClient for backlink lookups.")
-            self.api_client = GSCBacklinkAPIClient()
+            self.api_client = GSCBacklinkAPIClient(session_manager=self.session_manager)
         elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
             openlinkprofiler_base_url = config_loader.get("backlink_api.openlinkprofiler_api.base_url")
             if not openlinkprofiler_base_url:
                 self.logger.warning("OpenLinkProfiler API enabled but base_url not found in config. Falling back to simulated Backlink API.")
-                self.api_client = SimulatedBacklinkAPIClient()
+                self.api_client = SimulatedBacklinkAPIClient(session_manager=self.session_manager)
             else:
                 self.logger.info("Using OpenLinkProfilerAPIClient for backlink lookups.")
-                self.api_client = OpenLinkProfilerAPIClient(base_url=openlinkprofiler_base_url)
+                self.api_client = OpenLinkProfilerAPIClient(base_url=openlinkprofiler_base_url, session_manager=self.session_manager)
         elif config_loader.get("backlink_api.real_api.enabled"):
             real_api_key = config_loader.get("backlink_api.real_api.api_key")
             real_api_base_url = config_loader.get("backlink_api.real_api.base_url")
             if not real_api_key or not real_api_base_url:
                 self.logger.warning("Real Backlink API enabled but API key or base_url not found in config. Falling back to simulated Backlink API.")
-                self.api_client = SimulatedBacklinkAPIClient()
+                self.api_client = SimulatedBacklinkAPIClient(session_manager=self.session_manager)
             else:
                 self.logger.info("Using RealBacklinkAPIClient for backlink lookups.")
-                self.api_client = RealBacklinkAPIClient(api_key=real_api_key, base_url=real_api_base_url)
+                self.api_client = RealBacklinkAPIClient(api_key=real_api_key, base_url=real_api_base_url, session_manager=self.session_manager)
         else:
             self.logger.info("No specific Backlink API enabled. Using SimulatedBacklinkAPIClient.")
-            self.api_client = SimulatedBacklinkAPIClient()
+            self.api_client = SimulatedBacklinkAPIClient(session_manager=self.session_manager)
 
     async def __aenter__(self):
         """Async context manager entry for BacklinkService."""

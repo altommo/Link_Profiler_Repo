@@ -30,6 +30,7 @@ from Link_Profiler.services.ai_service import AIService
 # New imports needed
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,8 @@ class EnhancedWebCrawler:
                  crawl_queue: Optional[SmartCrawlQueue] = None,
                  ai_service: Optional[AIService] = None,
                  browser: Optional[Browser] = None,
-                 resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept DistributedResilienceManager
+                 resilience_manager: Optional[DistributedResilienceManager] = None,
+                 session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         
         # Core configuration
         self.config = config
@@ -68,7 +70,13 @@ class EnhancedWebCrawler:
         self.content_validator = ContentValidator()
         
         # Session management
-        self.session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided. Falling back to local SessionManager.")
+
         self.crawled_urls: set = set()
         self.failed_urls: set = set()
         
@@ -82,31 +90,9 @@ class EnhancedWebCrawler:
     
     async def __aenter__(self):
         """Initialize crawler with proper session management"""
-        # Create persistent HTTP session
-        connector = aiohttp.TCPConnector(
-            limit=200,  # Increased from 100
-            limit_per_host=20,  # Increased from 10
-            ttl_dns_cache=300,  # DNS cache TTL
-            use_dns_cache=True,
-            keepalive_timeout=30,
-            enable_cleanup_closed=True,
-            # New: Connection health checks
-            verify_ssl=True, # Always verify SSL certificates
-            # For more advanced health checks, a custom connector class might be needed
-            # or periodic checks on existing connections.
-        )
-        
-        timeout = aiohttp.ClientTimeout(
-            total=self.config.timeout_seconds,
-            connect=10,
-            sock_read=30
-        )
-        
-        self.session = aiohttp.ClientSession(
-            connector=connector,
-            timeout=timeout,
-            headers=self._get_default_headers()
-        )
+        # The session manager handles its own __aenter__ and __aexit__
+        # We just need to ensure it's entered before use.
+        await self.session_manager.__aenter__()
         
         # Initialize parsers
         await self.robots_parser.__aenter__()
@@ -122,8 +108,8 @@ class EnhancedWebCrawler:
         """Cleanup resources"""
         self.health_monitor.stop_monitoring()
         
-        if self.session:
-            await self.session.close()
+        # The session manager handles its own __aexit__
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
             
         await self.robots_parser.__aexit__(exc_type, exc_val, exc_tb)
         
@@ -133,6 +119,8 @@ class EnhancedWebCrawler:
     
     def _get_default_headers(self) -> Dict[str, str]:
         """Get default HTTP headers with anti-detection"""
+        # This method is now largely redundant as SessionManager handles headers
+        # but kept for compatibility or if specific overrides are needed.
         headers = {
             'User-Agent': self.config.user_agent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -199,10 +187,10 @@ class EnhancedWebCrawler:
         # Rate limiting
         await self.rate_limiter.adaptive_wait(domain, last_crawl_result)
         
-        # Human-like delays
-        if self.config.human_like_delays:
-            delay = random.uniform(0.5, 2.0)
-            await asyncio.sleep(delay)
+        # Human-like delays (handled by SessionManager now, but can add extra here if needed)
+        # if self.config.human_like_delays:
+        #     delay = random.uniform(0.5, 2.0)
+        #     await asyncio.sleep(delay)
         
         # Determine crawl method
         if self.config.render_javascript and self.browser:
@@ -228,18 +216,12 @@ class EnhancedWebCrawler:
     async def _crawl_with_http(self, url: str, domain: str, 
                               request_context: Dict) -> CrawlResult:
         """HTTP-based crawling with session reuse"""
-        headers = self._get_request_headers(domain)
-        proxy = None
-        proxy_details = None # New: Store ProxyDetails object
-        if self.config.use_proxies:
-            proxy_details = proxy_manager.get_next_proxy(desired_region=self.config.proxy_region)
-            if proxy_details:
-                proxy = proxy_details.url
-            else:
-                logger.warning(f"No proxy available for region {self.config.proxy_region}. Proceeding without proxy.")
+        # Headers and proxy handling are now managed by SessionManager
+        # We can pass custom headers if needed, but base headers are handled by SessionManager
+        headers = self.config.custom_headers if self.config.custom_headers else {}
 
         try:
-            async with self.session.get(url, headers=headers, proxy=proxy) as response:
+            async with await self.session_manager.get(url, headers=headers) as response:
                 content = await response.text()
                 response_headers = dict(response.headers)
                 
@@ -251,10 +233,6 @@ class EnhancedWebCrawler:
                 seo_metrics.http_status = response.status
                 seo_metrics.response_time_ms = (time.time() - request_context.get('start_time', time.time())) * 1000
                 
-                # Mark proxy good if used
-                if proxy_details:
-                    proxy_manager.mark_proxy_good(proxy_details.url)
-
                 return CrawlResult(
                     url=url,
                     status_code=response.status,
@@ -266,16 +244,10 @@ class EnhancedWebCrawler:
                 )
                 
         except aiohttp.ClientError as e:
-            if proxy_details:
-                proxy_manager.mark_proxy_bad(proxy_details.url, reason=f"ClientError: {e}")
             return self._create_error_result(url, 0, f"HTTP error: {e}", error_type="ClientError")
         except asyncio.TimeoutError:
-            if proxy_details:
-                proxy_manager.mark_proxy_bad(proxy_details.url, reason="TimeoutError")
             return self._create_error_result(url, 408, "Request timeout", error_type="TimeoutError")
         except Exception as e:
-            if proxy_details:
-                proxy_manager.mark_proxy_bad(proxy_details.url, reason=f"UnexpectedHTTPError: {e}")
             return self._create_error_result(url, 500, f"Unexpected HTTP crawl error: {e}", error_type="UnexpectedHTTPError")
     
     async def _crawl_with_browser(self, url: str, domain: str,
@@ -286,7 +258,6 @@ class EnhancedWebCrawler:
 
         context: Optional[BrowserContext] = None
         proxy = None
-        proxy_details = None # New: Store ProxyDetails object
         if self.config.use_proxies:
             proxy_details = proxy_manager.get_next_proxy(desired_region=self.config.proxy_region)
             if proxy_details:
@@ -315,9 +286,12 @@ class EnhancedWebCrawler:
             seo_metrics.http_status = response.status if response else 200
             seo_metrics.response_time_ms = (time.time() - request_context.get('start_time', time.time())) * 1000
             
-            # Mark proxy good if used
-            if proxy_details:
-                proxy_manager.mark_proxy_good(proxy_details.url)
+            # Mark proxy good if used (handled by SessionManager if it were used for Playwright)
+            # For Playwright, proxy success/failure needs to be handled here or in a Playwright-specific proxy manager
+            if proxy: # If a proxy was used
+                # This is a simplified assumption; Playwright doesn't directly integrate with aiohttp's proxy_manager
+                # You'd need to check Playwright's own network events for proxy health
+                pass 
 
             return CrawlResult(
                 url=url,
@@ -329,8 +303,10 @@ class EnhancedWebCrawler:
             )
             
         except Exception as e:
-            if proxy_details:
-                proxy_manager.mark_proxy_bad(proxy_details.url, reason=f"BrowserCrawlError: {e}")
+            if proxy: # If a proxy was used
+                # Simplified proxy bad marking for Playwright
+                if proxy_details:
+                    proxy_manager.mark_proxy_bad(proxy_details.url, reason=f"BrowserCrawlError: {e}")
             return self._create_error_result(url, 500, f"Browser error: {e}", error_type="BrowserCrawlError")
         finally:
             if context:
@@ -364,6 +340,8 @@ class EnhancedWebCrawler:
     
     def _get_request_headers(self, domain: str) -> Dict[str, str]:
         """Get headers with rotation if enabled"""
+        # This method is now largely redundant as SessionManager handles headers
+        # but kept for compatibility or if specific overrides are needed.
         headers = self._get_default_headers().copy()
         
         if self.config.user_agent_rotation:
@@ -384,10 +362,11 @@ class EnhancedWebCrawler:
     
     def _get_proxy(self) -> Optional[str]:
         """Get proxy if available"""
+        # This method is now largely redundant as SessionManager handles proxies
         if self.config.use_proxies and self.config.proxy_list:
             # ProxyManager.get_next_proxy should return a dict with 'url' key
             proxy_info = proxy_manager.get_next_proxy(desired_region=self.config.proxy_region)
-            return proxy_info.get('url') if proxy_info else None
+            return proxy_info.url if proxy_info else None
         return None
     
     def _create_error_result(self, url: str, status_code: int, error_message: str, error_type: str = "UnknownError") -> CrawlResult:

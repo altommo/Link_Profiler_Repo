@@ -9,6 +9,7 @@ import random
 
 from Link_Profiler.utils.user_agent_manager import user_agent_manager
 from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__) # This logger is for the module, not the class instance
 
@@ -17,32 +18,31 @@ class RobotsParser:
     Fetches and parses robots.txt files for given domains.
     Caches parsed robots.txt content to avoid re-fetching.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self._parsers: Dict[str, RobotFileParser] = {}
         self._cache_timestamps: Dict[str, datetime] = {} # Separate cache for timestamps
         self._fetch_lock: Dict[str, asyncio.Lock] = {} # To prevent multiple fetches for the same domain
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to RobotsParser. Falling back to local SessionManager.")
+
         self.cache_expiry: timedelta = timedelta(hours=1) # Cache robots.txt for 1 hour
         self.logger = logging.getLogger(__name__ + ".RobotsParser") # Initialize logger for the instance
 
     async def __aenter__(self):
         """Async context manager entry."""
-        if self._session is None or self._session.closed:
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("anti_detection.user_agent_rotation", False): # Use anti_detection config for rotation
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-            # If neither is enabled, aiohttp uses its default user agent.
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        # The session manager handles its own __aenter__ and __aexit__
+        # We just need to ensure it's entered before use.
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        # The session manager handles its own __aexit__
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _fetch_and_parse_robots_txt(self, domain: str) -> RobotFileParser:
         """
@@ -62,25 +62,9 @@ class RobotsParser:
             parser = RobotFileParser()
             parser.set_url(robots_txt_url) # Set URL for the parser
 
-            session_to_use = self._session
-            if session_to_use is None:
-                self.logger.warning(f"RobotsParser session not active for {domain}. Creating temporary session.")
-                headers = {}
-                if config_loader.get("anti_detection.request_header_randomization", False):
-                    headers.update(user_agent_manager.get_random_headers())
-                elif config_loader.get("anti_detection.user_agent_rotation", False):
-                    headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-                session_to_use = aiohttp.ClientSession(headers=headers)
-
-            # Add human-like delays if configured
-            if config_loader.get("anti_detection.human_like_delays", False) and config_loader.get("anti_detection.random_delay_range"):
-                delay = random.uniform(*config_loader["anti_detection"]["random_delay_range"])
-                await asyncio.sleep(delay)
-            elif config_loader.get("anti_detection.human_like_delays", False):
-                await asyncio.sleep(random.uniform(0.1, 0.5))
-
             try:
-                async with session_to_use.get(robots_txt_url, timeout=10) as response:
+                # Use the session manager for fetching
+                async with await self.session_manager.get(robots_txt_url) as response:
                     if response.status == 200:
                         content = await response.text()
                         parser.parse(content.splitlines())
@@ -105,9 +89,6 @@ class RobotsParser:
                 self.logger.error(f"Unexpected error fetching robots.txt for {domain}: {e}. Defaulting to allow.")
                 # CRITICAL FIX: Explicitly parse a permissive robots.txt on unexpected errors
                 parser.parse(["User-agent: *", "Allow: /"])
-            finally:
-                if session_to_use is not self._session and not session_to_use.closed:
-                    await session_to_use.close()
 
             self._parsers[domain] = parser
             self._cache_timestamps[domain] = datetime.now()

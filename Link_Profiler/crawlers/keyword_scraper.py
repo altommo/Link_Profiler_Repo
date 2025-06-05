@@ -17,6 +17,7 @@ from pytrends.exceptions import ResponseError as PytrendsResponseError
 from Link_Profiler.core.models import KeywordSuggestion # Absolute import
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -25,25 +26,21 @@ class KeywordScraper:
     Scrapes keyword suggestions from public endpoints (Google, Bing) and
     fetches trend data using Pytrends.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__)
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to KeywordScraper. Falling back to local SessionManager.")
+
         self.pytrends_client: Optional[TrendReq] = None
 
     async def __aenter__(self):
         """Initialises aiohttp session and Pytrends client."""
         self.logger.info("Entering KeywordScraper context.")
-        if self._session is None or self._session.closed:
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-            else:
-                # Default user agent if no rotation/randomization is enabled
-                headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        await self.session_manager.__aenter__() # Ensure session manager is entered
         
         # Pytrends is synchronous, so we'll run its methods in a thread pool
         self.pytrends_client = TrendReq(hl='en-US', tz=360) # tz=360 for GMT+6, adjust as needed
@@ -54,24 +51,18 @@ class KeywordScraper:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Closes aiohttp session."""
         self.logger.info("Exiting KeywordScraper context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb) # Ensure session manager is exited
         self.pytrends_client = None # Clear pytrends client
         self.logger.info("KeywordScraper closed.")
 
     async def _get_google_suggestions(self, query: str) -> List[str]:
         """Fetches suggestions from Google Autocomplete API."""
-        if not self._session:
-            raise RuntimeError("aiohttp session not initialized.")
+        if not self.session_manager:
+            raise RuntimeError("SessionManager not initialized.")
         
         url = f"https://suggestqueries.google.com/complete/search?client=firefox&q={urlencode({'q': query})}"
         try:
-            # Add human-like delays if configured
-            if config_loader.get("anti_detection.human_like_delays", False):
-                await asyncio.sleep(random.uniform(0.5, 1.5))
-
-            async with self._session.get(url, timeout=5) as response:
+            async with await self.session_manager.get(url, timeout=5) as response:
                 response.raise_for_status()
                 data = await response.json()
                 # Google Autocomplete returns a list of lists: [query, [suggestions], [descriptions], [urls]]
@@ -85,16 +76,12 @@ class KeywordScraper:
 
     async def _get_bing_suggestions(self, query: str) -> List[str]:
         """Fetches suggestions from Bing Suggest API."""
-        if not self._session:
-            raise RuntimeError("aiohttp session not initialized.")
+        if not self.session_manager:
+            raise RuntimeError("SessionManager not initialized.")
         
         url = f"https://api.bing.com/qsonhs.aspx?q={urlencode({'q': query})}"
         try:
-            # Add human-like delays if configured
-            if config_loader.get("anti_detection.human_like_delays", False):
-                await asyncio.sleep(random.uniform(0.5, 1.5))
-
-            async with self._session.get(url, timeout=5) as response:
+            async with await self.session_manager.get(url, timeout=5) as response:
                 response.raise_for_status()
                 data = await response.json()
                 # Bing Suggest returns JSON with 'AS' -> 'Results' -> 'Suggests'
@@ -132,7 +119,11 @@ class KeywordScraper:
                     for kw in chunk:
                         if kw in interest_over_time_df.columns:
                             # Convert to list of floats, handling 'isPartial' column if present
-                            trends_data[kw] = interest_over_time_df[kw].tolist()
+                            # Ensure the column exists before accessing
+                            if kw in interest_over_time_df.columns:
+                                trends_data[kw] = interest_over_time_df[kw].tolist()
+                            else:
+                                trends_data[kw] = [] # Keyword not found in trends data
                         else:
                             trends_data[kw] = []
                 else:
@@ -199,16 +190,3 @@ class KeywordScraper:
         
         self.logger.info(f"Generated {len(keyword_suggestions)} enriched keyword suggestions for '{seed_keyword}'.")
         return keyword_suggestions
-
-# Example usage (for testing)
-async def main():
-    logging.basicConfig(level=logging.INFO)
-    seed = "python programming"
-    
-    async with KeywordScraper() as scraper:
-        suggestions = await scraper.get_keyword_data(seed, num_suggestions=10)
-        for s in suggestions:
-            print(f"Seed: {s.seed_keyword}, Suggested: {s.suggested_keyword}, Volume: {s.search_volume_monthly}, CPC: {s.cpc_estimate}, Trend: {s.keyword_trend[:5]}..., Comp: {s.competition_level}")
-
-if __name__ == "__main__":
-    asyncio.run(main())

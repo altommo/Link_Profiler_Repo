@@ -346,6 +346,16 @@
     "max_queue_size": 100000,
     "domain_max_concurrent": 2
   },
+  "connection_optimization": {
+    "max_connections": 200,
+    "max_connections_per_host": 20,
+    "timeout_total": 30,
+    "timeout_connect": 10,
+    "timeout_sock_read": 30,
+    "retry_attempts": 3,
+    "retry_delay_base": 0.5,
+    "connection_health_check": true
+  },
   "satellite": {
     "id": "default-satellite-1",
     "heartbeat_interval": 5,

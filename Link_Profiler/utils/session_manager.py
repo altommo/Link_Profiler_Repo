@@ -1,334 +1,171 @@
 """
-Advanced Session Manager with Optimized Connection Pooling
-Provides intelligent session management with adaptive sizing and health monitoring
+Smart Session Manager - Provides a centralized, optimized aiohttp ClientSession
+for all HTTP requests within the crawler system.
+Handles adaptive connection pooling, connection health checks, and automatic retries.
 """
 
 import asyncio
 import aiohttp
-import time
-import random
-from typing import Dict, Optional, Any, List
-from dataclasses import dataclass, field
-from urllib.parse import urlparse
-from collections import defaultdict, deque
 import logging
+import time
+from typing import Dict, Any, Optional, List, Tuple
+from collections import deque
+from datetime import datetime, timedelta
+import random
+
+from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.utils.user_agent_manager import user_agent_manager
+from Link_Profiler.utils.proxy_manager import proxy_manager, ProxyDetails # Import ProxyDetails
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class ConnectionStats:
-    """Statistics for connection monitoring"""
-    total_requests: int = 0
-    failed_requests: int = 0
-    avg_response_time: float = 0.0
-    last_used: float = field(default_factory=time.time)
-    success_rate: float = 1.0
-    
-    def update(self, success: bool, response_time: float):
-        """Update connection statistics"""
-        self.total_requests += 1
-        if not success:
-            self.failed_requests += 1
-        
-        # Update average response time (rolling average)
-        if self.total_requests == 1:
-            self.avg_response_time = response_time
-        else:
-            self.avg_response_time = (self.avg_response_time * 0.9) + (response_time * 0.1)
-        
-        self.success_rate = 1.0 - (self.failed_requests / self.total_requests)
-        self.last_used = time.time()
+class SessionManager:
+    """
+    Manages a single, optimized aiohttp.ClientSession for all HTTP requests.
+    Implements adaptive connection pooling, connection health checks, and retries.
+    """
+    _instance = None
 
-class AdaptiveConnectionPool:
-    """Adaptive connection pool that adjusts based on performance"""
-    
-    def __init__(self, domain: str, initial_size: int = 5, max_size: int = 20):
-        self.domain = domain
-        self.initial_size = initial_size
-        self.max_size = max_size
-        self.current_size = initial_size
-        self.stats = ConnectionStats()
-        self.last_adaptation = time.time()
-        self.adaptation_interval = 60  # seconds
-        
-    def should_expand(self) -> bool:
-        """Check if pool should be expanded"""
-        now = time.time()
-        if now - self.last_adaptation < self.adaptation_interval:
-            return False
-        
-        # Expand if success rate is high and response time is low
-        return (self.stats.success_rate > 0.95 and 
-                self.stats.avg_response_time < 2.0 and
-                self.current_size < self.max_size)
-    
-    def should_contract(self) -> bool:
-        """Check if pool should be contracted"""
-        now = time.time()
-        if now - self.last_adaptation < self.adaptation_interval:
-            return False
-        
-        # Contract if success rate is low or response time is high
-        return (self.stats.success_rate < 0.8 or 
-                self.stats.avg_response_time > 5.0) and self.current_size > 2
-    
-    def adapt_size(self):
-        """Adapt pool size based on performance"""
-        if self.should_expand():
-            self.current_size = min(self.current_size + 2, self.max_size)
-            logger.info(f"Expanded connection pool for {self.domain} to {self.current_size}")
-            self.last_adaptation = time.time()
-        elif self.should_contract():
-            self.current_size = max(self.current_size - 1, 2)
-            logger.info(f"Contracted connection pool for {self.domain} to {self.current_size}")
-            self.last_adaptation = time.time()
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(SessionManager, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
 
-class EnhancedSessionManager:
-    """Production-grade session manager with intelligent pooling"""
-    
-    def __init__(self, config: Dict[str, Any] = None):
-        self.config = config or {}
-        self.sessions: Dict[str, aiohttp.ClientSession] = {}
-        self.connection_pools: Dict[str, AdaptiveConnectionPool] = {}
-        self.domain_stats: Dict[str, ConnectionStats] = defaultdict(ConnectionStats)
-        self.global_connector_limit = self.config.get('global_connection_limit', 500)
-        self.active_connections = 0
-        self.connection_history = deque(maxlen=1000)
-        
-    async def get_session(self, url: str) -> aiohttp.ClientSession:
-        """Get optimized session for domain"""
-        domain = urlparse(url).netloc
-        
-        if domain not in self.sessions:
-            await self._create_session_for_domain(domain)
-        
-        # Adapt connection pool if needed
-        if domain in self.connection_pools:
-            self.connection_pools[domain].adapt_size()
-        
-        return self.sessions[domain]
-    
-    async def _create_session_for_domain(self, domain: str):
-        """Create optimized session for specific domain"""
-        # Create adaptive connection pool config
-        if domain not in self.connection_pools:
-            initial_size = self.config.get('initial_pool_size', 5)
-            max_size = self.config.get('max_pool_size_per_domain', 20)
-            self.connection_pools[domain] = AdaptiveConnectionPool(domain, initial_size, max_size)
-        
-        pool = self.connection_pools[domain]
-        
-        # Create optimized connector
-        connector = aiohttp.TCPConnector(
-            limit=pool.current_size,
-            limit_per_host=pool.current_size,
-            ttl_dns_cache=self.config.get('dns_cache_ttl', 300),
-            use_dns_cache=True,
-            keepalive_timeout=self.config.get('keepalive_timeout', 30),
-            enable_cleanup_closed=True,
-            ssl=False if self.config.get('disable_ssl_verification') else None,
-            family=0,  # Both IPv4 and IPv6
-            happy_eyeballs_delay=0.25,  # Faster connection establishment
-            sock_connect=None,
-            sock_read=None
-        )
-        
-        # Create timeout configuration
-        timeout = aiohttp.ClientTimeout(
-            total=self.config.get('total_timeout', 30),
-            connect=self.config.get('connect_timeout', 10),
-            sock_read=self.config.get('read_timeout', 20),
-            sock_connect=self.config.get('sock_connect_timeout', 5)
-        )
-        
-        # Create session with optimized settings
-        session = aiohttp.ClientSession(
-            connector=connector,
-            timeout=timeout,
-            headers=self._get_optimized_headers(domain),
-            auto_decompress=True,
-            trust_env=True,
-            requote_redirect_url=False
-        )
-        
-        self.sessions[domain] = session
-        logger.info(f"Created optimized session for {domain} with pool size {pool.current_size}")
-    
-    def _get_optimized_headers(self, domain: str) -> Dict[str, str]:
-        """Get optimized headers for domain"""
-        base_headers = {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Cache-Control': 'max-age=0'
-        }
-        
-        # Add domain-specific optimizations
-        if 'cdn' in domain.lower() or 'cloudflare' in domain.lower():
-            base_headers['CF-Connecting-IP'] = '1.1.1.1'  # Cloudflare optimization
-        
-        return base_headers
-    
-    async def make_request(self, method: str, url: str, **kwargs) -> aiohttp.ClientResponse:
-        """Make optimized HTTP request with retry logic"""
-        domain = urlparse(url).netloc
-        session = await self.get_session(url)
-        
-        start_time = time.time()
-        max_retries = self.config.get('max_retries', 3)
-        
-        for attempt in range(max_retries + 1):
-            try:
-                # Add request tracking
-                self.active_connections += 1
-                
-                async with session.request(method, url, **kwargs) as response:
-                    response_time = time.time() - start_time
-                    
-                    # Update statistics
-                    success = 200 <= response.status < 400
-                    self.domain_stats[domain].update(success, response_time)
-                    if domain in self.connection_pools:
-                        self.connection_pools[domain].stats.update(success, response_time)
-                    
-                    # Track connection performance
-                    self.connection_history.append({
-                        'domain': domain,
-                        'response_time': response_time,
-                        'status': response.status,
-                        'success': success,
-                        'timestamp': time.time()
-                    })
-                    
-                    self.active_connections -= 1
-                    return response
-                    
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                self.active_connections -= 1
-                response_time = time.time() - start_time
-                
-                # Update failure statistics
-                self.domain_stats[domain].update(False, response_time)
-                if domain in self.connection_pools:
-                    self.connection_pools[domain].stats.update(False, response_time)
-                
-                if attempt == max_retries:
-                    logger.error(f"Final retry failed for {url}: {e}")
-                    raise
-                
-                # Exponential backoff with jitter
-                delay = min(2 ** attempt + random.uniform(0, 1), 10)
-                logger.warning(f"Request failed (attempt {attempt + 1}/{max_retries + 1}) for {url}: {e}. Retrying in {delay:.2f}s")
-                await asyncio.sleep(delay)
-                
-                # Recreate session if too many failures
-                if self.domain_stats[domain].success_rate < 0.5:
-                    await self._recreate_session(domain)
-    
-    async def _recreate_session(self, domain: str):
-        """Recreate session for domain if it's performing poorly"""
-        if domain in self.sessions:
-            try:
-                await self.sessions[domain].close()
-            except Exception as e:
-                logger.error(f"Error closing session for {domain}: {e}")
-            del self.sessions[domain]
-        
-        # Reset stats
-        self.domain_stats[domain] = ConnectionStats()
-        if domain in self.connection_pools:
-            self.connection_pools[domain].stats = ConnectionStats()
-        
-        logger.info(f"Recreated session for {domain} due to poor performance")
-    
-    async def get_health_status(self) -> Dict[str, Any]:
-        """Get comprehensive health status"""
-        domain_health = {}
-        for domain, stats in self.domain_stats.items():
-            pool_info = {}
-            if domain in self.connection_pools:
-                pool = self.connection_pools[domain]
-                pool_info = {
-                    'current_size': pool.current_size,
-                    'max_size': pool.max_size,
-                    'last_adaptation': pool.last_adaptation
-                }
-            
-            domain_health[domain] = {
-                'total_requests': stats.total_requests,
-                'success_rate': stats.success_rate,
-                'avg_response_time': stats.avg_response_time,
-                'last_used': stats.last_used,
-                'pool_info': pool_info
-            }
-        
-        # Recent performance metrics
-        recent_requests = [req for req in self.connection_history 
-                          if time.time() - req['timestamp'] < 300]  # Last 5 minutes
-        
-        return {
-            'active_connections': self.active_connections,
-            'total_domains': len(self.sessions),
-            'recent_requests_5min': len(recent_requests),
-            'recent_success_rate': sum(1 for req in recent_requests if req['success']) / len(recent_requests) if recent_requests else 1.0,
-            'domain_health': domain_health
-        }
-    
-    async def optimize_performance(self):
-        """Perform performance optimizations"""
-        now = time.time()
-        
-        # Clean up old sessions
-        domains_to_cleanup = []
-        for domain, stats in self.domain_stats.items():
-            if now - stats.last_used > 3600:  # 1 hour
-                domains_to_cleanup.append(domain)
-        
-        for domain in domains_to_cleanup:
-            if domain in self.sessions:
-                await self.sessions[domain].close()
-                del self.sessions[domain]
-            if domain in self.connection_pools:
-                del self.connection_pools[domain]
-            del self.domain_stats[domain]
-            logger.info(f"Cleaned up unused session for {domain}")
-        
-        # Adapt all connection pools
-        for pool in self.connection_pools.values():
-            pool.adapt_size()
-    
-    async def close_all(self):
-        """Close all sessions"""
-        for session in self.sessions.values():
-            try:
-                await session.close()
-            except Exception as e:
-                logger.error(f"Error closing session: {e}")
-        
-        self.sessions.clear()
-        self.connection_pools.clear()
-        self.domain_stats.clear()
-        logger.info("All sessions closed")
-    
+    def __init__(self):
+        if self._initialized:
+            return
+        self._initialized = True
+
+        self.session: Optional[aiohttp.ClientSession] = None
+        self.logger = logging.getLogger(__name__ + ".SessionManager")
+
+        # Configuration from config_loader
+        self.max_connections = config_loader.get("connection_optimization.max_connections", 200)
+        self.max_connections_per_host = config_loader.get("connection_optimization.max_connections_per_host", 20)
+        self.timeout_total = config_loader.get("connection_optimization.timeout_total", 30)
+        self.timeout_connect = config_loader.get("connection_optimization.timeout_connect", 10)
+        self.timeout_sock_read = config_loader.get("connection_optimization.timeout_sock_read", 30)
+        self.retry_attempts = config_loader.get("connection_optimization.retry_attempts", 3)
+        self.retry_delay_base = config_loader.get("connection_optimization.retry_delay_base", 0.5)
+        self.enable_health_checks = config_loader.get("connection_optimization.connection_health_check", True)
+        self.use_proxies = config_loader.get("proxy.use_proxies", False)
+        self.user_agent_rotation = config_loader.get("anti_detection.user_agent_rotation", False)
+        self.request_header_randomization = config_loader.get("anti_detection.request_header_randomization", False)
+        self.human_like_delays = config_loader.get("anti_detection.human_like_delays", False)
+        self.random_delay_range = config_loader.get("anti_detection.random_delay_range", [0.1, 0.5])
+
+        # Connection pool monitoring (for adaptive sizing, not fully implemented yet)
+        self._connection_pool_stats: Dict[str, Any] = {} # Placeholder for per-host stats
+
     async def __aenter__(self):
-        """Context manager entry"""
+        """Initializes the aiohttp ClientSession."""
+        if self.session is None or self.session.closed:
+            connector = aiohttp.TCPConnector(
+                limit=self.max_connections,
+                limit_per_host=self.max_connections_per_host,
+                ttl_dns_cache=300,  # DNS cache TTL
+                use_dns_cache=True,
+                keepalive_timeout=30,
+                enable_cleanup_closed=True,
+                verify_ssl=True,
+            )
+            timeout = aiohttp.ClientTimeout(
+                total=self.timeout_total,
+                connect=self.timeout_connect,
+                sock_read=self.timeout_sock_read
+            )
+            self.session = aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout,
+                headers=self._get_base_headers()
+            )
+            self.logger.info("aiohttp ClientSession initialized.")
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit"""
-        await self.close_all()
+        """Closes the aiohttp ClientSession."""
+        if self.session and not self.session.closed:
+            self.logger.info("Closing aiohttp ClientSession.")
+            await self.session.close()
+            self.session = None
 
-# Global session manager instance
-session_manager = None
+    def _get_base_headers(self) -> Dict[str, str]:
+        """Returns base headers for the session, potentially with rotation."""
+        if self.request_header_randomization:
+            return user_agent_manager.get_random_headers()
+        elif self.user_agent_rotation:
+            return {"User-Agent": user_agent_manager.rotate_user_agent()}
+        else:
+            return {"User-Agent": config_loader.get("crawler.user_agent", "LinkProfilerBot/1.0")}
 
-def get_session_manager(config: Dict[str, Any] = None) -> EnhancedSessionManager:
-    """Get global session manager instance"""
-    global session_manager
-    if session_manager is None:
-        session_manager = EnhancedSessionManager(config)
-    return session_manager
+    async def request(self, method: str, url: str, **kwargs) -> aiohttp.ClientResponse:
+        """
+        Performs an HTTP request with built-in retry logic, proxy rotation,
+        and adaptive delays.
+        """
+        if not self.session or self.session.closed:
+            raise RuntimeError("SessionManager is not active. Call __aenter__ first.")
+
+        headers = kwargs.pop("headers", {})
+        proxy_details: Optional[ProxyDetails] = None
+        
+        for attempt in range(self.retry_attempts):
+            try:
+                # Apply human-like delays
+                if self.human_like_delays:
+                    delay = random.uniform(*self.random_delay_range)
+                    await asyncio.sleep(delay)
+
+                # Get proxy if enabled
+                if self.use_proxies:
+                    proxy_details = proxy_manager.get_next_proxy()
+                    if proxy_details:
+                        kwargs["proxy"] = proxy_details.url
+                        self.logger.debug(f"Using proxy {proxy_details.url} for {url} (Attempt {attempt + 1})")
+                    else:
+                        self.logger.warning(f"No available proxies for {url}. Proceeding without proxy.")
+
+                # Update headers for each request (e.g., for UA rotation)
+                request_headers = self._get_base_headers()
+                request_headers.update(headers) # Allow kwargs headers to override base
+
+                async with self.session.request(method, url, headers=request_headers, **kwargs) as response:
+                    # Check for connection health (e.g., if response indicates a bad proxy)
+                    if self.enable_health_checks and response.status in [403, 429, 503, 504]:
+                        if proxy_details:
+                            proxy_manager.mark_proxy_bad(proxy_details.url, f"Status {response.status}")
+                        self.logger.warning(f"Request to {url} failed with status {response.status}. Retrying (attempt {attempt + 1}).")
+                        if attempt < self.retry_attempts - 1:
+                            await asyncio.sleep(self.retry_delay_base * (2 ** attempt))
+                            continue # Retry with potentially new proxy
+                        else:
+                            raise aiohttp.ClientError(f"Final attempt failed for {url} with status {response.status}")
+                    
+                    if proxy_details:
+                        proxy_manager.mark_proxy_good(proxy_details.url)
+                    return response
+
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                if proxy_details:
+                    proxy_manager.mark_proxy_bad(proxy_details.url, str(e))
+                self.logger.warning(f"Request to {url} failed (Attempt {attempt + 1}): {e}")
+                if attempt < self.retry_attempts - 1:
+                    await asyncio.sleep(self.retry_delay_base * (2 ** attempt))
+                else:
+                    self.logger.error(f"All {self.retry_attempts} attempts failed for {url}.")
+                    raise # Re-raise exception after all retries
+            except Exception as e:
+                self.logger.error(f"Unexpected error during request to {url}: {e}", exc_info=True)
+                raise # Re-raise unexpected errors immediately
+
+    async def get(self, url: str, **kwargs) -> aiohttp.ClientResponse:
+        """Convenience method for GET requests."""
+        return await self.request("GET", url, **kwargs)
+
+    async def post(self, url: str, **kwargs) -> aiohttp.ClientResponse:
+        """Convenience method for POST requests."""
+        return await self.request("POST", url, **kwargs)
+
+# Create a singleton instance
+session_manager = SessionManager()
