@@ -40,8 +40,8 @@ config_loader = ConfigLoader()
 config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
 
 app = FastAPI(title="Link Profiler Monitor")
-# Corrected template directory path relative to the new project_root
-templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "monitoring", "templates"))
+# Unified template directory path relative to the project_root
+templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "templates"))
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)

@@ -84,7 +84,7 @@ def main():
     print("📊 Monitoring Components")
     print("-" * 20)
     all_checks.append(check_file_exists(project_root / "Link_Profiler/monitoring/dashboard.py", "Monitoring Dashboard"))
-    all_checks.append(check_file_exists(project_root / "Link_Profiler/monitoring/templates/dashboard.html", "Dashboard Template"))
+    all_checks.append(check_file_exists(project_root / "Link_Profiler/templates/dashboard.html", "Dashboard Template"))
     all_checks.append(check_file_exists(project_root / "Link_Profiler/monitoring/__init__.py", "Monitoring Package"))
     print()
     
