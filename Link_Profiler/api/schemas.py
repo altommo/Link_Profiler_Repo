@@ -164,6 +164,9 @@ class CrawlJobResponse(BaseModel):
     error_log: List[CrawlErrorResponse]
     results: Dict = Field(default_factory=dict)
     initial_seed_urls: List[str] = Field(default_factory=list) # Added initial_seed_urls
+    priority: int # Added priority
+    scheduled_at: Optional[datetime] # Added scheduled_at
+    cron_schedule: Optional[str] # Added cron_schedule
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
@@ -195,6 +198,13 @@ class CrawlJobResponse(BaseModel):
             except ValueError:
                 logger.warning(f"Could not parse completed_date string: {job_dict.get('completed_date')}")
                 job_dict['completed_date'] = None
+
+        if isinstance(job_dict.get('scheduled_at'), str):
+            try:
+                job_dict['scheduled_at'] = datetime.fromisoformat(job_dict['scheduled_at'])
+            except ValueError:
+                logger.warning(f"Could not parse scheduled_at string: {job_dict.get('scheduled_at')}")
+                job_dict['scheduled_at'] = None
 
         job_dict['error_log'] = [CrawlErrorResponse.from_crawl_error(err) for err in job.error_log]
         job_dict['initial_seed_urls'] = job.initial_seed_urls # Ensure initial_seed_urls is passed
