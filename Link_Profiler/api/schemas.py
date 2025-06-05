@@ -5,17 +5,10 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 # Import from core.models for shared data structures and serialization
-from Link_Profiler.core.models import User, Token, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics # Added SEOMetrics
+from Link_Profiler.core.models import User, Token, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, serialize_model # Added serialize_model, ReportJob, SEOMetrics
 
-# Get logger from main.py (assuming main.py sets up logging globally)
-# This import is safe as schemas.py does not import main.py at the top level
-# in a way that would cause circular dependencies.
-try:
-    from Link_Profiler.main import logger
-except ImportError:
-    # Fallback logger if main.py is not yet fully initialized or for testing
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(level=logging.INFO)
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
 
 
 # Pydantic Models for API Request/Response (moved from main.py)
@@ -595,7 +588,7 @@ class CompetitorStrategyAnalysisRequest(BaseModel):
 
 class ReportScheduleRequest(BaseModel):
     report_type: str = Field(..., description="Type of report (e.g., 'link_profile_pdf', 'all_backlinks_excel').")
-    target_identifier: str = Field(..., description="Identifier for the report target (e.g., URL, 'all').")
+    target_identifier: str = Field(..., description="Identifier for the report target (e.g., 'URL', 'all').")
     format: str = Field(..., description="Format of the report (e.g., 'pdf', 'excel').")
     scheduled_at: Optional[datetime] = Field(None, description="Specific UTC datetime to run the report (ISO format).")
     cron_schedule: Optional[str] = Field(None, description="Cron string for recurring reports (e.g., '0 0 * * *').")
