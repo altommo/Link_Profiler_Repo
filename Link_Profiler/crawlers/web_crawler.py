@@ -348,16 +348,19 @@ class EnhancedWebCrawler:
         """Get headers with rotation if enabled"""
         # This method is now largely redundant as SessionManager handles headers
         # but kept for compatibility or if specific overrides are needed.
-        headers = self._get_default_headers().copy()
+        headers = {
+            'User-Agent': self.config.user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
         
-        if self.config.user_agent_rotation:
-            headers['User-Agent'] = user_agent_manager.get_random_user_agent() # Use UserAgentManager
-        
-        # Add other random headers if enabled
-        if self.config.request_header_randomization:
-            # This would involve a more sophisticated header randomization utility
-            pass # Placeholder for actual implementation
-        
+        if self.config.custom_headers:
+            headers.update(self.config.custom_headers)
+            
         return headers
     
     def _get_user_agent_for_domain(self, domain: str) -> str:
