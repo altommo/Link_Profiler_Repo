@@ -106,7 +106,8 @@ class YouTubeClient:
                     'description': snippet.get('description'),
                     'published_at': snippet.get('publishedAt'),
                     'channel_title': snippet.get('channelTitle'),
-                    'url': f"https://www.youtube.com/watch?v={video_id}"
+                    'url': f"https://www.youtube.com/watch?v={video_id}",
+                    'last_fetched_at': datetime.utcnow() # Set last_fetched_at for live data
                 })
             self.logger.info(f"Found {len(results)} YouTube videos for '{query}'.")
             return results
@@ -163,7 +164,8 @@ class YouTubeClient:
                 'view_count': int(stats.get('viewCount', 0)),
                 'like_count': int(stats.get('likeCount', 0)),
                 'comment_count': int(stats.get('commentCount', 0)),
-                'url': f"https://www.youtube.com/watch?v={video_id}"
+                'url': f"https://www.youtube.com/watch?v={video_id}",
+                'last_fetched_at': datetime.utcnow() # Set last_fetched_at for live data
             }
             self.logger.info(f"Fetched stats for YouTube video {video_id}.")
             return result
@@ -184,7 +186,8 @@ class YouTubeClient:
                 'description': f"This is a simulated description for a video about {query}.",
                 'published_at': (datetime.now() - timedelta(days=random.randint(1, 730))).isoformat(),
                 'channel_title': f"Simulated Channel {random.randint(1, 50)}",
-                'url': f"https://www.youtube.com/watch?v={video_id}"
+                'url': f"https://www.youtube.com/watch?v={video_id}",
+                'last_fetched_at': datetime.utcnow()
             })
         return simulated_results
 
@@ -199,6 +202,7 @@ class YouTubeClient:
             'view_count': random.randint(1000, 1000000),
             'like_count': random.randint(10, 50000),
             'comment_count': random.randint(0, 5000),
-            'url': f"https://www.youtube.com/watch?v={video_id}"
+            'url': f"https://www.youtube.com/watch?v={video_id}",
+            'last_fetched_at': datetime.utcnow()
         }
 

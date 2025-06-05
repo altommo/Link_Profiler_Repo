@@ -25,10 +25,12 @@ class UserResponse(BaseModel):
     is_active: bool
     is_admin: bool
     created_at: datetime
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
         # Pydantic V2: 'orm_mode' has been renamed to 'from_attributes'
         from_attributes = True 
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_user(cls, user: User):
@@ -166,10 +168,12 @@ class CrawlJobResponse(BaseModel):
     errors_count: int = Field(..., alias="errors_count") # Use errors_count from core.models.CrawlJob
     error_log: List[CrawlErrorResponse] = Field(..., alias="errors") # Use errors from core.models.CrawlJob
     results: Dict = Field(default_factory=dict)
-    # initial_seed_urls: List[str] = Field(default_factory=list) # Removed, not in core.models.CrawlJob
+    # initial_seed_urls is not part of CrawlJob dataclass directly, it's part of the request
+    # If needed in CrawlJob, it should be added to its definition or stored in config/results
     priority: int # Added priority
     scheduled_at: Optional[datetime] # Added scheduled_at
     cron_schedule: Optional[str] # Added cron_schedule
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
@@ -183,6 +187,7 @@ class CrawlJobResponse(BaseModel):
         job_dict['created_date'] = job_dict.pop('created_at', None) # Map created_at to created_date
         job_dict['errors_count'] = len(job.errors) # Calculate errors_count
         job_dict['error_log'] = [CrawlErrorResponse.from_crawl_error(err) for err in job.errors] # Map errors to error_log
+        job_dict['last_updated'] = job_dict.pop('last_fetched_at', None) # Map last_fetched_at to last_updated
 
         return cls(**job_dict)
 
@@ -201,9 +206,11 @@ class LinkProfileResponse(BaseModel):
     top_anchor_texts: Dict[str, int] # Changed from anchor_text_distribution
     top_referring_domains: Dict[str, int] # Changed from referring_domains
     last_updated: datetime # Changed from analysis_date
+    last_fetched_at: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_link_profile(cls, profile: LinkProfile):
@@ -241,9 +248,11 @@ class BacklinkResponse(BaseModel):
     http_status: Optional[int] = None
     crawl_timestamp: Optional[datetime] = None
     source_domain_metrics: Dict[str, Any] = Field(default_factory=dict)
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_backlink(cls, backlink: Backlink):
@@ -260,17 +269,19 @@ class DomainResponse(BaseModel):
     expiration_date: Optional[datetime] # Added
     registrar: Optional[str] # Added
     is_registered: Optional[bool] # Added
-    is_parked: Optional[bool] # Added
-    is_dead: Optional[bool] # Added
+    is_parked: Optional[bool] = None # Added
+    is_dead: Optional[bool] = None # Added
     whois_raw: Optional[str] # Changed from whois_data
     dns_records: Dict[str, List[str]] # Added
     ip_address: Optional[str] # Added
     country: Optional[str] # Added
     seo_metrics: SEOMetrics # Added
     last_checked: datetime # Changed from last_crawled
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_domain(cls, domain: Domain):
@@ -287,6 +298,10 @@ class DomainAnalysisResponse(BaseModel):
     is_valuable: bool
     reasons: List[str]
     details: Dict[str, Any]
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
+
+    class Config:
+        populate_by_name = True # Allow field names to be populated by their alias
 
 class FindExpiredDomainsRequest(BaseModel):
     potential_domains: List[str] = Field(..., description="A list of domain names to check for expiration and value.")
@@ -312,9 +327,11 @@ class SERPResultResponse(BaseModel):
     domain: str # Added
     position_type: Optional[str] # Added
     timestamp: datetime # Changed from crawl_timestamp
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
     
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_serp_result(cls, result: SERPResult):
@@ -334,9 +351,12 @@ class KeywordSuggestionResponse(BaseModel):
     difficulty: Optional[int] = None # Added
     relevance: Optional[float] = None # Added
     source: Optional[str] = None # Added
+    keyword_trend: Optional[List[float]] = None # New: keyword_trend
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
     
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_keyword_suggestion(cls, suggestion: KeywordSuggestion):
@@ -352,6 +372,7 @@ class LinkIntersectResponse(BaseModel):
     primary_domain: str
     competitor_domains: List[str]
     common_linking_domains: List[str]
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     @classmethod
     def from_link_intersect_result(cls, result: LinkIntersectResult):
@@ -367,6 +388,7 @@ class CompetitiveKeywordAnalysisResponse(BaseModel):
     common_keywords: List[str]
     keyword_gaps: Dict[str, List[str]]
     primary_unique_keywords: List[str]
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     @classmethod
     def from_competitive_keyword_analysis_result(cls, result: CompetitiveKeywordAnalysisResult):
@@ -410,9 +432,11 @@ class AlertRuleResponse(BaseModel):
     notification_recipients: List[str]
     created_at: datetime
     last_triggered_at: Optional[datetime]
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_alert_rule(cls, rule: AlertRule):
@@ -428,6 +452,7 @@ class ContentGapAnalysisResultResponse(BaseModel): # New Pydantic model for Cont
     content_format_gaps: List[str]
     actionable_insights: List[str]
     analysis_date: datetime
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     @classmethod
     def from_content_gap_analysis_result(cls, result: ContentGapAnalysisResult):
@@ -449,9 +474,11 @@ class LinkProspectResponse(BaseModel):
     last_contacted: Optional[datetime] # Added
     link_acquired_date: Optional[datetime] # Added
     prospect_seo_metrics: SEOMetrics # Added
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_link_prospect(cls, prospect: LinkProspect):
@@ -499,6 +526,7 @@ class OutreachCampaignResponse(BaseModel):
     contacts_made: int # Added contacts_made
     replies_received: int # Added replies_received
     links_acquired: int # Added links_acquired
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
@@ -526,9 +554,11 @@ class OutreachEventResponse(BaseModel):
     timestamp: datetime # Changed from event_date
     notes: Optional[str]
     success: Optional[bool]
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_outreach_event(cls, event: OutreachEvent):
@@ -566,6 +596,7 @@ class ReportJobResponse(BaseModel):
     config: Optional[Dict] # Added config
     scheduled_at: Optional[datetime] # Added scheduled_at
     cron_schedule: Optional[str] # Added cron_schedule
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
@@ -588,9 +619,11 @@ class DomainHistoryResponse(BaseModel): # New Pydantic model for DomainHistory
     spam_score: Optional[float]
     total_backlinks: Optional[int]
     referring_domains: Optional[int]
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_domain_history(cls, history: DomainHistory):
@@ -687,6 +720,7 @@ class SEOMetricsResponse(BaseModel): # New Pydantic model for SEOMetrics
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_seo_metrics(cls, metrics: SEOMetrics):

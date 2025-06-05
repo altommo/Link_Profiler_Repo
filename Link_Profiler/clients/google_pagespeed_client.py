@@ -59,7 +59,7 @@ class PageSpeedClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for client session."""
         if self.enabled:
-            self.logger.info("Exiting PageSpeedClient context.")
+            self.logger.info("Exiting PageSpeedClient context. Closing aiohttp session.")
             await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     @api_rate_limited(service="pagespeed_insights_api", api_client_type="pagespeed_client", endpoint="analyze_url")
