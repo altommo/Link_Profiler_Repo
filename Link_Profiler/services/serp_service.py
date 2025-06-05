@@ -11,6 +11,7 @@ import random
 import aiohttp
 import json # Import json for caching
 import redis.asyncio as redis # Import redis for type hinting
+from urllib.parse import urlparse # Added missing import
 
 from Link_Profiler.core.models import SERPResult, SEOMetrics # Absolute import CrawlResult
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler # New import
