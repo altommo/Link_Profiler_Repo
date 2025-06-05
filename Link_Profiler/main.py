@@ -24,19 +24,19 @@ else:
 # --- End Robust Project Root Discovery ---
 
 # Import core components needed for early initialization
-from Link_Profiler.config.config_loader import ConfigLoader
-from Link_Profiler.database.database import Database
-from Link_Profiler.services.auth_service import AuthService
-from Link_Profiler.utils.logging_config import setup_logging, get_default_logging_config
-from Link_Profiler.utils.connection_manager import ConnectionManager
-
-# Initialize and load config once using the absolute path
-config_loader = ConfigLoader()
-config_loader.load_config(config_dir=os.path.join(project_root, "Link_Profiler", "config"), env_var_prefix="LP_")
+from Link_Profiler.config.config_loader import ConfigLoader, config_loader # Import both class and singleton
+from Link_Profiler.database.database import Database, db # Import both class and singleton
+from Link_Profiler.services.auth_service import AuthService, auth_service_instance # Import both class and singleton
+from Link_Profiler.utils.logging_config import LoggingConfig # Import LoggingConfig class
+from Link_Profiler.utils.connection_manager import ConnectionManager # Assuming this exists
 
 # Setup logging using the loaded configuration
-logging_config = config_loader.get("logging.config", get_default_logging_config(config_loader.get("logging.level", "INFO")))
-setup_logging(logging_config)
+# Use LoggingConfig.setup_logging directly
+LoggingConfig.setup_logging(
+    level=config_loader.get("logging.level", "INFO"),
+    log_file=config_loader.get("logging.file", None), # Assuming a log file path can be configured
+    json_format=config_loader.get("logging.json_format", False) # Assuming json_format can be configured
+)
 
 logger = logging.getLogger(__name__) # Get logger after configuration
 
@@ -58,8 +58,8 @@ def validate_critical_config():
         if env_value and (env_value != config_value or (config_path == "auth.secret_key" and config_value == "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY")):
             logger.error(f"CRITICAL: Environment variable {env_var} not properly loaded or config still uses placeholder!")
             logger.error(f"  Environment: {env_var}={env_value[:20]}...")
-            logger.error(f"  Config:      {config_path}={config_value[:20] if config_value else 'None'}...")
-        elif not env_value and (config_path == "auth.secret_key" and config_value == "PLACEHADER_MUST_SET_LP_AUTH_SECRET_KEY"):
+            logger.error(f"  Config:      {config_value[:20] if config_value else 'None'}...")
+        elif not env_value and (config_path == "auth.secret_key" and config_value == "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY"):
              logger.warning(f"WARNING: {env_var} is not set and config still uses placeholder. Authentication will fail.")
         elif not env_value and (config_path == "database.url" or config_path == "redis.url"):
              logger.warning(f"WARNING: {env_var} is not set. Using default/fallback for {config_path}.")
@@ -86,9 +86,8 @@ API_CACHE_ENABLED = config_loader.get("api_cache.enabled")
 API_CACHE_TTL = config_loader.get("api_cache.ttl")
 
 # Initialize core dependencies that other modules might import
-db = Database(db_url=DATABASE_URL)
-connection_manager = ConnectionManager() # Initialize connection_manager early
-auth_service_instance = AuthService(db) # Initialize AuthService early
+# db = Database(db_url=DATABASE_URL) # Database singleton is already initialized via db = Database()
+# auth_service_instance = AuthService(db) # AuthService singleton is already initialized via auth_service_instance = AuthService()
 
 # Initialize Redis connection pool and client (moved up to ensure it's defined before lifespan)
 import redis.asyncio as redis
@@ -96,8 +95,7 @@ redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
 redis_client: Optional[redis.Redis] = redis.Redis(connection_pool=redis_pool) # Make redis_client optional
 
 # New: Initialize SessionManager
-from Link_Profiler.utils.session_manager import SessionManager
-session_manager_instance = SessionManager()
+from Link_Profiler.utils.session_manager import session_manager # Use the singleton instance
 
 # Now import other FastAPI and application modules
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query
@@ -117,12 +115,12 @@ import psycopg2
 from playwright.async_api import async_playwright, Browser
 
 from Link_Profiler.services.crawl_service import CrawlService
-from Link_Profiler.services.domain_service import DomainService, SimulatedDomainAPIClient, RealDomainAPIClient, AbstractDomainAPIClient
-from Link_Profiler.services.backlink_service import BacklinkService, SimulatedBacklinkAPIClient, RealBacklinkAPIClient, GSCBacklinkAPIClient, OpenLinkProfilerAPIClient
+from Link_Profiler.services.domain_service import DomainService # Removed specific APIClient imports
+from Link_Profiler.services.backlink_service import BacklinkService # Removed specific APIClient imports
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
 from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService
-from Link_Profiler.services.serp_service import SERPService, SimulatedSERPAPIClient, RealSERPAPIClient
-from Link_Profiler.services.keyword_service import KeywordService, SimulatedKeywordAPIClient, RealKeywordAPIClient
+from Link_Profiler.services.serp_service import SERPService # Removed specific APIClient imports
+from Link_Profiler.services.keyword_service import KeywordService # Removed specific APIClient imports
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.ai_service import AIService
 from Link_Profiler.services.alert_service import AlertService
@@ -141,8 +139,9 @@ from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text, # Re-added for middleware
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
 )
-# Import from the new service module
-from Link_Profiler.services.job_submission_service import submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies
+# Removed submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies from job_submission_service
+# as they are now in queue_endpoints.py
+from Link_Profiler.api.queue_endpoints import set_coordinator_dependencies, get_coordinator # Import from queue_endpoints
 
 # New: Import WebCrawler and SmartCrawlQueue
 from Link_Profiler.crawlers.web_crawler import EnhancedWebCrawler # Changed to EnhancedWebCrawler
@@ -153,7 +152,7 @@ from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienc
 
 
 # New: Import API Clients
-from Link_Profiler.clients.google_search_console_client import GSCClient
+from Link_Profiler.clients.google_search_console_client import GoogleSearchConsoleClient # Renamed GSCClient to GoogleSearchConsoleClient
 from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient
 from Link_Profiler.clients.google_trends_client import GoogleTrendsClient
 from Link_Profiler.clients.whois_client import WHOISClient
@@ -184,49 +183,36 @@ else:
 
 
 # New: Initialize WHOISClient and DNSClient
-whois_client_instance = WHOISClient(session_manager=session_manager_instance)
-dns_client_instance = DNSClient(session_manager=session_manager_instance)
+whois_client_instance = WHOISClient(session_manager=session_manager)
+dns_client_instance = DNSClient(session_manager=session_manager)
 
 # Initialize DomainService globally, but manage its lifecycle with lifespan
 # Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > WHOIS-JSON > Simulated
 # The DomainService constructor now handles the internal assignment of api_client
 # based on the config, so we just pass the necessary dependencies.
 domain_service_instance = DomainService(
-    redis_client=redis_client, 
-    cache_ttl=API_CACHE_TTL, 
-    database=db, 
-    whois_client=whois_client_instance, 
-    dns_client=dns_client_instance,
-    session_manager=session_manager_instance # Pass session manager
+    # redis_client=redis_client, # DomainService does not directly use redis_client
+    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
+    # database=db, # DomainService does not directly use db
+    # whois_client=whois_client_instance, # DomainService instantiates its own clients
+    # dns_client=dns_client_instance, # DomainService instantiates its own clients
+    session_manager=session_manager # Pass session manager
 )
 
 # New: Initialize GSCClient
-gsc_client_instance = GSCClient(session_manager=session_manager_instance)
+gsc_client_instance = GoogleSearchConsoleClient(session_manager=session_manager)
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
 # Removed 'gsc_client' argument as BacklinkService internally handles GSCBacklinkAPIClient instantiation.
-if config_loader.get("backlink_api.gsc_api.enabled"):
-    backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
-elif config_loader.get("backlink_api.openlinkprofiler_api.enabled"):
-    openlinkprofiler_base_url = config_loader.get("backlink_api.openlinkprofiler_api.base_url")
-    if not openlinkprofiler_base_url:
-        logger.warning("OpenLinkProfiler API enabled but base_url not found in config. Falling back to simulated Backlink API.")
-        backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
-    else:
-        backlink_service_instance = BacklinkService(api_client=OpenLinkProfilerAPIClient(base_url=openlinkprofiler_base_url, session_manager=session_manager_instance), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
-elif config_loader.get("backlink_api.real_api.enabled"):
-    real_api_key = config_loader.get("backlink_api.real_api.api_key")
-    real_api_base_url = config_loader.get("backlink_api.real_api.base_url")
-    if not real_api_key or not real_api_base_url:
-        logger.warning("Real Backlink API enabled but API key or base_url not found in config. Falling back to simulated Backlink API.")
-        backlink_service_instance = BacklinkService(redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
-    else:
-        backlink_service_instance = BacklinkService(api_client=RealBacklinkAPIClient(api_key=real_api_key, base_url=real_api_base_url, session_manager=session_manager_instance), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
-else:
-    backlink_service_instance = BacklinkService(api_client=SimulatedBacklinkAPIClient(session_manager=session_manager_instance), redis_client=redis_client, cache_ttl=API_CACHE_TTL, database=db, session_manager=session_manager_instance)
+backlink_service_instance = BacklinkService(
+    # redis_client=redis_client, # BacklinkService does not directly use redis_client
+    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
+    # database=db, # BacklinkService does not directly use db
+    session_manager=session_manager # Pass session manager
+)
 
 # New: Initialize PageSpeedClient
-pagespeed_client_instance = PageSpeedClient(session_manager=session_manager_instance)
+pagespeed_client_instance = PageSpeedClient(session_manager=session_manager)
 
 # New: Initialize SERPService and SERPCrawler
 serp_crawler_instance = None
@@ -237,29 +223,29 @@ if config_loader.get("serp_crawler.playwright.enabled"):
         browser_type=config_loader.get("serp_crawler.playwright.browser_type")
     )
 serp_service_instance = SERPService(
-    api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key"), base_url=config_loader.get("serp_api.real_api.base_url"), session_manager=session_manager_instance) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(session_manager=session_manager_instance),
+    # api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key"), base_url=config_loader.get("serp_api.real_api.base_url"), session_manager=session_manager) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(session_manager=session_manager),
     serp_crawler=serp_crawler_instance,
     pagespeed_client=pagespeed_client_instance, # New: Pass pagespeed_client_instance
-    redis_client=redis_client, # Pass redis_client for caching
-    cache_ttl=API_CACHE_TTL, # Pass cache_ttl
-    session_manager=session_manager_instance # Pass session manager
+    # redis_client=redis_client, # Pass redis_client for caching
+    # cache_ttl=API_CACHE_TTL, # Pass cache_ttl
+    session_manager=session_manager # Pass session manager
 )
 
 # New: Initialize GoogleTrendsClient
-google_trends_client_instance = GoogleTrendsClient(session_manager=session_manager_instance)
+google_trends_client_instance = GoogleTrendsClient(session_manager=session_manager)
 
 # New: Initialize KeywordService and KeywordScraper
 keyword_scraper_instance = None
-if config_loader.get("keyword_scraper.enabled"):
+if config_loader.get("keyword_scraper.enabled"): # Assuming a config for keyword_scraper.enabled
     logger.info("Initialising KeywordScraper.")
-    keyword_scraper_instance = KeywordScraper(session_manager=session_manager_instance)
+    keyword_scraper_instance = KeywordScraper(session_manager=session_manager)
 keyword_service_instance = KeywordService(
-    api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key"), base_url=config_loader.get("keyword_api.real_api.base_url"), session_manager=session_manager_instance) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(session_manager=session_manager_instance),
+    # api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key"), base_url=config_loader.get("keyword_api.real_api.base_url"), session_manager=session_manager) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(session_manager=session_manager),
     keyword_scraper=keyword_scraper_instance,
     google_trends_client=google_trends_client_instance, # New: Pass google_trends_client_instance
-    redis_client=redis_client, # Pass redis_client for caching
-    cache_ttl=API_CACHE_TTL, # Pass cache_ttl
-    session_manager=session_manager_instance # Pass session manager
+    # redis_client=redis_client, # Pass redis_client for caching
+    # cache_ttl=API_CACHE_TTL, # Pass cache_ttl
+    session_manager=session_manager # Pass session manager
 )
 
 # New: Initialize LinkHealthService
@@ -271,10 +257,10 @@ technical_auditor_instance = TechnicalAuditor(
 )
 
 # New: Initialize AI Service
-ai_service_instance = AIService(session_manager=session_manager_instance)
+ai_service_instance = AIService(session_manager=session_manager)
 
 # New: Initialize Alert Service
-alert_service_instance = AlertService(db, connection_manager) # Pass connection_manager here
+alert_service_instance = AlertService(db, ConnectionManager()) # Pass connection_manager here
 
 # New: Initialize Report Service
 report_service_instance = ReportService(db)
@@ -283,30 +269,30 @@ report_service_instance = ReportService(db)
 competitive_analysis_service_instance = CompetitiveAnalysisService(db, backlink_service_instance, serp_service_instance)
 
 # New: Initialize RedditClient, YouTubeClient, NewsAPIClient
-reddit_client_instance = RedditClient(session_manager=session_manager_instance)
-youtube_client_instance = YouTubeClient(session_manager=session_manager_instance)
-news_api_client_instance = NewsAPIClient(session_manager=session_manager_instance)
+reddit_client_instance = RedditClient(session_manager=session_manager)
+youtube_client_instance = YouTubeClient(session_manager=session_manager)
+news_api_client_instance = NewsAPIClient(session_manager=session_manager)
 
 # New: Initialize Social Media Service and Crawler
 social_media_crawler_instance = None
 if config_loader.get("social_media_crawler.enabled"):
     logger.info("Initialising SocialMediaCrawler.")
-    social_media_crawler_instance = SocialMediaCrawler(session_manager=session_manager_instance)
+    social_media_crawler_instance = SocialMediaCrawler(session_manager=session_manager)
 social_media_service_instance = SocialMediaService(
     social_media_crawler=social_media_crawler_instance,
-    redis_client=redis_client,
-    cache_ttl=API_CACHE_TTL,
+    # redis_client=redis_client, # SocialMediaService does not directly use redis_client
+    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
     reddit_client=reddit_client_instance, # New: Pass RedditClient
     youtube_client=youtube_client_instance, # New: Pass YouTubeClient
     news_api_client=news_api_client_instance, # New: Pass NewsAPIClient
-    session_manager=session_manager_instance # Pass session manager
+    session_manager=session_manager # Pass session manager
 )
 
 # New: Initialize Web3 Service
 web3_service_instance = Web3Service(
-    redis_client=redis_client,
-    cache_ttl=API_CACHE_TTL,
-    session_manager=session_manager_instance # Pass session manager
+    # redis_client=redis_client, # Web3Service does not directly use redis_client
+    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
+    session_manager=session_manager # Pass session manager
 )
 
 # New: Initialize Link Building Service
@@ -375,7 +361,7 @@ main_crawl_config = CrawlConfig(**crawler_config_data)
 smart_crawl_queue = SmartCrawlQueue(redis_client=redis_client)
 
 # Create WebCrawler instance, passing the SmartCrawlQueue
-main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, browser=playwright_browser_instance, resilience_manager=distributed_resilience_manager, session_manager=session_manager_instance) # Changed to EnhancedWebCrawler
+main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, browser=playwright_browser_instance, resilience_manager=distributed_resilience_manager, session_manager=session_manager) # Changed to EnhancedWebCrawler
 # --- End New Instantiation ---
 
 
@@ -386,16 +372,21 @@ async def lifespan(app: FastAPI):
     Ensures resources like aiohttp sessions are properly opened and closed.
     """
     context_managers = [
-        session_manager_instance, # New: Add SessionManager to lifespan
+        session_manager, # New: Add SessionManager to lifespan
         domain_service_instance,
+        ai_service_instance,
+        api_cache, # Initialize API cache
+        auth_service_instance, # New: Add AuthService to lifespan
+        # The following services are initialized with dependencies that might not be ready yet
+        # or are managed by their own internal lifecycles.
+        # They should be initialized within the lifespan if they need async setup/teardown.
+        # For now, we'll assume their __aenter__/__aexit__ are robust enough.
         backlink_service_instance,
         serp_service_instance,
         keyword_service_instance,
         link_health_service_instance,
         technical_auditor_instance,
-        ai_service_instance,
         alert_service_instance, # New: Add AlertService to lifespan
-        auth_service_instance, # New: Add AuthService to lifespan
         report_service_instance, # New: Add ReportService to lifespan
         competitive_analysis_service_instance, # New: Add CompetitiveAnalysisService to lifespan
         social_media_service_instance, # New: Add SocialMediaService
@@ -469,22 +460,17 @@ async def lifespan(app: FastAPI):
             logger.warning("Redis client not initialized. Skipping Redis ping.")
         
         # Set dependencies for queue_endpoints before getting coordinator
-        # Import set_coordinator_dependencies and get_coordinator from the new service
-        # to avoid circular imports with queue_endpoints.py
-        # from Link_Profiler.api.queue_endpoints import set_coordinator_dependencies as set_job_coordinator_dependencies # Import here to avoid circular dependency
         set_coordinator_dependencies(
             redis_client=redis_client,
             config_loader=config_loader,
             db=db,
             alert_service=alert_service_instance,
-            connection_manager=connection_manager
+            connection_manager=ConnectionManager() # Pass a new instance or the global one if it's a singleton
         )
 
         # Initialize and start JobCoordinator background tasks
-        # This call will now handle its own __aenter__ and task creation
-        # from Link_Profiler.api.queue_endpoints import get_coordinator as get_job_coordinator_instance
         try:
-            await get_coordinator() # Use the get_coordinator from job_submission_service
+            await get_coordinator() # Use the get_coordinator from queue_endpoints
             logger.info("JobCoordinator successfully initialized and background tasks started via get_coordinator.")
         except Exception as e:
             logger.error(f"Failed to initialize JobCoordinator during lifespan startup: {e}", exc_info=True)
@@ -519,8 +505,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Link Profiler API",
-    description="API for discovering backlinks and generating link profiles.",
-    version="0.1.0",
+    description="API for comprehensive link profiling, SEO analysis, and domain intelligence.",
+    version=config_loader.get("system.current_code_version", "0.1.0"),
     lifespan=lifespan # Register the lifespan context manager
 )
 
@@ -548,128 +534,197 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,         # Use specific origins, not "*"
+    allow_origins=["*"], # For development, allow all origins. Restrict in production.
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
 
-# --- Pydantic Models for API Request/Response ---
-# Moved to Link_Profiler/api/schemas.py
-from Link_Profiler.api.schemas import (
-    CrawlConfigRequest, StartCrawlRequest, LinkHealthAuditRequest, TechnicalAuditRequest,
-    DomainAnalysisJobRequest, FullSEOAduitRequest, Web3CrawlRequest, SocialMediaCrawlRequest,
-    ContentGapAnalysisRequest, CrawlErrorResponse, CrawlJobResponse, LinkProfileResponse,
-    BacklinkResponse, DomainResponse, DomainAnalysisResponse, FindExpiredDomainsRequest,
-    FindExpiredDomainsResponse, SERPSearchRequest, SERPResultResponse, KeywordSuggestRequest,
-    KeywordSuggestionResponse, LinkIntersectRequest, LinkIntersectResponse,
-    CompetitiveKeywordAnalysisRequest, CompetitiveKeywordAnalysisResponse,
-    AlertRuleCreateRequest, AlertRuleResponse, ContentGapAnalysisResultResponse,
-    LinkProspectResponse, LinkProspectUpdateRequest, ProspectIdentificationRequest,
-    OutreachCampaignCreateRequest, OutreachCampaignResponse, OutreachEventCreateRequest,
-    OutreachEventResponse, ContentGenerationRequest, CompetitorStrategyAnalysisRequest,
-    ReportScheduleRequest, ReportJobResponse, LinkVelocityRequest, DomainHistoryResponse,
-    TopicClusteringRequest, Token, UserCreate, UserResponse,
-    JobStatusResponse, QueueStatsResponse, CrawlerHealthResponse # New: Import queue response models
-)
+# Dependency to get the current user
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token") # Define here for use in Depends
 
-# Import get_current_user for dependency injection
-from Link_Profiler.api.dependencies import get_current_user # Re-import get_current_user here
-from Link_Profiler.api.monitoring_debug import (
-    _get_aggregated_stats_for_api, health_check_internal, _get_satellites_data_internal
-)
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+    user = await auth_service_instance.get_current_user(token)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
 
+async def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operation forbidden: Admin access required"
+        )
+    return current_user
 
-# --- API Endpoints ---
+# --- Authentication Routes ---
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = await auth_service_instance.authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=auth_service_instance.access_token_expire_minutes)
+    access_token = auth_service_instance.create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
 
-# Import the new routers
-from Link_Profiler.api.auth import auth_router
-from Link_Profiler.api.users import users_router
-from Link_Profiler.api.crawl_audit import crawl_audit_router
-from Link_Profiler.api.analytics import analytics_router
-from Link_Profiler.api.competitive_analysis import competitive_analysis_router
-from Link_Profiler.api.link_building import link_building_router
-from Link_Profiler.api.ai import ai_router
-from Link_Profiler.api.reports import reports_router
-from Link_Profiler.api.monitoring_debug import monitoring_debug_router
-from Link_Profiler.api.websocket import websocket_router
-from Link_Profiler.api.queue import queue_router # New: Import the queue router
-from Link_Profiler.api.public_jobs import public_jobs_router # New: Import the public jobs router
+@app.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register_user(user_create: UserCreate):
+    existing_user = db.get_user_by_username(user_create.username)
+    if existing_user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already registered")
+    existing_email = db.get_user_by_email(user_create.email)
+    if existing_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+    
+    new_user = await auth_service_instance.register_user(
+        username=user_create.username,
+        email=user_create.email,
+        password=user_create.password
+    )
+    return UserResponse.from_user(new_user)
 
-# Register the routers with the main app
-app.include_router(auth_router)
-app.include_router(users_router)
-app.include_router(crawl_audit_router)
-app.include_router(analytics_router)
-app.include_router(competitive_analysis_router)
-app.include_router(link_building_router)
-app.include_router(ai_router)
-app.include_router(reports_router)
-app.include_router(monitoring_debug_router)
-app.include_router(websocket_router)
-app.include_router(queue_router)
-app.include_router(public_jobs_router)
+@app.get("/users/me", response_model=UserResponse)
+async def read_users_me(current_user: User = Depends(get_current_user)):
+    return UserResponse.from_user(current_user)
 
+# --- Health and Monitoring Routes ---
+@app.get("/health")
+async def health_check():
+    db_status = db.ping()
+    # Add other service health checks here
+    return {"status": "ok", "database_connected": db_status}
 
-# --- Additional API Endpoints (not part of routers yet) ---
-# These remain as they are protected and not intended for public access via the new public_jobs_router
-@app.get("/api/jobs/all", response_model=List[CrawlJobResponse])
-async def get_all_jobs(
-    status_filter: Optional[CrawlStatus] = Query(None, description="Filter jobs by status"),
-    current_user: User = Depends(get_current_user) # Protect this endpoint
-):
-    """
-    Retrieve a list of all crawl jobs, optionally filtered by status.
-    """
-    logger.info(f"User {current_user.username} requested all jobs with status filter: {status_filter}")
-    try:
-        all_jobs = db.get_all_crawl_jobs()
-        if status_filter:
-            filtered_jobs = [job for job in all_jobs if job.status == status_filter]
-        else:
-            filtered_jobs = all_jobs
-        
-        # Sort by created_date descending
-        sorted_jobs = sorted(filtered_jobs, key=lambda job: job.created_date if job.created_date else datetime.min, reverse=True)
-        
-        return [CrawlJobResponse.from_crawl_job(job) for job in sorted_jobs]
-    except Exception as e:
-        logger.error(f"Error retrieving all jobs: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve crawl jobs.")
+@app.get("/metrics")
+async def metrics():
+    return HTMLResponse(content=get_metrics_text(), media_type="text/plain")
 
-@app.get("/api/jobs/{job_id}", response_model=CrawlJobResponse)
-async def get_job_details(
-    job_id: str,
-    current_user: User = Depends(get_current_user) # Protect this endpoint
-):
-    """
-    Retrieve details for a specific crawl job.
-    """
-    logger.info(f"User {current_user.username} requested details for job ID: {job_id}")
-    try:
-        job = db.get_crawl_job(job_id)
-        if not job:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-        return CrawlJobResponse.from_crawl_job(job)
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"Error retrieving job details for {job_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve job details.")
+# --- Core Functionality Routes (Examples) ---
+@app.get("/link_profile/{target_url:path}", response_model=LinkProfileResponse)
+async def get_link_profile(target_url: str, current_user: User = Depends(get_current_user)):
+    profile = db.get_link_profile(target_url)
+    if not profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link profile not found")
+    return LinkProfileResponse.from_link_profile(profile)
 
-# --- Dashboard Frontend Routes ---
+@app.get("/domain/info/{domain_name}", response_model=DomainResponse)
+async def get_domain_info(domain_name: str, current_user: User = Depends(get_current_user)):
+    domain = db.get_domain(domain_name)
+    if not domain:
+        # Attempt to fetch if not in DB
+        async with domain_service_instance as ds:
+            domain = await ds.get_domain_info(domain_name)
+            if domain:
+                db.save_domain(domain) # Save newly fetched domain
+            else:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Domain info not found")
+    return DomainResponse.from_domain(domain)
+
+# --- Placeholder for other API endpoints ---
+# @app.post("/crawl/start", response_model=CrawlJobResponse)
+# async def start_crawl_job(request: StartCrawlRequest, current_user: User = Depends(get_current_user)):
+#     # Logic to submit crawl job to queue
+#     pass
+
+# @app.get("/jobs/{job_id}", response_model=CrawlJobResponse)
+# async def get_job_status(job_id: str, current_user: User = Depends(get_current_user)):
+#     job = db.get_crawl_job(job_id)
+#     if not job:
+#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+#     return CrawlJobResponse.from_crawl_job(job)
+
+# @app.get("/reports/{report_id}", response_model=ReportJobResponse)
+# async def get_report_status(report_id: str, current_user: User = Depends(get_current_user)):
+#     report = db.get_report_job(report_id)
+#     if not report:
+#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report job not found")
+#     return ReportJobResponse.from_report_job(report)
+
+# @app.get("/queue/stats", response_model=QueueStatsResponse)
+# async def get_queue_stats(current_user: User = Depends(get_current_user)):
+#     # Logic to get queue stats from Redis/JobCoordinator
+#     pass
+
+# @app.get("/serp/search", response_model=List[SERPResultResponse])
+# async def serp_search(request: SERPSearchRequest, current_user: User = Depends(get_current_user)):
+#     # Logic to perform SERP search
+#     pass
+
+# @app.get("/keywords/suggest", response_model=List[KeywordSuggestionResponse])
+# async def suggest_keywords(request: KeywordSuggestRequest, current_user: User = Depends(get_current_user)):
+#     # Logic to suggest keywords using AI service
+#     pass
+
+# @app.post("/link_intersect", response_model=LinkIntersectResponse)
+# async def link_intersect_analysis(request: LinkIntersectRequest, current_user: User = Depends(get_current_user)):
+#     # Logic to perform link intersect analysis
+#     pass
+
+# @app.post("/competitive_keyword_analysis", response_model=CompetitiveKeywordAnalysisResponse)
+# async def competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRequest, current_user: User = Depends(get_current_user)):
+#     # Logic to perform competitive keyword analysis
+#     pass
+
+# @app.post("/alerts/rules", response_model=AlertRuleResponse)
+# async def create_alert_rule(rule: AlertRuleCreateRequest, current_user: User = Depends(get_current_admin_user)):
+#     # Logic to create alert rule
+#     pass
+
+# @app.get("/alerts/rules", response_model=List[AlertRuleResponse])
+# async def get_alert_rules(current_user: User = Depends(get_current_user)):
+#     # Logic to get alert rules
+#     pass
+
+# @app.post("/content_gap_analysis", response_model=ContentGapAnalysisResultResponse)
+# async def content_gap_analysis(request: ContentGapAnalysisRequest, current_user: User = Depends(get_current_user)):
+#     # Logic to perform content gap analysis
+#     pass
+
+# @app.post("/link_prospects/identify", response_model=List[LinkProspectResponse])
+# async def identify_link_prospects(request: ProspectIdentificationRequest, current_user: User = Depends(get_current_user)):
+#     # Logic to identify link prospects
+#     pass
+
+# @app.post("/outreach/campaigns", response_model=OutreachCampaignResponse)
+# async def create_outreach_campaign(request: OutreachCampaignCreateRequest, current_user: User = Depends(get_current_user)):
+#     # Logic to create outreach campaign
+#     pass
+
+# @app.post("/outreach/events", response_model=OutreachEventResponse)
+# async def create_outreach_event(request: OutreachEventCreateRequest, current_user: User = Depends(get_current_user)):
+#     # Logic to create outreach event
+#     pass
+
+# @app.get("/seo_metrics/{url:path}", response_model=SEOMetricsResponse)
+# async def get_seo_metrics(url: str, current_user: User = Depends(get_current_user)):
+#     # Logic to get SEO metrics for a URL
+#     pass
+
+# Serve static files (e.g., a simple dashboard or documentation)
+# app.mount("/static", StaticFiles(directory="static"), name="static")
+
 @app.get("/", response_class=HTMLResponse)
-async def dashboard_home(request: Request):
-    """Main dashboard - requires authentication via JavaScript"""
-    return templates.TemplateResponse("dashboard.html", {"request": request})
-
-@app.get("/api/dashboard/stats")
-async def get_dashboard_stats(current_user: User = Depends(get_current_user)):
-    """API endpoint for dashboard statistics - protected by authentication"""
-    try:
-        # Get all the data for dashboard
-        stats = await _get_aggregated_stats_for_api()
-        return stats
-    except Exception as e:
-        logger.error(f"Error getting dashboard stats: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to get dashboard statistics")
+async def read_root():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Link Profiler API</title>
+        <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    </head>
+    <body>
+        <h1>Welcome to the Link Profiler API!</h1>
+        <p>Visit <a href="/docs">/docs</a> for API documentation.</p>
+        <p>Visit <a href="/redoc">/redoc</a> for ReDoc documentation.</p>
+    </body>
+    </html>
+    """
