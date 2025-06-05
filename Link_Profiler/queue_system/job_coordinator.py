@@ -285,6 +285,8 @@ class JobCoordinator:
             self._processing_paused = True
             self.logger.info("Job processing paused.")
             await self.redis.set("job_processing_paused", "true") # Persist state
+            # Broadcast pause command to all satellite crawlers so they halt new work
+            await self.send_global_control_command("PAUSE")
             await self.connection_manager.broadcast("Job processing paused.")
             return True
 
@@ -294,6 +296,8 @@ class JobCoordinator:
             self._processing_paused = False
             self.logger.info("Job processing resumed.")
             await self.redis.delete("job_processing_paused") # Clear persisted state
+            # Notify satellites to resume processing
+            await self.send_global_control_command("RESUME")
             await self.connection_manager.broadcast("Job processing resumed.")
             return True
 
