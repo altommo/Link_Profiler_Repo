@@ -65,6 +65,14 @@ class ConnectionManager:
             f"Broadcasted message to {len(self.active_connections)} active connections. Message type: {message.get('type') if isinstance(message, dict) else 'text'}"
         )
 
+    async def broadcast_json(self, data: Dict[str, Any]):
+        """Helper to broadcast a JSON-serializable payload."""
+        await self.broadcast(data)
+
+    def connection_count(self) -> int:
+        """Returns the number of active WebSocket connections."""
+        return len(self.active_connections)
+
     async def __aenter__(self):
         return self
 
