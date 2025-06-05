@@ -29,6 +29,7 @@ from Link_Profiler.crawlers.web_crawler import EnhancedWebCrawler # Changed to E
 from Link_Profiler.core.models import CrawlConfig, CrawlJob, CrawlStatus, serialize_model, CrawlError, SEOMetrics
 from Link_Profiler.services.ai_service import AIService # Import AIService for WebCrawler
 from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue # Import SmartCrawlQueue for internal use by WebCrawler
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 # --- Configuration and Logging Setup ---
 config_loader = ConfigLoader()
@@ -58,6 +59,7 @@ class SatelliteCrawler:
         self.web_crawler: Optional[EnhancedWebCrawler] = None # Changed to EnhancedWebCrawler
         self.ai_service: Optional[AIService] = None # AI service for content analysis
         self.smart_crawl_queue: Optional[SmartCrawlQueue] = None # Smart crawl queue for internal use by WebCrawler
+        self.resilience_manager: Optional[DistributedResilienceManager] = None # New: DistributedResilienceManager
 
         self.jobs_processed = 0
         self.current_job_id: Optional[str] = None
@@ -87,6 +89,10 @@ class SatelliteCrawler:
         self.smart_crawl_queue = SmartCrawlQueue(redis_client=self.redis_client)
         await self.smart_crawl_queue.__aenter__()
 
+        # New: Initialize DistributedResilienceManager
+        self.resilience_manager = DistributedResilienceManager(redis_client=self.redis_client)
+        await self.resilience_manager.__aenter__()
+
         # Initialize WebCrawler with loaded config and AI service
         crawler_config_data = config_loader.get("crawler", {})
         # Ensure ml_rate_optimization is set based on rate_limiting config
@@ -106,7 +112,12 @@ class SatelliteCrawler:
         crawler_config_data['headless_browser'] = config_loader.get("browser_crawler.headless", True)
 
         main_crawl_config = CrawlConfig(**crawler_config_data)
-        self.web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=self.smart_crawl_queue, ai_service=self.ai_service) # Changed to EnhancedWebCrawler
+        self.web_crawler = EnhancedWebCrawler(
+            config=main_crawl_config, 
+            crawl_queue=self.smart_crawl_queue, 
+            ai_service=self.ai_service,
+            resilience_manager=self.resilience_manager # New: Pass the distributed resilience manager
+        )
         await self.web_crawler.__aenter__() # Enter WebCrawler context
 
         # Start background tasks
@@ -122,6 +133,8 @@ class SatelliteCrawler:
         logger.info(f"Satellite Crawler '{self.crawler_id}' shutting down...")
         if self.web_crawler:
             await self.web_crawler.__aexit__(exc_type, exc_val, exc_tb)
+        if self.resilience_manager: # New: Exit DistributedResilienceManager context
+            await self.resilience_manager.__aexit__(exc_type, exc_val, exc_tb)
         if self.ai_service:
             await self.ai_service.__aexit__(exc_type, exc_val, exc_tb)
         if self.smart_crawl_queue:

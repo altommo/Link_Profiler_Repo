@@ -144,6 +144,9 @@ from Link_Profiler.services.job_submission_service import submit_crawl_to_queue,
 from Link_Profiler.crawlers.web_crawler import EnhancedWebCrawler # Changed to EnhancedWebCrawler
 from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue, Priority
 
+# New: Import DistributedResilienceManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
+
 
 # New: Import API Clients
 from Link_Profiler.clients.google_search_console_client import GSCClient
@@ -335,6 +338,9 @@ crawl_service_for_lifespan = CrawlService(
 ) 
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service) # Corrected class name
 
+# New: Instantiate DistributedResilienceManager
+distributed_resilience_manager = DistributedResilienceManager(redis_client=redis_client)
+
 # --- New: Instantiate SmartCrawlQueue and WebCrawler ---
 # Load crawler-specific configuration
 crawler_config_data = config_loader.get("crawler", {})
@@ -360,7 +366,7 @@ main_crawl_config = CrawlConfig(**crawler_config_data)
 smart_crawl_queue = SmartCrawlQueue(redis_client=redis_client)
 
 # Create WebCrawler instance, passing the SmartCrawlQueue
-main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, browser=playwright_browser_instance) # Changed to EnhancedWebCrawler
+main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, browser=playwright_browser_instance, resilience_manager=distributed_resilience_manager) # Changed to EnhancedWebCrawler
 # --- End New Instantiation ---
 
 
@@ -393,7 +399,8 @@ async def lifespan(app: FastAPI):
         reddit_client_instance, # New: Add RedditClient
         youtube_client_instance, # New: Add YouTubeClient
         news_api_client_instance, # New: Add NewsAPIClient
-        main_web_crawler # Add the main_web_crawler to the lifespan context
+        main_web_crawler, # Add the main_web_crawler to the lifespan context
+        distributed_resilience_manager # New: Add DistributedResilienceManager to lifespan
     ]
 
     # Conditionally add ClickHouseLoader to context managers

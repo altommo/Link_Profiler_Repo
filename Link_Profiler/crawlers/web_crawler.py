@@ -13,7 +13,7 @@ import random
 import json
 
 # Existing imports
-from Link_Profiler.utils.circuit_breaker import ResilienceManager, CircuitBreakerOpenError
+from Link_Profiler.utils.circuit_breaker import CircuitBreakerOpenError # Removed LocalResilienceManager
 from Link_Profiler.utils.adaptive_rate_limiter import MLRateLimiter
 from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue, Priority
 from Link_Profiler.monitoring.crawler_metrics import crawler_metrics
@@ -29,6 +29,7 @@ from Link_Profiler.services.ai_service import AIService
 
 # New imports needed
 from playwright.async_api import async_playwright, Browser, BrowserContext
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,8 @@ class EnhancedWebCrawler:
                  config: CrawlConfig,
                  crawl_queue: Optional[SmartCrawlQueue] = None,
                  ai_service: Optional[AIService] = None,
-                 browser: Optional[Browser] = None):
+                 browser: Optional[Browser] = None,
+                 resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept DistributedResilienceManager
         
         # Core configuration
         self.config = config
@@ -48,7 +50,13 @@ class EnhancedWebCrawler:
         self.browser = browser # Playwright browser instance passed from main.py
         
         # Advanced components
-        self.resilience_manager = ResilienceManager()
+        self.resilience_manager = resilience_manager
+        if self.resilience_manager is None:
+            # Fallback to a local resilience manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.circuit_breaker import LocalResilienceManager
+            self.resilience_manager = LocalResilienceManager()
+            logger.warning("No DistributedResilienceManager provided. Falling back to LocalResilienceManager.")
+
         self.rate_limiter = MLRateLimiter()
         self.metrics = crawler_metrics
         self.health_monitor = HealthMonitor(self.metrics)
@@ -543,7 +551,7 @@ class EnhancedWebCrawler:
             **self.stats,
             'uptime_seconds': time.time() - (self.stats['start_time'] or time.time()),
             'rate_limiter_stats': self.rate_limiter.get_statistics(),
-            'circuit_breaker_health': self.resilience_manager.get_health_status(),
+            'circuit_breaker_health': await self.resilience_manager.get_health_status(), # Await the async method
             'queue_stats': self.crawl_queue.get_queue_stats() if self.crawl_queue else None,
             'health_report': self.metrics.generate_health_report()
         }

@@ -1,5 +1,5 @@
 """
-Circuit Breaker Implementation for Crawler Resilience
+Local Circuit Breaker Implementation for Crawler Resilience
 Prevents cascading failures and implements smart retry logic
 """
 
@@ -21,14 +21,14 @@ class CircuitBreakerState(Enum):
     HALF_OPEN = "half_open"  # Testing if service recovered
 
 @dataclass
-class CircuitBreakerConfig:
+class LocalCircuitBreakerConfig:
     failure_threshold: int = 5           # Failures before opening
     recovery_timeout: int = 60           # Seconds before trying half-open
     success_threshold: int = 3           # Successes needed to close from half-open
     timeout_duration: int = 30           # Request timeout in seconds
 
-class CircuitBreaker:
-    def __init__(self, name: str, config: CircuitBreakerConfig):
+class LocalCircuitBreaker:
+    def __init__(self, name: str, config: LocalCircuitBreakerConfig):
         self.name = name
         self.config = config
         self.state = CircuitBreakerState.CLOSED
@@ -46,7 +46,7 @@ class CircuitBreaker:
         elif self.state == CircuitBreakerState.OPEN:
             if self.next_attempt_time and now >= self.next_attempt_time:
                 self.state = CircuitBreakerState.HALF_OPEN
-                logger.info(f"Circuit breaker {self.name} switching to HALF_OPEN")
+                logger.info(f"Local circuit breaker {self.name} switching to HALF_OPEN")
                 return True
             return False
         elif self.state == CircuitBreakerState.HALF_OPEN:
@@ -78,7 +78,7 @@ class CircuitBreaker:
         """Open the circuit breaker"""
         self.state = CircuitBreakerState.OPEN
         self.next_attempt_time = time.time() + self.config.recovery_timeout
-        logger.warning(f"Circuit breaker {self.name} OPENED after {self.failure_count} failures")
+        logger.warning(f"Local circuit breaker {self.name} OPENED after {self.failure_count} failures")
     
     def _close_circuit(self):
         """Close the circuit breaker"""
@@ -86,7 +86,7 @@ class CircuitBreaker:
         self.failure_count = 0
         self.success_count = 0
         self.next_attempt_time = None
-        logger.info(f"Circuit breaker {self.name} CLOSED - service recovered")
+        logger.info(f"Local circuit breaker {self.name} CLOSED - service recovered")
 
 class ExponentialBackoff:
     """Implements exponential backoff with jitter"""
@@ -109,18 +109,18 @@ class ExponentialBackoff:
         
         return max(0, delay)
 
-class ResilienceManager:
-    """Manages circuit breakers and retry logic for all domains"""
+class LocalResilienceManager:
+    """Manages local circuit breakers and retry logic for all domains"""
     
     def __init__(self):
-        self.circuit_breakers: Dict[str, CircuitBreaker] = {}
+        self.circuit_breakers: Dict[str, LocalCircuitBreaker] = {}
         self.backoff = ExponentialBackoff()
         
-    def get_circuit_breaker(self, domain: str) -> CircuitBreaker:
+    def get_circuit_breaker(self, domain: str) -> LocalCircuitBreaker:
         """Get or create circuit breaker for domain"""
         if domain not in self.circuit_breakers:
-            config = CircuitBreakerConfig()
-            self.circuit_breakers[domain] = CircuitBreaker(domain, config)
+            config = LocalCircuitBreakerConfig()
+            self.circuit_breakers[domain] = LocalCircuitBreaker(domain, config)
         return self.circuit_breakers[domain]
     
     async def execute_with_resilience(self, func: Callable, url: str, *args, **kwargs) -> Any:

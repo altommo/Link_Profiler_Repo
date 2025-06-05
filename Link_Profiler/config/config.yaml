@@ -33,7 +33,7 @@ logging:
         propagate: False
     root:
       handlers: [console]
-      level: DEBUG # Set root level to DEBUG
+      level: DEBUG
 
 # API settings
 api:
@@ -266,7 +266,7 @@ notifications:
     sender_email: ""
   slack:
     enabled: false
-    webhook_url: "" # Slack incoming webhook URL
+    webhook_url: ""
 
 # Monitoring settings
 monitoring:
@@ -283,10 +283,12 @@ monitoring:
 
 # Circuit Breaker settings
 circuit_breaker:
+  enabled: true # Set to true to enable distributed circuit breaker
   failure_threshold: 5           # Failures before opening
   recovery_timeout: 60           # Seconds before trying half-open
   success_threshold: 3           # Successes needed to close from half-open
   timeout_duration: 30           # Request timeout in seconds
+  redis_key_prefix: "cb_state:" # Redis key prefix for circuit breaker states
 
 # Rate Limiting settings
 rate_limiting:
@@ -298,9 +300,9 @@ rate_limiting:
 
 # Queue System settings
 queue_system:
-  redis_url: "redis://:redis_secure_pass_456@127.0.0.1:6379/0" # Redis URL for the smart queue
-  max_queue_size: 100000 # Maximum number of tasks in the queue
-  domain_max_concurrent: 2 # Max concurrent requests per domain in the smart queue
+  redis_url: "redis://:redis_secure_pass_456@127.0.0.1:6379/0",
+  max_queue_size: 100000,
+  domain_max_concurrent: 2
 
 # Satellite Crawler settings
 satellite:
