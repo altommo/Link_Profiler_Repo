@@ -7,6 +7,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import logging
 import aiohttp # Added for aiohttp.ClientSession and ClientTimeout
+from enum import Enum # Added missing import
 
 # Assuming config_loader is available globally or passed via dependency injection
 from Link_Profiler.config.config_loader import config_loader

@@ -2,7 +2,10 @@ import logging.config
 import logging
 import os
 import json
-from typing import Dict, Any
+import sys # Added missing import
+import traceback # Added missing import
+from datetime import datetime # Added missing import
+from typing import Dict, Any, Optional # Added missing import
 
 class JSONFormatter(logging.Formatter):
     """JSON formatter for structured logging."""
