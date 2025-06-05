@@ -18,6 +18,7 @@ from Link_Profiler.core.models import KeywordSuggestion # Absolute import
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class KeywordScraper:
     Scrapes keyword suggestions from public endpoints (Google, Bing) and
     fetches trend data using Pytrends.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
         self.logger = logging.getLogger(__name__)
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
@@ -34,6 +35,13 @@ class KeywordScraper:
             from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
             self.session_manager = global_session_manager
             logger.warning("No SessionManager provided to KeywordScraper. Falling back to global SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to KeywordScraper. Falling back to global instance.")
+
 
         self.pytrends_client: Optional[TrendReq] = None
 
@@ -62,19 +70,17 @@ class KeywordScraper:
         
         url = f"https://suggestqueries.google.com/complete/search?client=firefox&q={urlencode({'q': query})}"
         try:
-            async with await self.session_manager.get(url, timeout=5) as response:
-                response.raise_for_status()
-                data = await response.json()
-                # Google Autocomplete returns a list of lists: [query, [suggestions], [descriptions], [urls]]
-                return data[1] if len(data) > 1 else []
-        except aiohttp.ClientError as e:
-            self.logger.warning(f"Error fetching Google suggestions for '{query}': {e}")
-            return []
-        except asyncio.TimeoutError:
-            self.logger.warning(f"Google suggestions fetch for '{query}' timed out.")
-            return []
+            # Use resilience manager for the actual HTTP request
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(url, timeout=5),
+                url=url # Pass the URL for circuit breaker naming
+            )
+            response.raise_for_status()
+            data = await response.json()
+            # Google Autocomplete returns a list of lists: [query, [suggestions], [descriptions], [urls]]
+            return data[1] if len(data) > 1 else []
         except Exception as e:
-            self.logger.error(f"Unexpected error in Google suggestions fetch for '{query}': {e}", exc_info=True)
+            self.logger.warning(f"Error fetching Google suggestions for '{query}': {e}")
             return []
 
     async def _get_bing_suggestions(self, query: str) -> List[str]:
@@ -84,20 +90,18 @@ class KeywordScraper:
         
         url = f"https://api.bing.com/qsonhs.aspx?q={urlencode({'q': query})}"
         try:
-            async with await self.session_manager.get(url, timeout=5) as response:
-                response.raise_for_status()
-                data = await response.json()
-                # Bing Suggest returns JSON with 'AS' -> 'Results' -> 'Suggests'
-                suggestions = [s['Txt'] for s in data.get('AS', {}).get('Results', [{}])[0].get('Suggests', [])]
-                return suggestions
-        except aiohttp.ClientError as e:
-            self.logger.warning(f"Error fetching Bing suggestions for '{query}': {e}")
-            return []
-        except asyncio.TimeoutError:
-            self.logger.warning(f"Bing suggestions fetch for '{query}' timed out.")
-            return []
+            # Use resilience manager for the actual HTTP request
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(url, timeout=5),
+                url=url # Pass the URL for circuit breaker naming
+            )
+            response.raise_for_status()
+            data = await response.json()
+            # Bing Suggest returns JSON with 'AS' -> 'Results' -> 'Suggests'
+            suggestions = [s['Txt'] for s in data.get('AS', {}).get('Results', [{}])[0].get('Suggests', [])]
+            return suggestions
         except Exception as e:
-            self.logger.error(f"Unexpected error in Bing suggestions fetch for '{query}': {e}", exc_info=True)
+            self.logger.warning(f"Error fetching Bing suggestions for '{query}': {e}")
             return []
 
     async def _get_keyword_trends(self, keywords: List[str], timeframe: str = 'today 12-m') -> Dict[str, List[float]]:
@@ -118,8 +122,14 @@ class KeywordScraper:
             chunk = keywords[i:i + chunk_size]
             try:
                 # Pytrends methods are synchronous, run in executor
-                await asyncio.to_thread(self.pytrends_client.build_payload, chunk, cat=0, timeframe=timeframe, geo='', gprop='')
-                interest_over_time_df = await asyncio.to_thread(self.pytrends_client.interest_over_time)
+                await self.resilience_manager.execute_with_resilience(
+                    lambda: self.pytrends_client.build_payload(chunk, cat=0, timeframe=timeframe, geo='', gprop=''),
+                    url="https://trends.google.com/trends/api/explore" # Use a representative URL for CB
+                )
+                interest_over_time_df = await self.resilience_manager.execute_with_resilience(
+                    lambda: self.pytrends_client.interest_over_time(),
+                    url="https://trends.google.com/trends/api/widgetdata/comparedgeo" # Use a representative URL for CB
+                )
                 
                 if not interest_over_time_df.empty:
                     for kw in chunk:
