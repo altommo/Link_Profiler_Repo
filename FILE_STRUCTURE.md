@@ -72,7 +72,8 @@ Link_Profiler/                                    # Project root
 │   ├── scripts/                                # ✅ NEW: Helper scripts
 │   │   ├── 📄 start_local.sh                   # ✅ NEW: Linux startup
 │   │   ├── 📄 start_local.bat                  # ✅ NEW: Windows startup
-│   │   └── 📄 test_queue.py                    # ✅ NEW: System testing
+│   ├── tests/                                  # ✅ NEW: Test scripts
+│   │   └── 📄 test_queue.py                    # ✅ System testing
 │   │
 │   ├── config/                                 # ✅ NEW: Configuration
 │   │   ├── 📄 default.json                     # ✅ NEW: Default settings
@@ -127,7 +128,7 @@ cd Link_Profiler/deployment/kubernetes
 ### Testing
 ```bash
 # Test queue system
-python Link_Profiler/scripts/test_queue.py
+python tests/test_queue.py
 
 # Submit test job
 curl -X POST "http://localhost:8000/queue/submit_crawl" \
