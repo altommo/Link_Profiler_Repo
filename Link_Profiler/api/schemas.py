@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 # Import from core.models for shared data structures and serialization
-from Link_Profiler.core.models import User, Token, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, serialize_model # Added serialize_model, ReportJob, SEOMetrics
+from Link_Profiler.core.models import User, Token, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics # Added serialize_model, ReportJob, SEOMetrics
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class UserResponse(BaseModel):
 
     @classmethod
     def from_user(cls, user: User):
-        user_dict = serialize_model(user)
+        user_dict = user.to_dict() # Use to_dict() method
         if isinstance(user_dict.get('created_at'), str):
             try:
                 user_dict['created_at'] = datetime.fromisoformat(user_dict['created_at'])
@@ -146,7 +146,7 @@ class CrawlErrorResponse(BaseModel):
 
     @classmethod
     def from_crawl_error(cls, error: CrawlError):
-        return cls(**serialize_model(error))
+        return cls(**error.to_dict()) # Use to_dict() method
 
 
 class CrawlJobResponse(BaseModel):
@@ -170,7 +170,7 @@ class CrawlJobResponse(BaseModel):
 
     @classmethod
     def from_crawl_job(cls, job: CrawlJob):
-        job_dict = serialize_model(job)
+        job_dict = job.to_dict() # Use to_dict() method
         
         # Explicitly convert Enum to its value string for Pydantic if not using use_enum_values
         # job_dict['status'] = job.status.value 
@@ -218,7 +218,7 @@ class LinkProfileResponse(BaseModel):
 
     @classmethod
     def from_link_profile(cls, profile: LinkProfile):
-        profile_dict = serialize_model(profile)
+        profile_dict = profile.to_dict() # Use to_dict() method
         profile_dict['referring_domains'] = list(profile.referring_domains) # Ensure it's a list
         if isinstance(profile_dict.get('analysis_date'), str):
             try:
@@ -251,7 +251,7 @@ class BacklinkResponse(BaseModel):
 
     @classmethod
     def from_backlink(cls, backlink: Backlink):
-        backlink_dict = serialize_model(backlink)
+        backlink_dict = backlink.to_dict() # Use to_dict() method
         
         # backlink_dict['link_type'] = LinkType(backlink.link_type.value) # Handled by use_enum_values
         # backlink_dict['spam_level'] = SpamLevel(backlink.spam_level.value) # Handled by use_enum_values
@@ -288,7 +288,7 @@ class DomainResponse(BaseModel):
 
     @classmethod
     def from_domain(cls, domain: Domain):
-        domain_dict = serialize_model(domain)
+        domain_dict = domain.to_dict() # Use to_dict() method
         if isinstance(domain_dict.get('first_seen'), str):
             try:
                 domain_dict['first_seen'] = datetime.fromisoformat(domain_dict['first_seen'])
@@ -337,7 +337,7 @@ class SERPResultResponse(BaseModel):
 
     @classmethod
     def from_serp_result(cls, result: SERPResult):
-        result_dict = serialize_model(result)
+        result_dict = result.to_dict() # Use to_dict() method
         if isinstance(result_dict.get('crawl_timestamp'), str):
             try:
                 result_dict['crawl_timestamp'] = datetime.fromisoformat(result_dict['crawl_timestamp'])
@@ -362,7 +362,7 @@ class KeywordSuggestionResponse(BaseModel):
     @classmethod
 
     def from_keyword_suggestion(cls, suggestion: KeywordSuggestion):
-        suggestion_dict = serialize_model(suggestion)
+        suggestion_dict = suggestion.to_dict() # Use to_dict() method
         if isinstance(suggestion_dict.get('data_timestamp'), str):
             try:
                 suggestion_dict['data_timestamp'] = datetime.fromisoformat(suggestion_dict['data_timestamp'])
@@ -382,7 +382,7 @@ class LinkIntersectResponse(BaseModel):
 
     @classmethod
     def from_link_intersect_result(cls, result: LinkIntersectResult):
-        return cls(**serialize_model(result))
+        return cls(**result.to_dict()) # Use to_dict() method
 
 class CompetitiveKeywordAnalysisRequest(BaseModel):
     primary_domain: str = Field(..., description="The primary domain for which to perform keyword analysis.")
@@ -397,7 +397,7 @@ class CompetitiveKeywordAnalysisResponse(BaseModel):
 
     @classmethod
     def from_competitive_keyword_analysis_result(cls, result: CompetitiveKeywordAnalysisResult):
-        return cls(**serialize_model(result))
+        return cls(**result.to_dict()) # Use to_dict() method
 
 # New: Pydantic models for AlertRule management
 class AlertRuleCreateRequest(BaseModel):
@@ -442,7 +442,7 @@ class AlertRuleResponse(BaseModel):
 
     @classmethod
     def from_alert_rule(cls, rule: AlertRule):
-        rule_dict = serialize_model(rule)
+        rule_dict = rule.to_dict() # Use to_dict() method
         # Ensure enums are converted to their values for Pydantic
         # rule_dict['severity'] = rule.severity.value # Handled by use_enum_values
         # rule_dict['notification_channels'] = [c.value for c in rule.notification_channels] # Handled by use_enum_values
@@ -472,7 +472,7 @@ class ContentGapAnalysisResultResponse(BaseModel): # New Pydantic model for Cont
 
     @classmethod
     def from_content_gap_analysis_result(cls, result: ContentGapAnalysisResult):
-        result_dict = serialize_model(result)
+        result_dict = result.to_dict() # Use to_dict() method
         if isinstance(result_dict.get('analysis_date'), str):
             try:
                 result_dict['analysis_date'] = datetime.fromisoformat(result_dict['analysis_date'])
@@ -494,7 +494,7 @@ class LinkProspectResponse(BaseModel):
 
     @classmethod
     def from_link_prospect(cls, prospect: LinkProspect):
-        prospect_dict = serialize_model(prospect)
+        prospect_dict = prospect.to_dict() # Use to_dict() method
         if isinstance(prospect_dict.get('last_outreach_date'), str):
             try:
                 prospect_dict['last_outreach_date'] = datetime.fromisoformat(prospect_dict['last_outreach_date'])
@@ -545,7 +545,7 @@ class OutreachCampaignResponse(BaseModel):
 
     @classmethod
     def from_outreach_campaign(cls, campaign: OutreachCampaign):
-        campaign_dict = serialize_model(campaign)
+        campaign_dict = campaign.to_dict() # Use to_dict() method
         if isinstance(campaign_dict.get('created_date'), str):
             campaign_dict['created_date'] = datetime.fromisoformat(campaign_dict['created_date'])
         if isinstance(campaign_dict.get('start_date'), str):
@@ -572,7 +572,7 @@ class OutreachEventResponse(BaseModel):
 
     @classmethod
     def from_outreach_event(cls, event: OutreachEvent):
-        event_dict = serialize_model(event)
+        event_dict = event.to_dict() # Use to_dict() method
         if isinstance(event_dict.get('event_date'), str):
             event_dict['event_date'] = datetime.fromisoformat(event_dict['event_date'])
         return cls(**event_dict)
@@ -588,7 +588,7 @@ class CompetitorStrategyAnalysisRequest(BaseModel):
 
 class ReportScheduleRequest(BaseModel):
     report_type: str = Field(..., description="Type of report (e.g., 'link_profile_pdf', 'all_backlinks_excel').")
-    target_identifier: str = Field(..., description="Identifier for the report target (e.g., 'URL', 'all').")
+    target_identifier: str = Field(..., description="Identifier for the report target (e.g., URL, 'all').")
     format: str = Field(..., description="Format of the report (e.g., 'pdf', 'excel').")
     scheduled_at: Optional[datetime] = Field(None, description="Specific UTC datetime to run the report (ISO format).")
     cron_schedule: Optional[str] = Field(None, description="Cron string for recurring reports (e.g., '0 0 * * *').")
@@ -610,7 +610,7 @@ class ReportJobResponse(BaseModel):
 
     @classmethod
     def from_report_job(cls, job: ReportJob):
-        job_dict = serialize_model(job)
+        job_dict = job.to_dict() # Use to_dict() method
         # job_dict['status'] = job.status.value # Handled by use_enum_values
         if isinstance(job_dict.get('created_date'), str):
             job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
@@ -629,7 +629,7 @@ class DomainHistoryResponse(BaseModel): # New Pydantic model for DomainHistory
 
     @classmethod
     def from_domain_history(cls, history: DomainHistory):
-        history_dict = serialize_model(history)
+        history_dict = history.to_dict() # Use to_dict() method
         if isinstance(history_dict.get('snapshot_date'), str):
             try:
                 history_dict['snapshot_date'] = datetime.fromisoformat(history_dict['snapshot_date'])
@@ -712,7 +712,7 @@ class SEOMetricsResponse(BaseModel): # New Pydantic model for SEOMetrics
 
     @classmethod
     def from_seo_metrics(cls, metrics: SEOMetrics):
-        metrics_dict = serialize_model(metrics)
+        metrics_dict = metrics.to_dict() # Use to_dict() method
         if isinstance(metrics_dict.get('audit_timestamp'), str):
             try:
                 metrics_dict['audit_timestamp'] = datetime.fromisoformat(metrics_dict['audit_timestamp'])
