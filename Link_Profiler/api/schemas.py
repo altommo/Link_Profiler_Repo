@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 # Import from core.models for shared data structures and serialization
-from Link_Profiler.core.models import User, Token, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics
+from Link_Profiler.core.models import User, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, Token, TokenData, LinkIntersectResult, CompetitiveKeywordAnalysisResult # Added Token, TokenData, LinkIntersectResult, CompetitiveKeywordAnalysisResult
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -33,12 +33,7 @@ class UserResponse(BaseModel):
     @classmethod
     def from_user(cls, user: User):
         user_dict = user.to_dict() # Use to_dict() method
-        if isinstance(user_dict.get('created_at'), str):
-            try:
-                user_dict['created_at'] = datetime.fromisoformat(user_dict['created_at'])
-            except ValueError:
-                 logger.warning(f"Could not parse created_at string: {user_dict.get('created_at')}")
-                 user_dict['created_at'] = None
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**user_dict)
 
 # Token model is already defined in core.models, so we can just import it.
@@ -48,6 +43,10 @@ class UserResponse(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+class TokenData(BaseModel): # Re-defining TokenData as a Pydantic model for API schema
+    username: Optional[str] = None
+
 
 # --- Pydantic Models for Crawl and Audit Requests (moved from main.py) ---
 
@@ -143,6 +142,10 @@ class CrawlErrorResponse(BaseModel):
     error_type: str
     message: str
     details: Optional[str]
+    severity: AlertSeverity # Added severity
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
 
     @classmethod
     def from_crawl_error(cls, error: CrawlError):
@@ -154,104 +157,87 @@ class CrawlJobResponse(BaseModel):
     target_url: str
     job_type: str
     status: CrawlStatus # Keep as Enum type hint
-    created_date: datetime
+    created_date: datetime = Field(..., alias="created_at") # Use created_at from core.models.CrawlJob
     started_date: Optional[datetime]
     completed_date: Optional[datetime]
     progress_percentage: float
     urls_crawled: int
     links_found: int
-    errors_count: int
-    error_log: List[CrawlErrorResponse]
+    errors_count: int = Field(..., alias="errors_count") # Use errors_count from core.models.CrawlJob
+    error_log: List[CrawlErrorResponse] = Field(..., alias="errors") # Use errors from core.models.CrawlJob
     results: Dict = Field(default_factory=dict)
-    initial_seed_urls: List[str] = Field(default_factory=list) # Added initial_seed_urls
+    # initial_seed_urls: List[str] = Field(default_factory=list) # Removed, not in core.models.CrawlJob
     priority: int # Added priority
     scheduled_at: Optional[datetime] # Added scheduled_at
     cron_schedule: Optional[str] # Added cron_schedule
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_crawl_job(cls, job: CrawlJob):
         job_dict = job.to_dict() # Use to_dict() method
         
-        # Explicitly convert Enum to its value string for Pydantic if not using use_enum_values
-        # job_dict['status'] = job.status.value 
-
-        if isinstance(job_dict.get('created_date'), str):
-            try:
-                job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
-            except ValueError:
-                 logger.warning(f"Could not parse created_date string: {job_dict.get('created_date')}")
-                 job_dict['created_date'] = None
-
-        if isinstance(job_dict.get('started_date'), str):
-             try:
-                job_dict['started_date'] = datetime.fromisoformat(job_dict['started_date'])
-             except ValueError:
-                 logger.warning(f"Could not parse started_date string: {job_dict.get('started_date')}")
-                 job_dict['started_date'] = None
-
-        if isinstance(job_dict.get('completed_date'), str):
-            try:
-                job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
-            except ValueError:
-                logger.warning(f"Could not parse completed_date string: {job_dict.get('completed_date')}")
-                job_dict['completed_date'] = None
-
-        if isinstance(job_dict.get('scheduled_at'), str):
-            try:
-                job_dict['scheduled_at'] = datetime.fromisoformat(job_dict['scheduled_at'])
-            except ValueError:
-                logger.warning(f"Could not parse scheduled_at string: {job_dict.get('scheduled_at')}")
-                job_dict['scheduled_at'] = None
-
-        job_dict['error_log'] = [CrawlErrorResponse.from_crawl_error(err) for err in job.error_log]
-        job_dict['initial_seed_urls'] = job.initial_seed_urls # Ensure initial_seed_urls is passed
+        # Manually map fields that have different names or need special handling
+        job_dict['created_date'] = job_dict.pop('created_at', None) # Map created_at to created_date
+        job_dict['errors_count'] = len(job.errors) # Calculate errors_count
+        job_dict['error_log'] = [CrawlErrorResponse.from_crawl_error(err) for err in job.errors] # Map errors to error_log
 
         return cls(**job_dict)
 
 class LinkProfileResponse(BaseModel):
     target_url: str
-    target_domain: str
+    target_domain: str # Added target_domain
     total_backlinks: int
-    unique_domains: int
-    dofollow_links: int
-    nofollow_links: int
-    authority_score: float
-    trust_score: float
-    spam_score: float
+    unique_referring_domains: int # Changed from unique_domains
+    dofollow_backlinks: int # Changed from dofollow_links
+    nofollow_backlinks: int # Changed from nofollow_links
+    ugc_backlinks: int # Added
+    sponsored_backlinks: int # Added
+    internal_backlinks: int # Added
+    external_backlinks: int # Added
+    broken_backlinks: int # Added
+    top_anchor_texts: Dict[str, int] # Changed from anchor_text_distribution
+    top_referring_domains: Dict[str, int] # Changed from referring_domains
+    last_updated: datetime # Changed from analysis_date
 
-    anchor_text_distribution: Dict[str, int]
-    referring_domains: List[str] # Convert set to list for JSON serialization
-    analysis_date: datetime
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
 
     @classmethod
     def from_link_profile(cls, profile: LinkProfile):
         profile_dict = profile.to_dict() # Use to_dict() method
-        profile_dict['referring_domains'] = list(profile.referring_domains) # Ensure it's a list
-        if isinstance(profile_dict.get('analysis_date'), str):
-            try:
-                profile_dict['analysis_date'] = datetime.fromisoformat(profile_dict['analysis_date'])
-            except ValueError:
-                 logger.warning(f"Could not parse analysis_date string: {profile_dict.get('analysis_date')}")
-                 profile_dict['analysis_date'] = None
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
+        # No need for manual conversion or logger.warning for parsing errors if from_dict is robust
+        
+        # Add target_domain from parsing target_url
+        profile_dict['target_domain'] = urlparse(profile.target_url).netloc
+        
         return cls(**profile_dict)
 
 class BacklinkResponse(BaseModel):
     source_url: str
     target_url: str
-    source_domain: str
-    target_domain: str
+    source_domain: Optional[str] # Made optional
+    target_domain: Optional[str] # Made optional
     anchor_text: str
     link_type: LinkType 
-    rel_attributes: List[str] = Field(default_factory=list)
-    context_text: str
-    is_image_link: bool
-    alt_text: Optional[str]
-    discovered_date: datetime
-    authority_passed: float
-    spam_level: SpamLevel 
+    nofollow: bool # Added
+    ugc: bool # Added
+    sponsored: bool # Added
+    first_seen: datetime # Changed from discovered_date
+    last_seen: datetime # Added
+    source_page_authority: Optional[int] # Added
+    source_domain_authority: Optional[int] # Added
+    rel_attributes: List[str] = Field(default_factory=list) # Added
+    context_text: Optional[str] # Made optional
+    position_on_page: Optional[str] # Added
+    is_image_link: bool # Added
+    alt_text: Optional[str] # Added
+    authority_passed: Optional[float] # Made optional
+    is_active: Optional[bool] # Added
+    spam_level: Optional[SpamLevel] # Added
     http_status: Optional[int] = None
     crawl_timestamp: Optional[datetime] = None
     source_domain_metrics: Dict[str, Any] = Field(default_factory=dict)
@@ -262,55 +248,37 @@ class BacklinkResponse(BaseModel):
     @classmethod
     def from_backlink(cls, backlink: Backlink):
         backlink_dict = backlink.to_dict() # Use to_dict() method
-        
-        # backlink_dict['link_type'] = LinkType(backlink.link_type.value) # Handled by use_enum_values
-        # backlink_dict['spam_level'] = SpamLevel(backlink.spam_level.value) # Handled by use_enum_values
-        
-        if isinstance(backlink_dict.get('discovered_date'), str):
-            try:
-                backlink_dict['discovered_date'] = datetime.fromisoformat(backlink_dict['discovered_date'])
-            except ValueError:
-                 logger.warning(f"Could not parse discovered_date string: {backlink_dict.get('discovered_date')}")
-                 backlink_dict['discovered_date'] = None
-        if isinstance(backlink_dict.get('crawl_timestamp'), str):
-            try:
-                backlink_dict['crawl_timestamp'] = datetime.fromisoformat(backlink_dict['crawl_timestamp'])
-            except ValueError:
-                 logger.warning(f"Could not parse crawl_timestamp string: {backlink_dict.get('crawl_timestamp')}")
-                 backlink_dict['crawl_timestamp'] = None
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**backlink_dict)
 
 class DomainResponse(BaseModel):
     name: str
-    authority_score: float
-    trust_score: float
-    spam_score: float
-    age_days: Optional[int]
-    country: Optional[str]
-    ip_address: Optional[str]
-    whois_data: Dict
-    total_pages: int
+    authority_score: Optional[float] # Made optional
+    trust_score: Optional[float] # Made optional
+    spam_score: Optional[float] # Made optional
+    registered_date: Optional[datetime] # Changed from first_seen
+    expiration_date: Optional[datetime] # Added
+    registrar: Optional[str] # Added
+    is_registered: Optional[bool] # Added
+    is_parked: Optional[bool] # Added
+    is_dead: Optional[bool] # Added
+    whois_raw: Optional[str] # Changed from whois_data
+    dns_records: Dict[str, List[str]] # Added
+    ip_address: Optional[str] # Added
+    country: Optional[str] # Added
+    seo_metrics: SEOMetrics # Added
+    last_checked: datetime # Changed from last_crawled
 
-    total_backlinks: int
-    referring_domains: int
-    first_seen: Optional[datetime]
-    last_crawled: Optional[datetime]
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
 
     @classmethod
     def from_domain(cls, domain: Domain):
         domain_dict = domain.to_dict() # Use to_dict() method
-        if isinstance(domain_dict.get('first_seen'), str):
-            try:
-                domain_dict['first_seen'] = datetime.fromisoformat(domain_dict['first_seen'])
-            except ValueError:
-                 logger.warning(f"Could not parse first_seen string: {domain_dict.get('first_seen')}")
-                 domain_dict['first_seen'] = None
-        if isinstance(domain_dict.get('last_crawled'), str):
-            try:
-                domain_dict['last_crawled'] = datetime.fromisoformat(domain_dict['last_crawled'])
-            except ValueError:
-                 logger.warning(f"Could not parse last_crawled string: {domain_dict.get('last_crawled')}")
-                 domain_dict['last_crawled'] = None
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
+        # Handle nested SEOMetrics
+        if 'seo_metrics' in domain_dict and isinstance(domain_dict['seo_metrics'], dict):
+            domain_dict['seo_metrics'] = SEOMetrics(**domain_dict['seo_metrics'])
         return cls(**domain_dict)
 
 class DomainAnalysisResponse(BaseModel):
@@ -337,23 +305,21 @@ class SERPSearchRequest(BaseModel):
 
 class SERPResultResponse(BaseModel):
     keyword: str
-    position: int
-    result_url: str
-    title_text: str
-    snippet_text: Optional[str] = None
-    rich_features: List[str] = Field(default_factory=list)
-    page_load_time: Optional[float] = None
-    crawl_timestamp: datetime
+    rank: int # Changed from position
+    url: str # Changed from result_url
+    title: str # Changed from title_text
+    snippet: Optional[str] = None # Changed from snippet_text
+    domain: str # Added
+    position_type: Optional[str] # Added
+    timestamp: datetime # Changed from crawl_timestamp
+    
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
 
     @classmethod
     def from_serp_result(cls, result: SERPResult):
         result_dict = result.to_dict() # Use to_dict() method
-        if isinstance(result_dict.get('crawl_timestamp'), str):
-            try:
-                result_dict['crawl_timestamp'] = datetime.fromisoformat(result_dict['crawl_timestamp'])
-            except ValueError:
-                logger.warning(f"Could not parse crawl_timestamp string: {result_dict.get('crawl_timestamp')}")
-                result_dict['crawl_timestamp'] = None
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**result_dict)
 
 class KeywordSuggestRequest(BaseModel):
@@ -361,24 +327,21 @@ class KeywordSuggestRequest(BaseModel):
     num_suggestions: int = Field(10, description="Number of keyword suggestions to fetch.")
 
 class KeywordSuggestionResponse(BaseModel):
-    seed_keyword: str
-    suggested_keyword: str
-    search_volume_monthly: Optional[int] = None
-    cpc_estimate: Optional[float] = None
-    keyword_trend: List[float] = Field(default_factory=list)
-    competition_level: Optional[str] = None
-    data_timestamp: datetime
+    keyword: str # Changed from suggested_keyword
+    search_volume: Optional[int] = None # Changed from search_volume_monthly
+    cpc: Optional[float] = None # Changed from cpc_estimate
+    competition: Optional[float] = None # Changed from competition_level
+    difficulty: Optional[int] = None # Added
+    relevance: Optional[float] = None # Added
+    source: Optional[str] = None # Added
+    
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
 
     @classmethod
-
     def from_keyword_suggestion(cls, suggestion: KeywordSuggestion):
         suggestion_dict = suggestion.to_dict() # Use to_dict() method
-        if isinstance(suggestion_dict.get('data_timestamp'), str):
-            try:
-                suggestion_dict['data_timestamp'] = datetime.fromisoformat(suggestion_dict['data_timestamp'])
-            except ValueError:
-                logger.warning(f"Could not parse data_timestamp string: {suggestion_dict.get('data_timestamp')}")
-                suggestion_dict['data_timestamp'] = None
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**suggestion_dict)
 
 class LinkIntersectRequest(BaseModel):
@@ -454,22 +417,7 @@ class AlertRuleResponse(BaseModel):
     @classmethod
     def from_alert_rule(cls, rule: AlertRule):
         rule_dict = rule.to_dict() # Use to_dict() method
-        # Ensure enums are converted to their values for Pydantic
-        # rule_dict['severity'] = rule.severity.value # Handled by use_enum_values
-        # rule_dict['notification_channels'] = [c.value for c in rule.notification_channels] # Handled by use_enum_values
-        
-        if isinstance(rule_dict.get('created_at'), str):
-            try:
-                rule_dict['created_at'] = datetime.fromisoformat(rule_dict['created_at'])
-            except ValueError:
-                 logger.warning(f"Could not parse created_at string: {rule_dict.get('created_at')}")
-                 rule_dict['created_at'] = None
-        if isinstance(rule_dict.get('last_triggered_at'), str):
-            try:
-                rule_dict['last_triggered_at'] = datetime.fromisoformat(rule_dict['last_triggered_at'])
-            except ValueError:
-                 logger.warning(f"Could not parse last_triggered_at string: {rule_dict.get('last_triggered_at')}")
-                 rule_dict['last_triggered_at'] = None
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**rule_dict)
 
 class ContentGapAnalysisResultResponse(BaseModel): # New Pydantic model for ContentGapAnalysisResult
@@ -484,40 +432,34 @@ class ContentGapAnalysisResultResponse(BaseModel): # New Pydantic model for Cont
     @classmethod
     def from_content_gap_analysis_result(cls, result: ContentGapAnalysisResult):
         result_dict = result.to_dict() # Use to_dict() method
-        if isinstance(result_dict.get('analysis_date'), str):
-            try:
-                result_dict['analysis_date'] = datetime.fromisoformat(result_dict['analysis_date'])
-            except ValueError:
-                logger.warning(f"Could not parse analysis_date string: {result_dict.get('analysis_date')}")
-                result_dict['analysis_date'] = None
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**result_dict)
 
 # New: Pydantic models for Link Building
 class LinkProspectResponse(BaseModel):
-    url: str
-    domain: str
-    score: float
-    reasons: List[str]
-    contact_info: Dict[str, str]
-    last_outreach_date: Optional[datetime]
-    status: str
-    discovered_date: datetime
+    id: str # Added id
+    target_domain: str # Added target_domain
+    prospect_url: str # Changed from url
+    status: str # Added
+    contact_email: Optional[str] # Added
+    contact_name: Optional[str] # Added
+    notes: Optional[str] # Added
+    priority: str # Added
+    discovered_date: datetime # Added
+    last_contacted: Optional[datetime] # Added
+    link_acquired_date: Optional[datetime] # Added
+    prospect_seo_metrics: SEOMetrics # Added
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
 
     @classmethod
     def from_link_prospect(cls, prospect: LinkProspect):
         prospect_dict = prospect.to_dict() # Use to_dict() method
-        if isinstance(prospect_dict.get('last_outreach_date'), str):
-            try:
-                prospect_dict['last_outreach_date'] = datetime.fromisoformat(prospect_dict['last_outreach_date'])
-            except ValueError:
-                logger.warning(f"Could not parse last_outreach_date string: {prospect_dict.get('last_outreach_date')}")
-                prospect_dict['last_outreach_date'] = None
-        if isinstance(prospect_dict.get('discovered_date'), str):
-            try:
-                prospect_dict['discovered_date'] = datetime.fromisoformat(prospect_dict['discovered_date'])
-            except ValueError:
-                logger.warning(f"Could not parse discovered_date string: {prospect_dict.get('discovered_date')}")
-                prospect_dict['discovered_date'] = None
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
+        # Handle nested SEOMetrics
+        if 'prospect_seo_metrics' in prospect_dict and isinstance(prospect_dict['prospect_seo_metrics'], dict):
+            prospect_dict['prospect_seo_metrics'] = SEOMetrics(**prospect_dict['prospect_seo_metrics'])
         return cls(**prospect_dict)
 
 class LinkProspectUpdateRequest(BaseModel):
@@ -549,25 +491,29 @@ class OutreachCampaignResponse(BaseModel):
     name: str
     target_domain: str
     status: str
-    created_date: datetime
+    created_date: datetime = Field(..., alias="created_at") # Use created_at from core.models.OutreachCampaign
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
-    metrics: Dict[str, Any] = Field(default_factory=dict)
+    notes: Optional[str] # Added notes
+    total_prospects: int # Added total_prospects
+    contacts_made: int # Added contacts_made
+    replies_received: int # Added replies_received
+    links_acquired: int # Added links_acquired
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_outreach_campaign(cls, campaign: OutreachCampaign):
         campaign_dict = campaign.to_dict() # Use to_dict() method
-        if isinstance(campaign_dict.get('created_date'), str):
-            campaign_dict['created_date'] = datetime.fromisoformat(campaign_dict['created_date'])
-        if isinstance(campaign_dict.get('start_date'), str):
-            campaign_dict['start_date'] = datetime.fromisoformat(campaign_dict['start_date'])
-        if isinstance(campaign_dict.get('end_date'), str):
-            campaign_dict['end_date'] = datetime.fromisoformat(campaign_dict['end_date'])
+        campaign_dict['created_date'] = campaign_dict.pop('created_at', None) # Map created_at to created_date
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**campaign_dict)
 
 class OutreachEventCreateRequest(BaseModel):
     campaign_id: str
-    prospect_url: str
+    prospect_id: str # Changed from prospect_url
     event_type: str = Field(..., description="Type of event (e.g., 'email_sent', 'reply_received', 'link_acquired').")
     notes: Optional[str] = None
     success: Optional[bool] = None
@@ -575,17 +521,19 @@ class OutreachEventCreateRequest(BaseModel):
 class OutreachEventResponse(BaseModel):
     id: str
     campaign_id: str
-    prospect_url: str
+    prospect_id: str # Changed from prospect_url
     event_type: str
-    event_date: datetime
+    timestamp: datetime # Changed from event_date
     notes: Optional[str]
     success: Optional[bool]
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
 
     @classmethod
     def from_outreach_event(cls, event: OutreachEvent):
         event_dict = event.to_dict() # Use to_dict() method
-        if isinstance(event_dict.get('event_date'), str):
-            event_dict['event_date'] = datetime.fromisoformat(event_dict['event_date'])
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**event_dict)
 
 # New: Pydantic models for AI features
@@ -611,42 +559,43 @@ class ReportJobResponse(BaseModel):
     target_identifier: str
     format: str
     status: CrawlStatus
-    created_date: datetime
-    completed_date: Optional[datetime]
-    file_path: Optional[str]
+    created_date: datetime = Field(..., alias="created_at") # Use created_at from core.models.ReportJob
+    completed_date: Optional[datetime] = Field(None, alias="completed_at") # Use completed_at from core.models.ReportJob
+    file_path: Optional[str] = Field(None, alias="generated_file_path") # Use generated_file_path from core.models.ReportJob
     error_message: Optional[str]
+    config: Optional[Dict] # Added config
+    scheduled_at: Optional[datetime] # Added scheduled_at
+    cron_schedule: Optional[str] # Added cron_schedule
 
     class Config:
         use_enum_values = True # Ensure enums are serialized by value
+        populate_by_name = True # Allow field names to be populated by their alias
 
     @classmethod
     def from_report_job(cls, job: ReportJob):
         job_dict = job.to_dict() # Use to_dict() method
-        # job_dict['status'] = job.status.value # Handled by use_enum_values
-        if isinstance(job_dict.get('created_date'), str):
-            job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
-        if isinstance(job_dict.get('completed_date'), str):
-            job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
+        job_dict['created_date'] = job_dict.pop('created_at', None) # Map created_at to created_date
+        job_dict['completed_date'] = job_dict.pop('completed_at', None) # Map completed_at to completed_date
+        job_dict['file_path'] = job_dict.pop('generated_file_path', None) # Map generated_file_path to file_path
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**job_dict)
 
 class DomainHistoryResponse(BaseModel): # New Pydantic model for DomainHistory
     domain_name: str
     snapshot_date: datetime
-    authority_score: float
-    trust_score: float
-    spam_score: float
-    total_backlinks: int
-    referring_domains: int
+    authority_score: Optional[float]
+    trust_score: Optional[float]
+    spam_score: Optional[float]
+    total_backlinks: Optional[int]
+    referring_domains: Optional[int]
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
 
     @classmethod
     def from_domain_history(cls, history: DomainHistory):
         history_dict = history.to_dict() # Use to_dict() method
-        if isinstance(history_dict.get('snapshot_date'), str):
-            try:
-                history_dict['snapshot_date'] = datetime.fromisoformat(history_dict['snapshot_date'])
-            except ValueError:
-                logger.warning(f"Could not parse snapshot_date string: {history_dict.get('snapshot_date')}")
-                history_dict['snapshot_date'] = None
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**history_dict)
 
 # New: Pydantic models for Queue Endpoints
@@ -681,27 +630,42 @@ class CrawlerHealthResponse(BaseModel):
     uptime_seconds: float
 
 class SEOMetricsResponse(BaseModel): # New Pydantic model for SEOMetrics
-    url: str
+    domain_authority: Optional[int] = None
+    page_authority: Optional[int] = None
+    trust_flow: Optional[int] = None
+    citation_flow: Optional[int] = None
+    organic_keywords: Optional[int] = None
+    organic_traffic: Optional[int] = None
+    referring_domains: Optional[int] = None
+    spam_score: Optional[float] = None
+    moz_rank: Optional[float] = None
+    ahrefs_rank: Optional[int] = None
+    semrush_rank: Optional[int] = None
+    majestic_trust_flow: Optional[int] = None
+    majestic_citation_flow: Optional[int] = None
+    
+    # Page-level Metrics (from SEOMetricsORM)
+    url: Optional[str] = None # Added url
     http_status: Optional[int] = None
     response_time_ms: Optional[float] = None
     page_size_bytes: Optional[int] = None
-    title_length: int = 0
-    meta_description_length: int = 0
-    h1_count: int = 0
-    h2_count: int = 0
-    internal_links: int = 0
-    external_links: int = 0
-    images_count: int = 0
-    images_without_alt: int = 0
-    has_canonical: bool = False
-    has_robots_meta: bool = False
-    has_schema_markup: bool = False
+    title_length: Optional[int] = None
+    meta_description_length: Optional[int] = None
+    h1_count: Optional[int] = None
+    h2_count: Optional[int] = None
+    internal_links: Optional[int] = None
+    external_links: Optional[int] = None
+    images_count: Optional[int] = None
+    images_without_alt: Optional[int] = None
+    has_canonical: Optional[bool] = None
+    has_robots_meta: Optional[bool] = None
+    has_schema_markup: Optional[bool] = None
     broken_links: List[str] = Field(default_factory=list)
     performance_score: Optional[float] = None
     mobile_friendly: Optional[bool] = None
     accessibility_score: Optional[float] = None
     audit_timestamp: Optional[datetime] = None
-    seo_score: float = 0.0
+    seo_score: Optional[float] = None
     issues: List[str] = Field(default_factory=list)
     structured_data_types: List[str] = Field(default_factory=list)
     og_title: Optional[str] = None
@@ -709,25 +673,23 @@ class SEOMetricsResponse(BaseModel): # New Pydantic model for SEOMetrics
     twitter_title: Optional[str] = None
     twitter_description: Optional[str] = None
     validation_issues: List[str] = Field(default_factory=list)
-    ai_content_classification: Optional[str] = None
-    ai_content_score: Optional[float] = None
     ocr_text: Optional[str] = None
     nlp_entities: List[str] = Field(default_factory=list)
     nlp_sentiment: Optional[str] = None
     nlp_topics: List[str] = Field(default_factory=list)
     video_transcription: Optional[str] = None
     video_topics: List[str] = Field(default_factory=list)
-    ai_suggestions: List[str] = Field(default_factory=list)
-    ai_semantic_keywords: List[str] = Field(default_factory=list)
-    ai_readability_score: Optional[float] = None
+    ai_content_classification: Optional[str] = None # Added
+    ai_content_score: Optional[float] = None # Added
+    ai_suggestions: List[str] = Field(default_factory=list) # Added
+    ai_semantic_keywords: List[str] = Field(default_factory=list) # Added
+    ai_readability_score: Optional[float] = None # Added
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
 
     @classmethod
     def from_seo_metrics(cls, metrics: SEOMetrics):
         metrics_dict = metrics.to_dict() # Use to_dict() method
-        if isinstance(metrics_dict.get('audit_timestamp'), str):
-            try:
-                metrics_dict['audit_timestamp'] = datetime.fromisoformat(metrics_dict['audit_timestamp'])
-            except ValueError:
-                logger.warning(f"Could not parse audit_timestamp string: {metrics_dict.get('audit_timestamp')}")
-                metrics_dict['audit_timestamp'] = None
+        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**metrics_dict)

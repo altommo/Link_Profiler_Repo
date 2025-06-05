@@ -361,6 +361,7 @@ class CrawlJob:
     job_type: str # e.g., "backlink_discovery", "site_audit", "content_crawl"
     status: CrawlStatus = CrawlStatus.PENDING
     config: Dict[str, Any] = field(default_factory=dict) # Store CrawlConfig as dict
+    created_at: datetime = field(default_factory=datetime.now) # Changed from created_date
     started_date: Optional[datetime] = None
     completed_date: Optional[datetime] = None
     progress_percentage: float = 0.0
@@ -368,6 +369,9 @@ class CrawlJob:
     links_found: int = 0
     errors: List[CrawlError] = field(default_factory=list)
     results: Dict[str, Any] = field(default_factory=dict) # Store summary results
+    priority: int = 5 # Added priority
+    scheduled_at: Optional[datetime] = None # Added scheduled_at
+    cron_schedule: Optional[str] = None # Added cron_schedule
 
     def add_error(self, url: str, error_type: str, message: str, details: Optional[str] = None, severity: AlertSeverity = AlertSeverity.WARNING) -> None:
         error = CrawlError(url=url, error_type=error_type, message=message, details=details, severity=severity)
@@ -380,12 +384,16 @@ class CrawlJob:
     def from_dict(cls, data: Dict) -> 'CrawlJob':
         if 'status' in data and isinstance(data['status'], str):
             data['status'] = CrawlStatus(data['status'])
+        if 'created_at' in data and isinstance(data['created_at'], str):
+            data['created_at'] = datetime.fromisoformat(data['created_at'])
         if 'started_date' in data and isinstance(data['started_date'], str):
             data['started_date'] = datetime.fromisoformat(data['started_date'])
         if 'completed_date' in data and isinstance(data['completed_date'], str):
             data['completed_date'] = datetime.fromisoformat(data['completed_date'])
         if 'errors' in data and isinstance(data['errors'], list):
             data['errors'] = [CrawlError.from_dict(e) for e in data['errors']]
+        if 'scheduled_at' in data and isinstance(data['scheduled_at'], str):
+            data['scheduled_at'] = datetime.fromisoformat(data['scheduled_at'])
         return cls(**data)
 
 @dataclass 
@@ -428,6 +436,42 @@ class KeywordSuggestion:
         return cls(**data)
 
 @dataclass
+class LinkIntersectResult:
+    """Result of a link intersect analysis."""
+    primary_domain: str
+    competitor_domains: List[str]
+    common_linking_domains: List[str] = field(default_factory=list)
+    analysis_date: datetime = field(default_factory=datetime.now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'LinkIntersectResult':
+        if 'analysis_date' in data and isinstance(data['analysis_date'], str):
+            data['analysis_date'] = datetime.fromisoformat(data['analysis_date'])
+        return cls(**data)
+
+@dataclass
+class CompetitiveKeywordAnalysisResult:
+    """Result of a competitive keyword analysis."""
+    primary_domain: str
+    competitor_domains: List[str]
+    common_keywords: List[str] = field(default_factory=list)
+    keyword_gaps: Dict[str, List[str]] = field(default_factory=dict) # Competitor -> keywords they rank for that primary doesn't
+    primary_unique_keywords: List[str] = field(default_factory=list) # Keywords primary ranks for that competitors don't
+    analysis_date: datetime = field(default_factory=datetime.now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'CompetitiveKeywordAnalysisResult':
+        if 'analysis_date' in data and isinstance(data['analysis_date'], str):
+            data['analysis_date'] = datetime.fromisoformat(data['analysis_date'])
+        return cls(**data)
+
+@dataclass
 class AlertRule:
     """Defines a rule for triggering alerts based on job or metric conditions."""
     id: str
@@ -439,6 +483,7 @@ class AlertRule:
     is_active: bool = True
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+    last_triggered_at: Optional[datetime] = None # Added last_triggered_at
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -453,6 +498,8 @@ class AlertRule:
             data['created_at'] = datetime.fromisoformat(data['created_at'])
         if 'updated_at' in data and isinstance(data['updated_at'], str):
             data['updated_at'] = datetime.fromisoformat(data['updated_at'])
+        if 'last_triggered_at' in data and isinstance(data['last_triggered_at'], str):
+            data['last_triggered_at'] = datetime.fromisoformat(data['last_triggered_at'])
         return cls(**data)
 
 @dataclass
@@ -477,6 +524,31 @@ class User:
             data['created_at'] = datetime.fromisoformat(data['created_at'])
         if 'updated_at' in data and isinstance(data['updated_at'], str):
             data['updated_at'] = datetime.fromisoformat(data['updated_at'])
+        return cls(**data)
+
+@dataclass
+class Token:
+    """Represents a JWT token."""
+    access_token: str
+    token_type: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'Token':
+        return cls(**data)
+
+@dataclass
+class TokenData:
+    """Represents data extracted from a JWT token."""
+    username: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'TokenData':
         return cls(**data)
 
 @dataclass
@@ -542,6 +614,7 @@ class OutreachCampaign:
     name: str
     target_domains: List[str] = field(default_factory=list)
     status: str = "planning" # e.g., "planning", "active", "completed", "paused"
+    created_at: datetime = field(default_factory=datetime.now) # Changed from created_date
     start_date: datetime = field(default_factory=datetime.now)
     end_date: Optional[datetime] = None
     notes: Optional[str] = None
@@ -556,6 +629,8 @@ class OutreachCampaign:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'OutreachCampaign':
+        if 'created_at' in data and isinstance(data['created_at'], str):
+            data['created_at'] = datetime.fromisoformat(data['created_at'])
         if 'start_date' in data and isinstance(data['start_date'], str):
             data['start_date'] = datetime.fromisoformat(data['start_date'])
         if 'end_date' in data and isinstance(data['end_date'], str):
@@ -600,4 +675,88 @@ class ContentGapAnalysisResult:
     def from_dict(cls, data: Dict) -> 'ContentGapAnalysisResult':
         if 'analysis_date' in data and isinstance(data['analysis_date'], str):
             data['analysis_date'] = datetime.fromisoformat(data['analysis_date'])
+        return cls(**data)
+
+@dataclass
+class ReportJob:
+    """Represents a report generation job."""
+    id: str
+    report_type: str
+    target_identifier: str
+    format: str
+    status: CrawlStatus = CrawlStatus.PENDING
+    created_at: datetime = field(default_factory=datetime.now) # Changed from created_date
+    completed_at: Optional[datetime] = None
+    generated_file_path: Optional[str] = None # Changed from file_path
+    error_message: Optional[str] = None
+    config: Dict[str, Any] = field(default_factory=dict) # Added config
+    scheduled_at: Optional[datetime] = None # Added scheduled_at
+    cron_schedule: Optional[str] = None # Added cron_schedule
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'ReportJob':
+        if 'status' in data and isinstance(data['status'], str):
+            data['status'] = CrawlStatus(data['status'])
+        if 'created_at' in data and isinstance(data['created_at'], str):
+            data['created_at'] = datetime.fromisoformat(data['created_at'])
+        if 'completed_at' in data and isinstance(data['completed_at'], str):
+            data['completed_at'] = datetime.fromisoformat(data['completed_at'])
+        if 'scheduled_at' in data and isinstance(data['scheduled_at'], str):
+            data['scheduled_at'] = datetime.fromisoformat(data['scheduled_at'])
+        return cls(**data)
+
+@dataclass
+class DomainIntelligence:
+    """Comprehensive intelligence summary for a domain."""
+    domain_name: str
+    last_updated: datetime = field(default_factory=datetime.now)
+    overall_score: Optional[float] = None
+    technical_data_summary: Dict[str, Any] = field(default_factory=dict)
+    seo_metrics: SEOMetrics = field(default_factory=SEOMetrics) # Nested SEOMetrics
+    social_data_summary: Dict[str, Any] = field(default_factory=dict)
+    security_data_summary: Dict[str, Any] = field(default_factory=dict)
+    historical_data_summary: Dict[str, Any] = field(default_factory=dict)
+    content_data_summary: Dict[str, Any] = field(default_factory=dict)
+    top_social_platforms: List[str] = field(default_factory=list)
+    estimated_traffic_trend: List[float] = field(default_factory=list)
+    data_sources: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = {k: serialize_model(v) for k, v in self.__dict__.items()}
+        if isinstance(data.get('seo_metrics'), SEOMetrics):
+            data['seo_metrics'] = data['seo_metrics'].to_dict()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'DomainIntelligence':
+        if 'last_updated' in data and isinstance(data['last_updated'], str):
+            data['last_updated'] = datetime.fromisoformat(data['last_updated'])
+        if 'seo_metrics' in data and isinstance(data['seo_metrics'], dict):
+            data['seo_metrics'] = SEOMetrics.from_dict(data['seo_metrics'])
+        return cls(**data)
+
+@dataclass
+class SocialMention:
+    """Represents a social media mention of a brand or keyword."""
+    id: str
+    query: str
+    platform: str
+    mention_url: str
+    mention_text: str
+    author: Optional[str] = None
+    published_date: datetime = field(default_factory=datetime.now)
+    sentiment: Optional[str] = None
+    engagement_score: Optional[float] = None
+    raw_data: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'SocialMention':
+        if 'published_date' in data and isinstance(data['published_date'], str):
+            data['published_date'] = datetime.fromisoformat(data['published_date'])
         return cls(**data)
