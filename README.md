@@ -66,7 +66,7 @@ link_profiler/
 ├── queue_system/           # Distributed job processing
 ├── clients/                # External API integrations
 ├── monitoring/             # Metrics and alerting
-├── templates/              # Dashboard HTML and static assets
+├── admin-management-console/ # Admin/Management Console HTML and static assets
 ├── utils/                  # Utilities and helpers
 └── deployment/             # Docker and Kubernetes configs
 ```
@@ -641,7 +641,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **API Documentation**: http://localhost:8000/docs
 - **Prometheus Metrics**: http://localhost:8001/metrics
 - **Health Dashboard**: http://localhost:8001/dashboard
-- **Dashboard Templates**: `Link_Profiler/templates` (static assets in `templates/static`)
+- **Admin/Management Console**: `admin-management-console` (static assets in `admin-management-console/static`)
+- **Customer Dashboard**: `customer-dashboard` (React + Vite)
+- **Admin Dashboard**: `admin-dashboard` (React + Vite)
 - **GitHub Repository**: https://github.com/your-org/link-profiler
 - **Docker Hub**: https://hub.docker.com/r/your-org/link-profiler
 

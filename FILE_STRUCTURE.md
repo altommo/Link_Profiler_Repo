@@ -10,6 +10,8 @@ Link_Profiler/                                    # Project root
 ├── 📄 requirements-satellite.txt                 # ✅ Minimal satellite deps
 ├── 📄 QUEUE_SYSTEM.md                           # ✅ Queue documentation
 ├── 📄 README.md                                 # ✅ Existing README
+├── customer-dashboard/                          # ✅ NEW: Public React frontend
+├── admin-dashboard/                             # ✅ NEW: Admin React frontend
 │
 ├── Link_Profiler/                               # Main package
 │   ├── 📄 __init__.py                           # ✅ Package init
@@ -43,7 +45,7 @@ Link_Profiler/                                    # Project root
 │   ├── monitoring/                             # ✅ NEW: Monitoring tools
 │   │   ├── 📄 __init__.py                       # ✅ NEW: Package init  
 │   │   ├── 📄 dashboard.py                      # ✅ NEW: Web dashboard
-│   ├── templates/                              # Dashboard UI (single location)
+│   ├── admin-management-console/               # Admin/Management Console UI
 │   │   ├── static/                             # CSS and JS assets
 │   │   │   ├── css/
 │   │   │   └── js/
