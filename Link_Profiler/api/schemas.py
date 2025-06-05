@@ -610,7 +610,7 @@ class ReportJobResponse(BaseModel):
 
     @classmethod
     def from_report_job(cls, job: ReportJob):
-        job_dict = job.to_dict() # Use to_dict() method
+        job_dict = serialize_model(job)
         # job_dict['status'] = job.status.value # Handled by use_enum_values
         if isinstance(job_dict.get('created_date'), str):
             job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])

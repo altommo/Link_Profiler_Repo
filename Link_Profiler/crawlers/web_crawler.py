@@ -31,6 +31,8 @@ from Link_Profiler.services.ai_service import AIService
 from playwright.async_api import async_playwright, Browser, BrowserContext
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.ai.content_analyzer import ContentAnalyzer # New: Import ContentAnalyzer
+from Link_Profiler.ai.crawl_optimizer import CrawlOptimizer # New: Import CrawlOptimizer
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,10 @@ class EnhancedWebCrawler:
             from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided. Falling back to local SessionManager.")
+
+        # AI-driven components
+        self.content_analyzer = ContentAnalyzer(ai_service=self.ai_service) # New: Initialize ContentAnalyzer
+        self.crawl_optimizer = CrawlOptimizer(ai_service=self.ai_service, metrics=self.metrics, rate_limiter=self.rate_limiter) # New: Initialize CrawlOptimizer
 
         self.crawled_urls: set = set()
         self.failed_urls: set = set()
@@ -202,7 +208,7 @@ class EnhancedWebCrawler:
         result.crawl_time_ms = int((time.time() - start_time) * 1000)
         result.crawl_timestamp = current_timestamp
         
-        # Content validation
+        # Content validation and AI enhancement
         if result.content and result.status_code == 200:
             result = await self._validate_and_enhance_content(result)
         
@@ -323,7 +329,7 @@ class EnhancedWebCrawler:
         # AI content quality assessment
         if self.ai_service and self.ai_service.enabled and result.content:
             try:
-                ai_score, ai_classification = await self.ai_service.assess_content_quality(
+                ai_score, ai_classification = await self.content_analyzer.assess_content_quality( # Use content_analyzer
                     result.content, result.url
                 )
                 if ai_score is not None and ai_classification is not None:
