@@ -48,3 +48,4 @@ pytesseract
 Pillow
 alembic
 opencv-python
+google-cloud-vision
