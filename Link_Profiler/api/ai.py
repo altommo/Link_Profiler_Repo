@@ -310,7 +310,7 @@ async def assess_content_quality_endpoint(
     """
     logger.info(f"API: Received request for AI content quality assessment for '{url}' by user: {current_user.username}.")
     if not content or not url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_BAD_REQUEST, detail="Content and URL must be provided.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content and URL must be provided.")
     
     if not ai_service_instance.enabled:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
