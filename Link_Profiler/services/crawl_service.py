@@ -19,7 +19,7 @@ from playwright.async_api import Browser
 from Link_Profiler.core.models import (
     URL, Backlink, CrawlConfig, CrawlStatus, LinkType, 
     CrawlJob, ContentType, serialize_model, SEOMetrics, SpamLevel, CrawlError,
-    SERPResult, KeywordSuggestion, LinkProfile, ContentGapAnalysisResult, LinkProspect, ReportJob # New: Import ContentGapAnalysisResult, LinkProspect, ReportJob
+    SERPResult, KeywordSuggestion, LinkProfile, ContentGapAnalysisResult, LinkProspect, ReportJob, CrawlResult # Added CrawlResult
 )
 from Link_Profiler.crawlers.web_crawler import EnhancedWebCrawler # Changed from WebCrawler
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
@@ -508,7 +508,7 @@ class CrawlService:
                         crawl_result: Optional[CrawlResult] = None
                         for attempt in range(config.max_retries + 1):
                             try:
-                                crawl_result = await wc.crawl_url(url)
+                                crawl_result = await wc.crawl_url(url, job.id, current_depth) # Pass job_id and depth
                                 if crawl_result.error_message:
                                     if crawl_result.status_code in [408, 500, 502, 503, 504] or "Network or client error" in crawl_result.error_message:
                                         if attempt < config.max_retries:
@@ -725,7 +725,7 @@ class CrawlService:
         if serp_results:
             self.logger.info(f"Found {len(serp_results)} SERP results for '{keyword}'.")
             try:
-                await self.db.add_serp_results(serp_results)
+                self.db.add_serp_results(serp_results)
                 if self.clickhouse_loader:
                     await self.clickhouse_loader.bulk_insert_serp_results(serp_results)
                 self.logger.info(f"Successfully added {len(serp_results)} SERP results to the database.")
@@ -762,7 +762,7 @@ class CrawlService:
         if suggestions:
             self.logger.info(f"Found {len(suggestions)} keyword suggestions for '{seed_keyword}'.")
             try:
-                await self.db.add_keyword_suggestions(suggestions)
+                self.db.add_keyword_suggestions(suggestions)
                 if self.clickhouse_loader:
                     await self.clickhouse_loader.bulk_insert_keyword_suggestions(suggestions)
                 self.logger.info(f"Successfully added {len(suggestions)} keyword suggestions to the database.")
