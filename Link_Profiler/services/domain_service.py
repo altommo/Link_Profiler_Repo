@@ -246,6 +246,9 @@ class DomainService:
     async def _fetch_dns_records(self, domain_name: str) -> Dict[str, List[str]]:
         """Fetch DNS records using DNS over HTTPS or dnspython if enabled."""
         if not self.allow_live:
+            self.logger.debug(
+                "Live DNS lookups disabled in configuration; using simulated records."
+            )
             return self._simulate_dns_records(domain_name)
 
         if self.dns_over_https_enabled and (self.cloudflare_doh_url or self.google_doh_url):
@@ -282,11 +285,17 @@ class DomainService:
         except Exception as e:
             self.logger.error(f"DNS lookup failed for {domain_name}: {e}")
 
+        self.logger.debug(
+            f"Falling back to simulated DNS records for {domain_name}."
+        )
         return self._simulate_dns_records(domain_name)
 
     async def _fetch_seo_metrics(self, domain_name: str) -> Dict[str, Any]:
         """Fetch SEO metrics using external API if enabled."""
         if not self.allow_live or not self.seo_metrics_enabled:
+            self.logger.debug(
+                "Live SEO metric lookups disabled; returning simulated metrics."
+            )
             return self._simulate_seo_metrics(domain_name)
 
         headers = {}
@@ -313,11 +322,17 @@ class DomainService:
         except Exception as e:
             self.logger.error(f"SEO metrics lookup failed for {domain_name}: {e}")
 
+        self.logger.debug(
+            f"Falling back to simulated SEO metrics for {domain_name}."
+        )
         return self._simulate_seo_metrics(domain_name)
 
     async def _fetch_ip_info(self, domain_name: str) -> Dict[str, Any]:
         """Fetch IP information using external API if enabled."""
         if not self.allow_live or not self.ip_info_enabled:
+            self.logger.debug(
+                "Live IP information lookups disabled; using simulated data."
+            )
             return self._simulate_ip_info(domain_name)
 
         params = {}
@@ -339,10 +354,14 @@ class DomainService:
         except Exception as e:
             self.logger.error(f"IP info lookup failed for {domain_name}: {e}")
 
+        self.logger.debug(
+            f"Falling back to simulated IP info for {domain_name}."
+        )
         return self._simulate_ip_info(domain_name)
 
     def _simulate_dns_records(self, domain_name: str) -> Dict[str, List[str]]:
-        """Simulates DNS record lookup."""
+        """Simulates DNS record lookup used as a fallback."""
+        self.logger.debug(f"Simulating DNS records for {domain_name}.")
         return {
             "A": [f"192.0.2.{random.randint(1, 254)}"],
             "MX": [f"mail.{domain_name}"],
@@ -351,7 +370,8 @@ class DomainService:
         }
 
     def _simulate_seo_metrics(self, domain_name: str) -> Dict[str, Any]:
-        """Simulates fetching SEO metrics."""
+        """Simulates fetching SEO metrics used as a fallback."""
+        self.logger.debug(f"Simulating SEO metrics for {domain_name}.")
         return {
             "domain_authority": random.randint(10, 90),
             "page_authority": random.randint(10, 90),
@@ -363,7 +383,8 @@ class DomainService:
         }
 
     def _simulate_ip_info(self, domain_name: str) -> Dict[str, Any]:
-        """Simulates IP information lookup."""
+        """Simulates IP information lookup used as a fallback."""
+        self.logger.debug(f"Simulating IP info for {domain_name}.")
         return {
             "ip_address": f"192.0.2.{random.randint(1, 254)}",
             "country": random.choice(["US", "CA", "GB", "DE", "AU"]),
