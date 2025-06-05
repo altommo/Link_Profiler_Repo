@@ -10,11 +10,11 @@ from datetime import datetime, timedelta
 import random
 import aiohttp
 import json # Import json for caching
-import redis.asyncio as redis # Import redis for caching
+import redis.asyncio as redis # Import redis for type hinting
 
-from Link_Profiler.core.models import SERPResult, SEOMetrics # Absolute import
+from Link_Profiler.core.models import SERPResult, SEOMetrics # Absolute import CrawlResult
 from Link_Profiler.crawlers.serp_crawler import SERPCrawler # New import
-from Link_Profiler.config.config_loader import config_loader # Import config_loader
+from Link_Profiler.config.config_loader import config_loader # New import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient # New: Import PageSpeedClient
@@ -89,6 +89,7 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
         try:
             # Simulate an actual HTTP request, even if it's to a dummy URL
             async with session_to_use.get(f"http://localhost:8080/simulate_serp/{keyword}") as response:
+                # We don't care about the actual response, just that the request was made
                 pass
         except aiohttp.ClientConnectorError:
             pass
@@ -193,7 +194,7 @@ class RealSERPAPIClient(BaseSERPAPIClient):
 
         try:
             async with session_to_use.get(endpoint, params=params, timeout=30) as response:
-                response.raise_for_status()
+                response.raise_for_status() # Raise an exception for HTTP errors
                 data = await response.json()
                 
                 serp_results = []
@@ -217,7 +218,7 @@ class RealSERPAPIClient(BaseSERPAPIClient):
 
         except aiohttp.ClientError as e:
             self.logger.error(f"Error fetching real SERP results for '{keyword}': {e}. Returning empty list.")
-            return []
+            return [] # Return empty list on network/client error
         except Exception as e:
             self.logger.error(f"Unexpected error in real SERP fetch for '{keyword}': {e}. Returning empty list.")
             return []
@@ -272,23 +273,27 @@ class SERPService:
         if self.pagespeed_client: # New: Exit PageSpeedClient's context
             await self.pagespeed_client.__aexit__(exc_type, exc_val, exc_tb)
 
-    async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
+    async def _get_cached_response(self, cache_key: str, service_name: str, endpoint_name: str) -> Optional[Any]:
         if self.api_cache_enabled and self.redis_client:
             try:
                 cached_data = await self.redis_client.get(cache_key)
                 if cached_data:
+                    API_CACHE_HITS_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
                     self.logger.debug(f"Cache hit for {cache_key}")
                     return json.loads(cached_data)
             except Exception as e:
+                API_CACHE_ERRORS_TOTAL.labels(service=service_name, endpoint=endpoint_name, error_type=type(e).__name__).inc()
                 self.logger.error(f"Error retrieving from cache for {cache_key}: {e}", exc_info=True)
         return None
 
-    async def _set_cached_response(self, cache_key: str, data: Any):
+    async def _set_cached_response(self, cache_key: str, data: Any, service_name: str, endpoint_name: str):
         if self.api_cache_enabled and self.redis_client:
             try:
                 await self.redis_client.setex(cache_key, self.cache_ttl, json.dumps(data))
+                API_CACHE_SET_TOTAL.labels(service=service_name, endpoint=endpoint_name).inc()
                 self.logger.debug(f"Cached {cache_key} with TTL {self.cache_ttl}")
             except Exception as e:
+                API_CACHE_ERRORS_TOTAL.labels(service=service_name, endpoint=endpoint_name, error_type=type(e).__name__).inc()
                 self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
 
     async def get_serp_data(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
@@ -298,7 +303,7 @@ class SERPService:
         Uses caching.
         """
         cache_key = f"serp_data:{keyword}:{num_results}:{search_engine}"
-        cached_result = await self._get_cached_response(cache_key)
+        cached_result = await self._get_cached_response(cache_key, "serp_api", "get_serp_data")
         if cached_result is not None:
             return [SERPResult.from_dict(sr_data) for sr_data in cached_result]
 
@@ -311,7 +316,7 @@ class SERPService:
             serp_results = await self.api_client.get_serp_results(keyword, num_results, search_engine)
         
         if serp_results:
-            await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results]) # Cache as list of dicts
+            await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", "get_serp_data") # Cache as list of dicts
         return serp_results
 
     async def get_pagespeed_metrics_for_url(self, url: str, strategy: str = 'mobile') -> Optional[SEOMetrics]:

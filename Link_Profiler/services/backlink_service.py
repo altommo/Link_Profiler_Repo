@@ -27,11 +27,6 @@ from Link_Profiler.database.database import Database # Import Database
 
 logger = logging.getLogger(__name__)
 
-# If modifying these scopes, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
-CREDENTIALS_FILE = 'credentials.json'
-TOKEN_FILE = 'token.json' # Corrected to .json
-
 class BaseBacklinkAPIClient:
     """
     Base class for a backlink information API client.
@@ -515,7 +510,7 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
                             link_type=LinkType.FOLLOW, # GSC doesn't specify nofollow for this report
                             context_text="From GSC Top Linking Site",
                             discovered_date=datetime.now(), # GSC doesn't provide discovery date for this report
-                            spam_level=SpamLevel.CLEAN # Assume clean from GSC
+                            spam_level=SpamLevel.CLEAN
                         )
                     )
             self.logger.info(f"GSCBacklinkAPIClient: Found {len(backlinks)} backlinks for {target_url} from GSC.")
