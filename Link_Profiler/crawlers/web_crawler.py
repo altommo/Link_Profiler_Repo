@@ -4,7 +4,7 @@ Production-Ready Web Crawler with Full Feature Integration
 import asyncio
 import aiohttp
 import time
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Set, Tuple
 from datetime import datetime
 from urllib.parse import urlparse, urljoin
 import logging
@@ -45,7 +45,7 @@ class EnhancedWebCrawler:
         self.config = config
         self.crawl_queue = crawl_queue
         self.ai_service = ai_service
-        self.browser = browser
+        self.browser = browser # Playwright browser instance passed from main.py
         
         # Advanced components
         self.resilience_manager = ResilienceManager()
@@ -81,7 +81,11 @@ class EnhancedWebCrawler:
             ttl_dns_cache=300,  # DNS cache TTL
             use_dns_cache=True,
             keepalive_timeout=30,
-            enable_cleanup_closed=True
+            enable_cleanup_closed=True,
+            # New: Connection health checks
+            verify_ssl=True, # Always verify SSL certificates
+            # For more advanced health checks, a custom connector class might be needed
+            # or periodic checks on existing connections.
         )
         
         timeout = aiohttp.ClientTimeout(
@@ -115,8 +119,9 @@ class EnhancedWebCrawler:
             
         await self.robots_parser.__aexit__(exc_type, exc_val, exc_tb)
         
-        if self.browser:
-            await self.browser.close()
+        # Browser is managed by main.py's lifespan, so no need to close here
+        # if self.browser:
+        #     await self.browser.close()
     
     def _get_default_headers(self) -> Dict[str, str]:
         """Get default HTTP headers with anti-detection"""
@@ -143,10 +148,15 @@ class EnhancedWebCrawler:
                 self._crawl_url_internal, url, depth, last_crawl_result
             )
         except CircuitBreakerOpenError as e:
-            return self._create_error_result(url, 503, f"Circuit breaker open: {e}")
+            # Enhanced error handling: Classify error
+            error_type = "CircuitBreakerOpen"
+            logger.error(f"Circuit breaker open for {url}: {e}")
+            return self._create_error_result(url, 503, f"Circuit breaker open: {e}", error_type=error_type)
         except Exception as e:
+            # Enhanced error handling: Catch all unexpected errors
+            error_type = "UnexpectedCrawlError"
             logger.error(f"Unexpected error crawling {url}: {e}", exc_info=True)
-            return self._create_error_result(url, 500, f"Unexpected error: {e}")
+            return self._create_error_result(url, 500, f"Unexpected error: {e}", error_type=error_type)
     
     async def _crawl_url_internal(self, url: str, depth: int = 0,
                                  last_crawl_result: Optional[CrawlResult] = None) -> CrawlResult:
@@ -166,7 +176,7 @@ class EnhancedWebCrawler:
         
         # Domain filtering
         if not self.config.is_domain_allowed(domain):
-            result = self._create_error_result(url, 403, f"Domain {domain} not allowed")
+            result = self._create_error_result(url, 403, f"Domain {domain} not allowed", error_type="DomainBlocked")
             await self.metrics.track_request_complete(url, result, request_context)
             return result
         
@@ -174,7 +184,7 @@ class EnhancedWebCrawler:
         if self.config.respect_robots_txt:
             can_crawl = await self.robots_parser.can_fetch(url, self.config.user_agent)
             if not can_crawl:
-                result = self._create_error_result(url, 403, "Blocked by robots.txt")
+                result = self._create_error_result(url, 403, "Blocked by robots.txt", error_type="RobotsTxtBlocked")
                 await self.metrics.track_request_complete(url, result, request_context)
                 return result
         
@@ -182,7 +192,7 @@ class EnhancedWebCrawler:
         await self.rate_limiter.adaptive_wait(domain, last_crawl_result)
         
         # Human-like delays
-        if hasattr(self.config, 'human_like_delays') and self.config.human_like_delays:
+        if self.config.human_like_delays:
             delay = random.uniform(0.5, 2.0)
             await asyncio.sleep(delay)
         
@@ -211,8 +221,14 @@ class EnhancedWebCrawler:
                               request_context: Dict) -> CrawlResult:
         """HTTP-based crawling with session reuse"""
         headers = self._get_request_headers(domain)
-        proxy = self._get_proxy() if hasattr(self.config, 'use_proxies') and self.config.use_proxies else None
-        
+        proxy = None
+        if self.config.use_proxies:
+            proxy_info = proxy_manager.get_next_proxy(desired_region=self.config.proxy_region)
+            if proxy_info:
+                proxy = proxy_info.get('url')
+            else:
+                logger.warning(f"No proxy available for region {self.config.proxy_region}. Proceeding without proxy.")
+
         try:
             async with self.session.get(url, headers=headers, proxy=proxy) as response:
                 content = await response.text()
@@ -224,7 +240,7 @@ class EnhancedWebCrawler:
                 # Parse SEO metrics
                 seo_metrics = await self.content_parser.parse_seo_metrics(url, content)
                 seo_metrics.http_status = response.status
-                seo_metrics.response_time_ms = request_context.get('start_time', time.time())
+                seo_metrics.response_time_ms = (time.time() - request_context.get('start_time', time.time())) * 1000
                 
                 return CrawlResult(
                     url=url,
@@ -237,17 +253,24 @@ class EnhancedWebCrawler:
                 )
                 
         except aiohttp.ClientError as e:
-            return self._create_error_result(url, 0, f"HTTP error: {e}")
+            return self._create_error_result(url, 0, f"HTTP error: {e}", error_type="ClientError")
         except asyncio.TimeoutError:
-            return self._create_error_result(url, 408, "Request timeout")
+            return self._create_error_result(url, 408, "Request timeout", error_type="TimeoutError")
+        except Exception as e:
+            return self._create_error_result(url, 500, f"Unexpected HTTP crawl error: {e}", error_type="UnexpectedHTTPError")
     
     async def _crawl_with_browser(self, url: str, domain: str,
                                  request_context: Dict) -> CrawlResult:
         """Browser-based crawling for JavaScript content"""
+        if not self.browser:
+            return self._create_error_result(url, 500, "Browser not initialized for JavaScript rendering.", error_type="BrowserNotInitialized")
+
+        context: Optional[BrowserContext] = None
         try:
             context = await self.browser.new_context(
                 user_agent=self._get_user_agent_for_domain(domain),
-                viewport={'width': 1920, 'height': 1080}
+                viewport={'width': 1920, 'height': 1080},
+                proxy={"server": self._get_proxy()} if self.config.use_proxies and self._get_proxy() else None
             )
             
             page = await context.new_page()
@@ -262,8 +285,7 @@ class EnhancedWebCrawler:
             # Parse SEO metrics
             seo_metrics = await self.content_parser.parse_seo_metrics(url, content)
             seo_metrics.http_status = response.status if response else 200
-            
-            await context.close()
+            seo_metrics.response_time_ms = (time.time() - request_context.get('start_time', time.time())) * 1000
             
             return CrawlResult(
                 url=url,
@@ -275,7 +297,10 @@ class EnhancedWebCrawler:
             )
             
         except Exception as e:
-            return self._create_error_result(url, 500, f"Browser error: {e}")
+            return self._create_error_result(url, 500, f"Browser error: {e}", error_type="BrowserCrawlError")
+        finally:
+            if context:
+                await context.close()
     
     async def _validate_and_enhance_content(self, result: CrawlResult) -> CrawlResult:
         """Validate content and enhance with AI analysis"""
@@ -285,17 +310,21 @@ class EnhancedWebCrawler:
         )
         result.validation_issues = validation_issues
         
-        # AI content analysis
-        if self.ai_service and self.ai_service.enabled:
+        # AI content quality assessment
+        if self.ai_service and self.ai_service.enabled and result.content:
             try:
-                ai_score = await self.ai_service.assess_content_quality(
+                ai_score, ai_classification = await self.ai_service.assess_content_quality(
                     result.content, result.url
                 )
-                if ai_score and result.seo_metrics:
+                if ai_score is not None and ai_classification is not None:
+                    if result.seo_metrics is None:
+                        result.seo_metrics = SEOMetrics(url=result.url)
                     result.seo_metrics.ai_content_score = ai_score
+                    result.seo_metrics.ai_content_classification = ai_classification
+                    # Recalculate SEO score if AI metrics are added
                     result.seo_metrics.calculate_seo_score()
             except Exception as e:
-                logger.warning(f"AI analysis failed for {result.url}: {e}")
+                logger.warning(f"AI content quality analysis failed for {result.url}: {e}")
         
         return result
     
@@ -303,24 +332,31 @@ class EnhancedWebCrawler:
         """Get headers with rotation if enabled"""
         headers = self._get_default_headers().copy()
         
-        if hasattr(self.config, 'user_agent_rotation') and self.config.user_agent_rotation:
-            headers['User-Agent'] = self._get_user_agent_for_domain(domain)
+        if self.config.user_agent_rotation:
+            headers['User-Agent'] = user_agent_manager.get_random_user_agent() # Use UserAgentManager
+        
+        # Add other random headers if enabled
+        if self.config.request_header_randomization:
+            # This would involve a more sophisticated header randomization utility
+            pass # Placeholder for actual implementation
         
         return headers
     
     def _get_user_agent_for_domain(self, domain: str) -> str:
         """Get user agent for domain with consistency if enabled"""
-        if hasattr(self.config, 'consistent_ua_per_domain') and self.config.consistent_ua_per_domain:
+        if self.config.consistent_ua_per_domain:
             return user_agent_manager.get_user_agent_for_domain(domain)
         return user_agent_manager.get_random_user_agent()
     
     def _get_proxy(self) -> Optional[str]:
         """Get proxy if available"""
-        if hasattr(self.config, 'proxy_region'):
-            return proxy_manager.get_next_proxy(desired_region=self.config.proxy_region)
-        return proxy_manager.get_next_proxy()
+        if self.config.use_proxies and self.config.proxy_list:
+            # ProxyManager.get_next_proxy should return a dict with 'url' key
+            proxy_info = proxy_manager.get_next_proxy(desired_region=self.config.proxy_region)
+            return proxy_info.get('url') if proxy_info else None
+        return None
     
-    def _create_error_result(self, url: str, status_code: int, error_message: str) -> CrawlResult:
+    def _create_error_result(self, url: str, status_code: int, error_message: str, error_type: str = "UnknownError") -> CrawlResult:
         """Create standardized error result"""
         return CrawlResult(
             url=url,
@@ -328,7 +364,8 @@ class EnhancedWebCrawler:
             error_message=error_message,
             crawl_time_ms=0,
             crawl_timestamp=datetime.now(),
-            anomaly_flags=[f"Error: {error_message}"]
+            anomaly_flags=[f"Error: {error_message}"],
+            errors=[CrawlError(url=url, error_type=error_type, message=error_message)]
         )
     
     async def start_crawl(self, target_url: str, initial_seed_urls: List[str], 
@@ -342,8 +379,8 @@ class EnhancedWebCrawler:
         # Initialize stats
         pages_crawled = 0
         total_links = 0
-        backlinks_found = []
-        errors = []
+        backlinks_found_list: List[Backlink] = [] # Renamed to avoid conflict with method
+        errors: List[CrawlError] = []
         
         target_domain = urlparse(target_url).netloc
         
@@ -388,7 +425,7 @@ class EnhancedWebCrawler:
                             link for link in result.links_found
                             if self._is_backlink_to_target(link, target_url, target_domain)
                         ]
-                        backlinks_found.extend(target_links)
+                        backlinks_found_list.extend(target_links)
                         
                         # Enqueue discovered links
                         for link in result.links_found:
@@ -412,20 +449,52 @@ class EnhancedWebCrawler:
         else:
             # Fallback simple crawl
             logger.warning("No smart queue available, using simple crawl")
-            # Implementation similar to current but enhanced
+            crawled_urls_set: Set[str] = set()
+            urls_to_crawl_list: List[Tuple[str, int]] = [(url, 0) for url in initial_seed_urls] # (url, depth)
+            
+            while urls_to_crawl_list and pages_crawled < self.config.max_pages:
+                current_url, current_depth = urls_to_crawl_list.pop(0)
+                
+                if current_url in crawled_urls_set or current_depth >= self.config.max_depth:
+                    continue
+                
+                logger.info(f"Fallback crawling: {current_url} (Depth: {current_depth})")
+                result = await self.crawl_url(current_url, current_depth)
+                crawled_urls_set.add(current_url)
+                
+                if result.error_message:
+                    errors.append(CrawlError(
+                        url=current_url,
+                        error_type="FallbackCrawlError",
+                        message=result.error_message
+                    ))
+                else:
+                    pages_crawled += 1
+                    total_links += len(result.links_found)
+                    
+                    target_links = [
+                        link for link in result.links_found
+                        if self._is_backlink_to_target(link, target_url, target_domain)
+                    ]
+                    backlinks_found_list.extend(target_links)
+                    
+                    for link in result.links_found:
+                        link_domain = urlparse(link.target_url).netloc
+                        if self.config.is_domain_allowed(link_domain):
+                            urls_to_crawl_list.append((link.target_url, current_depth + 1))
         
         # Return comprehensive summary
         return CrawlResult(
             url=target_url,
-            status_code=200,
+            status_code=200, # Overall success status
             pages_crawled=pages_crawled,
             total_links_found=total_links,
-            backlinks_found=len(backlinks_found),
+            backlinks_found=len(backlinks_found_list),
             failed_urls_count=len(errors),
             is_final_summary=True,
             crawl_duration_seconds=time.time() - start_time,
             errors=errors,
-            links_found=backlinks_found,
+            links_found=backlinks_found_list, # Return the list of backlinks found to target
             crawl_timestamp=datetime.now()
         )
     
