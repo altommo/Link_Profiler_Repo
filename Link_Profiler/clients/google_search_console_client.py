@@ -4,6 +4,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError # Import HttpError for specific error handling
+from google_auth_oauthlib.flow import InstalledAppFlow # Import InstalledAppFlow
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import logging

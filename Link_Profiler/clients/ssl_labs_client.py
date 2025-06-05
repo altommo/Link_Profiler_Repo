@@ -10,6 +10,7 @@ import aiohttp
 import json # For parsing JSON response
 import random # Import random for simulation
 import time # Import time for time.monotonic()
+from datetime import datetime # Import datetime
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
