@@ -13,6 +13,8 @@ import time
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timedelta
 import random
+from urllib.parse import urlparse # Import urlparse
+from Link_Profiler.config.config_loader import config_loader # Import config_loader
 
 from Link_Profiler.services.ai_service import AIService
 from Link_Profiler.monitoring.crawler_metrics import CrawlerMetrics
@@ -32,9 +34,9 @@ class CrawlOptimizer:
         self.logger = logging.getLogger(__name__ + ".CrawlOptimizer")
 
         # Configuration for optimization (can be loaded from config_loader)
-        self.content_priority_threshold = 0.7 # Minimum AI content score for high priority
-        self.anomaly_penalty_factor = 2.0 # Multiply delay by this if anomaly detected
-        self.max_crawl_depth_adjustment = 2 # Max additional depth for high-value content
+        self.content_priority_threshold = config_loader.get("ai.content_priority_threshold", 0.7) # Minimum AI content score for high priority
+        self.anomaly_penalty_factor = config_loader.get("ai.anomaly_penalty_factor", 2.0) # Multiply delay by this if anomaly detected
+        self.max_crawl_depth_adjustment = config_loader.get("crawler.max_crawl_depth_adjustment", 2) # Max additional depth for high-value content
 
     async def prioritize_urls(self, urls: List[str], current_depth: int, crawl_config: CrawlConfig) -> List[Tuple[str, int]]:
         """
