@@ -31,9 +31,17 @@ class Web3Service:
         self.cache_ttl = cache_ttl
         self.enabled = config_loader.get("web3_crawler.enabled", False)
         self.ipfs_gateway_url = config_loader.get("web3_crawler.ipfs_gateway_url", "https://ipfs.io/ipfs/")
-        self.blockchain_node_url = config_loader.get("web3_crawler.blockchain_node_url", "https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID")
+        self.blockchain_node_url = config_loader.get(
+            "web3_crawler.blockchain_node_url",
+            "https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID",
+        )
         self.etherscan_api_key = config_loader.get("web3_crawler.etherscan_api_key")
+        if isinstance(self.etherscan_api_key, str) and self.etherscan_api_key.startswith("${"):
+            # Ignore placeholder values from config
+            self.etherscan_api_key = None
         self.opensea_api_key = config_loader.get("web3_crawler.opensea_api_key")
+        if isinstance(self.opensea_api_key, str) and self.opensea_api_key.startswith("${"):
+            self.opensea_api_key = None
 
         self._session: Optional[aiohttp.ClientSession] = None # New: aiohttp client session
 
