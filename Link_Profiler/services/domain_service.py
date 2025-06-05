@@ -8,8 +8,9 @@ from typing import Optional, Dict, Any, List
 from urllib.parse import urlparse
 import asyncio
 from datetime import datetime
-import json # Import json for serializing/deserializing WHOIS data
-import random # Import random for simulation functions
+import json  # Import json for serializing/deserializing WHOIS data
+import random  # Import random for simulation functions
+import dns.asyncresolver  # For real DNS lookups
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.clients.base_client import BaseAPIClient
@@ -120,6 +121,18 @@ class DomainService:
         # Initialize API clients
         self.abstract_api_client = AbstractDomainAPIClient(session_manager=self.session_manager)
         self.whois_json_api_client = WhoisJsonAPIClient(session_manager=self.session_manager)
+
+        # Configuration for live lookups
+        self.allow_live = config_loader.get("domain_api.domain_service.allow_live", False)
+        self.dns_over_https_enabled = config_loader.get("domain_api.dns_over_https_api.enabled", False)
+        self.cloudflare_doh_url = config_loader.get("domain_api.dns_over_https_api.cloudflare_url")
+        self.google_doh_url = config_loader.get("domain_api.dns_over_https_api.google_url")
+        self.seo_metrics_enabled = config_loader.get("domain_api.seo_metrics_api.enabled", False)
+        self.seo_metrics_base_url = config_loader.get("domain_api.seo_metrics_api.base_url", "https://openpagerank.com/api/v1.0/getPageRank")
+        self.seo_metrics_api_key = config_loader.get("domain_api.seo_metrics_api.api_key")
+        self.ip_info_enabled = config_loader.get("domain_api.ip_info_api.enabled", False)
+        self.ip_info_base_url = config_loader.get("domain_api.ip_info_api.base_url", "http://ip-api.com/json")
+        self.ip_info_api_key = config_loader.get("domain_api.ip_info_api.api_key")
         
         # Placeholder for other potential clients (e.g., DNS over HTTPS, SEO metrics API)
         # self.dns_client = DNSOverHttpsClient(session_manager=self.session_manager)
@@ -186,19 +199,14 @@ class DomainService:
                 domain_data["is_free"] = validation_data.get("is_free", False)
                 domain_data["is_spam"] = validation_data.get("is_spam", False) # AbstractAPI provides this
 
-        # --- DNS Records (A, CNAME, MX, NS, TXT) ---
-        # This would typically involve a dedicated DNS client or direct dns.resolver calls
-        # For now, we'll simulate or leave as placeholder if no client is integrated
-        domain_data["dns_records"] = self._simulate_dns_records(parsed_domain)
+        # --- DNS Records (A, AAAA, MX, NS, TXT) ---
+        domain_data["dns_records"] = await self._fetch_dns_records(parsed_domain)
         
         # --- SEO Metrics (e.g., Domain Authority, Page Authority, Trust Flow, Citation Flow) ---
-        # This would involve integration with Moz, Ahrefs, SEMrush APIs
-        # For now, simulate
-        domain_data["seo_metrics"] = self._simulate_seo_metrics(parsed_domain)
+        domain_data["seo_metrics"] = await self._fetch_seo_metrics(parsed_domain)
 
         # --- IP Information ---
-        # This would involve IP lookup services
-        domain_data["ip_info"] = self._simulate_ip_info(parsed_domain)
+        domain_data["ip_info"] = await self._fetch_ip_info(parsed_domain)
 
         # Construct Domain object
         domain_obj = Domain(
@@ -234,6 +242,104 @@ class DomainService:
                 # Fallback for other formats if necessary
                 pass
         return None
+
+    async def _fetch_dns_records(self, domain_name: str) -> Dict[str, List[str]]:
+        """Fetch DNS records using DNS over HTTPS or dnspython if enabled."""
+        if not self.allow_live:
+            return self._simulate_dns_records(domain_name)
+
+        if self.dns_over_https_enabled and (self.cloudflare_doh_url or self.google_doh_url):
+            doh_url = self.cloudflare_doh_url or self.google_doh_url
+            records: Dict[str, List[str]] = {}
+            for rtype in ["A", "AAAA", "MX", "NS", "TXT"]:
+                try:
+                    params = {"name": domain_name, "type": rtype}
+                    headers = {"Accept": "application/dns-json"}
+                    resp = await self.session_manager.get(doh_url, params=params, headers=headers)
+                    data = await resp.json()
+                    answers = data.get("Answer") or data.get("answer") or []
+                    if answers:
+                        records[rtype] = [a.get("data") for a in answers if a.get("data")]
+                except Exception as e:
+                    self.logger.error(f"DNS over HTTPS error for {domain_name} {rtype}: {e}")
+            if records:
+                return records
+
+        # Fallback to local DNS resolver if DOH not configured or failed
+        try:
+            resolver = dns.asyncresolver.Resolver()
+            records: Dict[str, List[str]] = {}
+            for rtype in ["A", "AAAA", "MX", "NS", "TXT"]:
+                try:
+                    answers = await resolver.resolve(domain_name, rtype)
+                    records[rtype] = [r.to_text() for r in answers]
+                except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+                    continue
+                except Exception as e:
+                    self.logger.error(f"DNS lookup error for {domain_name} {rtype}: {e}")
+            if records:
+                return records
+        except Exception as e:
+            self.logger.error(f"DNS lookup failed for {domain_name}: {e}")
+
+        return self._simulate_dns_records(domain_name)
+
+    async def _fetch_seo_metrics(self, domain_name: str) -> Dict[str, Any]:
+        """Fetch SEO metrics using external API if enabled."""
+        if not self.allow_live or not self.seo_metrics_enabled:
+            return self._simulate_seo_metrics(domain_name)
+
+        headers = {}
+        if self.seo_metrics_api_key:
+            headers["API-OPR"] = self.seo_metrics_api_key
+
+        try:
+            params = {"domains[]": domain_name}
+            resp = await self.session_manager.get(self.seo_metrics_base_url, params=params, headers=headers)
+            data = await resp.json()
+            result = None
+            if isinstance(data, dict):
+                if "response" in data and isinstance(data["response"], list) and data["response"]:
+                    result = data["response"][0]
+                elif "results" in data and isinstance(data["results"], list) and data["results"]:
+                    result = data["results"][0]
+            if result:
+                return {
+                    "domain_authority": result.get("page_rank_integer"),
+                    "page_authority": result.get("page_rank_decimal"),
+                    "referring_domains": result.get("rank"),
+                    "last_fetched_at": datetime.utcnow().isoformat()
+                }
+        except Exception as e:
+            self.logger.error(f"SEO metrics lookup failed for {domain_name}: {e}")
+
+        return self._simulate_seo_metrics(domain_name)
+
+    async def _fetch_ip_info(self, domain_name: str) -> Dict[str, Any]:
+        """Fetch IP information using external API if enabled."""
+        if not self.allow_live or not self.ip_info_enabled:
+            return self._simulate_ip_info(domain_name)
+
+        params = {}
+        if self.ip_info_api_key:
+            params["token"] = self.ip_info_api_key
+
+        try:
+            url = f"{self.ip_info_base_url.rstrip('/')}/{domain_name}"
+            resp = await self.session_manager.get(url, params=params)
+            data = await resp.json()
+            if data.get("status", "success") == "success":
+                return {
+                    "ip_address": data.get("query"),
+                    "country": data.get("country"),
+                    "city": data.get("city"),
+                    "isp": data.get("isp"),
+                    "last_fetched_at": datetime.utcnow().isoformat()
+                }
+        except Exception as e:
+            self.logger.error(f"IP info lookup failed for {domain_name}: {e}")
+
+        return self._simulate_ip_info(domain_name)
 
     def _simulate_dns_records(self, domain_name: str) -> Dict[str, List[str]]:
         """Simulates DNS record lookup."""
