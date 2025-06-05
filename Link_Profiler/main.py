@@ -176,7 +176,7 @@ from Link_Profiler.api.schemas import (
     ReportJobResponse, QueueStatsResponse, SERPResultResponse, KeywordSuggestionResponse, 
     LinkIntersectResponse, CompetitiveKeywordAnalysisResponse, AlertRuleResponse, 
     ContentGapAnalysisResultResponse, LinkProspectResponse, OutreachCampaignResponse, 
-    OutreachEventResponse, SEOMetricsResponse # Import all necessary schemas
+    OutreachEventResponse, SEOMetricsResponse, QueueCrawlRequest # Added QueueCrawlRequest
 )
 
 
@@ -384,12 +384,16 @@ async def lifespan(app: FastAPI):
     Context manager for managing the lifespan of the FastAPI application.
     Ensures resources like aiohttp sessions are properly opened and closed.
     """
+    # Initialize ConnectionManager here, as it's used by alert_service and queue_endpoints
+    connection_manager_instance = ConnectionManager()
+
     context_managers = [
         session_manager, # New: Add SessionManager to lifespan
         domain_service_instance,
         ai_service_instance,
         api_cache, # Initialize API cache
         auth_service_instance, # New: Add AuthService to lifespan
+        connection_manager_instance, # Add ConnectionManager to lifespan
         # The following services are initialized with dependencies that might not be ready yet
         # or are managed by their own internal lifecycles.
         # They should be initialized within the lifespan if they need async setup/teardown.
@@ -478,7 +482,7 @@ async def lifespan(app: FastAPI):
             config_loader=config_loader,
             db=db,
             alert_service=alert_service_instance,
-            connection_manager=ConnectionManager() # Pass a new instance or the global one if it's a singleton
+            connection_manager=connection_manager_instance # Pass the initialized instance
         )
 
         # Initialize and start JobCoordinator background tasks
