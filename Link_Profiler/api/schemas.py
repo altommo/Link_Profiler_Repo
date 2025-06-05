@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 # Import from core.models for shared data structures and serialization
-from Link_Profiler.core.models import User, Token, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics # Added serialize_model, ReportJob, SEOMetrics
+from Link_Profiler.core.models import User, Token, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -421,6 +421,7 @@ class AlertRuleCreateRequest(BaseModel):
 
 class AlertRuleResponse(BaseModel):
     id: str
+
     name: str
     description: Optional[str]
     is_active: bool
