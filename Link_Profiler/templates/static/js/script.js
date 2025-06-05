@@ -1,8 +1,8 @@
 // Configuration - determine API base URL dynamically
-const API_BASE = window.location.protocol === 'file:' 
-    ? 'https://api.yspanel.com' 
-    : (window.location.origin.includes('monitor.yspanel.com') 
-        ? 'https://api.yspanel.com' 
+const API_BASE = window.location.protocol === 'file:'
+    ? 'https://api.yspanel.com'
+    : (window.location.origin.includes('monitor.yspanel.com')
+        ? 'https://api.yspanel.com'
         : window.location.origin);
 
 let authToken = localStorage.getItem('authToken');
