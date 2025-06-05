@@ -18,6 +18,7 @@ from Link_Profiler.config.config_loader import config_loader # New import config
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient # New: Import PageSpeedClient
+from Link_Profiler.monitoring.prometheus_metrics import API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL # Import Prometheus metrics
 
 logger = logging.getLogger(__name__)
 

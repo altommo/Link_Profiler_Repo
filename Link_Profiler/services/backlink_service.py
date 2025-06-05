@@ -24,6 +24,7 @@ from Link_Profiler.monitoring.prometheus_metrics import ( # Import Prometheus me
 )
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.database.database import Database # Import Database
+from Link_Profiler.clients.google_search_console_client import CREDENTIALS_FILE, TOKEN_FILE, SCOPES # Import GSC specific constants
 
 logger = logging.getLogger(__name__)
 
@@ -418,8 +419,10 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
         
         # Use project_root from main.py for consistent path
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        credentials_file_path = os.path.join(project_root, CREDENTIALS_FILE)
-        token_file_path = os.path.join(project_root, TOKEN_FILE)
+        credentials_file_path = os.path.join(project_root, config_loader.get("backlink_api.gsc_api.credentials_file", "credentials.json"))
+        token_file_path = os.path.join(project_root, config_loader.get("backlink_api.gsc_api.token_file", "token.json"))
+        
+        SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly'] # Define SCOPES here or import from a client config
 
         if os.path.exists(token_file_path):
             self._creds = Credentials.from_authorized_user_file(token_file_path, SCOPES)
