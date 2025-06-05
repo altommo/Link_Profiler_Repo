@@ -102,7 +102,7 @@ def main():
     all_checks.append(check_file_exists(project_root / "run_satellite.py", "Satellite Entry Point"))
     all_checks.append(check_file_exists(project_root / "Link_Profiler/scripts/start_local.sh", "Local Start Script (Linux)"))
     all_checks.append(check_file_exists(project_root / "Link_Profiler/scripts/start_local.bat", "Local Start Script (Windows)"))
-    all_checks.append(check_file_exists(project_root / "Link_Profiler/scripts/test_queue.py", "Test Script"))
+    all_checks.append(check_file_exists(project_root / "tests/test_queue.py", "Test Script"))
     print()
     
     print("📚 Documentation")
