@@ -43,8 +43,11 @@ Link_Profiler/                                    # Project root
 │   ├── monitoring/                             # ✅ NEW: Monitoring tools
 │   │   ├── 📄 __init__.py                       # ✅ NEW: Package init  
 │   │   ├── 📄 dashboard.py                      # ✅ NEW: Web dashboard
-│   │   └── templates/
-│   │       └── 📄 dashboard.html                # ✅ NEW: Dashboard UI
+│   ├── templates/
+│   │   ├── static/
+│   │   │   ├── css/
+│   │   │   └── js/
+│   │   └── 📄 dashboard.html                # ✅ NEW: Dashboard UI
 │   │
 │   ├── deployment/                             # ✅ NEW: Deployment configs
 │   │   ├── docker/                             # Docker deployment

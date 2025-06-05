@@ -98,9 +98,9 @@ from Link_Profiler.api.monitoring_debug import health_check_internal, _get_aggre
 # Import core models for type hinting in API responses
 from Link_Profiler.core.models import CrawlStatus, User
 
-# Determine base directory for templates and static files
-base_dir = os.path.dirname(os.path.abspath(__file__))
-templates = Jinja2Templates(directory=os.path.join(base_dir, "templates"))
+# Determine project root for templates and static files
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "templates"))
 
 # Initialize FastAPI app
 dashboard_app = FastAPI(
@@ -110,7 +110,11 @@ dashboard_app = FastAPI(
 )
 
 # Mount static files
-dashboard_app.mount("/static", StaticFiles(directory=os.path.join(base_dir, "templates", "static")), name="static")
+dashboard_app.mount(
+    "/static",
+    StaticFiles(directory=os.path.join(project_root, "Link_Profiler", "templates", "static")),
+    name="static",
+)
 
 @dashboard_app.get("/", response_class=HTMLResponse)
 async def dashboard_home(request: Request):
