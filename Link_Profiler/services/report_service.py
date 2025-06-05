@@ -65,6 +65,17 @@ class ReportService:
         """No specific async cleanup needed for this class."""
         pass
 
+    def _create_dummy_pdf(self, link_profile: LinkProfile, target_url: str, *, reason: str) -> io.BytesIO:
+        """Return a simple dummy PDF representation as a placeholder."""
+        dummy_pdf_content = (
+            f"Simulated PDF Report for Link Profile: {target_url}\n\n"
+            f"Total Backlinks: {link_profile.total_backlinks}\n"
+            f"Unique Domains: {link_profile.unique_domains}\n"
+            f"Authority Score: {link_profile.authority_score}\n"
+            f"(Dummy PDF generated because: {reason})"
+        )
+        return io.BytesIO(dummy_pdf_content.encode("utf-8"))
+
     async def generate_link_profile_pdf_report(self, target_url: str) -> Optional[io.BytesIO]:
         """
         Generates a PDF report for a given link profile.
@@ -76,16 +87,10 @@ class ReportService:
             return None
 
         if not self.REPORTLAB_AVAILABLE:
-            self.logger.error("ReportLab is not installed. Cannot generate PDF report. Returning simulated PDF.")
-            # Simulate a PDF for demonstration if ReportLab is missing
-            dummy_pdf_content = (
-                f"Simulated PDF Report for Link Profile: {target_url}\n\n"
-                f"Total Backlinks: {link_profile.total_backlinks}\n"
-                f"Unique Domains: {link_profile.unique_domains}\n"
-                f"Authority Score: {link_profile.authority_score}\n"
-                f"This is a placeholder. Install ReportLab for real PDF generation."
+            self.logger.warning(
+                "ReportLab is not installed. Falling back to a dummy PDF report."
             )
-            return io.BytesIO(dummy_pdf_content.encode("utf-8"))
+            return self._create_dummy_pdf(link_profile, target_url, reason="ReportLab missing")
 
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=letter)
@@ -202,17 +207,10 @@ class ReportService:
             return buffer
         except Exception as e:
             self.logger.error(
-                f"Error building PDF for {target_url}: {e}. Falling back to dummy PDF.",
+                f"Error building PDF for {target_url}: {e}. Using dummy PDF instead.",
                 exc_info=True,
             )
-            dummy_pdf_content = (
-                f"Simulated PDF Report for Link Profile: {target_url}\n\n"
-                f"Total Backlinks: {link_profile.total_backlinks}\n"
-                f"Unique Domains: {link_profile.unique_domains}\n"
-                f"Authority Score: {link_profile.authority_score}\n"
-                f"This is a placeholder due to an error generating the real PDF."
-            )
-            return io.BytesIO(dummy_pdf_content.encode("utf-8"))
+            return self._create_dummy_pdf(link_profile, target_url, reason="PDF generation error")
 
     async def generate_link_profile_excel_report(self, target_url: str) -> Optional[io.BytesIO]:
         """
