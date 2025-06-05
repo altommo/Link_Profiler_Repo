@@ -14,6 +14,7 @@ import praw # Requires pip install praw
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ class RedditClient:
     Client for interacting with the Reddit API using PRAW.
     Note: PRAW is synchronous, so API calls are wrapped in `asyncio.to_thread`.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
         self.logger = logging.getLogger(__name__ + ".RedditClient")
         self.client_id = config_loader.get("social_media_crawler.reddit_api.client_id")
         self.client_secret = config_loader.get("social_media_crawler.reddit_api.client_secret")
@@ -35,6 +36,12 @@ class RedditClient:
             from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
             self.session_manager = global_session_manager
             logger.warning("No SessionManager provided to RedditClient. Falling back to global SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to RedditClient. Falling back to global instance.")
 
 
         if not self.enabled:
@@ -50,14 +57,19 @@ class RedditClient:
             await self.session_manager.__aenter__() # Ensure session manager is entered
             try:
                 # PRAW initialization is synchronous
-                self.reddit = await asyncio.to_thread(
-                    praw.Reddit,
-                    client_id=self.client_id,
-                    client_secret=self.client_secret,
-                    user_agent=self.user_agent
+                self.reddit = await self.resilience_manager.execute_with_resilience(
+                    lambda: praw.Reddit(
+                        client_id=self.client_id,
+                        client_secret=self.client_secret,
+                        user_agent=self.user_agent
+                    ),
+                    url="https://www.reddit.com/api/v1/access_token" # Representative URL for CB
                 )
                 # Test connection by fetching a read-only property
-                await asyncio.to_thread(lambda: self.reddit.user.me()) # This will trigger authentication
+                await self.resilience_manager.execute_with_resilience(
+                    lambda: self.reddit.user.me(),
+                    url="https://oauth.reddit.com/api/v1/me" # Representative URL for CB
+                )
                 self.logger.info("PRAW Reddit instance initialized successfully.")
             except Exception as e:
                 self.logger.error(f"Failed to initialize PRAW Reddit client: {e}. Functionality will be simulated.", exc_info=True)
@@ -91,7 +103,10 @@ class RedditClient:
         results = []
         try:
             # PRAW search is synchronous, run in a separate thread
-            submissions = await asyncio.to_thread(self.reddit.subreddit('all').search, query, limit=limit)
+            submissions = await self.resilience_manager.execute_with_resilience(
+                lambda: self.reddit.subreddit('all').search(query, limit=limit),
+                url="https://oauth.reddit.com/r/all/search" # Representative URL for CB
+            )
             
             for s in submissions:
                 results.append({

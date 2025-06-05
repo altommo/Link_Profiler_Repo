@@ -12,6 +12,7 @@ import json
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class PageSpeedClient:
     Client for fetching PageSpeed Insights data from Google's API.
     Requires a Google Cloud API key with PageSpeed Insights API enabled.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
         self.logger = logging.getLogger(__name__ + ".PageSpeedClient")
         self.base_url = config_loader.get("serp_api.pagespeed_insights_api.base_url")
         self.api_key = config_loader.get("serp_api.pagespeed_insights_api.api_key")
@@ -31,6 +32,13 @@ class PageSpeedClient:
             from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
             self.session_manager = global_session_manager
             logger.warning("No SessionManager provided to PageSpeedClient. Falling back to global SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to PageSpeedClient. Falling back to global instance.")
+
 
         if not self.enabled:
             self.logger.info("PageSpeed Insights API is disabled by configuration.")
@@ -82,18 +90,16 @@ class PageSpeedClient:
         self.logger.info(f"Fetching PageSpeed Insights for {url} with strategy {strategy.upper()}...")
 
         try:
-            async with await self.session_manager.get(self.base_url, params=params, timeout=30) as response:
-                response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
-                data = await response.json()
-                self.logger.info(f"Successfully fetched PageSpeed Insights for {url}.")
-                return data
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/Client error fetching PageSpeed Insights for {url}: {e}. Returning None.")
-            return None
-        except asyncio.TimeoutError:
-            self.logger.error(f"PageSpeed Insights request for {url} timed out.")
-            return None
+            # Use resilience manager for the actual HTTP request
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(self.base_url, params=params, timeout=30),
+                url=self.base_url # Pass the base URL for circuit breaker naming
+            )
+            response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+            data = await response.json()
+            self.logger.info(f"Successfully fetched PageSpeed Insights for {url}.")
+            return data
         except Exception as e:
-            self.logger.error(f"Unexpected error fetching PageSpeed Insights for {url}: {e}. Returning None.", exc_info=True)
+            self.logger.error(f"Error fetching PageSpeed Insights for {url}: {e}. Returning None.", exc_info=True)
             return None
 

@@ -13,6 +13,7 @@ import random
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ class WHOISClient:
     Client for fetching WHOIS data from WHOIS-JSON.com.
     Offers a free tier with limits.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None):
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
         self.logger = logging.getLogger(__name__ + ".WHOISClient")
         self.base_url = config_loader.get("domain_api.whois_json_api.base_url")
         self.api_key = config_loader.get("domain_api.whois_json_api.api_key") # Optional, for higher limits
@@ -32,6 +33,13 @@ class WHOISClient:
             from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
             self.session_manager = global_session_manager
             logger.warning("No SessionManager provided to WHOISClient. Falling back to global SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to WHOISClient. Falling back to global instance.")
+
 
         if not self.enabled:
             self.logger.info("WHOIS-JSON.com API is disabled by configuration.")
@@ -71,19 +79,17 @@ class WHOISClient:
 
         self.logger.info(f"Calling WHOIS-JSON.com API for domain: {domain}...")
         try:
-            async with await self.session_manager.get(endpoint, params=params, timeout=10) as response:
-                response.raise_for_status() # Raise an exception for HTTP errors
-                data = await response.json()
-                self.logger.info(f"WHOIS data for {domain} fetched successfully.")
-                return data
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/API error fetching WHOIS data for {domain}: {e}", exc_info=True)
-            return self._simulate_whois_data(domain) # Fallback to simulation on error
-        except asyncio.TimeoutError:
-            self.logger.error(f"WHOIS-JSON.com API request for {domain} timed out.")
-            return self._simulate_whois_data(domain) # Fallback to simulation on error
+            # Use resilience manager for the actual HTTP request
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(endpoint, params=params, timeout=10),
+                url=endpoint # Pass the endpoint for circuit breaker naming
+            )
+            response.raise_for_status() # Raise an exception for HTTP errors
+            data = await response.json()
+            self.logger.info(f"WHOIS data for {domain} fetched successfully.")
+            return data
         except Exception as e:
-            self.logger.error(f"Unexpected error fetching WHOIS data for {domain}: {e}", exc_info=True)
+            self.logger.error(f"Error fetching WHOIS data for {domain}: {e}", exc_info=True)
             return self._simulate_whois_data(domain) # Fallback to simulation on error
 
     def _simulate_whois_data(self, domain: str) -> Optional[Dict[str, Any]]:

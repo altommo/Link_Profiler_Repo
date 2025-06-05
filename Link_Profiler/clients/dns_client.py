@@ -13,6 +13,7 @@ import random
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ class DNSClient:
     Client for performing DNS lookups using DNS-over-HTTPS (DoH) providers.
     Supports Cloudflare and Google DoH endpoints.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
         self.logger = logging.getLogger(__name__ + ".DNSClient")
         self.cloudflare_url = config_loader.get("domain_api.dns_over_https_api.cloudflare_url")
         self.google_url = config_loader.get("domain_api.dns_over_https_api.google_url")
@@ -32,6 +33,13 @@ class DNSClient:
             from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
             self.session_manager = global_session_manager
             logger.warning("No SessionManager provided to DNSClient. Falling back to global SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to DNSClient. Falling back to global instance.")
+
 
         self.providers = []
         if self.cloudflare_url:
@@ -79,27 +87,25 @@ class DNSClient:
         self.logger.info(f"Resolving DNS for {domain} ({record_type} record) using {provider_url}...")
 
         try:
-            async with await self.session_manager.get(provider_url, params=params, headers=headers, timeout=10) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                if data and data.get("Answer"):
-                    for answer in data["Answer"]:
-                        if answer["type"] == 1 and record_type == "A": # A record
-                            return answer["data"]
-                        if answer["type"] == 28 and record_type == "AAAA": # AAAA record
-                            return answer["data"]
-                self.logger.info(f"No {record_type} record found for {domain}.")
-                return None
+            # Use resilience manager for the actual HTTP request
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(provider_url, params=params, headers=headers, timeout=10),
+                url=provider_url # Pass the URL for circuit breaker naming
+            )
+            response.raise_for_status()
+            data = await response.json()
+            
+            if data and data.get("Answer"):
+                for answer in data["Answer"]:
+                    if answer["type"] == 1 and record_type == "A": # A record
+                        return answer["data"]
+                    if answer["type"] == 28 and record_type == "AAAA": # AAAA record
+                        return answer["data"]
+            self.logger.info(f"No {record_type} record found for {domain}.")
+            return None
 
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/Client error resolving DNS for {domain}: {e}. Returning None.")
-            return None
-        except asyncio.TimeoutError:
-            self.logger.error(f"DNS resolution for {domain} timed out.")
-            return None
         except Exception as e:
-            self.logger.error(f"Unexpected error resolving DNS for {domain}: {e}. Returning None.", exc_info=True)
+            self.logger.error(f"Error resolving DNS for {domain}: {e}. Returning None.", exc_info=True)
             return None
 
     @api_rate_limited(service="dns_over_https_api", api_client_type="dns_client", endpoint="get_all_records")
@@ -122,22 +128,20 @@ class DNSClient:
         self.logger.info(f"Fetching all DNS records for {domain} using {provider_url}...")
 
         try:
-            async with await self.session_manager.get(provider_url, params=params, headers=headers, timeout=15) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                if data and data.get("Answer"):
-                    return data["Answer"]
-                self.logger.info(f"No DNS records found for {domain}.")
-                return []
+            # Use resilience manager for the actual HTTP request
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(provider_url, params=params, headers=headers, timeout=15),
+                url=provider_url # Pass the URL for circuit breaker naming
+            )
+            response.raise_for_status()
+            data = await response.json()
+            
+            if data and data.get("Answer"):
+                return data["Answer"]
+            self.logger.info(f"No DNS records found for {domain}.")
+            return []
 
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/Client error fetching all DNS records for {domain}: {e}. Returning empty list.")
-            return []
-        except asyncio.TimeoutError:
-            self.logger.error(f"DNS records fetch for {domain} timed out.")
-            return []
         except Exception as e:
-            self.logger.error(f"Unexpected error fetching all DNS records for {domain}: {e}. Returning empty list.", exc_info=True)
+            self.logger.error(f"Error fetching all DNS records for {domain}: {e}. Returning empty list.", exc_info=True)
             return []
 

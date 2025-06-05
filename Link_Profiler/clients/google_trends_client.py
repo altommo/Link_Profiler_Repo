@@ -15,6 +15,7 @@ from pytrends.exceptions import ResponseError as PytrendsResponseError
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class GoogleTrendsClient:
     Client for fetching Google Trends data using the unofficial pytrends library.
     Pytrends is synchronous, so its methods are run in a thread pool.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
         self.logger = logging.getLogger(__name__ + ".GoogleTrendsClient")
         self.enabled = config_loader.get("keyword_api.google_trends_api.enabled", False)
         self.session_manager = session_manager # Store the injected session manager
@@ -32,6 +33,13 @@ class GoogleTrendsClient:
             from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
             self.session_manager = global_session_manager
             logger.warning("No SessionManager provided to GoogleTrendsClient. Falling back to global SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to GoogleTrendsClient. Falling back to global instance.")
+
 
         self.pytrends_client: Optional[TrendReq] = None
 
@@ -72,9 +80,15 @@ class GoogleTrendsClient:
         for i in range(0, len(keywords), chunk_size):
             chunk = keywords[i:i + chunk_size]
             try:
-                # Pytrends methods are synchronous, run in executor
-                await asyncio.to_thread(self.pytrends_client.build_payload, chunk, cat=0, timeframe=timeframe, geo='', gprop='')
-                interest_over_time_df = await asyncio.to_thread(self.pytrends_client.interest_over_time)
+                # Use resilience manager for the synchronous pytrends call
+                await self.resilience_manager.execute_with_resilience(
+                    lambda: self.pytrends_client.build_payload(chunk, cat=0, timeframe=timeframe, geo='', gprop=''),
+                    url="https://trends.google.com/trends/api/explore" # Use a representative URL for CB
+                )
+                interest_over_time_df = await self.resilience_manager.execute_with_resilience(
+                    lambda: self.pytrends_client.interest_over_time(),
+                    url="https://trends.google.com/trends/api/widgetdata/comparedgeo" # Use a representative URL for CB
+                )
                 
                 if not interest_over_time_df.empty:
                     for kw in chunk:
