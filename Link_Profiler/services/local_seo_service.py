@@ -7,6 +7,7 @@ import logging
 import asyncio
 from typing import List, Dict, Any, Optional
 import json
+from math import radians, sin, cos, asin, sqrt
 import redis.asyncio as redis
 
 from Link_Profiler.config.config_loader import config_loader
@@ -84,28 +85,80 @@ class LocalSEOService:
 
     async def get_nearby_places(self, lat: float, lon: float, radius_km: float = 1.0, query_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Finds nearby places using reverse geocoding and potentially further searches.
-        Note: Nominatim's reverse geocoding is for a single point. For "nearby places",
-        a more advanced API or local database would be needed. This is a conceptual placeholder.
+        Finds nearby places using the OpenStreetMap Overpass API.
+
+        Args:
+            lat (float): Latitude of the search center.
+            lon (float): Longitude of the search center.
+            radius_km (float): Search radius in kilometers.
+            query_type (Optional[str]): Amenity type to search for (e.g. 'cafe').
+
+        Returns:
+            List[Dict[str, Any]]: List of places with name, address, coordinates and distance.
         """
         if not self.nominatim_client.enabled:
             self.logger.warning("Nominatim client is disabled. Cannot find nearby places.")
             return []
 
-        self.logger.info(f"Simulating nearby places for {lat}, {lon} (radius: {radius_km}km, type: {query_type}).")
-        # Nominatim doesn't directly support "nearby places" search.
-        # This would typically involve a spatial database or a dedicated Places API (e.g., Google Places).
-        # For now, we'll simulate a few generic nearby points.
-        
-        import random
-        simulated_places = []
-        for i in range(random.randint(1, 5)):
-            simulated_places.append({
-                "name": f"Simulated Cafe {i+1}",
-                "address": f"123 Fake St, Simulated City",
-                "lat": lat + random.uniform(-0.01, 0.01),
-                "lon": lon + random.uniform(-0.01, 0.01),
-                "type": query_type or "restaurant",
-                "distance_km": round(random.uniform(0.1, radius_km), 2)
+        amenity = query_type or "cafe"
+        cache_key = f"overpass_nearby:{lat}:{lon}:{radius_km}:{amenity}"
+        cached_result = await self._get_cached_response(cache_key)
+        if cached_result:
+            return cached_result
+
+        radius_m = int(radius_km * 1000)
+        overpass_url = "https://overpass-api.de/api/interpreter"
+        overpass_query = f"[out:json];node(around:{radius_m},{lat},{lon})[amenity={amenity}];out;"
+
+        self.logger.info(
+            f"Querying Overpass API for '{amenity}' around {lat}, {lon} within {radius_km} km."
+        )
+
+        try:
+            response = await self.nominatim_client.resilience_manager.execute_with_resilience(
+                lambda url: self.nominatim_client.session_manager.post(url, data=overpass_query, timeout=10),
+                url=overpass_url
+            )
+            data = await response.json()
+        except Exception as e:
+            self.logger.error(f"Error querying Overpass API: {e}", exc_info=True)
+            return []
+
+        def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+            R = 6371.0
+            dlat = radians(lat2 - lat1)
+            dlon = radians(lon2 - lon1)
+            a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+            c = 2 * asin(sqrt(a))
+            return R * c
+
+        places: List[Dict[str, Any]] = []
+        for element in data.get("elements", []):
+            lat_p = element.get("lat")
+            lon_p = element.get("lon")
+            if lat_p is None or lon_p is None:
+                continue
+
+            tags = element.get("tags", {})
+            name = tags.get("name", amenity.title())
+            address_parts = [
+                tags.get("addr:housenumber"),
+                tags.get("addr:street"),
+                tags.get("addr:city"),
+                tags.get("addr:state"),
+                tags.get("addr:country"),
+            ]
+            address = ", ".join(filter(None, address_parts))
+            distance_km = round(_haversine(lat, lon, lat_p, lon_p), 2)
+
+            places.append({
+                "name": name,
+                "address": address,
+                "lat": lat_p,
+                "lon": lon_p,
+                "type": tags.get("amenity", amenity),
+                "distance_km": distance_km,
             })
-        return simulated_places
+
+        await self._set_cached_response(cache_key, places)
+        return places
