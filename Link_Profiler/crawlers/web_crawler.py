@@ -76,8 +76,8 @@ class EnhancedWebCrawler:
         """Initialize crawler with proper session management"""
         # Create persistent HTTP session
         connector = aiohttp.TCPConnector(
-            limit=100,  # Total connection pool size
-            limit_per_host=10,  # Max connections per host
+            limit=200,  # Increase from 100
+            limit_per_host=20,  # Increase from 10
             ttl_dns_cache=300,  # DNS cache TTL
             use_dns_cache=True,
             keepalive_timeout=30,
