@@ -6,9 +6,10 @@ Learns optimal crawling patterns for each domain
 import asyncio
 import time
 import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from collections import deque
+from urllib.parse import urlparse # Added for domain extraction
 import logging
 
 logger = logging.getLogger(__name__)
@@ -32,19 +33,19 @@ class DomainProfile:
 class ResponseAnalyzer:
     """Analyzes server responses to detect load and adjust timing"""
     
-    def extract_signals(self, crawl_result) -> Dict[str, float]:
+    def extract_signals(self, crawl_result: Any) -> Dict[str, float]:
         """Extract ML features from crawl result"""
         signals = {
             'response_time': crawl_result.crawl_time_ms / 1000.0,
             'content_length': len(crawl_result.content) if crawl_result.content else 0,
-            'status_code': crawl_result.status_code,
+            'status_code': float(crawl_result.status_code),
             'is_success': 1.0 if 200 <= crawl_result.status_code < 400 else 0.0,
             'server_time': self._extract_server_time(crawl_result),
             'content_encoding': self._analyze_content_encoding(crawl_result)
         }
         return signals
     
-    def _extract_server_time(self, result) -> float:
+    def _extract_server_time(self, result: Any) -> float:
         """Extract server processing time from headers"""
         if hasattr(result, 'headers') and result.headers:
             # Look for common server timing headers
@@ -52,12 +53,15 @@ class ResponseAnalyzer:
             for header in timing_headers:
                 if header in result.headers:
                     try:
+                        # Server-Timing can be complex, just take the first value if present
+                        if header == 'Server-Timing':
+                            return float(result.headers[header].split(';')[0].split('=')[-1])
                         return float(result.headers[header].split()[0])
                     except (ValueError, IndexError):
                         continue
         return 0.0
     
-    def _analyze_content_encoding(self, result) -> float:
+    def _analyze_content_encoding(self, result: Any) -> float:
         """Analyze content encoding efficiency"""
         if hasattr(result, 'headers') and result.headers:
             encoding = result.headers.get('Content-Encoding', '')
@@ -84,7 +88,7 @@ class MLRateLimiter:
             self.domain_profiles[domain] = DomainProfile(domain=domain)
         return self.domain_profiles[domain]
     
-    async def adaptive_wait(self, domain: str, last_response=None):
+    async def adaptive_wait(self, domain: str, last_response: Optional[Any] = None):
         """ML-enhanced adaptive waiting"""
         profile = self.get_domain_profile(domain)
         
@@ -107,7 +111,7 @@ class MLRateLimiter:
         await asyncio.sleep(optimal_delay)
         profile.last_updated = time.time()
     
-    def _update_profile(self, profile: DomainProfile, response):
+    def _update_profile(self, profile: DomainProfile, response: Any):
         """Update domain profile with new response data"""
         signals = self.response_analyzer.extract_signals(response)
         
@@ -159,7 +163,7 @@ class MLRateLimiter:
         
         return base_delay
     
-    def _detect_server_stress(self, response) -> bool:
+    def _detect_server_stress(self, response: Any) -> bool:
         """Detect if server is under stress"""
         if not response:
             return False
