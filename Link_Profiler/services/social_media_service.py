@@ -7,7 +7,6 @@ import asyncio
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-import random
 import json
 import redis.asyncio as redis
 import uuid # Import uuid for SocialMention ID
@@ -190,25 +189,53 @@ class SocialMediaService:
             self.logger.warning("Social Media Service is disabled. Cannot identify B2B opportunities.")
             return []
 
+        platforms = config_loader.get("social_media_crawler.platforms", [])
         opportunities = []
+
         for keyword in industry_keywords:
-            # This would involve more complex logic, potentially using the crawler to find relevant discussions
-            # or directly querying LinkedIn/Reddit APIs for specific content types.
-            # For now, we'll simulate finding some opportunities.
-            if "linkedin" in config_loader.get("social_media_crawler.platforms", []):
-                opportunities.append({
-                    "type": "LinkedIn Profile",
-                    "url": f"https://linkedin.com/in/simulated-expert-{random.randint(1,100)}",
-                    "relevance": f"Discusses '{keyword}'",
-                    "contact_hint": "Connect on LinkedIn"
-                })
-            if "reddit" in config_loader.get("social_media_crawler.platforms", []):
-                opportunities.append({
-                    "type": "Reddit Discussion",
-                    "url": f"https://reddit.com/r/simulated_industry/comments/{random.randint(1000,9999)}",
-                    "relevance": f"Thread about '{keyword}'",
-                    "contact_hint": "Participate in discussion"
-                })
-        
-        self.logger.info(f"Simulated {len(opportunities)} B2B link opportunities.")
+            if "linkedin" in platforms and self.social_media_crawler:
+                try:
+                    linkedin_posts = await self.social_media_crawler.scrape_platform(
+                        "linkedin", keyword, limit=10
+                    )
+                    for post in linkedin_posts:
+                        opportunities.append(
+                            {
+                                "type": "LinkedIn Post",
+                                "url": post.get("url"),
+                                "relevance": post.get("text"),
+                                "contact_hint": "Connect on LinkedIn",
+                            }
+                        )
+                except Exception as e:
+                    self.logger.error(
+                        f"Error fetching LinkedIn opportunities for '{keyword}': {e}",
+                        exc_info=True,
+                    )
+
+            if (
+                "reddit" in platforms
+                and self.reddit_client
+                and self.reddit_client.enabled
+            ):
+                try:
+                    reddit_threads = await self.reddit_client.search_mentions(
+                        keyword, limit=10
+                    )
+                    for thread in reddit_threads:
+                        opportunities.append(
+                            {
+                                "type": "Reddit Discussion",
+                                "url": thread.get("url"),
+                                "relevance": thread.get("mention_text"),
+                                "contact_hint": "Participate in discussion",
+                            }
+                        )
+                except Exception as e:
+                    self.logger.error(
+                        f"Error fetching Reddit opportunities for '{keyword}': {e}",
+                        exc_info=True,
+                    )
+
+        self.logger.info(f"Found {len(opportunities)} B2B link opportunities.")
         return opportunities
