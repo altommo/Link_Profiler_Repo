@@ -185,24 +185,43 @@ class KeywordScraper:
         trends = await self._get_keyword_trends(unique_suggestions)
 
         keyword_suggestions: List[KeywordSuggestion] = []
+
+        metrics_enabled = config_loader.get("keyword_api.metrics_api.enabled")
+        metrics_base = config_loader.get("keyword_api.metrics_api.base_url")
+        metrics_key = config_loader.get("keyword_api.metrics_api.api_key")
+
+        async def fetch_metrics(keyword: str) -> Dict[str, Any]:
+            """Fetch keyword metrics from the configured API."""
+            if not (metrics_enabled and metrics_base and metrics_key):
+                return {}
+
+            endpoint = f"{metrics_base}/metrics"
+            params = {"keyword": keyword, "apiKey": metrics_key}
+            try:
+                response = await self.resilience_manager.execute_with_resilience(
+                    lambda: self.session_manager.get(endpoint, params=params, timeout=10),
+                    url=endpoint
+                )
+                response.raise_for_status()
+                return await response.json()
+            except Exception as e:
+                self.logger.warning(f"Error fetching metrics for {keyword}: {e}")
+                return {}
+
         for suggested_keyword_lower in unique_suggestions:
-            # Simulate search volume, CPC, and competition level
-            # TODO: Integrate with real APIs for search volume, CPC, and competition level.
-            search_volume = random.randint(100, 10000)
-            cpc_estimate = round(random.uniform(0.5, 5.0), 2)
-            competition_level = random.choice(["Low", "Medium", "High"])
+            metrics = await fetch_metrics(suggested_keyword_lower)
 
             keyword_suggestions.append(
                 KeywordSuggestion(
-                    keyword=suggested_keyword_lower, # Changed from suggested_keyword
-                    search_volume=search_volume, # Changed from search_volume_monthly
-                    cpc=cpc_estimate, # Changed from cpc_estimate
-                    competition=competition_level, # Changed from competition_level
-                    difficulty=random.randint(1, 100), # New field
-                    relevance=round(random.uniform(0.1, 1.0), 2), # New field
-                    source="Scraper", # New field
-                    # keyword_trend is already handled by trends
-                    # data_timestamp is not in KeywordSuggestion dataclass
+                    keyword=suggested_keyword_lower,
+                    search_volume=metrics.get("search_volume") or metrics.get("volume"),
+                    cpc=metrics.get("cpc"),
+                    competition=metrics.get("competition"),
+                    difficulty=metrics.get("difficulty"),
+                    relevance=metrics.get("relevance"),
+                    source=metrics.get("source", "MetricsAPI" if metrics else "Scraper"),
+                    keyword_trend=trends.get(suggested_keyword_lower),
+                    last_fetched_at=datetime.utcnow() if metrics else None,
                 )
             )
         
