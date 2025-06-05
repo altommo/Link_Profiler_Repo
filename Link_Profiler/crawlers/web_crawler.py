@@ -41,11 +41,11 @@ class EnhancedWebCrawler:
     
     def __init__(self, 
                  config: CrawlConfig,
+                 resilience_manager: DistributedResilienceManager, # Moved non-default arguments first
+                 session_manager: SessionManager, # Moved non-default arguments first
                  crawl_queue: Optional[SmartCrawlQueue] = None,
                  ai_service: Optional[AIService] = None,
-                 browser: Optional[Browser] = None,
-                 resilience_manager: DistributedResilienceManager, # Removed Optional, now required
-                 session_manager: SessionManager): # Removed Optional, now required
+                 browser: Optional[Browser] = None):
         
         # Core configuration
         self.config = config
