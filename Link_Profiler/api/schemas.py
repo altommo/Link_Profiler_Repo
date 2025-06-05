@@ -114,7 +114,7 @@ class FullSEOAduitRequest(BaseModel): # New Pydantic model for full SEO audit jo
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration for the audit (e.g., user agent).")
 
 class Web3CrawlRequest(BaseModel): # New Pydantic model for Web3 crawl job submission
-    web3_content_identifier: str = Field(..., description="The identifier for Web3 content (e.g., IPFS hash, blockchain address).")
+    web3_content_identifier: str = Field(..., description="The identifier for Web3 content (e.g., IPFS hash, blockchain data).")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration.")
 
 class SocialMediaCrawlRequest(BaseModel): # New Pydantic model for Social Media crawl job submission
