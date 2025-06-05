@@ -20,6 +20,7 @@ from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Imp
 from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient # New: Import PageSpeedClient
 from Link_Profiler.monitoring.prometheus_metrics import API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL # Import Prometheus metrics
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +45,21 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
     A simulated client for SERP APIs.
     Generates dummy SERP data.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
         self.logger = logging.getLogger(__name__ + ".SimulatedSERPAPIClient")
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to SimulatedSERPAPIClient. Falling back to local SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to SimulatedSERPAPIClient. Falling back to global instance.")
+
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
@@ -64,6 +72,7 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
         self.logger.debug("Exiting SimulatedSERPAPIClient context.")
         await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
+    @api_rate_limited(service="serp_api", api_client_type="simulated_api", endpoint="get_serp_results")
     async def get_serp_results(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
         """
         Simulates fetching SERP results for a given keyword.
@@ -72,9 +81,11 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
         
         try:
             # Simulate an actual HTTP request, even if it's to a dummy URL
-            async with await self.session_manager.get(f"http://localhost:8080/simulate_serp/{keyword}") as response:
-                # We don't care about the actual response, just that the request was made
-                pass
+            # Use resilience manager for the actual HTTP request
+            await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(f"http://localhost:8080/simulate_serp/{keyword}"),
+                url=f"http://localhost:8080/simulate_serp/{keyword}" # Pass the URL for circuit breaker naming
+            )
         except aiohttp.ClientConnectorError:
             pass
         except Exception as e:
@@ -86,22 +97,17 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
             result_url = f"https://example.com/search-result-{keyword.replace(' ', '-')}-{position}"
             title_text = f"Best {keyword} - Result {position}"
             snippet_text = f"This is a simulated snippet for {keyword} at position {position}. It provides relevant information."
-            rich_features = []
-            if position == 1 and random.random() > 0.5:
-                rich_features.append("Featured Snippet")
-            if position % 3 == 0:
-                rich_features.append("Image Pack")
             
             serp_results.append(
                 SERPResult(
                     keyword=keyword,
-                    position=position,
-                    result_url=result_url,
-                    title_text=title_text,
-                    snippet_text=snippet_text,
-                    rich_features=rich_features,
-                    page_load_time=round(random.uniform(0.5, 3.0), 2),
-                    crawl_timestamp=datetime.now()
+                    rank=position,
+                    url=result_url,
+                    title=title_text,
+                    snippet=snippet_text,
+                    domain=urlparse(result_url).netloc,
+                    position_type="organic",
+                    timestamp=datetime.now()
                 )
             )
         self.logger.info(f"Simulated {len(serp_results)} SERP results for '{keyword}'.")
@@ -113,16 +119,23 @@ class RealSERPAPIClient(BaseSERPAPIClient):
     Requires an API key.
     This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
+    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
         self.logger = logging.getLogger(__name__ + ".RealSERPAPIClient")
         self.api_key = api_key
         self.base_url = base_url
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to RealSERPAPIClient. Falling back to local SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to RealSERPAPIClient. Falling back to global instance.")
+
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
@@ -154,34 +167,35 @@ class RealSERPAPIClient(BaseSERPAPIClient):
         self.logger.info(f"Attempting real API call for SERP results: {endpoint}?q={keyword} from {search_engine}...")
 
         try:
-            async with await self.session_manager.get(endpoint, params=params) as response:
-                response.raise_for_status() # Raise an exception for HTTP errors
-                data = await response.json()
-                
-                serp_results = []
-                # --- Replace with actual parsing logic for your chosen API ---
-                # Example: assuming 'organic_results' key with list of dicts
-                # for i, item in enumerate(data.get("organic_results", [])):
-                #     serp_results.append(
-                #         SERPResult(
-                #             keyword=keyword,
-                #             position=item.get("position", i + 1),
-                #             result_url=item.get("link"),
-                #             title_text=item.get("title"),
-                #             snippet_text=item.get("snippet"),
-                #             rich_features=item.get("rich_features", []), # Assuming API provides this
-                #             page_load_time=item.get("page_load_time"), # Assuming API provides this
-                #             crawl_timestamp=datetime.now()
-                #         )
-                #     )
-                self.logger.warning("RealSERPAPIClient: Returning simulated data. Replace with actual API response parsing.")
-                return SimulatedSERPAPIClient(session_manager=self.session_manager).get_serp_results(keyword, num_results, search_engine) # Fallback to simulation
+            # Use resilience manager for the actual HTTP request
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(endpoint, params=params, timeout=30),
+                url=endpoint # Pass the endpoint for circuit breaker naming
+            )
+            response.raise_for_status() # Raise an exception for HTTP errors
+            data = await response.json()
+            
+            serp_results = []
+            # --- Replace with actual parsing logic for your chosen API ---
+            # Example: assuming 'organic_results' key with list of dicts
+            for i, item in enumerate(data.get("organic_results", [])):
+                serp_results.append(
+                    SERPResult(
+                        keyword=keyword,
+                        rank=item.get("position", i + 1),
+                        url=item.get("link"),
+                        title=item.get("title"),
+                        snippet=item.get("snippet"),
+                        domain=urlparse(item.get("link")).netloc, # Extract domain from link
+                        position_type="organic", # Default to organic
+                        timestamp=datetime.now() # Use current time if API doesn't provide
+                    )
+                )
+            self.logger.info(f"RealSERPAPIClient: Fetched {len(serp_results)} SERP results for '{keyword}'.")
+            return serp_results
 
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Error fetching real SERP results for '{keyword}': {e}. Returning empty list.")
-            return [] # Return empty list on network/client error
         except Exception as e:
-            self.logger.error(f"Unexpected error in real SERP fetch for '{keyword}': {e}. Returning empty list.")
+            self.logger.error(f"Error fetching real SERP results for '{keyword}': {e}. Returning empty list.", exc_info=True)
             return []
 
 
@@ -189,7 +203,7 @@ class SERPService:
     """
     Service for fetching Search Engine Results Page (SERP) data.
     """
-    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None, pagespeed_client: Optional[PageSpeedClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, session_manager: Optional[SessionManager] = None): # New: Accept session_manager
+    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None, pagespeed_client: Optional[PageSpeedClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
@@ -197,23 +211,29 @@ class SERPService:
         self.session_manager = session_manager # Store the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to SERPService. Falling back to local SessionManager.")
         
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to SERPService. Falling back to global instance.")
+
         # Determine which API client to use based on config_loader priority
         if config_loader.get("serp_api.real_api.enabled"):
             real_api_key = config_loader.get("serp_api.real_api.api_key")
             real_api_base_url = config_loader.get("serp_api.real_api.base_url")
             if not real_api_key or not real_api_base_url:
                 self.logger.error("Real SERP API enabled but API key or base_url not found in config. Falling back to simulated SERP API.")
-                self.api_client = SimulatedSERPAPIClient(session_manager=self.session_manager)
+                self.api_client = SimulatedSERPAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
             else:
                 self.logger.info("Using RealSERPAPIClient for SERP lookups.")
-                self.api_client = RealSERPAPIClient(api_key=real_api_key, base_url=real_api_base_url, session_manager=self.session_manager)
+                self.api_client = RealSERPAPIClient(api_key=real_api_key, base_url=real_api_base_url, session_manager=self.session_manager, resilience_manager=self.resilience_manager)
         else:
             self.logger.info("Using SimulatedSERPAPIClient for SERP lookups.")
-            self.api_client = SimulatedSERPAPIClient(session_manager=self.session_manager)
+            self.api_client = SimulatedSERPAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
             
         self.serp_crawler = serp_crawler # Store the SERPCrawler instance
         self.pagespeed_client = pagespeed_client # New: Store PageSpeedClient instance
