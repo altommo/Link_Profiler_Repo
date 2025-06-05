@@ -61,7 +61,8 @@
     "result_queue_name": "crawl_results",
     "dead_letter_queue_name": "dead_letter_queue",
     "scheduler_interval": 5,
-    "heartbeat_queue_sorted_name": "crawler_heartbeats_sorted"
+    "heartbeat_queue_sorted_name": "crawler_heartbeats_sorted",
+    "scheduled_jobs_queue": "scheduled_crawl_jobs"
   },
   "monitoring": {
     "monitor_port": 8001,
@@ -154,7 +155,7 @@
       },
       "root": {
         "handlers": ["console"],
-        "level": "WARNING"
+        "level": "INFO"
       }
     }
   },
@@ -327,7 +328,7 @@
     }
   },
   "circuit_breaker": {
-    "enabled": false,
+    "enabled": true,
     "failure_threshold": 5,
     "recovery_timeout": 60,
     "success_threshold": 3,
@@ -344,17 +345,24 @@
   "queue_system": {
     "redis_url": "redis://:redis_secure_pass_456@127.0.0.1:6379/0",
     "max_queue_size": 100000,
-    "domain_max_concurrent": 2
+    "domain_max_concurrent": 2,
+    "scheduled_jobs_queue": "scheduled_crawl_jobs"
   },
   "connection_optimization": {
-    "max_connections": 200,
-    "max_connections_per_host": 20,
+    "max_connections": 250,
+    "max_connections_per_host": 25,
     "timeout_total": 30,
     "timeout_connect": 10,
     "timeout_sock_read": 30,
     "retry_attempts": 3,
     "retry_delay_base": 0.5,
     "connection_health_check": true
+  },
+  "advanced_session_manager": {
+    "enabled": true,
+    "initial_pool_size": 10,
+    "max_pool_size_per_domain": 25,
+    "adaptation_interval": 45
   },
   "satellite": {
     "id": "default-satellite-1",

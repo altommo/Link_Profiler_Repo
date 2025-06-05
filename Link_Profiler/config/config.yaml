@@ -300,20 +300,28 @@ rate_limiting:
 
 # Queue System settings
 queue_system:
-  redis_url: "redis://:redis_secure_pass_456@127.0.0.1:6379/0",
-  max_queue_size: 100000,
+  redis_url: "redis://:redis_secure_pass_456@127.0.0.1:6379/0"
+  max_queue_size: 100000
   domain_max_concurrent: 2
+  scheduled_jobs_queue: "scheduled_crawl_jobs" # New: Name of the queue for scheduled jobs
 
 # Connection Optimization settings
 connection_optimization:
-  max_connections: 200 # Total maximum connections in the pool
-  max_connections_per_host: 20 # Maximum connections per single host
+  max_connections: 250 # Total maximum connections in the pool (Increased from 200)
+  max_connections_per_host: 25 # Maximum connections per single host (Increased from 20)
   timeout_total: 30 # Total request timeout in seconds
   timeout_connect: 10 # Connection timeout in seconds
   timeout_sock_read: 30 # Socket read timeout in seconds
   retry_attempts: 3 # Number of times to retry a failed request
   retry_delay_base: 0.5 # Base delay for retries in seconds (exponential backoff)
   connection_health_check: true # Enable active health checks on connections
+
+# Advanced Session Manager settings
+advanced_session_manager:
+  enabled: true
+  initial_pool_size: 10
+  max_pool_size_per_domain: 25
+  adaptation_interval: 45
 
 # Satellite Crawler settings
 satellite:
