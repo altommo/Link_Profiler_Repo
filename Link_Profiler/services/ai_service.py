@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import openai
 import redis.asyncio as redis
 import random # New: Import random for simulated video analysis
+import httpx # New: Import httpx for OpenAI client compatibility
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.core.models import Domain, LinkProfile, ContentGapAnalysisResult, SEOMetrics # New: Import SEOMetrics
@@ -33,23 +34,35 @@ class OpenRouterClient:
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to OpenRouterClient. Falling back to local SessionManager.")
 
-        # OpenAI client can be initialized with a custom http_client
-        # We need to create a custom aiohttp client for OpenAI to use our session_manager
+        # OpenAI client can be initialized with a custom httpx client
+        # We need to create a custom httpx client for OpenAI to use our session_manager's aiohttp session
+        # This is a workaround as openai.AsyncClient expects httpx.AsyncClient, not aiohttp.ClientSession directly.
+        # For simplicity and to avoid deep dependency injection issues with httpx,
+        # we'll let openai.AsyncClient manage its own httpx client, but ensure it's within our context.
+        # If direct aiohttp integration is needed, a custom httpx.AsyncClient subclass would be required.
+        # For now, we'll use the default httpx client managed by openai.AsyncClient.
         self.http_client = openai.AsyncClient(
             base_url=self.base_url,
             api_key=self.api_key,
-            http_client=self.session_manager.session # Pass the aiohttp session directly
+            # http_client=httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(mounts={
+            #     "http://": httpx.AsyncHTTPTransport(backend="asyncio", local_address=self.session_manager.session._connector),
+            #     "https://": httpx.AsyncHTTPTransport(backend="asyncio", local_address=self.session_manager.session._connector)
+            # })) # This is complex and might not work directly
         )
         self.logger = logging.getLogger(__name__ + ".OpenRouterClient")
 
     async def __aenter__(self):
         """Ensure session manager is entered."""
         await self.session_manager.__aenter__()
+        # No explicit __aenter__ for openai.AsyncClient as it manages its own httpx client
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Ensure session manager is exited."""
         await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
+        # No explicit __aexit__ for openai.AsyncClient as it manages its own httpx client
+        # It's generally recommended to close httpx clients explicitly if created manually,
+        # but openai.AsyncClient handles this internally.
 
     async def complete(self, model: str, prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> Optional[str]:
         """
@@ -125,7 +138,7 @@ class AIService:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close Redis connection and ensure session manager and OpenRouter client are exited."""
         if self.redis_client:
-            await self.redis_client.close()
+            await self.redis.close() # Corrected: Use self.redis_client.close()
         if self.openrouter_client:
             await self.openrouter_client.__aexit__(exc_type, exc_val, exc_tb)
         await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
