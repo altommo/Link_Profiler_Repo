@@ -61,10 +61,7 @@ class AlertManager:
             tasks.append(self._send_slack_alert(alert, self.slack_webhook_url))
         
         if self.email_enabled:
-            # Email sending typically requires an SMTP client setup
-            # For now, this is a placeholder.
-            self.logger.warning("Email alerting is enabled but not implemented yet.")
-            # tasks.append(self._send_email_alert(alert))
+            tasks.append(self._send_email_alert(alert))
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
