@@ -54,6 +54,7 @@ class SatelliteCrawler:
         self.global_control_channel = "crawler_control:all" # For global commands
         self.current_code_version = config_loader.get("system.current_code_version", "unknown")
         self.processing_paused = False # Local flag for pausing job processing
+        self.cancel_current_job: bool = False  # Flag set when a CANCEL_JOB command is received
 
         self.redis_client: Optional[redis.Redis] = None
         self.web_crawler: Optional[EnhancedWebCrawler] = None # Changed to EnhancedWebCrawler
@@ -176,41 +177,55 @@ class SatelliteCrawler:
                 await asyncio.sleep(self.heartbeat_interval)
 
     async def _control_command_listener(self):
-        """Listens for specific control commands from the coordinator."""
-        control_key = f"{self.control_channel_prefix}:{self.crawler_id}"
-        logger.info(f"Listening for control commands on key: {control_key}")
-        while self.running:
-            try:
-                command_data_json = await self.redis_client.get(control_key)
-                if command_data_json:
-                    command_data = json.loads(command_data_json)
-                    command = command_data.get("command")
-                    logger.info(f"Received command: {command} for crawler {self.crawler_id}")
-                    await self._execute_command(command)
-                    await self.redis_client.delete(control_key) # Acknowledge and remove command
-            except Exception as e:
-                logger.error(f"Error in control command listener for '{self.crawler_id}': {e}")
-            finally:
-                await asyncio.sleep(1) # Check frequently
+        """Listens for specific control commands from the coordinator via Pub/Sub."""
+        channel = f"{self.control_channel_prefix}:{self.crawler_id}"
+        logger.info(f"Subscribing to control channel: {channel}")
+        pubsub = self.redis_client.pubsub()
+        await pubsub.subscribe(channel)
+        try:
+            while self.running:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message and message.get("type") == "message":
+                    try:
+                        data = json.loads(message["data"].decode("utf-8"))
+                    except Exception:
+                        logger.warning(f"Malformed control message: {message}")
+                        continue
+                    command = data.get("command")
+                    payload = data.get("payload")
+                    logger.info(
+                        f"Received command '{command}' for crawler {self.crawler_id}")
+                    await self._execute_command(command, payload)
+                await asyncio.sleep(0.1)
+        finally:
+            await pubsub.unsubscribe(channel)
+            await pubsub.close()
 
     async def _global_control_command_listener(self):
-        """Listens for global control commands from the coordinator."""
-        logger.info(f"Listening for global control commands on key: {self.global_control_channel}")
-        while self.running:
-            try:
-                command_data_json = await self.redis_client.get(self.global_control_channel)
-                if command_data_json:
-                    command_data = json.loads(command_data_json)
-                    command = command_data.get("command")
-                    logger.info(f"Received global command: {command}")
-                    await self._execute_command(command)
-                    # Do NOT delete the global command here, coordinator will manage its lifecycle
-            except Exception as e:
-                logger.error(f"Error in global control command listener for '{self.crawler_id}': {e}")
-            finally:
-                await asyncio.sleep(5) # Check less frequently for global commands
+        """Listens for global control commands from the coordinator via Pub/Sub."""
+        channel = self.global_control_channel
+        logger.info(f"Subscribing to global control channel: {channel}")
+        pubsub = self.redis_client.pubsub()
+        await pubsub.subscribe(channel)
+        try:
+            while self.running:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message and message.get("type") == "message":
+                    try:
+                        data = json.loads(message["data"].decode("utf-8"))
+                    except Exception:
+                        logger.warning(f"Malformed global control message: {message}")
+                        continue
+                    command = data.get("command")
+                    payload = data.get("payload")
+                    logger.info(f"Received global command '{command}'")
+                    await self._execute_command(command, payload)
+                await asyncio.sleep(0.5)
+        finally:
+            await pubsub.unsubscribe(channel)
+            await pubsub.close()
 
-    async def _execute_command(self, command: str):
+    async def _execute_command(self, command: str, payload: Optional[Dict[str, Any]] = None):
         """Executes a received control command."""
         if command == "PAUSE":
             self.processing_paused = True
@@ -228,6 +243,14 @@ class SatelliteCrawler:
             self.running = False
             # Optionally, re-execute the current script
             # os.execv(sys.executable, ['python'] + sys.argv)
+        elif command == "CANCEL_JOB":
+            job_id = payload.get("job_id") if payload else None
+            if job_id and job_id == self.current_job_id:
+                logger.info(f"Cancellation requested for active job {job_id}.")
+                self.cancel_current_job = True
+            else:
+                logger.info(
+                    f"Received CANCEL_JOB for {job_id}, but current job is {self.current_job_id}.")
         else:
             logger.warning(f"Unknown command received: {command}")
 
@@ -255,7 +278,13 @@ class SatelliteCrawler:
 
                     # Execute the crawl job
                     result_summary = await self._execute_crawl_job(job)
-                    
+
+                    # If a cancellation was requested for this job, override status
+                    if self.cancel_current_job:
+                        result_summary["status"] = CrawlStatus.CANCELLED.value
+                        result_summary["error_message"] = "Job cancelled by coordinator"
+                        self.cancel_current_job = False
+
                     # Send result back to coordinator
                     await self._send_result_to_coordinator(job, result_summary)
                     

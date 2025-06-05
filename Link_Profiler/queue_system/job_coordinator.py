@@ -326,11 +326,13 @@ class JobCoordinator:
         await self.connection_manager.broadcast(f"Job {job_id} cancelled.")
         await self.alert_service.evaluate_job_update(job) # Evaluate for alerts
 
-        # If job is currently in progress, send a control command to the crawler
-        # This requires a mechanism for crawlers to listen for control commands.
-        # For now, this is a placeholder.
-        # await self.send_control_command(job.assigned_crawler_id, "cancel_job", job_id)
-        self.logger.info(f"Control command to cancel job {job_id} sent (if crawler listening).")
+        # If job might be currently processed by a crawler, broadcast a cancel command.
+        # We may not know the exact crawler handling the job, so send a global
+        # cancellation message. Crawlers listening on the Pub/Sub channel will
+        # check the payload and stop if they are working on this job.
+        await self.send_global_control_command("CANCEL_JOB", {"job_id": job_id})
+        self.logger.info(
+            f"Cancellation command broadcast for job {job_id}. Crawlers will stop if processing.")
 
         return True
 
