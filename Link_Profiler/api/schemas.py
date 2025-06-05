@@ -82,7 +82,7 @@ class CrawlConfigRequest(BaseModel):
     browser_type: Optional[str] = Field("chromium", description="Browser type for headless rendering (chromium, firefox, webkit). Only applicable if render_javascript is true.")
     headless_browser: bool = Field(True, description="Whether the browser should run in headless mode. Only applicable if render_javascript is true.")
     extract_image_text: bool = Field(False, description="Whether to perform OCR on images to extract text.")
-    crawl_web3_content: bool = Field(False, description="Whether to crawl Web3 content (e.g., IPFS hash, blockchain address).")
+    crawl_web3_content: bool = Field(False, description="Whether to crawl Web3 content (e.g., IPFS hash, blockchain data, etc.).")
     crawl_social_media: bool = Field(False, description="Whether to crawl social media content.")
     job_type: str = Field("unknown", description="The type of job this configuration is for (e.g., 'backlink_discovery', 'technical_audit').") # Added job_type to CrawlConfig
 
@@ -184,83 +184,539 @@ class CrawlJobResponse(BaseModel):
 
         if isinstance(job_dict.get('started_date'), str):
              try:
-                job_dict['started_2025-06-02 01:31:15,173 - Link_Profiler.services.web3_service:38 - INFO - Web3 Service is disabled by configuration.
-2025-06-02 01:31:15,319 - Link_Profiler.main:368 - INFO - Global Playwright browser for WebCrawler is disabled by configuration.
-2025-06-02 01:31:15,321 - Link_Profiler.main:376 - INFO - Application startup: Entering DomainService context.
-2025-06-02 01:31:15,323 - Link_Profiler.services.domain_service:403 - DEBUG - Entering DomainService context.
-2025-06-02 01:31:15,325 - Link_Profiler.services.domain_service.SimulatedDomainAPIClient:61 - DEBUG - Entering SimulatedDomainAPIClient context.
-2025-06-02 01:31:15,327 - Link_Profiler.main:376 - INFO - Application startup: Entering BacklinkService context.
-2025-06-02 01:31:15,327 - Link_Profiler.services.backlink_service:568 - DEBUG - Entering BacklinkService context.
-2025-06-02 01:31:15,328 - Link_Profiler.services.backlink_service.SimulatedBacklinkAPIClient:62 - DEBUG - Entering SimulatedBacklinkAPIClient context.
-2025-06-02 01:31:15,329 - Link_Profiler.main:376 - INFO - Application startup: Entering SERPService context.
-2025-06-02 01:31:15,329 - Link_Profiler.services.serp_service:258 - DEBUG - Entering SERPService context.
-2025-06-02 01:31:15,330 - Link_Profiler.services.serp_service.SimulatedSERPAPIClient:51 - DEBUG - Entering SimulatedSERPAPIClient context.
-2025-06-02 01:31:15,331 - Link_Profiler.main:376 - INFO - Application startup: Entering KeywordService context.
-2025-06-02 01:31:15,331 - Link_Profiler.services.keyword_service:348 - DEBUG - Entering KeywordService context.
-2025-06-02 01:31:15,332 - Link_Profiler.services.keyword_service.SimulatedKeywordAPIClient:52 - DEBUG - Entering SimulatedKeywordAPIClient context.
-2025-06-02 01:31:15,332 - Link_Profiler.main:376 - INFO - Application startup: Entering LinkHealthService context.
-2025-06-02 01:31:15,333 - Link_Profiler.services.link_health_service:45 - DEBUG - Entering LinkHealthService context.
-2025-06-02 01:31:15,334 - Link_Profiler.main:376 - INFO - Application startup: Entering TechnicalAuditor context.
-2025-06-02 01:31:15,335 - Link_Profiler.crawlers.technical_auditor:28 - INFO - Entering TechnicalAuditor context.
-2025-06-02 01:31:15,335 - Link_Profiler.main:376 - INFO - Application startup: Entering AIService context.
-2025-06-02 01:31:15,336 - Link_Profiler.main:376 - INFO - Application startup: Entering AlertService context.
-2025-06-02 01:31:15,337 - Link_Profiler.services.alert_service:32 - INFO - AlertService starting up. Loading active alert rules.
-2025-06-02 01:31:15,529 - Link_Profiler.services.alert_service:47 - INFO - Loaded 0 active alert rules.
-2025-06-02 01:31:15,530 - Link_Profiler.main:376 - INFO - Application startup: Entering AuthService context.
-2025-06-02 01:31:15,531 - Link_Profiler.main:376 - INFO - Application startup: Entering ReportService context.
-2025-06-02 01:31:15,531 - Link_Profiler.main:376 - INFO - Application startup: Entering CompetitiveAnalysisService context.
-2025-06-02 01:31:15,532 - Link_Profiler.main:376 - INFO - Application startup: Entering SocialMediaService context.
-2025-06-02 01:31:15,532 - Link_Profiler.services.social_media_service:46 - DEBUG - Entering SocialMediaService context.
-2025-06-02 01:31:15,533 - Link_Profiler.main:376 - INFO - Application startup: Entering Web3Service context.
-2025-06-02 01:31:15,534 - Link_Profiler.main:376 - INFO - Application startup: Entering LinkBuildingService context.
-2025-06-02 01:31:15,534 - Link_Profiler.main:376 - INFO - Application startup: Entering GSCClient context.
-2025-06-02 01:31:15,535 - Link_Profiler.main:376 - INFO - Application startup: Entering PageSpeedClient context.
-2025-06-02 01:31:15,535 - Link_Profiler.main:376 - INFO - Application startup: Entering GoogleTrendsClient context.
-2025-06-02 01:31:15,536 - Link_Profiler.main:376 - INFO - Application startup: Entering WHOISClient context.
-2025-06-02 01:31:15,536 - Link_Profiler.main:376 - INFO - Application startup: Entering DNSClient context.
-2025-06-02 01:31:15,537 - Link_Profiler.main:376 - INFO - Application startup: Entering RedditClient context.
-2025-06-02 01:31:15,537 - Link_Profiler.main:376 - INFO - Application startup: Entering YouTubeClient context.
-2025-06-02 01:31:15,539 - Link_Profiler.main:376 - INFO - Application startup: Entering NewsAPIClient context.
-2025-06-02 01:31:15,540 - Link_Profiler.main:380 - INFO - Application startup: Pinging Redis.
-2025-06-02 01:31:19,653 - Link_Profiler.main:387 - ERROR - Failed to connect to Redis: Error Multiple exceptions: [Errno 10061] Connect call failed ('::1', 6379, 0, 0), [Errno 10061] Connect call failed ('127.0.0.1', 6379) connecting to localhost:6379.
-2025-06-02 01:36:19,641 - Link_Profiler.services.alert_service:221 - DEBUG - Refreshing alert rules.
-2025-06-02 01:36:19,650 - Link_Profiler.services.alert_service:47 - INFO - Loaded 0 active alert rules.
-2025-06-02 01:41:19,629 - Link_Profiler.services.alert_service:221 - DEBUG - Refreshing alert rules.
-2025-06-02 01:41:19,629 - Link_Profiler.services.alert_service:47 - INFO - Loaded 0 active alert rules.
-2025-06-02 01:45:41,726 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting NewsAPIClient context.
-2025-06-02 01:45:41,733 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting YouTubeClient context.
-2025-06-02 01:45:41,733 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting RedditClient context.
-2025-06-02 01:45:41,733 - Link_Profiler.clients.reddit_client.RedditClient:60 - INFO - Exiting RedditClient context.
-2025-06-02 01:45:41,733 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting DNSClient context.
-2025-06-02 01:45:41,742 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting WHOISClient context.
-2025-06-02 01:45:41,742 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting GoogleTrendsClient context.
-2025-06-02 01:45:41,742 - Link_Profiler.clients.google_trends_client.GoogleTrendsClient:42 - INFO - Exiting GoogleTrendsClient context.
-2025-06-02 01:45:41,742 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting PageSpeedClient context.
-2025-06-02 01:45:41,742 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting GSCClient context.
-2025-06-02 01:45:41,742 - Link_Profiler.clients.google_search_console_client.GSCClient:107 - INFO - Exiting GSCClient context.
-2025-06-02 01:45:41,742 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting LinkBuildingService context.
-2025-06-02 01:45:41,742 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting Web3Service context.
-2025-06-02 01:45:41,742 - Link_Profiler.services.web3_service:55 - INFO - Exiting Web3Service context.
-2025-06-02 01:45:41,742 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting SocialMediaService context.
-2025-06-02 01:45:41,758 - Link_Profiler.services.social_media_service:59 - DEBUG - Exiting SocialMediaService context.
-2025-06-02 01:45:41,758 - Link_Profiler.clients.reddit_client.RedditClient:60 - INFO - Exiting RedditClient context.
-2025-06-02 01:45:41,758 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting CompetitiveAnalysisService context.
-2025-06-02 01:45:41,758 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting ReportService context.
-2025-06-02 01:45:41,758 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting AuthService context.
-2025-06-02 01:45:41,758 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting AlertService context.
-2025-06-02 01:45:41,758 - Link_Profiler.services.alert_service:39 - INFO - AlertService shutting down.
-2025-06-02 01:45:41,773 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting AIService context.
-2025-06-02 01:45:41,773 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting TechnicalAuditor context.
-2025-06-02 01:45:41,778 - Link_Profiler.crawlers.technical_auditor:33 - INFO - Exiting TechnicalAuditor context.
-2025-06-02 01:45:41,780 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting LinkHealthService context.
-2025-06-02 01:45:41,780 - Link_Profiler.services.link_health_service:68 - DEBUG - Exiting LinkHealthService context.
-2025-06-02 01:45:41,780 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting KeywordService context.
-2025-06-02 01:45:41,784 - Link_Profiler.services.keyword_service:360 - DEBUG - Exiting SimulatedKeywordAPIClient context.
-2025-06-02 01:45:41,784 - Link_Profiler.clients.google_trends_client.GoogleTrendsClient:42 - INFO - Exiting GoogleTrendsClient context.
-2025-06-02 01:45:41,789 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting SERPService context.
-2025-06-02 01:45:41,791 - Link_Profiler.services.serp_service:268 - DEBUG - Exiting SimulatedSERPAPIClient context.
-2025-06-02 01:45:41,791 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting BacklinkService context.
-2025-06-02 01:45:41,796 - Link_Profiler.services.backlink_service:574 - DEBUG - Exiting SimulatedBacklinkAPIClient context.
-2025-06-02 01:45:41,799 - Link_Profiler.main:400 - INFO - Application shutdown: Exiting DomainService context.
-2025-06-02 01:45:41,799 - Link_Profiler.services.domain_service:413 - DEBUG - Exiting SimulatedDomainAPIClient context.
-2025-06-02 01:45:41,799 - Link_Profiler.main:413 - INFO - Application shutdown: Closing Redis connection pool.
+                job_dict['started_date'] = datetime.fromisoformat(job_dict['started_date'])
+             except ValueError:
+                 logger.warning(f"Could not parse started_date string: {job_dict.get('started_date')}")
+                 job_dict['started_date'] = None
+
+        if isinstance(job_dict.get('completed_date'), str):
+            try:
+                job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
+            except ValueError:
+                logger.warning(f"Could not parse completed_date string: {job_dict.get('completed_date')}")
+                job_dict['completed_date'] = None
+
+        job_dict['error_log'] = [CrawlErrorResponse.from_crawl_error(err) for err in job.error_log]
+        job_dict['initial_seed_urls'] = job.initial_seed_urls # Ensure initial_seed_urls is passed
+
+        return cls(**job_dict)
+
+class LinkProfileResponse(BaseModel):
+    target_url: str
+    target_domain: str
+    total_backlinks: int
+    unique_domains: int
+    dofollow_links: int
+    nofollow_links: int
+    authority_score: float
+    trust_score: float
+    spam_score: float
+
+    anchor_text_distribution: Dict[str, int]
+    referring_domains: List[str] # Convert set to list for JSON serialization
+    analysis_date: datetime
+
+    @classmethod
+    def from_link_profile(cls, profile: LinkProfile):
+        profile_dict = profile.to_dict() # Use to_dict() method
+        profile_dict['referring_domains'] = list(profile.referring_domains) # Ensure it's a list
+        if isinstance(profile_dict.get('analysis_date'), str):
+            try:
+                profile_dict['analysis_date'] = datetime.fromisoformat(profile_dict['analysis_date'])
+            except ValueError:
+                 logger.warning(f"Could not parse analysis_date string: {profile_dict.get('analysis_date')}")
+                 profile_dict['analysis_date'] = None
+        return cls(**profile_dict)
+
+class BacklinkResponse(BaseModel):
+    source_url: str
+    target_url: str
+    source_domain: str
+    target_domain: str
+    anchor_text: str
+    link_type: LinkType 
+    rel_attributes: List[str] = Field(default_factory=list)
+    context_text: str
+    is_image_link: bool
+    alt_text: Optional[str]
+    discovered_date: datetime
+    authority_passed: float
+    spam_level: SpamLevel 
+    http_status: Optional[int] = None
+    crawl_timestamp: Optional[datetime] = None
+    source_domain_metrics: Dict[str, Any] = Field(default_factory=dict)
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
+
+    @classmethod
+    def from_backlink(cls, backlink: Backlink):
+        backlink_dict = backlink.to_dict() # Use to_dict() method
+        
+        # backlink_dict['link_type'] = LinkType(backlink.link_type.value) # Handled by use_enum_values
+        # backlink_dict['spam_level'] = SpamLevel(backlink.spam_level.value) # Handled by use_enum_values
+        
+        if isinstance(backlink_dict.get('discovered_date'), str):
+            try:
+                backlink_dict['discovered_date'] = datetime.fromisoformat(backlink_dict['discovered_date'])
+            except ValueError:
+                 logger.warning(f"Could not parse discovered_date string: {backlink_dict.get('discovered_date')}")
+                 backlink_dict['discovered_date'] = None
+        if isinstance(backlink_dict.get('crawl_timestamp'), str):
+            try:
+                backlink_dict['crawl_timestamp'] = datetime.fromisoformat(backlink_dict['crawl_timestamp'])
+            except ValueError:
+                 logger.warning(f"Could not parse crawl_timestamp string: {backlink_dict.get('crawl_timestamp')}")
+                 backlink_dict['crawl_timestamp'] = None
+        return cls(**backlink_dict)
+
+class DomainResponse(BaseModel):
+    name: str
+    authority_score: float
+    trust_score: float
+    spam_score: float
+    age_days: Optional[int]
+    country: Optional[str]
+    ip_address: Optional[str]
+    whois_data: Dict
+    total_pages: int
+
+    total_backlinks: int
+    referring_domains: int
+    first_seen: Optional[datetime]
+    last_crawled: Optional[datetime]
+
+    @classmethod
+    def from_domain(cls, domain: Domain):
+        domain_dict = domain.to_dict() # Use to_dict() method
+        if isinstance(domain_dict.get('first_seen'), str):
+            try:
+                domain_dict['first_seen'] = datetime.fromisoformat(domain_dict['first_seen'])
+            except ValueError:
+                 logger.warning(f"Could not parse first_seen string: {domain_dict.get('first_seen')}")
+                 domain_dict['first_seen'] = None
+        if isinstance(domain_dict.get('last_crawled'), str):
+            try:
+                domain_dict['last_crawled'] = datetime.fromisoformat(domain_dict['last_crawled'])
+            except ValueError:
+                 logger.warning(f"Could not parse last_crawled string: {domain_dict.get('last_crawled')}")
+                 domain_dict['last_crawled'] = None
+        return cls(**domain_dict)
+
+class DomainAnalysisResponse(BaseModel):
+    domain_name: str
+    value_score: float
+    is_valuable: bool
+    reasons: List[str]
+    details: Dict[str, Any]
+
+class FindExpiredDomainsRequest(BaseModel):
+    potential_domains: List[str] = Field(..., description="A list of domain names to check for expiration and value.")
+    min_value_score: float = Field(50.0, description="Minimum value score a domain must have to be considered valuable.")
+    limit: Optional[int] = Field(None, description="Maximum number of valuable domains to return.")
+
+class FindExpiredDomainsResponse(BaseModel):
+    found_domains: List[DomainAnalysisResponse]
+    total_candidates_processed: int
+    valuable_domains_found: int
+
+class SERPSearchRequest(BaseModel):
+    keyword: str = Field(..., description="The search term to get SERP results for.")
+    num_results: int = Field(10, description="Number of SERP results to fetch.")
+    search_engine: str = Field("google", description="The search engine to use (e.g., 'google', 'bing').")
+
+class SERPResultResponse(BaseModel):
+    keyword: str
+    position: int
+    result_url: str
+    title_text: str
+    snippet_text: Optional[str] = None
+    rich_features: List[str] = Field(default_factory=list)
+    page_load_time: Optional[float] = None
+    crawl_timestamp: datetime
+
+    @classmethod
+    def from_serp_result(cls, result: SERPResult):
+        result_dict = result.to_dict() # Use to_dict() method
+        if isinstance(result_dict.get('crawl_timestamp'), str):
+            try:
+                result_dict['crawl_timestamp'] = datetime.fromisoformat(result_dict['crawl_timestamp'])
+            except ValueError:
+                logger.warning(f"Could not parse crawl_timestamp string: {result_dict.get('crawl_timestamp')}")
+                result_dict['crawl_timestamp'] = None
+        return cls(**result_dict)
+
+class KeywordSuggestRequest(BaseModel):
+    seed_keyword: str = Field(..., description="The initial keyword to get suggestions for.")
+    num_suggestions: int = Field(10, description="Number of keyword suggestions to fetch.")
+
+class KeywordSuggestionResponse(BaseModel):
+    seed_keyword: str
+    suggested_keyword: str
+    search_volume_monthly: Optional[int] = None
+    cpc_estimate: Optional[float] = None
+    keyword_trend: List[float] = Field(default_factory=list)
+    competition_level: Optional[str] = None
+    data_timestamp: datetime
+
+    @classmethod
+
+    def from_keyword_suggestion(cls, suggestion: KeywordSuggestion):
+        suggestion_dict = suggestion.to_dict() # Use to_dict() method
+        if isinstance(suggestion_dict.get('data_timestamp'), str):
+            try:
+                suggestion_dict['data_timestamp'] = datetime.fromisoformat(suggestion_dict['data_timestamp'])
+            except ValueError:
+                logger.warning(f"Could not parse data_timestamp string: {suggestion_dict.get('data_timestamp')}")
+                suggestion_dict['data_timestamp'] = None
+        return cls(**suggestion_dict)
+
+class LinkIntersectRequest(BaseModel):
+    primary_domain: str = Field(..., description="The primary domain for analysis (e.g., 'example.com').")
+    competitor_domains: List[str] = Field(..., description="A list of competitor domains to compare against (e.g., ['competitor1.com', 'competitor2.com']).")
+
+class LinkIntersectResponse(BaseModel):
+    primary_domain: str
+    competitor_domains: List[str]
+    common_linking_domains: List[str]
+
+    @classmethod
+    def from_link_intersect_result(cls, result: LinkIntersectResult):
+        return cls(**result.to_dict()) # Use to_dict() method
+
+class CompetitiveKeywordAnalysisRequest(BaseModel):
+    primary_domain: str = Field(..., description="The primary domain for which to perform keyword analysis.")
+    competitor_domains: List[str] = Field(..., description="A list of competitor domains to compare against.")
+
+class CompetitiveKeywordAnalysisResponse(BaseModel):
+    primary_domain: str
+    competitor_domains: List[str]
+    common_keywords: List[str]
+    keyword_gaps: Dict[str, List[str]]
+    primary_unique_keywords: List[str]
+
+    @classmethod
+    def from_competitive_keyword_analysis_result(cls, result: CompetitiveKeywordAnalysisResult):
+        return cls(**result.to_dict()) # Use to_dict() method
+
+# New: Pydantic models for AlertRule management
+class AlertRuleCreateRequest(BaseModel):
+    name: str = Field(..., description="A unique name for the alert rule.")
+    description: Optional[str] = Field(None, description="A brief description of the alert rule.")
+    is_active: bool = Field(True, description="Whether the alert rule is active.")
+    
+    trigger_type: str = Field(..., description="Type of event that triggers the alert (e.g., 'job_status_change', 'metric_threshold', 'anomaly_detected').")
+    job_type_filter: Optional[str] = Field(None, description="Optional: Apply rule only to specific job types (e.g., 'backlink_discovery').")
+    target_url_pattern: Optional[str] = Field(None, description="Optional: Regex pattern for target URLs to apply the rule to.")
+    
+    metric_name: Optional[str] = Field(None, description="Optional: Name of the metric to monitor (for 'metric_threshold' trigger_type, e.g., 'seo_score', 'broken_links_count', 'crawl_errors_rate').")
+    threshold_value: Optional[Union[int, float]] = Field(None, description="Optional: Threshold value for the metric.")
+    comparison_operator: Optional[str] = Field(None, description="Optional: Comparison operator for the metric threshold (e.g., '>', '<', '>=', '<=', '==').")
+    
+    anomaly_type_filter: Optional[str] = Field(None, description="Optional: Filter for specific anomaly types (for 'anomaly_detected' trigger_type, e.g., 'captcha_spike').")
+    
+    severity: AlertSeverity = Field(AlertSeverity.WARNING, description="Severity level of the alert.")
+    notification_channels: List[AlertChannel] = Field([AlertChannel.DASHBOARD], description="List of channels to send notifications to.")
+    notification_recipients: List[str] = Field([], description="List of recipients (e.g., email addresses, Slack channel IDs).")
+
+class AlertRuleResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str]
+    is_active: bool
+    trigger_type: str
+    job_type_filter: Optional[str]
+    target_url_pattern: Optional[str]
+    metric_name: Optional[str]
+    threshold_value: Optional[Union[int, float]]
+    comparison_operator: Optional[str]
+    anomaly_type_filter: Optional[str]
+    severity: AlertSeverity
+    notification_channels: List[AlertChannel]
+    notification_recipients: List[str]
+    created_at: datetime
+    last_triggered_at: Optional[datetime]
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
+
+    @classmethod
+    def from_alert_rule(cls, rule: AlertRule):
+        rule_dict = rule.to_dict() # Use to_dict() method
+        # Ensure enums are converted to their values for Pydantic
+        # rule_dict['severity'] = rule.severity.value # Handled by use_enum_values
+        # rule_dict['notification_channels'] = [c.value for c in rule.notification_channels] # Handled by use_enum_values
+        
+        if isinstance(rule_dict.get('created_at'), str):
+            try:
+                rule_dict['created_at'] = datetime.fromisoformat(rule_dict['created_at'])
+            except ValueError:
+                 logger.warning(f"Could not parse created_at string: {rule_dict.get('created_at')}")
+                 rule_dict['created_at'] = None
+        if isinstance(rule_dict.get('last_triggered_at'), str):
+            try:
+                rule_dict['last_triggered_at'] = datetime.fromisoformat(rule_dict['last_triggered_at'])
+            except ValueError:
+                 logger.warning(f"Could not parse last_triggered_at string: {rule_dict.get('last_triggered_at')}")
+                 rule_dict['last_triggered_at'] = None
+        return cls(**rule_dict)
+
+class ContentGapAnalysisResultResponse(BaseModel): # New Pydantic model for ContentGapAnalysisResult
+    target_url: str
+    competitor_urls: List[str]
+    missing_topics: List[str]
+    missing_keywords: List[str]
+    content_format_gaps: List[str]
+    actionable_insights: List[str]
+    analysis_date: datetime
+
+    @classmethod
+    def from_content_gap_analysis_result(cls, result: ContentGapAnalysisResult):
+        result_dict = result.to_dict() # Use to_dict() method
+        if isinstance(result_dict.get('analysis_date'), str):
+            try:
+                result_dict['analysis_date'] = datetime.fromisoformat(result_dict['analysis_date'])
+            except ValueError:
+                logger.warning(f"Could not parse analysis_date string: {result_dict.get('analysis_date')}")
+                result_dict['analysis_date'] = None
+        return cls(**result_dict)
+
+# New: Pydantic models for Link Building
+class LinkProspectResponse(BaseModel):
+    url: str
+    domain: str
+    score: float
+    reasons: List[str]
+    contact_info: Dict[str, str]
+    last_outreach_date: Optional[datetime]
+    status: str
+    discovered_date: datetime
+
+    @classmethod
+    def from_link_prospect(cls, prospect: LinkProspect):
+        prospect_dict = prospect.to_dict() # Use to_dict() method
+        if isinstance(prospect_dict.get('last_outreach_date'), str):
+            try:
+                prospect_dict['last_outreach_date'] = datetime.fromisoformat(prospect_dict['last_outreach_date'])
+            except ValueError:
+                logger.warning(f"Could not parse last_outreach_date string: {prospect_dict.get('last_outreach_date')}")
+                prospect_dict['last_outreach_date'] = None
+        if isinstance(prospect_dict.get('discovered_date'), str):
+            try:
+                prospect_dict['discovered_date'] = datetime.fromisoformat(prospect_dict['discovered_date'])
+            except ValueError:
+                logger.warning(f"Could not parse discovered_date string: {prospect_dict.get('discovered_date')}")
+                prospect_dict['discovered_date'] = None
+        return cls(**prospect_dict)
+
+class LinkProspectUpdateRequest(BaseModel):
+    status: Optional[str] = None
+    last_outreach_date: Optional[datetime] = None
+    contact_info: Optional[Dict[str, str]] = None
+    reasons: Optional[List[str]] = None
+    score: Optional[float] = None
+
+class ProspectIdentificationRequest(BaseModel):
+    target_domain: str = Field(..., description="The primary domain for which to find link building prospects.")
+    competitor_domains: List[str] = Field(..., description="A list of competitor domains to analyze for backlinks.")
+    keywords: List[str] = Field(..., description="A list of keywords to search SERPs for relevant pages.")
+    min_domain_authority: float = Field(20.0, description="Minimum domain authority for a prospect to be considered.")
+    max_spam_score: float = Field(0.3, description="Maximum spam score for a prospect to be considered.")
+    num_serp_results_to_check: int = Field(50, description="Number of SERP results to check for each keyword.")
+    num_competitor_backlinks_to_check: int = Field(100, description="Number of competitor backlinks to check for intersect analysis.")
+
+class OutreachCampaignCreateRequest(BaseModel):
+    name: str = Field(..., description="Name of the outreach campaign.")
+    target_domain: str = Field(..., description="The target domain for this campaign.")
+    description: Optional[str] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+class OutreachCampaignResponse(BaseModel):
+    id: str
+
+    name: str
+    target_domain: str
+    status: str
+    created_date: datetime
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+
+    @classmethod
+    def from_outreach_campaign(cls, campaign: OutreachCampaign):
+        campaign_dict = campaign.to_dict() # Use to_dict() method
+        if isinstance(campaign_dict.get('created_date'), str):
+            campaign_dict['created_date'] = datetime.fromisoformat(campaign_dict['created_date'])
+        if isinstance(campaign_dict.get('start_date'), str):
+            campaign_dict['start_date'] = datetime.fromisoformat(campaign_dict['start_date'])
+        if isinstance(campaign_dict.get('end_date'), str):
+            campaign_dict['end_date'] = datetime.fromisoformat(campaign_dict['end_date'])
+        return cls(**campaign_dict)
+
+class OutreachEventCreateRequest(BaseModel):
+    campaign_id: str
+    prospect_url: str
+    event_type: str = Field(..., description="Type of event (e.g., 'email_sent', 'reply_received', 'link_acquired').")
+    notes: Optional[str] = None
+    success: Optional[bool] = None
+
+class OutreachEventResponse(BaseModel):
+    id: str
+    campaign_id: str
+    prospect_url: str
+    event_type: str
+    event_date: datetime
+    notes: Optional[str]
+    success: Optional[bool]
+
+    @classmethod
+    def from_outreach_event(cls, event: OutreachEvent):
+        event_dict = event.to_dict() # Use to_dict() method
+        if isinstance(event_dict.get('event_date'), str):
+            event_dict['event_date'] = datetime.fromisoformat(event_dict['event_date'])
+        return cls(**event_dict)
+
+# New: Pydantic models for AI features
+class ContentGenerationRequest(BaseModel):
+    topic: str = Field(..., description="The topic for which to generate content ideas.")
+    num_ideas: int = Field(5, description="Number of content ideas to generate.")
+
+class CompetitorStrategyAnalysisRequest(BaseModel):
+    primary_domain: str = Field(..., description="The primary domain for analysis.")
+    competitor_domains: List[str] = Field(..., description="List of competitor domains.")
+
+class ReportScheduleRequest(BaseModel):
+    report_type: str = Field(..., description="Type of report (e.g., 'link_profile_pdf', 'all_backlinks_excel').")
+    target_identifier: str = Field(..., description="Identifier for the report target (e.g., URL, 'all').")
+    format: str = Field(..., description="Format of the report (e.g., 'pdf', 'excel').")
+    scheduled_at: Optional[datetime] = Field(None, description="Specific UTC datetime to run the report (ISO format).")
+    cron_schedule: Optional[str] = Field(None, description="Cron string for recurring reports (e.g., '0 0 * * *').")
+    config: Optional[Dict] = Field(None, description="Optional configuration for report generation.")
+
+class ReportJobResponse(BaseModel):
+    id: str
+    report_type: str
+    target_identifier: str
+    format: str
+    status: CrawlStatus
+    created_date: datetime
+    completed_date: Optional[datetime]
+    file_path: Optional[str]
+    error_message: Optional[str]
+
+    class Config:
+        use_enum_values = True # Ensure enums are serialized by value
+
+    @classmethod
+    def from_report_job(cls, job: ReportJob):
+        job_dict = job.to_dict() # Use to_dict() method
+        # job_dict['status'] = job.status.value # Handled by use_enum_values
+        if isinstance(job_dict.get('created_date'), str):
+            job_dict['created_date'] = datetime.fromisoformat(job_dict['created_date'])
+        if isinstance(job_dict.get('completed_date'), str):
+            job_dict['completed_date'] = datetime.fromisoformat(job_dict['completed_date'])
+        return cls(**job_dict)
+
+class DomainHistoryResponse(BaseModel): # New Pydantic model for DomainHistory
+    domain_name: str
+    snapshot_date: datetime
+    authority_score: float
+    trust_score: float
+    spam_score: float
+    total_backlinks: int
+    referring_domains: int
+
+    @classmethod
+    def from_domain_history(cls, history: DomainHistory):
+        history_dict = history.to_dict() # Use to_dict() method
+        if isinstance(history_dict.get('snapshot_date'), str):
+            try:
+                history_dict['snapshot_date'] = datetime.fromisoformat(history_dict['snapshot_date'])
+            except ValueError:
+                logger.warning(f"Could not parse snapshot_date string: {history_dict.get('snapshot_date')}")
+                history_dict['snapshot_date'] = None
+        return cls(**history_dict)
+
+# New: Pydantic models for Queue Endpoints
+class QueueStatsResponse(BaseModel):
+    pending_jobs: int
+    results_pending: int
+    active_satellites: int
+    satellite_crawlers: Dict[str, Any] # Detailed info about each satellite
+    timestamp: datetime
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: CrawlStatus
+    progress_percentage: float
+    message: Optional[str] = None
+    errors: List[str] = Field(default_factory=list)
+    results_summary: Dict[str, Any] = Field(default_factory=dict)
+    last_updated: datetime
+
+    class Config:
+        use_enum_values = True
+
+class CrawlerHealthResponse(BaseModel):
+    crawler_id: str
+    status: str
+    last_seen: datetime
+    cpu_usage: float
+    memory_usage: float
+    jobs_processed: int
+    current_job_id: Optional[str] = None
+    error_rate: float
+    uptime_seconds: float
+
+class SEOMetricsResponse(BaseModel): # New Pydantic model for SEOMetrics
+    url: str
+    http_status: Optional[int] = None
+    response_time_ms: Optional[float] = None
+    page_size_bytes: Optional[int] = None
+    title_length: int = 0
+    meta_description_length: int = 0
+    h1_count: int = 0
+    h2_count: int = 0
+    internal_links: int = 0
+    external_links: int = 0
+    images_count: int = 0
+    images_without_alt: int = 0
+    has_canonical: bool = False
+    has_robots_meta: bool = False
+    has_schema_markup: bool = False
+    broken_links: List[str] = Field(default_factory=list)
+    performance_score: Optional[float] = None
+    mobile_friendly: Optional[bool] = None
+    accessibility_score: Optional[float] = None
+    audit_timestamp: Optional[datetime] = None
+    seo_score: float = 0.0
+    issues: List[str] = Field(default_factory=list)
+    structured_data_types: List[str] = Field(default_factory=list)
+    og_title: Optional[str] = None
+    og_description: Optional[str] = None
+    twitter_title: Optional[str] = None
+    twitter_description: Optional[str] = None
+    validation_issues: List[str] = Field(default_factory=list)
+    ai_content_classification: Optional[str] = None
+    ai_content_score: Optional[float] = None
+    ocr_text: Optional[str] = None
+    nlp_entities: List[str] = Field(default_factory=list)
+    nlp_sentiment: Optional[str] = None
+    nlp_topics: List[str] = Field(default_factory=list)
+    video_transcription: Optional[str] = None
+    video_topics: List[str] = Field(default_factory=list)
+    ai_suggestions: List[str] = Field(default_factory=list)
+    ai_semantic_keywords: List[str] = Field(default_factory=list)
+    ai_readability_score: Optional[float] = None
+
+    @classmethod
+    def from_seo_metrics(cls, metrics: SEOMetrics):
+        metrics_dict = metrics.to_dict() # Use to_dict() method
+        if isinstance(metrics_dict.get('audit_timestamp'), str):
+            try:
+                metrics_dict['audit_timestamp'] = datetime.fromisoformat(metrics_dict['audit_timestamp'])
+            except ValueError:
+                logger.warning(f"Could not parse audit_timestamp string: {metrics_dict.get('audit_timestamp')}")
+                metrics_dict['audit_timestamp'] = None
+        return cls(**metrics_dict)
