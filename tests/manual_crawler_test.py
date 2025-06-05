@@ -345,7 +345,7 @@ class DirectFileTest:
             "python -c \"from crawlers.web_crawler import WebCrawler; print('✅ WebCrawler import successful')\"",
             "python -c \"from core.models import CrawlConfig; print('✅ CrawlConfig import successful')\"",
             "python -c \"from database.database import Database; print('✅ Database import successful')\"",
-            "python test_api.py",  # Your existing test file
+            "python tests/test_api.py",  # Your existing test file
         ]
         
         print("🧪 Testing import commands:")
@@ -372,7 +372,7 @@ class DirectFileTest:
                 print(f"❌ Error running command: {e}")
         
         print(f"\n💡 You can also run your existing test with:")
-        print(f"   python test_api.py")
+        print(f"   python tests/test_api.py")
 
 
 async def main():
@@ -402,7 +402,7 @@ async def main():
         print("⚠️  API-based testing had issues. Try these alternatives:")
         print("   1. Make sure your API is running: python main.py")
         print("   2. Check the API logs for errors")
-        print("   3. Try running your existing test_api.py script")
+        print("   3. Try running your existing tests/test_api.py script")
         print("   4. Use the simple crawler test as a baseline comparison")
     
     print(f"\n📋 Known Good Test URLs (from your simple test):")
