@@ -17,6 +17,8 @@ class ProxyDetails:
     # Optional: add more fields for health tracking
     last_used: Optional[datetime] = None
     failure_count: int = 0
+    success_count: int = 0 # New: Track success count
+    last_failure_reason: Optional[str] = None # New: Store last failure reason
 
 class ProxyManager:
     """
@@ -43,6 +45,7 @@ class ProxyManager:
         self._bad_proxies_until: Dict[str, datetime] = {}
         self.logger = logging.getLogger(__name__ + ".ProxyManager")
         self.proxy_retry_delay_seconds = 300 # Default 5 minutes
+        self.max_proxy_failures = 5 # New: Max failures before longer blacklist
 
     def load_proxies(self, proxy_list_raw: List[Dict[str, str]], proxy_retry_delay_seconds: int = 300):
         """
@@ -68,7 +71,7 @@ class ProxyManager:
         self.proxy_retry_delay_seconds = proxy_retry_delay_seconds
         self.logger.info(f"Loaded {total_loaded} proxies across {len(self._regional_proxies)} regions. Retry delay: {proxy_retry_delay_seconds}s.")
 
-    def get_next_proxy(self, desired_region: Optional[str] = None) -> Optional[str]:
+    def get_next_proxy(self, desired_region: Optional[str] = None) -> Optional[ProxyDetails]: # Changed return type to ProxyDetails
         """
         Returns the next available proxy URL.
         Prioritizes the desired_region if specified and available.
@@ -104,7 +107,7 @@ class ProxyManager:
                 
                 proxy_details.last_used = datetime.now()
                 self.logger.debug(f"Using proxy: {proxy_details.url} (Region: {region})")
-                return proxy_details.url
+                return proxy_details # Return ProxyDetails object
         
         self.logger.warning("No available proxies found across all regions.")
         return None # All proxies are currently bad or no proxies loaded
@@ -112,11 +115,42 @@ class ProxyManager:
     def mark_proxy_bad(self, proxy_url: str, reason: str = "unknown"):
         """
         Marks a proxy URL as bad, preventing its use for a specified duration.
+        Increments failure count and adjusts blacklist duration.
         """
-        if proxy_url:
-            retry_time = datetime.now() + timedelta(seconds=self.proxy_retry_delay_seconds)
-            self._bad_proxies_until[proxy_url] = retry_time
-            self.logger.warning(f"Marked proxy {proxy_url} as bad until {retry_time} due to: {reason}.")
+        for region in self._regional_proxies:
+            for proxy_details in self._regional_proxies[region]:
+                if proxy_details.url == proxy_url:
+                    proxy_details.failure_count += 1
+                    proxy_details.last_failure_reason = reason
+                    proxy_details.success_count = 0 # Reset success count on failure
+
+                    # Exponentially increase blacklist time based on consecutive failures
+                    blacklist_duration = self.proxy_retry_delay_seconds * (2 ** (proxy_details.failure_count - 1))
+                    # Cap the blacklist duration to prevent permanent removal for transient issues
+                    blacklist_duration = min(blacklist_duration, 24 * 3600) # Max 24 hours
+                    
+                    retry_time = datetime.now() + timedelta(seconds=blacklist_duration)
+                    self._bad_proxies_until[proxy_url] = retry_time
+                    self.logger.warning(f"Marked proxy {proxy_url} as bad until {retry_time} due to: {reason}. Failures: {proxy_details.failure_count}")
+                    return
+        self.logger.warning(f"Attempted to mark non-existent proxy {proxy_url} as bad.")
+
+    def mark_proxy_good(self, proxy_url: str):
+        """
+        Marks a proxy URL as good, removing it from the blacklist and incrementing success count.
+        """
+        if proxy_url in self._bad_proxies_until:
+            del self._bad_proxies_until[proxy_url]
+            self.logger.info(f"Proxy {proxy_url} marked as good and removed from blacklist.")
+        
+        for region in self._regional_proxies:
+            for proxy_details in self._regional_proxies[region]:
+                if proxy_details.url == proxy_url:
+                    proxy_details.success_count += 1
+                    # Gradually reduce failure count on success
+                    proxy_details.failure_count = max(0, proxy_details.failure_count - 1)
+                    self.logger.debug(f"Proxy {proxy_url} recorded success. Successes: {proxy_details.success_count}, Failures: {proxy_details.failure_count}")
+                    return
 
 # Create a singleton instance
 proxy_manager = ProxyManager()
