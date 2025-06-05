@@ -2,7 +2,6 @@
 Comprehensive Monitoring and Metrics for Crawler System
 Real-time performance tracking and health monitoring
 """
-
 import time
 import asyncio
 from typing import Dict, List, Any, Optional, Set
@@ -11,9 +10,8 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta
 import json
 import logging
-import psutil # Import psutil for resource monitoring
 
-logger = logging.getLogger(__name__) # Corrected: Use __name__ for module logger
+logger = logging.getLogger(__name__)
 
 @dataclass
 class MetricPoint:
@@ -24,7 +22,7 @@ class MetricPoint:
 
 class Counter:
     """Prometheus-style counter metric"""
-    def __init__(self, name: str, description: str = ""): # Corrected: __init__ instead of init
+    def __init__(self, name: str, description: str = ""):
         self.name = name
         self.description = description
         self.values: Dict[str, float] = defaultdict(float)
@@ -45,23 +43,20 @@ class Counter:
 
 class Histogram:
     """Histogram metric for tracking distributions"""
-    def __init__(self, name: str, description: str = "", buckets: List[float] = None): # Corrected: __init__ instead of init
+    def __init__(self, name: str, description: str = "", buckets: List[float] = None):
         self.name = name
         self.description = description
         self.buckets = buckets or [0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 25.0, 50.0, 100.0]
-        self.observations: Dict[str, List[float]] = defaultdict(list)
+        self.observations: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1000)) # Keep recent observations
         self.bucket_counts: Dict[str, Dict[float, int]] = defaultdict(lambda: defaultdict(int))
         self.sum_values: Dict[str, float] = defaultdict(float)
         self.count_values: Dict[str, int] = defaultdict(int)
 
     def observe(self, value: float, labels: Dict[str, str] = None):
         """Record observation"""
-        key = self._labels_to_key(labels or {}) # Corrected: _labels_to_key
+        key = self._labels_to_key(labels or {})
         
-        # Keep recent observations for percentile calculation
         self.observations[key].append(value)
-        if len(self.observations[key]) > 1000:  # Keep last 1000 observations
-            self.observations[key] = self.observations[key][-1000:]
         
         # Update buckets
         for bucket in self.buckets:
@@ -74,27 +69,27 @@ class Histogram:
 
     def get_percentile(self, percentile: float, labels: Dict[str, str] = None) -> float:
         """Get percentile value"""
-        key = self._labels_to_key(labels or {}) # Corrected: _labels_to_key
+        key = self._labels_to_key(labels or {})
         if key not in self.observations or not self.observations[key]:
             return 0.0
         
-        observations = sorted(self.observations[key])
-        index = int(percentile / 100.0 * len(observations))
-        return observations[min(index, len(observations) - 1)]
+        observations_list = sorted(list(self.observations[key])) # Convert deque to list and sort
+        index = int(percentile / 100.0 * len(observations_list))
+        return observations_list[min(index, len(observations_list) - 1)]
 
     def get_average(self, labels: Dict[str, str] = None) -> float:
         """Get average value"""
-        key = self._labels_to_key(labels or {}) # Corrected: _labels_to_key
+        key = self._labels_to_key(labels or {})
         if self.count_values[key] == 0:
             return 0.0
         return self.sum_values[key] / self.count_values[key]
 
-    def _labels_to_key(self, labels: Dict[str, str]) -> str: # Corrected: _labels_to_key
+    def _labels_to_key(self, labels: Dict[str, str]) -> str:
         return json.dumps(sorted(labels.items()))
 
 class Gauge:
     """Gauge metric for values that can go up and down"""
-    def __init__(self, name: str, description: str = ""): # Corrected: __init__ instead of init
+    def __init__(self, name: str, description: str = ""):
         self.name = name
         self.description = description
         self.values: Dict[str, float] = defaultdict(float)
@@ -182,7 +177,7 @@ class CrawlerMetrics:
             'labels': labels
         }
 
-    async def track_request_complete(self, url: str, response, request_context: Dict):
+    async def track_request_complete(self, url: str, response: Any, request_context: Dict):
         """Track completion of request"""
         end_time = time.time()
         duration = end_time - request_context['start_time']
@@ -194,7 +189,7 @@ class CrawlerMetrics:
         
         # Track content size
         if hasattr(response, 'content') and response.content:
-            content_size = len(response.content)
+            content_size = len(response.content) if isinstance(response.content, bytes) else len(response.content.encode('utf-8'))
             self.content_size.observe(content_size, labels=labels)
         
         # Track success/failure
@@ -218,14 +213,6 @@ class CrawlerMetrics:
         self.request_times.append(end_time)
         self._update_throughput()
 
-    def _update_throughput(self):
-        """Update throughput metrics"""
-        now = time.time()
-        # Count requests in last 60 seconds
-        recent_requests = [t for t in self.request_times if now - t <= 60]
-        rps = len(recent_requests) / 60.0
-        self.throughput_rps.set(rps)
-
     async def track_queue_metrics(self, queue_stats: Dict[str, Any]):
         """Track queue-related metrics"""
         self.queue_size.set(queue_stats.get('queue_size', 0))
@@ -244,6 +231,7 @@ class CrawlerMetrics:
     async def track_resource_usage(self):
         """Track system resource usage"""
         try:
+            import psutil
             process = psutil.Process()
             
             # Memory usage
@@ -251,11 +239,13 @@ class CrawlerMetrics:
             self.memory_usage.set(memory_info.rss)
             
             # CPU usage
-            cpu_percent = process.cpu_percent()
+            cpu_percent = process.cpu_percent(interval=None) # Non-blocking call
             self.cpu_usage.set(cpu_percent)
             
         except ImportError:
             logger.warning("psutil not available for resource monitoring")
+        except Exception as e:
+            logger.error(f"Error tracking resource usage: {e}")
 
     def calculate_efficiency_score(self) -> float:
         """Calculate overall crawler efficiency score (0-100)"""
@@ -334,7 +324,7 @@ class CrawlerMetrics:
                 'p99_response_time': self.response_time.get_percentile(99)
             },
             'resources': {
-                'memory_usage_mb': self.memory_usage.get() / (1024 * 1024),
+                'memory_usage_mb': self.memory_usage.get() / (1024 * 1024) if self.memory_usage.get() else 0.0,
                 'cpu_usage_percent': self.cpu_usage.get(),
                 'active_connections': self.active_connections.get()
             },
@@ -383,32 +373,111 @@ class CrawlerMetrics:
         lines = []
         
         # Helper to format metric lines
-        def add_metric_lines(metric_name: str, metric_type: str, description: str, values: Dict[str, float]):
+        def add_metric_lines(metric_name: str, metric_type: str, description: str, values: Dict[str, float], is_histogram: bool = False):
             lines.append(f"# HELP {metric_name} {description}")
             lines.append(f"# TYPE {metric_name} {metric_type}")
             
             for labels_key, value in values.items():
-                if labels_key:
-                    labels_dict = json.loads(labels_key)
-                    labels_str = ','.join([f'{k}="{v}"' for k, v in labels_dict.items()])
-                    lines.append(f"{metric_name}{{{labels_str}}} {value}")
+                labels_dict = json.loads(labels_key) if labels_key else {}
+                labels_str = ','.join([f'{k}="{v}"' for k, v in labels_dict.items()])
+                
+                if is_histogram:
+                    # Histograms have _bucket, _sum, _count
+                    # This simplified export only shows sum and count, not buckets
+                    pass # Handled separately below for histograms
                 else:
-                    lines.append(f"{metric_name} {value}")
-        
+                    if labels_str:
+                        lines.append(f"{metric_name}{{{labels_str}}} {value}")
+                    else:
+                        lines.append(f"{metric_name} {value}")
+
         # Export counters
-        add_metric_lines("crawler_requests_total", "counter", 
+        add_metric_lines(self.requests_total.name, "counter", 
                         self.requests_total.description, self.requests_total.values)
         
-        add_metric_lines("crawler_requests_failed_total", "counter",
+        add_metric_lines(self.requests_failed.name, "counter",
                         self.requests_failed.description, self.requests_failed.values)
         
+        add_metric_lines(self.links_discovered.name, "counter",
+                        self.links_discovered.description, self.links_discovered.values)
+        
+        add_metric_lines(self.pages_crawled.name, "counter",
+                        self.pages_crawled.description, self.pages_crawled.values)
+        
+        add_metric_lines(self.data_extracted.name, "counter",
+                        self.data_extracted.description, self.data_extracted.values)
+        
+        add_metric_lines(self.error_types.name, "counter",
+                        self.error_types.description, self.error_types.values)
+
         # Export gauges
-        add_metric_lines("crawler_queue_size", "gauge",
+        add_metric_lines(self.queue_size.name, "gauge",
                         self.queue_size.description, self.queue_size.values)
         
-        add_metric_lines("crawler_efficiency_score", "gauge",
+        add_metric_lines(self.active_domains.name, "gauge",
+                        self.active_domains.description, self.active_domains.values)
+        
+        add_metric_lines(self.domain_success_rate.name, "gauge",
+                        self.domain_success_rate.description, self.domain_success_rate.values)
+        
+        add_metric_lines(self.active_connections.name, "gauge",
+                        self.active_connections.description, self.active_connections.values)
+        
+        add_metric_lines(self.memory_usage.name, "gauge",
+                        self.memory_usage.description, self.memory_usage.values)
+        
+        add_metric_lines(self.cpu_usage.name, "gauge",
+                        self.cpu_usage.description, self.cpu_usage.values)
+        
+        add_metric_lines(self.throughput_rps.name, "gauge",
+                        self.throughput_rps.description, self.throughput_rps.values)
+        
+        add_metric_lines(self.efficiency_score.name, "gauge",
                         self.efficiency_score.description, self.efficiency_score.values)
         
+        add_metric_lines(self.circuit_breaker_state.name, "gauge",
+                        self.circuit_breaker_state.description, self.circuit_breaker_state.values)
+
+        # Export histograms (sum and count)
+        lines.append(f"# HELP {self.response_time.name} {self.response_time.description}")
+        lines.append(f"# TYPE {self.response_time.name} histogram")
+        for labels_key in self.response_time.sum_values:
+            labels_dict = json.loads(labels_key) if labels_key else {}
+            labels_str = ','.join([f'{k}="{v}"' for k, v in labels_dict.items()])
+            
+            for bucket in self.response_time.buckets:
+                count = self.response_time.bucket_counts[labels_key].get(bucket, 0)
+                lines.append(f"{self.response_time.name}_bucket{{{labels_str},le=\"{bucket}\"}} {count}")
+            lines.append(f"{self.response_time.name}_bucket{{{labels_str},le=\"+Inf\"}} {self.response_time.count_values[labels_key]}")
+            lines.append(f"{self.response_time.name}_sum{{{labels_str}}} {self.response_time.sum_values[labels_key]}")
+            lines.append(f"{self.response_time.name}_count{{{labels_str}}} {self.response_time.count_values[labels_key]}")
+
+        lines.append(f"# HELP {self.content_size.name} {self.content_size.description}")
+        lines.append(f"# TYPE {self.content_size.name} histogram")
+        for labels_key in self.content_size.sum_values:
+            labels_dict = json.loads(labels_key) if labels_key else {}
+            labels_str = ','.join([f'{k}="{v}"' for k, v in labels_dict.items()])
+            
+            for bucket in self.content_size.buckets:
+                count = self.content_size.bucket_counts[labels_key].get(bucket, 0)
+                lines.append(f"{self.content_size.name}_bucket{{{labels_str},le=\"{bucket}\"}} {count}")
+            lines.append(f"{self.content_size.name}_bucket{{{labels_str},le=\"+Inf\"}} {self.content_size.count_values[labels_key]}")
+            lines.append(f"{self.content_size.name}_sum{{{labels_str}}} {self.content_size.sum_values[labels_key]}")
+            lines.append(f"{self.content_size.name}_count{{{labels_str}}} {self.content_size.count_values[labels_key]}")
+
+        lines.append(f"# HELP {self.queue_wait_time.name} {self.queue_wait_time.description}")
+        lines.append(f"# TYPE {self.queue_wait_time.name} histogram")
+        for labels_key in self.queue_wait_time.sum_values:
+            labels_dict = json.loads(labels_key) if labels_key else {}
+            labels_str = ','.join([f'{k}="{v}"' for k, v in labels_dict.items()])
+            
+            for bucket in self.queue_wait_time.buckets:
+                count = self.queue_wait_time.bucket_counts[labels_key].get(bucket, 0)
+                lines.append(f"{self.queue_wait_time.name}_bucket{{{labels_str},le=\"{bucket}\"}} {count}")
+            lines.append(f"{self.queue_wait_time.name}_bucket{{{labels_str},le=\"+Inf\"}} {self.queue_wait_time.count_values[labels_key]}")
+            lines.append(f"{self.queue_wait_time.name}_sum{{{labels_str}}} {self.queue_wait_time.sum_values[labels_key]}")
+            lines.append(f"{self.queue_wait_time.name}_count{{{labels_str}}} {self.queue_wait_time.count_values[labels_key]}")
+
         return '\n'.join(lines)
 
 # Global metrics instance
