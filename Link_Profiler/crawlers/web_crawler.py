@@ -44,8 +44,8 @@ class EnhancedWebCrawler:
                  crawl_queue: Optional[SmartCrawlQueue] = None,
                  ai_service: Optional[AIService] = None,
                  browser: Optional[Browser] = None,
-                 resilience_manager: Optional[DistributedResilienceManager] = None,
-                 session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
+                 resilience_manager: DistributedResilienceManager, # Removed Optional, now required
+                 session_manager: SessionManager): # Removed Optional, now required
         
         # Core configuration
         self.config = config
@@ -54,12 +54,7 @@ class EnhancedWebCrawler:
         self.browser = browser # Playwright browser instance passed from main.py
         
         # Advanced components
-        self.resilience_manager = resilience_manager
-        if self.resilience_manager is None:
-            # Fallback to a local resilience manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.circuit_breaker import LocalResilienceManager
-            self.resilience_manager = LocalResilienceManager()
-            logger.warning("No DistributedResilienceManager provided. Falling back to LocalResilienceManager.")
+        self.resilience_manager = resilience_manager # Use the injected resilience manager
 
         self.rate_limiter = MLRateLimiter()
         self.metrics = crawler_metrics
@@ -73,11 +68,6 @@ class EnhancedWebCrawler:
         
         # Session management
         self.session_manager = session_manager # Use the injected session manager
-        if self.session_manager is None:
-            # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
-            self.session_manager = LocalSessionManager()
-            logger.warning("No SessionManager provided. Falling back to local SessionManager.")
 
         # AI-driven components
         self.content_analyzer = ContentAnalyzer(ai_service=self.ai_service) # New: Initialize ContentAnalyzer
@@ -122,25 +112,6 @@ class EnhancedWebCrawler:
         # Browser is managed by main.py's lifespan, so no need to close here
         # if self.browser:
         #     await self.browser.close()
-    
-    def _get_default_headers(self) -> Dict[str, str]:
-        """Get default HTTP headers with anti-detection"""
-        # This method is now largely redundant as SessionManager handles headers
-        # but kept for compatibility or if specific overrides are needed.
-        headers = {
-            'User-Agent': self.config.user_agent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        }
-        
-        if self.config.custom_headers:
-            headers.update(self.config.custom_headers)
-            
-        return headers
     
     async def crawl_url(self, url: str, depth: int = 0, 
                        last_crawl_result: Optional[CrawlResult] = None) -> CrawlResult:
@@ -343,25 +314,6 @@ class EnhancedWebCrawler:
                 logger.warning(f"AI content quality analysis failed for {result.url}: {e}")
         
         return result
-    
-    def _get_request_headers(self, domain: str) -> Dict[str, str]:
-        """Get headers with rotation if enabled"""
-        # This method is now largely redundant as SessionManager handles headers
-        # but kept for compatibility or if specific overrides are needed.
-        headers = {
-            'User-Agent': self.config.user_agent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        }
-        
-        if self.config.custom_headers:
-            headers.update(self.config.custom_headers)
-            
-        return headers
     
     def _get_user_agent_for_domain(self, domain: str) -> str:
         """Get user agent for domain with consistency if enabled"""
