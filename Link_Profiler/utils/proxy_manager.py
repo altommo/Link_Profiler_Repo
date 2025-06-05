@@ -9,8 +9,7 @@ import logging
 import aiohttp # Added for aiohttp.ClientSession and ClientTimeout
 from enum import Enum # Added missing import
 
-# Assuming config_loader is available globally or passed via dependency injection
-from Link_Profiler.config.config_loader import config_loader
+# Removed direct import of config_loader, will use global instance
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +48,9 @@ class ProxyManager:
 
         self.logger = logging.getLogger(__name__ + ".ProxyManager")
         
+        # Import config_loader here to avoid circular dependency at module level
+        from Link_Profiler.config.config_loader import config_loader 
+
         # Configuration from config_loader
         self.use_proxies = config_loader.get("proxy.use_proxies", False)
         self.retry_delay = config_loader.get("proxy.proxy_retry_delay_seconds", 300)

@@ -2,6 +2,7 @@
 Smart Session Manager - Provides a centralized, optimized aiohttp ClientSession
 for all HTTP requests within the crawler system.
 Handles adaptive connection pooling, connection health checks, and automatic retries.
+File: Link_Profiler/utils/session_manager.py
 """
 
 import asyncio
@@ -13,7 +14,7 @@ from collections import deque
 from datetime import datetime, timedelta
 import random
 
-from Link_Profiler.config.config_loader import config_loader
+# Removed direct import of config_loader, will use global instance
 from Link_Profiler.utils.user_agent_manager import user_agent_manager
 from Link_Profiler.utils.proxy_manager import proxy_manager, ProxyDetails # Import ProxyDetails
 
@@ -39,6 +40,9 @@ class SessionManager:
 
         self.session: Optional[aiohttp.ClientSession] = None
         self.logger = logging.getLogger(__name__ + ".SessionManager")
+
+        # Import config_loader here to avoid circular dependency at module level
+        from Link_Profiler.config.config_loader import config_loader 
 
         # Configuration from config_loader
         self.max_connections = config_loader.get("connection_optimization.max_connections", 200)
@@ -92,6 +96,9 @@ class SessionManager:
 
     def _get_base_headers(self) -> Dict[str, str]:
         """Returns base headers for the session, potentially with rotation."""
+        # Import config_loader here to avoid circular dependency at module level
+        from Link_Profiler.config.config_loader import config_loader 
+
         if self.request_header_randomization:
             return user_agent_manager.get_random_headers()
         elif self.user_agent_rotation:

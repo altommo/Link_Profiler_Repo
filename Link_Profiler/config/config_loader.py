@@ -1,8 +1,14 @@
+"""
+Config Loader - Loads configuration from JSON/YAML files and environment variables.
+Environment variables take precedence over file settings.
+File: Link_Profiler/config/config_loader.py
+"""
+
 import os
+import yaml
 import json
 import logging
-from typing import Dict, Any, Optional
-import yaml # Import yaml
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -10,126 +16,147 @@ class ConfigLoader:
     """
     Loads configuration from JSON/YAML files and environment variables.
     Environment variables take precedence over file settings.
+    Implemented as a singleton to ensure a single, globally accessible configuration.
     """
     _instance = None
-    _config: Dict[str, Any] = {}
-    _is_loaded: bool = False
+    _config_data: Dict[str, Any] = {}
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(ConfigLoader, cls).__new__(cls)
+            cls._instance._initialized = False
         return cls._instance
 
-    def load_config(self, config_dir: str = "Link_Profiler/config", env_var_prefix: str = ""):
-        """
-        Loads configuration from default.yaml (or default.json if yaml not found)
-        and environment variables.
-        Environment variables with the given prefix (e.g., "LP_") will override
-        settings in the config file.
-        """
-        if self._is_loaded:
-            logger.debug("Config already loaded. Skipping re-load.")
+    def __init__(self):
+        if self._initialized:
             return
+        self._initialized = True
+        self.logger = logging.getLogger(__name__ + ".ConfigLoader")
+        self._load_config()
 
-        config_file_path_yaml = os.path.join(config_dir, "config.yaml")
-        config_file_path_json = os.path.join(config_dir, "default.json") # Fallback to default.json
+    def _load_config(self):
+        """
+        Loads configuration from default YAML files and environment variables.
+        Environment variables override file settings.
+        """
+        config_paths = [
+            "Link_Profiler/config/core.yaml",
+            "Link_Profiler/config/crawler.yaml",
+            "Link_Profiler/config/external_apis.yaml",
+            "Link_Profiler/config/security.yaml",
+            "Link_Profiler/config/monitoring.yaml",
+            "Link_Profiler/config/features.yaml",
+            "Link_Profiler/config/config.yaml" # Legacy/fallback
+        ]
+        
+        loaded_files = []
+        for path in config_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, 'r') as f:
+                        file_config = yaml.safe_load(f)
+                        if file_config:
+                            self._merge_config(self._config_data, file_config)
+                            loaded_files.append(path)
+                except Exception as e:
+                    self.logger.error(f"Error loading config file {path}: {e}")
+            else:
+                self.logger.debug(f"Config file not found: {path}")
 
-        loaded_from_file = {}
-        if os.path.exists(config_file_path_yaml):
-            try:
-                with open(config_file_path_yaml, 'r') as f:
-                    loaded_from_file = yaml.safe_load(f)
-                logger.info(f"Configuration loaded from {config_file_path_yaml}")
-            except yaml.YAMLError as e:
-                logger.error(f"Error loading YAML config from {config_file_path_yaml}: {e}")
-                loaded_from_file = {} # Fallback to empty if YAML fails
-        elif os.path.exists(config_file_path_json):
-            try:
-                with open(config_file_path_json, 'r') as f:
-                    loaded_from_file = json.load(f)
-                logger.info(f"Configuration loaded from {config_file_path_json}")
-            except json.JSONDecodeError as e:
-                logger.error(f"Error loading JSON config from {config_file_path_json}: {e}")
-                loaded_from_file = {} # Fallback to empty if JSON fails
+        if not loaded_files:
+            self.logger.warning("No configuration files found. Using default settings and environment variables only.")
         else:
-            logger.warning(f"No config file found at {config_file_path_yaml} or {config_file_path_json}. Using environment variables and defaults only. Attempted from directory: {config_dir}") # Added debug info
+            self.logger.info(f"Loaded configuration from: {', '.join(loaded_files)}")
 
-        self._config = loaded_from_file if loaded_from_file is not None else {}
+        self._load_env_variables()
+        self.logger.info("Configuration loaded successfully.")
 
-        # Override with environment variables
+    def _merge_config(self, target: Dict, source: Dict):
+        """
+        Recursively merges source dictionary into target dictionary.
+        Existing keys in target are overwritten by source.
+        """
+        for key, value in source.items():
+            if isinstance(value, dict) and key in target and isinstance(target[key], dict):
+                self._merge_config(target[key], value)
+            else:
+                target[key] = value
+
+    def _load_env_variables(self):
+        """
+        Loads environment variables and applies them to the configuration,
+        overriding any values loaded from files.
+        Supports nested keys using '__' as a separator (e.g., 'DATABASE__URL').
+        """
         for key, value in os.environ.items():
-            if key.startswith(env_var_prefix):
-                # Convert environment variable name (e.g., LP_DATABASE_URL) to config path (database.url)
-                config_path = key[len(env_var_prefix):].lower().replace('_', '.')
-                
-                # Attempt to convert value to appropriate type (int, float, bool, list, dict)
-                converted_value = self._convert_env_value(value)
-                
-                logger.info(f"Processing env var: {key} -> {config_path} = {converted_value}") # Added logging
-                self._set_nested_value(self._config, config_path, converted_value)
-                logger.debug(f"Overrode config setting '{config_path}' with environment variable '{key}'")
+            # Only consider environment variables prefixed with 'LP_'
+            if not key.startswith('LP_'):
+                continue
 
-        self._is_loaded = True
+            # Convert LP_DATABASE_URL to database.url
+            # LP_AI_OPENROUTER_API_KEY to ai.openrouter_api_key
+            # LP_MONITOR_PASSWORD to monitoring.monitor_auth.password
+            config_key_path = key[3:].lower().replace('__', '.') # Remove prefix, lowercase, replace __ with .
+
+            # Handle special cases for password/secret keys that might be directly referenced
+            if config_key_path == 'auth.secret_key':
+                self._set_nested_value(self._config_data, 'auth.secret_key', value)
+                self.logger.debug(f"Applied environment variable LP_AUTH_SECRET_KEY to auth.secret_key")
+            elif config_key_path == 'monitor_password': # LP_MONITOR_PASSWORD
+                self._set_nested_value(self._config_data, 'monitoring.monitor_auth.password', value)
+                self.logger.debug(f"Applied environment variable LP_MONITOR_PASSWORD to monitoring.monitor_auth.password")
+            elif config_key_path == 'redis_url': # LP_REDIS_URL
+                self._set_nested_value(self._config_data, 'redis.url', value)
+                self.logger.debug(f"Applied environment variable LP_REDIS_URL to redis.url")
+            elif config_key_path == 'database_url': # LP_DATABASE_URL
+                self._set_nested_value(self._config_data, 'database.url', value)
+                self.logger.debug(f"Applied environment variable LP_DATABASE_URL to database.url")
+            elif config_key_path == 'ai_openrouter_api_key': # LP_AI_OPENROUTER_API_KEY
+                self._set_nested_value(self._config_data, 'ai.openrouter_api_key', value)
+                self.logger.debug(f"Applied environment variable LP_AI_OPENROUTER_API_KEY to ai.openrouter_api_key")
+            else:
+                # Generic handling for other LP_ variables
+                self._set_nested_value(self._config_data, config_key_path, value)
+                self.logger.debug(f"Applied environment variable {key} to {config_key_path}")
+
+
+    def _set_nested_value(self, data: Dict, key_path: str, value: Any):
+        """Sets a value in a nested dictionary using a dot-separated key path."""
+        parts = key_path.split('.')
+        current = data
+        for i, part in enumerate(parts):
+            if i == len(parts) - 1:
+                current[part] = value
+            else:
+                if part not in current or not isinstance(current[part], dict):
+                    current[part] = {}
+                current = current[part]
 
     def get(self, key_path: str, default: Any = None) -> Any:
         """
-        Retrieves a configuration value using a dot-separated key path (e.g., "database.url").
+        Retrieves a configuration value using a dot-separated key path.
+        
+        Args:
+            key_path: The dot-separated path to the configuration value (e.g., "database.url").
+            default: The default value to return if the key path is not found.
+            
+        Returns:
+            The configuration value or the default value if not found.
         """
-        keys = key_path.split('.')
-        current_value = self._config
-        for key in keys:
-            if isinstance(current_value, dict) and key in current_value:
-                current_value = current_value[key]
+        parts = key_path.split('.')
+        current = self._config_data
+        for part in parts:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
             else:
                 return default
-        return current_value
+        return current
 
-    def _set_nested_value(self, d: Dict, key_path: str, value: Any):
-        """Sets a value in a nested dictionary using a dot-separated key path."""
-        keys = key_path.split('.')
-        for i, key in enumerate(keys):
-            if i == len(keys) - 1:
-                d[key] = value
-            else:
-                if not isinstance(d.get(key), dict):
-                    d[key] = {}
-                d = d[key]
+    def reload(self):
+        """Reloads the configuration from files and environment variables."""
+        self._config_data = {} # Clear existing config
+        self._load_config()
+        self.logger.info("Configuration reloaded.")
 
-    def _convert_env_value(self, value: str) -> Any:
-        """Attempts to convert environment variable string value to appropriate Python type."""
-        if value.lower() == 'true':
-            return True
-        if value.lower() == 'false':
-            return False
-        try:
-            return int(value)
-        except ValueError:
-            try:
-                return float(value)
-            except ValueError:
-                if value.startswith('[') and value.endswith(']'):
-                    try:
-                        return json.loads(value) # For list/array like "[item1, item2]"
-                    except json.JSONDecodeError:
-                        pass
-                if value.startswith('{') and value.endswith('}'):
-                    try:
-                        return json.loads(value) # For dict like "{"key": "value"}"
-                    except json.JSONDecodeError:
-                        pass
-                return value # Return as string if no other conversion works
-
-    def _deep_update(self, main_dict: Dict, update_dict: Dict):
-        """
-        Recursively updates a dictionary with values from another dictionary.
-        Existing keys in main_dict that are also in update_dict will be overwritten.
-        """
-        for key, value in update_dict.items():
-            if isinstance(value, dict) and key in main_dict and isinstance(main_dict[key], dict):
-                main_dict[key] = self._deep_update(main_dict[key], value)
-            else:
-                main_dict[key] = value
-        return main_dict
-
-# Global instance for easy access
+# Create a singleton instance for global access
 config_loader = ConfigLoader()
