@@ -51,21 +51,10 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
     A simulated client for backlink information APIs.
     Generates dummy backlink data.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
+    def __init__(self, session_manager: SessionManager, resilience_manager: DistributedResilienceManager): # Removed Optional and fallback
         self.logger = logging.getLogger(__name__ + ".SimulatedBacklinkAPIClient")
-        self.session_manager = session_manager # Use the injected session manager
-        if self.session_manager is None:
-            # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
-            self.session_manager = LocalSessionManager()
-            logger.warning("No SessionManager provided to SimulatedBacklinkAPIClient. Falling back to local SessionManager.")
-        
-        self.resilience_manager = resilience_manager # New: Store ResilienceManager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to SimulatedBacklinkAPIClient. Falling back to global instance.")
-
+        self.session_manager = session_manager
+        self.resilience_manager = resilience_manager
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
@@ -155,23 +144,12 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
     A client for real backlink information APIs (e.g., Ahrefs, Moz, SEMrush).
     This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
+    def __init__(self, api_key: str, base_url: str, session_manager: SessionManager, resilience_manager: DistributedResilienceManager): # Removed Optional and fallback
         self.logger = logging.getLogger(__name__ + ".RealBacklinkAPIClient")
         self.api_key = api_key
         self.base_url = base_url
-        self.session_manager = session_manager # Use the injected session manager
-        if self.session_manager is None:
-            # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
-            self.session_manager = LocalSessionManager()
-            logger.warning("No SessionManager provided to RealBacklinkAPIClient. Falling back to local SessionManager.")
-        
-        self.resilience_manager = resilience_manager # New: Store ResilienceManager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to RealBacklinkAPIClient. Falling back to global instance.")
-
+        self.session_manager = session_manager
+        self.resilience_manager = resilience_manager
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
@@ -255,22 +233,11 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
     A client for OpenLinkProfiler.org API.
     This API is free with usage limits.
     """
-    def __init__(self, base_url: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
+    def __init__(self, base_url: str, session_manager: SessionManager, resilience_manager: DistributedResilienceManager): # Removed Optional and fallback
         self.logger = logging.getLogger(__name__ + ".OpenLinkProfilerAPIClient")
         self.base_url = base_url
-        self.session_manager = session_manager # Use the injected session manager
-        if self.session_manager is None:
-            # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
-            self.session_manager = LocalSessionManager()
-            logger.warning("No SessionManager provided to OpenLinkProfilerAPIClient. Falling back to local SessionManager.")
-        
-        self.resilience_manager = resilience_manager # New: Store ResilienceManager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to OpenLinkProfilerAPIClient. Falling back to global instance.")
-
+        self.session_manager = session_manager
+        self.resilience_manager = resilience_manager
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
@@ -333,7 +300,6 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
                 elif "canonical" in link_type_str: # OpenLinkProfiler might have canonical type
                     link_type = LinkType.CANONICAL
                 
-                # Map spam score to our SpamLevel enum (very basic mapping)
                 spam_level = SpamLevel.CLEAN
                 if spam_score_val > 70: # Example threshold
                     spam_level = SpamLevel.CONFIRMED_SPAM
@@ -368,23 +334,12 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
     A client for Google Search Console API.
     Requires OAuth 2.0 authentication setup.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
+    def __init__(self, session_manager: SessionManager, resilience_manager: DistributedResilienceManager): # Removed Optional and fallback
         self.logger = logging.getLogger(__name__ + ".GSCBacklinkAPIClient")
         self.service = None
         self._creds = None
-        self.session_manager = session_manager # Use the injected session manager
-        if self.session_manager is None:
-            # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
-            self.session_manager = LocalSessionManager()
-            logger.warning("No SessionManager provided to GSCBacklinkAPIClient. Falling back to local SessionManager.")
-        
-        self.resilience_manager = resilience_manager # New: Store ResilienceManager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to GSCBacklinkAPIClient. Falling back to global instance.")
-
+        self.session_manager = session_manager
+        self.resilience_manager = resilience_manager
 
     async def __aenter__(self):
         """Authenticates and builds the GSC service."""
@@ -520,24 +475,14 @@ class BacklinkService:
     """
     Service for retrieving backlink information, either from a crawler or an API.
     """
-    def __init__(self, api_client: Optional[BaseBacklinkAPIClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
+    def __init__(self, api_client: Optional[BaseBacklinkAPIClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None, session_manager: SessionManager, resilience_manager: DistributedResilienceManager): # Removed Optional and fallback
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
         self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
         self.db = database # New: Store database instance
-        self.session_manager = session_manager # Store the injected session manager
-        if self.session_manager is None:
-            # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
-            self.session_manager = LocalSessionManager()
-            logger.warning("No SessionManager provided to BacklinkService. Falling back to local SessionManager.")
-        
-        self.resilience_manager = resilience_manager # New: Store ResilienceManager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to BacklinkService. Falling back to global instance.")
+        self.session_manager = session_manager
+        self.resilience_manager = resilience_manager
 
         # Determine which API client to use based on config_loader priority
         if config_loader.get("backlink_api.gsc_api.enabled"):
