@@ -4,13 +4,13 @@
 
 server {
     listen 80;
-    server_name www.yspanel.com api.yspanel.com linkprofiler.yspanel.com monitor.yspanel.com; # Add all your domains here
+server_name www.yspanel.com api.yspanel.com linkprofiler.yspanel.com monitor.yspanel.com; # Add all your domains here
     return 301 https://$host$request_uri; # Redirect HTTP to HTTPS
 }
 
 server {
     listen 443 ssl http2; # Listen for HTTPS traffic
-    server_name www.yspanel.com api.yspanel.com linkprofiler.yspanel.com monitor.yspanel.com; # Add all your domains here
+server_name www.yspanel.com api.yspanel.com linkprofiler.yspanel.com monitor.yspanel.com; # Add all your domains here
 
     # SSL certificate paths (replace with your actual paths, e.g., from Certbot)
     ssl_certificate /etc/letsencrypt/live/www.yspanel.com/fullchain.pem;
