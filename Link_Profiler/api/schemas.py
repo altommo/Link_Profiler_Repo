@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
+from urllib.parse import urlparse # Import urlparse
 
 # Import from core.models for shared data structures and serialization
 from Link_Profiler.core.models import User, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, Token, TokenData, LinkIntersectResult, CompetitiveKeywordAnalysisResult # Added Token, TokenData, LinkIntersectResult, CompetitiveKeywordAnalysisResult
