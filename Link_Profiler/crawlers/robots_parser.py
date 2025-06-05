@@ -13,6 +13,9 @@ import asyncio # Import asyncio for asyncio.Lock
 from Link_Profiler.utils.session_manager import SessionManager
 from Link_Profiler.config.config_loader import config_loader
 
+
+logger = logging.getLogger(__name__) # This logger is for the module, not the class instance
+
 # Conditional import for robotparser (Python 3.8+)
 try:
     from urllib.robotparser import RobotFileParser
@@ -37,8 +40,6 @@ except ImportError:
         def request_rate(self, useragent): return None
     logger.warning("urllib.robotparser.RobotFileParser not available. Using a dummy implementation. Consider upgrading Python.")
 
-
-logger = logging.getLogger(__name__) # This logger is for the module, not the class instance
 
 class RobotsParser:
     """
