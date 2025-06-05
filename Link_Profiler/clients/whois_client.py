@@ -6,6 +6,7 @@ File: Link_Profiler/clients/whois_client.py
 import logging
 import asyncio
 from typing import Dict, Any, Optional
+from datetime import datetime, timedelta
 import aiohttp
 import json
 import random
@@ -87,6 +88,7 @@ class WHOISClient:
             response.raise_for_status() # Raise an exception for HTTP errors
             data = await response.json()
             self.logger.info(f"WHOIS data for {domain} fetched successfully.")
+            data['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
             return data
         except Exception as e:
             self.logger.error(f"Error fetching WHOIS data for {domain}: {e}", exc_info=True)
@@ -108,7 +110,8 @@ class WHOISClient:
                 "status": "clientTransferProhibited",
                 "emails": ["abuse@example.com"],
                 "organization": "Example LLC",
-                "country": "US"
+                "country": "US",
+                'last_fetched_at': datetime.utcnow().isoformat()
             }
         elif "test.com" in domain:
             return None # Simulate not found
@@ -122,6 +125,7 @@ class WHOISClient:
                 "status": "ok",
                 "emails": [f"admin@{domain}"],
                 "organization": f"Org {random.randint(1, 100)}",
-                "country": random.choice(["US", "CA", "GB", "DE", "AU"])
+                "country": random.choice(["US", "CA", "GB", "DE", "AU"]),
+                'last_fetched_at': datetime.utcnow().isoformat()
             }
 

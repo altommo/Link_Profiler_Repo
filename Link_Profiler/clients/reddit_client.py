@@ -118,7 +118,8 @@ class RedditClient:
                     'author': str(s.author), # Convert Redditor object to string
                     'published_date': datetime.fromtimestamp(s.created_utc).isoformat(),
                     'sentiment': 'neutral', # PRAW doesn't provide sentiment directly
-                    'engagement_score': s.score # Using score as a proxy for engagement
+                    'engagement_score': s.score, # Using score as a proxy for engagement
+                    'last_fetched_at': datetime.utcnow() # Set last_fetched_at for live data
                 })
             self.logger.info(f"Found {len(results)} Reddit mentions for '{query}'.")
             return results
@@ -140,7 +141,8 @@ class RedditClient:
                 'author': f"u/simulated_user_{random.randint(1,100)}",
                 'published_date': (datetime.now() - timedelta(days=random.randint(1, 365))).isoformat(),
                 'sentiment': random.choice(['positive', 'negative', 'neutral']),
-                'engagement_score': random.randint(1, 1000)
+                'engagement_score': random.randint(1, 1000),
+                'last_fetched_at': datetime.utcnow()
             })
         return simulated_results
 

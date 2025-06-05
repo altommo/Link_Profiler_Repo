@@ -106,8 +106,9 @@ class NewsAPIClient:
                     'url': article.get('url'),
                     'author': article.get('author'),
                     'source': article.get('source', {}).get('name'),
-                    'published_at': article.get('publishedAt'),
-                    'content': article.get('content')
+                    'published_at': article.get('published_at'),
+                    'content': article.get('content'),
+                    'last_fetched_at': datetime.utcnow() # Set last_fetched_at for live data
                 })
             self.logger.info(f"Found {len(results)} news articles for '{query}'.")
             return results
@@ -128,7 +129,8 @@ class NewsAPIClient:
                 'author': f"Reporter {random.randint(1, 50)}",
                 'source': f"Simulated News Outlet {random.randint(1, 10)}",
                 'published_at': (datetime.now() - timedelta(hours=random.randint(1, 24*7))).isoformat(),
-                'content': f"Full content of the simulated news article about {query}..."
+                'content': f"Full content of the simulated news article about {query}...",
+                'last_fetched_at': datetime.utcnow()
             })
         return simulated_results
 
