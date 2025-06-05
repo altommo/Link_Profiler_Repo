@@ -9,6 +9,7 @@ from typing import Dict, Any, Optional
 import aiohttp
 import json # For parsing JSON response
 import random # Import random for simulation
+import time # Import time for time.monotonic()
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
@@ -24,6 +25,7 @@ class SSLLabsClient:
         self.base_url = config_loader.get("technical_auditor.ssl_labs_api.base_url")
         self.enabled = config_loader.get("technical_auditor.ssl_labs_api.enabled", False)
         self._session: Optional[aiohttp.ClientSession] = None
+        self._last_call_time: float = 0.0 # For explicit throttling
 
         if not self.enabled:
             self.logger.info("SSL Labs API is disabled by configuration.")
@@ -43,6 +45,15 @@ class SSLLabsClient:
             await self._session.close()
             self._session = None
 
+    async def _throttle(self):
+        """Ensures at least 1 second delay between calls to SSL Labs."""
+        elapsed = time.monotonic() - self._last_call_time
+        if elapsed < 1.0:
+            wait_time = 1.0 - elapsed
+            self.logger.debug(f"Throttling SSL Labs API. Waiting for {wait_time:.2f} seconds.")
+            await asyncio.sleep(wait_time)
+        self._last_call_time = time.monotonic()
+
     @api_rate_limited(service="ssl_labs_api", api_client_type="ssl_labs_client", endpoint="analyze_ssl")
     async def analyze_ssl(self, host: str, publish: str = 'off', all_results: str = 'done') -> Optional[Dict[str, Any]]:
         """
@@ -60,6 +71,8 @@ class SSLLabsClient:
             self.logger.warning(f"SSL Labs API is disabled. Simulating SSL analysis for {host}.")
             return self._simulate_ssl_analysis(host)
 
+        await self._throttle() # Apply explicit throttling
+
         endpoint = self.base_url
         params = {
             'host': host,
@@ -70,31 +83,45 @@ class SSLLabsClient:
         }
 
         self.logger.info(f"Calling SSL Labs API for SSL analysis of {host}...")
-        try:
-            async with self._session.get(endpoint, params=params, timeout=60) as response: # Increased timeout for SSL analysis
-                response.raise_for_status()
-                data = await response.json()
-                
-                # SSL Labs API can return "IN_PROGRESS" status, so we might need to poll
-                if data.get('status') == 'IN_PROGRESS' or data.get('status') == 'DNS':
-                    self.logger.info(f"SSL Labs analysis for {host} is {data.get('status')}. Polling...")
-                    # Implement polling logic if needed for real-time results
-                    # For now, we'll just return the current status or simulate completion
-                    await asyncio.sleep(5) # Wait a bit before re-checking or simulating
-                    # In a real scenario, you'd re-call this method or have a separate polling loop.
-                    # For this one-shot call, we'll just return the current state.
-                    if data.get('status') == 'IN_PROGRESS':
-                        self.logger.warning(f"SSL Labs analysis for {host} still in progress. Returning partial/simulated data.")
-                        return self._simulate_ssl_analysis(host) # Fallback to simulation if not immediately done
-                
-                self.logger.info(f"SSL analysis for {host} completed with grade: {data.get('endpoints', [{}])[0].get('grade')}.")
-                return data
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/API error fetching SSL analysis for {host}: {e}", exc_info=True)
-            return self._simulate_ssl_analysis(host) # Fallback to simulation on error
-        except Exception as e:
-            self.logger.error(f"Unexpected error fetching SSL analysis for {host}: {e}", exc_info=True)
-            return self._simulate_ssl_analysis(host) # Fallback to simulation on error
+        
+        for attempt in range(3): # Retry up to 3 times for 429/5xx errors
+            try:
+                async with self._session.get(endpoint, params=params, timeout=60) as response: # Increased timeout for SSL analysis
+                    response.raise_for_status()
+                    data = await response.json()
+                    
+                    # Implement polling logic
+                    while data.get('status') in ('IN_PROGRESS', 'DNS'):
+                        self.logger.info(f"SSL Labs analysis for {host} is {data.get('status')}. Polling in 10 seconds...")
+                        await asyncio.sleep(10)
+                        await self._throttle() # Throttle before polling
+                        async with self._session.get(endpoint, params=params, timeout=60) as poll_response:
+                            poll_response.raise_for_status()
+                            data = await poll_response.json()
+                    
+                    if data.get('status') == 'READY':
+                        self.logger.info(f"SSL analysis for {host} completed with grade: {data.get('endpoints', [{}])[0].get('grade')}.")
+                        return data
+                    elif data.get('status') == 'ERROR':
+                        self.logger.error(f"SSL Labs analysis for {host} returned an error status: {data.get('statusMessage')}")
+                        return None # Analysis failed
+                    else:
+                        self.logger.warning(f"SSL Labs analysis for {host} returned unexpected status: {data.get('status')}. Data: {data}")
+                        return None # Unexpected status
+            except aiohttp.ClientResponseError as e:
+                if e.status in (429, 500, 502, 503, 504) and attempt < 2: # Retry on 429 or 5xx
+                    self.logger.warning(f"SSL Labs API returned {e.status} for {host}. Retrying in {2 ** attempt} seconds...")
+                    await asyncio.sleep(2 ** attempt)
+                    await self._throttle() # Throttle before retry
+                    continue
+                else:
+                    self.logger.error(f"Network/API error fetching SSL analysis for {host} (Status: {e.status}): {e}", exc_info=True)
+                    return self._simulate_ssl_analysis(host) # Fallback to simulation on error
+            except Exception as e:
+                self.logger.error(f"Unexpected error fetching SSL analysis for {host}: {e}", exc_info=True)
+                return self._simulate_ssl_analysis(host) # Fallback to simulation on error
+        
+        return None # Should not reach here if retries are exhausted or successful
 
     def _simulate_ssl_analysis(self, host: str) -> Dict[str, Any]:
         """Helper to generate simulated SSL analysis data."""
@@ -157,3 +184,4 @@ class SSLLabsClient:
                 }
             ]
         }
+

@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 import aiohttp
 import json # For parsing JSON response
 import random # Import random for simulation
+import time # Import time for time.monotonic()
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
@@ -26,6 +27,7 @@ class SecurityTrailsClient:
         self.base_url = config_loader.get("technical_auditor.security_trails_api.base_url")
         self.enabled = config_loader.get("technical_auditor.security_trails_api.enabled", False)
         self._session: Optional[aiohttp.ClientSession] = None
+        self._last_call_time: float = 0.0 # For explicit throttling
 
         if not self.enabled:
             self.logger.info("SecurityTrails API is disabled by configuration.")
@@ -49,6 +51,15 @@ class SecurityTrailsClient:
             await self._session.close()
             self._session = None
 
+    async def _throttle(self):
+        """Ensures at least 1 second delay between calls to SecurityTrails."""
+        elapsed = time.monotonic() - self._last_call_time
+        if elapsed < 1.0:
+            wait_time = 1.0 - elapsed
+            self.logger.debug(f"Throttling SecurityTrails API. Waiting for {wait_time:.2f} seconds.")
+            await asyncio.sleep(wait_time)
+        self._last_call_time = time.monotonic()
+
     @api_rate_limited(service="security_trails_api", api_client_type="security_trails_client", endpoint="get_subdomains")
     async def get_subdomains(self, domain: str) -> List[str]:
         """
@@ -64,6 +75,8 @@ class SecurityTrailsClient:
             self.logger.warning(f"SecurityTrails API is disabled. Simulating subdomains for {domain}.")
             return self._simulate_subdomains(domain)
 
+        await self._throttle() # Apply explicit throttling
+
         endpoint = f"{self.base_url}/domain/{domain}/subdomains"
         
         self.logger.info(f"Calling SecurityTrails API for subdomains of {domain}...")
@@ -77,8 +90,8 @@ class SecurityTrailsClient:
                     subdomains.append(f"{subdomain_prefix}.{domain}")
             self.logger.info(f"Found {len(subdomains)} subdomains for {domain}.")
             return subdomains
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/API error fetching subdomains for {domain}: {e}", exc_info=True)
+        except aiohttp.ClientResponseError as e:
+            self.logger.error(f"Network/API error fetching subdomains for {domain} (Status: {e.status}): {e}", exc_info=True)
             return self._simulate_subdomains(domain) # Fallback to simulation on error
         except Exception as e:
             self.logger.error(f"Unexpected error fetching subdomains for {domain}: {e}", exc_info=True)
@@ -100,21 +113,41 @@ class SecurityTrailsClient:
             self.logger.warning(f"SecurityTrails API is disabled. Simulating DNS history for {domain}.")
             return self._simulate_dns_history(domain, record_type)
 
+        await self._throttle() # Apply explicit throttling
+
         endpoint = f"{self.base_url}/history/{domain}/dns/{record_type}"
         
         self.logger.info(f"Calling SecurityTrails API for DNS history of {domain} ({record_type})...")
-        try:
-            async with self._session.get(endpoint, timeout=10) as response:
-                response.raise_for_status()
-                data = await response.json()
-                self.logger.info(f"DNS history for {domain} ({record_type}) fetched successfully.")
-                return data
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/API error fetching DNS history for {domain}: {e}", exc_info=True)
-            return self._simulate_dns_history(domain, record_type) # Fallback to simulation on error
-        except Exception as e:
-            self.logger.error(f"Unexpected error fetching DNS history for {domain}: {e}", exc_info=True)
-            return self._simulate_dns_history(domain, record_type) # Fallback to simulation on error
+        all_records = []
+        page = 1
+        while True:
+            params = {"page": page}
+            try:
+                async with self._session.get(endpoint, params=params, timeout=10) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    
+                    records_on_page = data.get("records", [])
+                    all_records.extend(records_on_page)
+                    
+                    if not data.get("has_next_page") or not records_on_page:
+                        break # No more pages or no records on current page
+                    
+                    page += 1
+                    await asyncio.sleep(1) # Delay between pages
+            except aiohttp.ClientResponseError as e:
+                self.logger.error(f"Network/API error fetching DNS history for {domain} ({record_type}, page {page}) (Status: {e.status}): {e}", exc_info=True)
+                return self._simulate_dns_history(domain, record_type) # Fallback to simulation on error
+            except Exception as e:
+                self.logger.error(f"Unexpected error fetching DNS history for {domain} ({record_type}, page {page}): {e}", exc_info=True)
+                return self._simulate_dns_history(domain, record_type) # Fallback to simulation on error
+
+        self.logger.info(f"DNS history for {domain} ({record_type}) fetched successfully. Total records: {len(all_records)}.")
+        return {
+            "records": all_records,
+            "record_type": record_type.upper(),
+            "total_pages": page # Total pages fetched
+        }
 
     def _simulate_subdomains(self, domain: str) -> List[str]:
         """Helper to generate simulated subdomains."""
@@ -158,3 +191,4 @@ class SecurityTrailsClient:
             "record_type": record_type.upper(),
             "total_pages": 1
         }
+

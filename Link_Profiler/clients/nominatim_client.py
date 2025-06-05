@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 import aiohttp
 import json # For parsing JSON response
 import random # Import random for simulation
+import time # Import time for time.monotonic()
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
@@ -26,6 +27,7 @@ class NominatimClient:
         self.user_agent = config_loader.get("local_seo.nominatim_api.user_agent")
         self.enabled = config_loader.get("local_seo.nominatim_api.enabled", False)
         self._session: Optional[aiohttp.ClientSession] = None
+        self._last_call_time: float = 0.0 # For explicit throttling
 
         if not self.enabled:
             self.logger.info("Nominatim API is disabled by configuration.")
@@ -49,6 +51,15 @@ class NominatimClient:
             await self._session.close()
             self._session = None
 
+    async def _throttle(self):
+        """Ensures at least 1 second delay between calls to Nominatim."""
+        elapsed = time.monotonic() - self._last_call_time
+        if elapsed < 1.0:
+            wait_time = 1.0 - elapsed
+            self.logger.debug(f"Throttling Nominatim API. Waiting for {wait_time:.2f} seconds.")
+            await asyncio.sleep(wait_time)
+        self._last_call_time = time.monotonic()
+
     @api_rate_limited(service="nominatim_api", api_client_type="nominatim_client", endpoint="geocode_search")
     async def geocode_search(self, query: str, limit: int = 1) -> List[Dict[str, Any]]:
         """
@@ -64,6 +75,8 @@ class NominatimClient:
         if not self.enabled:
             self.logger.warning(f"Nominatim API is disabled. Simulating geocode search for '{query}'.")
             return self._simulate_geocode_results(query, limit)
+
+        await self._throttle() # Apply explicit throttling
 
         endpoint = f"{self.base_url}"
         params = {
@@ -82,8 +95,8 @@ class NominatimClient:
                 results.extend(data)
             self.logger.info(f"Found {len(results)} geocode results for '{query}'.")
             return results
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/API error geocoding '{query}' with Nominatim: {e}", exc_info=True)
+        except aiohttp.ClientResponseError as e:
+            self.logger.error(f"Network/API error geocoding '{query}' with Nominatim (Status: {e.status}): {e}", exc_info=True)
             return self._simulate_geocode_results(query, limit) # Fallback to simulation on error
         except Exception as e:
             self.logger.error(f"Unexpected error geocoding '{query}' with Nominatim: {e}", exc_info=True)
@@ -105,6 +118,8 @@ class NominatimClient:
             self.logger.warning(f"Nominatim API is disabled. Simulating reverse geocode for {lat}, {lon}.")
             return self._simulate_reverse_geocode_result(lat, lon)
 
+        await self._throttle() # Apply explicit throttling
+
         endpoint = f"{self.base_url}/reverse"
         params = {
             'lat': lat,
@@ -119,8 +134,8 @@ class NominatimClient:
                 response.raise_for_status()
                 data = await response.json()
                 return data
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/API error reverse geocoding {lat}, {lon} with Nominatim: {e}", exc_info=True)
+        except aiohttp.ClientResponseError as e:
+            self.logger.error(f"Network/API error reverse geocoding {lat}, {lon} with Nominatim (Status: {e.status}): {e}", exc_info=True)
             return self._simulate_reverse_geocode_result(lat, lon) # Fallback to simulation on error
         except Exception as e:
             self.logger.error(f"Unexpected error reverse geocoding {lat}, {lon} with Nominatim: {e}", exc_info=True)
@@ -175,3 +190,4 @@ class NominatimClient:
             },
             "boundingbox": [str(lat - 0.01), str(lat + 0.01), str(lon - 0.01), str(lon + 0.01)]
         }
+
