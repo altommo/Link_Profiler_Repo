@@ -471,7 +471,7 @@ pause
     print("  ✅ Created scripts/start_local.bat")
     
     # Test script (already exists, just ensure it's mentioned)
-    print("  ℹ️  scripts/test_queue.py should already exist from previous steps.")
+    print("  ℹ️  tests/test_queue.py should already exist from previous steps.")
 
 def create_requirements_txt():
     """Create a basic requirements.txt if it doesn't exist."""
@@ -550,7 +550,7 @@ def copy_artifact_files_instructions():
         ("Link_Profiler/utils/proxy_manager.py", "Link_Profiler/utils/proxy_manager.py"),
         ("Link_Profiler/utils/content_validator.py", "Link_Profiler/utils/content_validator.py"),
         ("Link_Profiler/utils/data_exporter.py", "Link_Profiler/utils/data_exporter.py"),
-        ("Link_Profiler/test_api.py", "test_api.py"),
+        ("tests/test_api.py", "tests/test_api.py"),
         ("setup.py", "setup.py"),
         (".env.example", ".env.example"),
         (".gitignore", ".gitignore"),
@@ -598,7 +598,7 @@ def main():
     print("3. Start Redis: `redis-server` (if not using Docker).")
     print("4. Install PostgreSQL and create the database as per README.md.")
     print("5. Install Python dependencies: `pip install -r requirements.txt`.")
-    print("6. Test setup: `python scripts/test_queue.py` (or `python test_api.py` for full API tests).")
+    print("6. Test setup: `python tests/test_queue.py` (or `python tests/test_api.py` for full API tests).")
     print("7. Start development: `./scripts/start_local.sh` (Linux/macOS) or `scripts\\start_local.bat` (Windows).")
     print("\n🎉 Happy crawling with distributed queues!")
 

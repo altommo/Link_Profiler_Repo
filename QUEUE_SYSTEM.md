@@ -52,7 +52,7 @@ python -m Link_Profiler.monitoring.dashboard dashboard
 ### 4. Test the System
 ```bash
 # Test queue functionality
-python Link_Profiler/scripts/test_queue.py
+python tests/test_queue.py
 
 # Submit a test job via API
 curl -X POST "http://localhost:8000/queue/submit_crawl" \
