@@ -118,6 +118,47 @@ class SEOMetrics:
     majestic_citation_flow: Optional[int] = None
     # Add more as needed from various SEO tools
 
+    # New fields from TechnicalAuditor
+    url: Optional[str] = None # The URL this SEOMetrics object refers to
+    http_status: Optional[int] = None
+    response_time_ms: Optional[float] = None
+    page_size_bytes: Optional[int] = None
+    title_length: Optional[int] = None
+    meta_description_length: Optional[int] = None
+    h1_count: Optional[int] = None
+    h2_count: Optional[int] = None
+    internal_links: Optional[int] = None
+    external_links: Optional[int] = None
+    images_count: Optional[int] = None
+    images_without_alt: Optional[int] = None
+    has_canonical: Optional[bool] = None
+    has_robots_meta: Optional[bool] = None
+    has_schema_markup: Optional[bool] = None
+    broken_links: List[str] = field(default_factory=list)
+    performance_score: Optional[float] = None # Lighthouse Performance score (0-100)
+    mobile_friendly: Optional[bool] = None
+    accessibility_score: Optional[float] = None # Lighthouse Accessibility score (0-100)
+    audit_timestamp: Optional[datetime] = None # When the audit was run
+    seo_score: Optional[float] = None # Overall SEO score (0-100)
+    issues: List[str] = field(default_factory=list) # List of identified issues
+    structured_data_types: List[str] = field(default_factory=list) # e.g., "Article", "Product"
+    og_title: Optional[str] = None
+    og_description: Optional[str] = None
+    twitter_title: Optional[str] = None
+    twitter_description: Optional[str] = None
+    validation_issues: List[str] = field(default_factory=list) # Issues from ContentValidator
+    ocr_text: Optional[str] = None # Extracted text from images via OCR
+    nlp_entities: List[str] = field(default_factory=list) # Entities extracted via NLP
+    nlp_sentiment: Optional[str] = None # Sentiment extracted via NLP (positive, neutral, negative)
+    nlp_topics: List[str] = field(default_factory=list) # Main topics extracted via NLP
+    video_transcription: Optional[str] = None # Transcription from video analysis
+    video_topics: List[str] = field(default_factory=list) # Topics from video analysis
+    ai_content_classification: Optional[str] = None # AI classification of content quality
+    ai_content_score: Optional[float] = None # AI-generated content score
+    ai_suggestions: List[str] = field(default_factory=list) # AI-generated suggestions
+    ai_semantic_keywords: List[str] = field(default_factory=list) # AI-generated semantic keywords
+    ai_readability_score: Optional[float] = None # AI-generated readability score
+
     def to_dict(self) -> Dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if v is not None}
 
