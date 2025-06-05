@@ -33,23 +33,25 @@ class APIRateLimiter:
         if service_name not in cls._instances:
             instance = super().__new__(cls)
             instance._service_name = service_name
+            instance._initialized = False # Flag to ensure __init__ runs only once
             cls._instances[service_name] = instance
         return cls._instances[service_name]
 
     def __init__(self, service_name: str):
-        if not hasattr(self, '_initialized'): # Prevent re-initialization for singletons
-            self._initialized = True
-            self.enabled = config_loader.get("api_rate_limiter.enabled", False)
-            self.requests_per_second = config_loader.get("api_rate_limiter.requests_per_second", 1.0)
-            self.min_interval = 1.0 / self.requests_per_second if self.requests_per_second > 0 else 0.0
-            self.max_retries = config_loader.get("api_rate_limiter.max_retries", 3) # New: Max retries
-            self.retry_backoff_factor = config_loader.get("api_rate_limiter.retry_backoff_factor", 0.5) # New: Backoff factor
-            self.logger = logging.getLogger(f"{__name__}.{service_name}")
-            
-            if self.enabled:
-                self.logger.info(f"API Rate Limiter enabled for '{service_name}' at {self.requests_per_second} req/s with {self.max_retries} retries.")
-            else:
-                self.logger.info(f"API Rate Limiter disabled for '{service_name}'.")
+        if self._initialized: # Prevent re-initialization for singletons
+            return
+        self._initialized = True
+        self.enabled = config_loader.get("api_rate_limiter.enabled", False)
+        self.requests_per_second = config_loader.get("api_rate_limiter.requests_per_second", 1.0)
+        self.min_interval = 1.0 / self.requests_per_second if self.requests_per_second > 0 else 0.0
+        self.max_retries = config_loader.get("api_rate_limiter.max_retries", 3) # New: Max retries
+        self.retry_backoff_factor = config_loader.get("api_rate_limiter.retry_backoff_factor", 0.5) # New: Backoff factor
+        self.logger = logging.getLogger(f"{__name__}.{service_name}")
+        
+        if self.enabled:
+            self.logger.info(f"API Rate Limiter enabled for '{service_name}' at {self.requests_per_second} req/s with {self.max_retries} retries.")
+        else:
+            self.logger.info(f"API Rate Limiter disabled for '{service_name}'.")
 
     async def _wait_if_needed(self, key: str):
         """Waits if necessary to adhere to the rate limit for a specific key."""
