@@ -85,5 +85,17 @@
     "dashboard_refresh": 60,
     "max_job_history": 500,
     "performance_window": 7200
+  },
+  "distributed_circuit_breaker": {
+    "enabled": true,
+    "redis_cluster": true,
+    "sync_interval": 5,
+    "global_thresholds": true
+  },
+  "advanced_session_manager": {
+    "enabled": true,
+    "initial_pool_size": 10,
+    "max_pool_size_per_domain": 25,
+    "adaptation_interval": 45
   }
 }
