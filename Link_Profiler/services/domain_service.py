@@ -1,31 +1,21 @@
-"""
-Domain Service - Provides domain-related information using various API clients.
-File: Link_Profiler/services/domain_service.py
-"""
-
 import asyncio
 import logging
-import os
-from typing import List, Dict, Any, Optional, Union
-from urllib.parse import urlparse
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import random
 import aiohttp
-import json
-import redis.asyncio as redis
+import json # Import json for caching
+import redis.asyncio as redis # Import redis for type hinting
 
-from Link_Profiler.core.models import Domain, DomainHistory
-from Link_Profiler.config.config_loader import config_loader
-from Link_Profiler.utils.api_rate_limiter import api_rate_limited
-from Link_Profiler.monitoring.prometheus_metrics import (
-    API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL
-)
-from Link_Profiler.utils.user_agent_manager import user_agent_manager
-from Link_Profiler.database.database import Database
-
-# New: Import WHOISClient and DNSClient
-from Link_Profiler.clients.whois_client import WHOISClient
-from Link_Profiler.clients.dns_client import DNSClient
+from Link_Profiler.core.models import Domain, DomainHistory # Absolute import
+from Link_Profiler.config.config_loader import config_loader # New import
+from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
+from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
+from Link_Profiler.clients.whois_client import WHOISClient # New: Import WHOISClient
+from Link_Profiler.clients.dns_client import DNSClient # New: Import DNSClient
+from Link_Profiler.monitoring.prometheus_metrics import API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL # Import Prometheus metrics
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.database.database import Database # Import Database
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +24,7 @@ class BaseDomainAPIClient:
     Base class for a domain information API client.
     Real implementations would connect to external services.
     """
-    async def get_domain_availability(self, domain_name: str) -> bool:
-        raise NotImplementedError
-
-    async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
+    async def get_domain_info(self, domain: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
     async def __aenter__(self):
@@ -53,58 +40,61 @@ class SimulatedDomainAPIClient(BaseDomainAPIClient):
     A purely simulated client for domain information APIs.
     Generates dummy domain data without making external network calls.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".SimulatedDomainAPIClient")
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to SimulatedDomainAPIClient. Falling back to local SessionManager.")
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
         self.logger.debug("Entering SimulatedDomainAPIClient context.")
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for client session."""
         self.logger.debug("Exiting SimulatedDomainAPIClient context.")
-        pass
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
-    async def get_domain_availability(self, domain_name: str) -> bool:
+    async def get_domain_info(self, domain: str) -> Optional[Dict[str, Any]]:
         """
-        Simulates checking domain availability.
+        Simulates fetching domain information.
         """
-        self.logger.info(f"Purely simulating domain availability for: {domain_name}")
-        # Simulate availability based on domain name
-        return "example" not in domain_name and "test" not in domain_name
+        self.logger.info(f"Simulating API call for domain info: {domain}")
+        
+        try:
+            async with await self.session_manager.get(f"http://localhost:8080/simulate_domain/{domain}") as response:
+                # We don't care about the actual response, just that the request was made
+                pass
+        except aiohttp.ClientConnectorError:
+            pass
+        except Exception as e:
+            self.logger.warning(f"Unexpected error during simulated domain fetch: {e}")
 
-    async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Simulates fetching WHOIS data.
-        """
-        self.logger.info(f"Purely simulating WHOIS data for: {domain_name}")
-        # Generate dummy WHOIS data
-        if "example.com" in domain_name:
+        # Generate dummy data
+        is_available = random.choice([True, False])
+        if is_available:
             return {
-                "domain_name": domain_name,
-                "registrar": "Example Registrar",
-                "creation_date": "2000-01-01",
-                "expiration_date": "2025-01-01",
-                "name_servers": ["ns1.example.com", "ns2.example.com"],
-                "status": "clientTransferProhibited",
-                "emails": ["abuse@example.com"],
-                "organization": "Example LLC",
-                "country": "US"
+                "domain_name": domain,
+                "is_available": True,
+                "creation_date": (datetime.now() - timedelta(days=random.randint(365, 365*10))).isoformat(),
+                "expiration_date": (datetime.now() + timedelta(days=random.randint(30, 365*5))).isoformat(),
+                "registrant_country": random.choice(["US", "CA", "GB", "DE", "AU"]),
+                "registrar": f"SimulatedRegistrar{random.randint(1,5)}",
+                "name_servers": [f"ns1.simulated.com", f"ns2.simulated.com"],
+                "whois_data": {"raw": "Simulated WHOIS data..."},
+                "ip_address": f"192.168.1.{random.randint(1,254)}",
+                "status": "active"
             }
-        elif "test.com" in domain_name:
-            return None # Simulate not found
         else:
             return {
-                "domain_name": domain_name,
-                "registrar": f"Registrar {random.randint(1, 10)}",
-                "creation_date": (datetime.now() - timedelta(days=random.randint(365, 365*10))).strftime("%Y-%m-%d"),
-                "expiration_date": (datetime.now() + timedelta(days=random.randint(30, 365*5))).strftime("%Y-%m-%d"),
-                "name_servers": [f"ns1.{domain_name}", f"ns2.{domain_name}"],
-                "status": "ok",
-                "emails": [f"admin@{domain_name}"],
-                "organization": f"Org {random.randint(1, 100)}",
-                "country": random.choice(["US", "CA", "GB", "DE", "AU"])
+                "domain_name": domain,
+                "is_available": False,
+                "status": "unavailable"
             }
 
 class RealDomainAPIClient(BaseDomainAPIClient):
@@ -112,252 +102,144 @@ class RealDomainAPIClient(BaseDomainAPIClient):
     A client for real domain information APIs.
     This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str):
+    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".RealDomainAPIClient")
         self.api_key = api_key
         self.base_url = base_url
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to RealDomainAPIClient. Falling back to local SessionManager.")
 
     async def __aenter__(self):
         """Async context manager entry for client session."""
         self.logger.info("Entering RealDomainAPIClient context.")
-        if self._session is None or self._session.closed:
-            headers = {"X-API-Key": self.api_key} # Common header for API keys
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for client session."""
         self.logger.info("Exiting RealDomainAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
-    @api_rate_limited(service="domain_api", api_client_type="real_api", endpoint="availability")
-    async def get_domain_availability(self, domain_name: str) -> bool:
+    @api_rate_limited(service="domain_api", api_client_type="real_api", endpoint="get_domain_info")
+    async def get_domain_info(self, domain: str) -> Optional[Dict[str, Any]]:
         """
-        Fetches domain availability from a real API.
+        Fetches domain information from a real API.
         Replace with actual API call logic for your chosen provider.
         """
-        endpoint = f"{self.base_url}/v1/availability" # Hypothetical endpoint
-        params = {"domain": domain_name, "apiKey": self.api_key} # Some APIs use query param for key
-        self.logger.info(f"Attempting real API call for domain availability: {endpoint}?domain={domain_name}...")
-
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("RealDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {"X-API-Key": self.api_key}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-        else:
-            close_session_after_use = False
+        endpoint = f"{self.base_url}/v1/domain/{domain}/info" # Hypothetical endpoint
+        headers = {"Authorization": f"Bearer {self.api_key}"} # Example for API key in header
+        self.logger.info(f"Attempting real API call for domain info: {endpoint}...")
 
         try:
-            async with session_to_use.get(endpoint, params=params, timeout=10) as response:
-                response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+            async with await self.session_manager.get(endpoint, headers=headers) as response:
+                response.raise_for_status() # Raise an exception for HTTP errors
                 data = await response.json()
+                
                 # --- Replace with actual parsing logic for your chosen API ---
-                # Example: return data.get("available", False)
-                self.logger.warning("RealDomainAPIClient: Returning simulated availability. Replace with actual API response parsing.")
-                return "example" not in domain_name and "test" not in domain_name # Fallback to simulation
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Error fetching real domain availability for {domain_name}: {e}. Returning False.")
-            return False
-        except Exception as e:
-            self.logger.error(f"Unexpected error in real domain availability fetch for {domain_name}: {e}. Returning False.")
-            return False
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
-
-    @api_rate_limited(service="domain_api", api_client_type="real_api", endpoint="whois")
-    async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Fetches WHOIS data from a real API.
-        Replace with actual API call logic for your chosen provider.
-        """
-        endpoint = f"{self.base_url}/v1/whois" # Hypothetical endpoint
-        params = {"domain": domain_name, "apiKey": self.api_key}
-        self.logger.info(f"Attempting real API call for WHOIS data: {endpoint}?domain={domain_name}...")
-
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("RealDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {"X-API-Key": self.api_key}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-        else:
-            close_session_after_use = False
-
-        try:
-            async with session_to_use.get(endpoint, params=params, timeout=10) as response:
-                response.raise_for_status()
-                data = await response.json()
-                # --- Replace with actual parsing logic for your chosen API ---
-                # Example:
+                # Example: assuming data contains keys like 'domain_name', 'created_date', etc.
                 # return {
-                #     "domain_name": data.get("domainName"),
-                #     "registrar": data.get("registrarName"),
-                #     "creation_date": data.get("createdDate"),
-                #     "expiration_date": data.get("expiresDate"),
-                #     "name_servers": data.get("nameServers", []),
-                #     "status": data.get("status"),
-                #     "emails": data.get("contactEmails", []),
-                #     "organization": data.get("registrantOrganization"),
-                #     "country": data.get("registrantCountry")
+                #     "domain_name": data.get("domain_name"),
+                #     "is_available": data.get("status") == "available",
+                #     "creation_date": data.get("created_date"),
+                #     "expiration_date": data.get("expiration_date"),
+                #     "registrant_country": data.get("registrant", {}).get("country"),
+                #     "registrar": data.get("registrar"),
+                #     "name_servers": data.get("name_servers", []),
+                #     "whois_data": data.get("whois_raw"),
+                #     "ip_address": data.get("ip_address"),
+                #     "status": data.get("status")
                 # }
-                self.logger.warning("RealDomainAPIClient: Returning simulated WHOIS data. Replace with actual API response parsing.")
-                return await SimulatedDomainAPIClient().get_whois_data(domain_name) # Fallback to simulation
+                self.logger.warning("RealDomainAPIClient: Returning simulated data. Replace with actual API response parsing.")
+                return SimulatedDomainAPIClient(session_manager=self.session_manager).get_domain_info(domain) # Fallback to simulation
+
         except aiohttp.ClientError as e:
-            self.logger.error(f"Error fetching real WHOIS data for {domain_name}: {e}. Returning None.")
-            return None
+            self.logger.error(f"Error fetching real domain info for {domain}: {e}. Returning None.")
+            return None # Return None on network/client error
         except Exception as e:
-            self.logger.error(f"Unexpected error in real WHOIS data fetch for {domain_name}: {e}. Returning None.")
+            self.logger.error(f"Unexpected error in real domain fetch for {domain}: {e}. Returning None.")
             return None
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
 
 class AbstractDomainAPIClient(BaseDomainAPIClient):
     """
     A client for AbstractAPI's Domain API (or similar low-cost/free-tier service).
     Requires an API key.
     """
-    def __init__(self, api_key: str, base_url: str, whois_base_url: str):
+    def __init__(self, api_key: str, base_url: str, whois_base_url: str, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__ + ".AbstractDomainAPIClient")
         self.api_key = api_key
         self.base_url = base_url # For domain validation
-        self.whois_base_url = whois_base_url # For WHOIS
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.whois_base_url = whois_base_url # For WHOIS data
+        self.session_manager = session_manager # Use the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to AbstractDomainAPIClient. Falling back to local SessionManager.")
 
     async def __aenter__(self):
+        """Async context manager entry for client session."""
         self.logger.info("Entering AbstractDomainAPIClient context.")
-        if self._session is None or self._session.closed:
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            self._session = aiohttp.ClientSession(headers=headers)
+        await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit for client session."""
         self.logger.info("Exiting AbstractDomainAPIClient context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
-    @api_rate_limited(service="domain_api", api_client_type="abstract_api", endpoint="availability")
-    async def get_domain_availability(self, domain_name: str) -> bool:
+    @api_rate_limited(service="domain_api", api_client_type="abstract_api", endpoint="get_domain_info")
+    async def get_domain_info(self, domain: str) -> Optional[Dict[str, Any]]:
         """
-        Fetches domain availability using AbstractAPI's Domain Validation API.
+        Fetches domain information using AbstractAPI.
+        Combines domain validation and WHOIS data.
         """
-        endpoint = self.base_url
-        params = {"api_key": self.api_key, "domain": domain_name}
-        self.logger.info(f"Attempting AbstractAPI Domain API call for availability: {endpoint}?domain={domain_name}...")
+        if not self.api_key:
+            self.logger.error("AbstractAPI key is not configured. Cannot fetch domain info.")
+            return None
 
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("AbstractDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-        else:
-            close_session_after_use = False
+        domain_validation_url = f"{self.base_url}?api_key={self.api_key}&domain={domain}"
+        whois_url = f"{self.whois_base_url}?api_key={self.api_key}&domain={domain}"
+        
+        domain_data = {}
+        whois_data = {}
 
         try:
-            async with session_to_use.get(endpoint, params=params, timeout=10) as response:
+            # Fetch domain validation data
+            async with await self.session_manager.get(domain_validation_url) as response:
                 response.raise_for_status()
-                data = await response.json()
-                # Example parsing for AbstractAPI Domain API
-                return data.get("is_available", False)
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Error fetching AbstractAPI domain availability for {domain_name}: {e}. Returning False.")
-            return False
-        except Exception as e:
-            self.logger.error(f"Unexpected error in AbstractAPI domain availability fetch for {domain_name}: {e}. Returning False.")
-            return False
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
+                domain_data = await response.json()
+                self.logger.debug(f"AbstractAPI Domain Validation for {domain}: {domain_data}")
 
-    @api_rate_limited(service="domain_api", api_client_type="abstract_api", endpoint="whois")
-    async def get_whois_data(self, domain_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Fetches WHOIS data using AbstractAPI's WHOIS API.
-        """
-        endpoint = self.whois_base_url
-        params = {"api_key": self.api_key, "domain": domain_name}
-        self.logger.info(f"Attempting AbstractAPI WHOIS API call for {domain_name}...")
-
-        session_to_use = self._session
-        close_session_after_use = False
-        if session_to_use is None or session_to_use.closed:
-            self.logger.warning("AbstractDomainAPIClient: aiohttp session not active. Creating temporary session for this call.")
-            
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-
-            session_to_use = aiohttp.ClientSession(headers=headers)
-            close_session_after_use = True
-        else:
-            close_session_after_use = False
-
-        try:
-            async with session_to_use.get(endpoint, params=params, timeout=10) as response:
+            # Fetch WHOIS data
+            async with await self.session_manager.get(whois_url) as response:
                 response.raise_for_status()
-                data = await response.json()
-                # Example parsing for AbstractAPI WHOIS API
-                return {
-                    "domain_name": data.get("domain_name"),
-                    "registrar": data.get("registrar_name"),
-                    "creation_date": data.get("creation_date"),
-                    "expiration_date": data.get("expiration_date"),
-                    "name_servers": data.get("name_servers", {}).get("hostnames", []),
-                    "status": data.get("status"),
-                    "emails": data.get("contact", {}).get("email", []),
-                    "organization": data.get("registrant_organization"),
-                    "country": data.get("registrant_country")
-                }
+                whois_data = await response.json()
+                self.logger.debug(f"AbstractAPI WHOIS for {domain}: {whois_data}")
+
+            # Combine and format data
+            return {
+                "domain_name": domain_data.get("domain"),
+                "is_available": domain_data.get("is_available"),
+                "creation_date": whois_data.get("created"),
+                "expiration_date": whois_data.get("expires"),
+                "registrant_country": whois_data.get("country"),
+                "registrar": whois_data.get("registrar"),
+                "name_servers": whois_data.get("nameservers"),
+                "whois_data": whois_data, # Store full WHOIS response
+                "ip_address": domain_data.get("ip_address"),
+                "status": "active" if not domain_data.get("is_available") else "available"
+            }
+
         except aiohttp.ClientError as e:
-            self.logger.error(f"Error fetching AbstractAPI WHOIS data for {domain_name}: {e}. Returning None.")
+            self.logger.error(f"AbstractAPI network/client error for {domain}: {e}. Returning None.")
             return None
         except Exception as e:
-            self.logger.error(f"Unexpected error in AbstractAPI WHOIS data fetch for {domain_name}: {e}. Returning None.")
+            self.logger.error(f"Unexpected error with AbstractAPI for {domain}: {e}. Returning None.", exc_info=True)
             return None
-        finally:
-            if close_session_after_use and not session_to_use.closed:
-                await session_to_use.close()
 
 
 class DomainService:
@@ -365,56 +247,65 @@ class DomainService:
     Service for querying domain-related information, such as availability and WHOIS data.
     Uses various API clients to perform actual lookups.
     """
-    def __init__(self, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None,
-                 whois_client: Optional[WHOISClient] = None, dns_client: Optional[DNSClient] = None): # New: Accept WHOISClient and DNSClient
+    def __init__(self, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, database: Optional[Database] = None, whois_client: Optional[WHOISClient] = None, dns_client: Optional[DNSClient] = None, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
+        self.db = database
         self.api_cache_enabled = config_loader.get("api_cache.enabled", False)
-        self.db = database # Store the database instance
+        self.whois_client = whois_client # New: Store WHOISClient instance
+        self.dns_client = dns_client # New: Store DNSClient instance
+        self.session_manager = session_manager # Store the injected session manager
+        if self.session_manager is None:
+            # Fallback to a local session manager if none is provided (e.g., for testing)
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            self.session_manager = LocalSessionManager()
+            logger.warning("No SessionManager provided to DomainService. Falling back to local SessionManager.")
 
-        self.whois_client = whois_client
-        self.dns_client = dns_client
-
-        # Determine which DomainAPIClient to use for availability based on priority: AbstractAPI > Real (paid) > Simulated
+        # Determine which DomainAPIClient to use based on config_loader priority
         if config_loader.get("domain_api.abstract_api.enabled"):
             abstract_api_key = config_loader.get("domain_api.abstract_api.api_key")
             abstract_base_url = config_loader.get("domain_api.abstract_api.base_url")
             abstract_whois_base_url = config_loader.get("domain_api.abstract_api.whois_base_url")
             if not abstract_api_key or not abstract_base_url or not abstract_whois_base_url:
-                self.logger.warning("AbstractAPI enabled but API key or base_urls not found in config. Falling back to simulated Domain API.")
-                self.api_client = SimulatedDomainAPIClient()
+                self.logger.warning("AbstractAPI enabled but key/URL not found. Falling back to simulated Domain API.")
+                self.api_client = SimulatedDomainAPIClient(session_manager=self.session_manager)
             else:
-                self.api_client = AbstractDomainAPIClient(api_key=abstract_api_key, base_url=abstract_base_url, whois_base_url=abstract_whois_base_url)
+                self.logger.info("Using AbstractDomainAPIClient for domain lookups.")
+                self.api_client = AbstractDomainAPIClient(api_key=abstract_api_key, base_url=abstract_base_url, whois_base_url=abstract_whois_base_url, session_manager=self.session_manager)
         elif config_loader.get("domain_api.real_api.enabled"):
             real_api_key = config_loader.get("domain_api.real_api.api_key")
-            real_api_base_url = config_loader.get("domain_api.real_api.base_url")
-            if not real_api_key or not real_api_base_url:
-                self.logger.warning("Real Domain API enabled but API key or base_url not found in config. Falling back to simulated Domain API.")
-                self.api_client = SimulatedDomainAPIClient()
+            real_base_url = config_loader.get("domain_api.real_api.base_url")
+            if not real_api_key or not real_base_url:
+                self.logger.warning("Real Domain API enabled but key/URL not found. Falling back to simulated Domain API.")
+                self.api_client = SimulatedDomainAPIClient(session_manager=self.session_manager)
             else:
-                self.api_client = RealDomainAPIClient(api_key=real_api_key, base_url=real_api_base_url)
+                self.logger.info("Using RealDomainAPIClient for domain lookups.")
+                self.api_client = RealDomainAPIClient(api_key=real_api_key, base_url=real_base_url, session_manager=self.session_manager)
+        elif config_loader.get("domain_api.whois_json_api.enabled") and self.whois_client and self.whois_client.enabled:
+            self.logger.info("Using WHOISClient for domain lookups.")
+            self.api_client = self.whois_client # WHOISClient is already a BaseDomainAPIClient
         else:
             self.logger.info("No specific Domain API enabled. Using SimulatedDomainAPIClient for availability checks.")
-            self.api_client = SimulatedDomainAPIClient()
+            self.api_client = SimulatedDomainAPIClient(session_manager=self.session_manager)
 
     async def __aenter__(self):
         """Async context manager entry for DomainService."""
         self.logger.debug("Entering DomainService context.")
-        await self.api_client.__aenter__() # Enter the primary API client's context
-        if self.whois_client:
+        await self.api_client.__aenter__() # Enter the client's context
+        if self.whois_client: # New: Enter WHOISClient's context
             await self.whois_client.__aenter__()
-        if self.dns_client:
+        if self.dns_client: # New: Enter DNSClient's context
             await self.dns_client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for DomainService."""
         self.logger.debug("Exiting DomainService context.")
-        await self.api_client.__aexit__(exc_type, exc_val, exc_tb) # Exit the primary API client's context
-        if self.whois_client:
+        await self.api_client.__aexit__(exc_type, exc_val, exc_tb) # Exit the client's context
+        if self.whois_client: # New: Exit WHOISClient's context
             await self.whois_client.__aexit__(exc_type, exc_val, exc_tb)
-        if self.dns_client:
+        if self.dns_client: # New: Exit DNSClient's context
             await self.dns_client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _get_cached_response(self, cache_key: str, service_name: str, endpoint_name: str) -> Optional[Any]:
@@ -442,156 +333,75 @@ class DomainService:
                 API_CACHE_ERRORS_TOTAL.labels(service=service_name, endpoint=endpoint_name, error_type=type(e).__name__).inc()
                 self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
 
-    async def check_domain_availability(self, domain_name: str) -> bool:
-        """
-        Checks if a domain name is available for registration.
-        Uses caching.
-        """
-        cache_key = f"domain_availability:{domain_name}"
-        cached_result = await self._get_cached_response(cache_key, "domain_api", "availability")
-        if cached_result is not None:
-            return cached_result
-
-        is_available = await self.api_client.get_domain_availability(domain_name)
-        await self._set_cached_response(cache_key, is_available, "domain_api", "availability")
-        return is_available
-
-    async def get_whois_info(self, domain_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieves WHOIS information for a given domain name.
-        Prioritizes WHOISClient if enabled, otherwise uses primary domain API client.
-        Uses caching.
-        """
-        cache_key = f"whois_info:{domain_name}"
-        cached_result = await self._get_cached_response(cache_key, "domain_api", "whois")
-        if cached_result is not None:
-            return cached_result
-
-        whois_data = None
-        if self.whois_client and config_loader.get("domain_api.whois_json_api.enabled"):
-            self.logger.info(f"Using WHOISClient to fetch WHOIS data for {domain_name}.")
-            whois_data = await self.whois_client.get_domain_info(domain_name)
-        else:
-            self.logger.info(f"Using primary Domain API client to fetch WHOIS data for {domain_name}.")
-            whois_data = await self.api_client.get_whois_data(domain_name)
-
-        if whois_data: # Only cache if data is actually returned
-            await self._set_cached_response(cache_key, whois_data, "domain_api", "whois")
-        return whois_data
-
-    async def get_dns_records(self, domain_name: str, record_type: str = 'A') -> Optional[Dict[str, Any]]:
-        """
-        Retrieves DNS records for a given domain name.
-        Uses DNSClient if enabled.
-        Uses caching.
-        """
-        cache_key = f"dns_records:{domain_name}:{record_type}"
-        cached_result = await self._get_cached_response(cache_key, "domain_api", "dns_records")
-        if cached_result is not None:
-            return cached_result
-
-        dns_data = None
-        if self.dns_client and config_loader.get("domain_api.dns_over_https_api.enabled"):
-            self.logger.info(f"Using DNSClient to fetch {record_type} records for {domain_name}.")
-            # Default to Cloudflare, can be made configurable
-            dns_data = await self.dns_client.get_dns_records(domain_name, record_type, use_cloudflare=True)
-        else:
-            self.logger.warning(f"DNSClient is not enabled. Cannot fetch DNS records for {domain_name}. Simulating.")
-            # Fallback to a simple simulation if DNSClient is not enabled
-            dns_data = {
-                "Status": 0,
-                "Question": [{"name": domain_name, "type": 1}], # Type A
-                "Answer": [{"name": domain_name, "type": 1, "TTL": 300, "data": "192.0.2.1"}] # Dummy IP
-            }
-
-        if dns_data:
-            await self._set_cached_response(cache_key, dns_data, "domain_api", "dns_records")
-        return dns_data
-
     async def get_domain_info(self, domain_name: str) -> Optional[Domain]:
         """
-        Combines WHOIS info, availability check, and DNS records into a Domain model.
-        Assigns consistent simulated scores if no real API is used.
-        Uses caching for underlying API calls.
-        Also saves a historical snapshot of the domain's metrics.
+        Retrieves comprehensive information about a domain.
+        Prioritizes database cache, then API, then fetches new data.
         """
-        # First, try to load from DB
-        domain_obj = self.db.get_domain(domain_name) if self.db else None
-        if domain_obj and (datetime.now() - (domain_obj.last_crawled or datetime.min)).days < 7: # Cache for 7 days in DB
-            self.logger.info(f"Domain info for {domain_name} found in DB and is recent.")
-            self._save_domain_snapshot(domain_obj) # Save a historical snapshot even if from cache, to track progression
+        # 1. Check database cache first
+        if self.db:
+            domain_from_db = self.db.get_domain(domain_name)
+            if domain_from_db and (datetime.now() - (domain_from_db.last_crawled or datetime.min)).total_seconds() < self.cache_ttl:
+                self.logger.info(f"Domain info for {domain_name} found in DB cache.")
+                return domain_from_db
+
+        # 2. Check Redis API cache
+        cache_key = f"domain_info:{domain_name}"
+        cached_data = await self._get_cached_response(cache_key, "domain_api", "get_domain_info")
+        if cached_data:
+            domain_obj = Domain.from_dict(cached_data)
+            if self.db:
+                self.db.save_domain(domain_obj) # Save to DB for persistence
             return domain_obj
 
-        self.logger.info(f"Fetching fresh domain info for {domain_name}.")
-        
-        # Fetch data concurrently
-        is_available, whois_data, dns_a_records = await asyncio.gather(
-            self.check_domain_availability(domain_name),
-            self.get_whois_info(domain_name),
-            self.get_dns_records(domain_name, 'A')
-        )
+        # 3. Fetch from API
+        self.logger.info(f"Fetching domain info for {domain_name} from API.")
+        domain_data = await self.api_client.get_domain_info(domain_name)
 
-        if not whois_data and not is_available:
-            self.logger.warning(f"Could not retrieve any info for domain {domain_name}. It might not exist or APIs failed.")
-            return None
+        if domain_data:
+            # If WHOISClient is enabled and used as primary, it might not return IP.
+            # Try to get IP from DNSClient if available and IP is missing.
+            if not domain_data.get("ip_address") and self.dns_client and self.dns_client.enabled:
+                self.logger.info(f"Attempting to get IP for {domain_name} via DNSClient.")
+                ip_address = await self.dns_client.resolve_domain(domain_name)
+                if ip_address:
+                    domain_data["ip_address"] = ip_address
+            
+            # Calculate age if creation_date is available
+            creation_date_str = domain_data.get("creation_date")
+            if creation_date_str:
+                try:
+                    creation_dt = self.parse_date_robustly(creation_date_str)
+                    if creation_dt:
+                        domain_data["age_days"] = (datetime.now() - creation_dt).days
+                except Exception as e:
+                    self.logger.warning(f"Could not parse creation_date: {creation_date_str} for {domain_name}: {e}")
+            else:
+                domain_data["age_days"] = None
 
-        # Parse WHOIS data
-        creation_date_str = whois_data.get("creation_date") if whois_data else None
-        age_days = None
-        if creation_date_str:
-            try:
-                creation_date = self.parse_date_robustly(creation_date_str)
-                if creation_date:
-                    age_days = (datetime.now() - creation_date).days
-            except Exception as e:
-                self.logger.warning(f"Could not parse creation_date '{creation_date_str}' for {domain_name}: {e}")
-
-        # Extract IP address from DNS A records
-        ip_address = None
-        if dns_a_records and dns_a_records.get("Answer"):
-            for answer in dns_a_records["Answer"]:
-                if answer.get("type") == 1 and "data" in answer: # Type 1 is A record
-                    ip_address = answer["data"]
-                    break
-
-        # Simulate scores if not from a real source or if they are missing
-        # These scores would ideally come from a dedicated domain metrics API (e.g., Moz, Ahrefs)
-        # For now, generate consistent dummy scores based on domain name hash
-        domain_hash = sum(ord(c) for c in domain_name.lower())
-        authority_score = (domain_hash % 90) + 10 # 10-99
-        trust_score = round(random.uniform(0.1, 0.9), 2)
-        spam_score = round(random.uniform(0.05, 0.5), 2)
-
-        # If domain_obj exists, update its fields; otherwise, create new
-        if domain_obj:
-            domain_obj.authority_score = authority_score
-            domain_obj.trust_score = trust_score
-            domain_obj.spam_score = spam_score
-            domain_obj.age_days = age_days
-            domain_obj.country = whois_data.get("country") if whois_data else None
-            domain_obj.ip_address = ip_address # Use fetched IP
-            domain_obj.whois_data = whois_data if whois_data else {}
-            domain_obj.last_crawled = datetime.now()
-        else:
             domain_obj = Domain(
                 name=domain_name,
-                authority_score=authority_score,
-                trust_score=trust_score,
-                spam_score=spam_score,
-                age_days=age_days,
-                country=whois_data.get("country") if whois_data else None,
-                ip_address=ip_address, # Use fetched IP
-                whois_data=whois_data if whois_data else {},
-                first_seen=creation_date,
+                authority_score=random.uniform(0, 100), # Placeholder, would come from external source
+                trust_score=random.uniform(0, 1), # Placeholder
+                spam_score=random.uniform(0, 1), # Placeholder
+                age_days=domain_data.get("age_days"),
+                country=domain_data.get("registrant_country"),
+                ip_address=domain_data.get("ip_address"),
+                whois_data=domain_data.get("whois_data", {}),
+                total_pages=random.randint(10, 10000), # Placeholder
+                total_backlinks=random.randint(100, 100000), # Placeholder
+                referring_domains=random.randint(10, 5000), # Placeholder
+                first_seen=creation_dt if 'creation_dt' in locals() else None,
                 last_crawled=datetime.now()
             )
+            
+            if self.db:
+                self.db.save_domain(domain_obj) # Save to DB
+            await self._set_cached_response(cache_key, domain_obj.to_dict(), "domain_api", "get_domain_info") # Cache in Redis
+            return domain_obj
         
-        if self.db:
-            self.db.save_domain(domain_obj)
-            self._save_domain_snapshot(domain_obj) # Save historical snapshot
-            self.logger.info(f"Domain info for {domain_name} saved/updated in DB and snapshot taken.")
-
-        return domain_obj
+        self.logger.warning(f"Could not retrieve domain info for {domain_name}.")
+        return None
 
     def parse_date_robustly(self, date_str: str) -> Optional[datetime]:
         """Attempts to parse a date string using common formats."""

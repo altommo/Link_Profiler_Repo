@@ -94,7 +94,7 @@ ML-driven crawling optimization:
 
 ### Priority 2: Enterprise Monitoring (Week 2)
 
-#### File: `monitoring/dashboard_server.py` (ENHANCED)
+#### File: `monitoring/dashboard_server.py` (NEW)
 
 Production-ready monitoring dashboard with:
 - Real-time metrics visualization
@@ -109,6 +109,11 @@ Advanced alerting system:
 - Alert escalation policies
 - Smart alert grouping
 - Custom alert rules engine
+
+#### Modifications Required:
+- Update `Link_Profiler\main.py` to initialize `AlertManager` and pass it to `AlertService`.
+- Update `Link_Profiler\services\alert_service.py` to use `AlertManager` for dispatching alerts.
+- Add configuration options for monitoring and alerting in `config.yaml` and `default.json`.
 
 ---
 
@@ -139,8 +144,8 @@ Advanced alerting system:
 ### Week 2: Intelligence & Monitoring
 - [x] Implement ML content analysis
 - [x] Add AI-driven optimizations
-- [ ] Create enterprise monitoring dashboard
-- [ ] Implement advanced alerting
+- [x] Create enterprise monitoring dashboard
+- [x] Implement advanced alerting
 - [ ] Load testing and optimization
 
 ### Week 3: Advanced Features & Scaling
