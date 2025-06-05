@@ -177,7 +177,7 @@ async function callAuthenticatedAPI(endpoint, method = 'GET', data = null) {
 
 async function loadStats() {
     try {
-        const stats = await callAuthenticatedAPI('/api/dashboard/stats'); // New endpoint
+        const stats = await callAuthenticatedAPI('/api/stats');
         if (!stats) return;
 
         // Update metrics

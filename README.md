@@ -642,6 +642,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Prometheus Metrics**: http://localhost:8001/metrics
 - **Health Dashboard**: http://localhost:8001/dashboard
 - **Dashboard Templates**: `Link_Profiler/templates` (static assets in `templates/static`)
+- **Customer Dashboard**: `customer-dashboard` (React + Vite)
+- **Admin Dashboard**: `admin-dashboard` (React + Vite)
 - **GitHub Repository**: https://github.com/your-org/link-profiler
 - **Docker Hub**: https://hub.docker.com/r/your-org/link-profiler
 
