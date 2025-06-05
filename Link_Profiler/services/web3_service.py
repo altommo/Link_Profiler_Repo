@@ -110,54 +110,73 @@ class Web3Service:
                     if random.random() > 0.3:
                         links_found_web3.append(f"ethereum:0x{random.randint(10**39, 10**40-1)}")
 
-            elif identifier.startswith("0x") and len(identifier) == 42: # Likely an Ethereum address
+            elif identifier.startswith("0x") and len(identifier) == 42:  # Likely an Ethereum address
                 self.logger.info(f"Fetching blockchain data for Ethereum address: {identifier}.")
-                if not self.blockchain_node_url or "YOUR_INFURA_PROJECT_ID" in self.blockchain_node_url:
-                    self.logger.warning("Blockchain node URL not configured. Simulating blockchain data.")
-                    return self._simulate_blockchain_data(identifier)
 
-                # Example: Using web3.py (requires installation: pip install web3)
-                # from web3 import Web3
-                # w3 = Web3(Web3.HTTPProvider(self.blockchain_node_url))
-                # if not w3.is_connected():
-                #     raise ConnectionError("Not connected to Ethereum node.")
-                # balance_wei = await asyncio.to_thread(w3.eth.get_balance, identifier)
-                # balance_eth = w3.from_wei(balance_wei, 'ether')
-                # transaction_count = await asyncio.to_thread(w3.eth.get_transaction_count, identifier)
-                # code = await asyncio.to_thread(w3.eth.get_code, identifier)
-                # is_contract = code and code != b'0x'
-
-                # Example: Using Etherscan API for more comprehensive data (requires API key)
+                balance_eth = None
+                transaction_count = None
                 etherscan_api_url = "https://api.etherscan.io/api"
-                if self.etherscan_api_key:
-                    params = {
-                        "module": "account",
-                        "action": "balance",
-                        "address": identifier,
-                        "tag": "latest",
-                        "apikey": self.etherscan_api_key
-                    }
-                    async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
-                        response.raise_for_status()
-                        data = await response.json()
-                        balance_wei = int(data.get("result", 0))
-                        balance_eth = balance_wei / (10**18) # Convert wei to eth
 
-                    params = {
-                        "module": "account",
-                        "action": "txlist",
-                        "address": identifier,
-                        "startblock": 0,
-                        "endblock": 99999999,
-                        "sort": "asc",
-                        "apikey": self.etherscan_api_key
+                if self.etherscan_api_key:
+                    try:
+                        params = {
+                            "module": "account",
+                            "action": "balance",
+                            "address": identifier,
+                            "tag": "latest",
+                            "apikey": self.etherscan_api_key,
+                        }
+                        async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                            response.raise_for_status()
+                            data = await response.json()
+                            balance_wei = int(data.get("result", 0))
+                            balance_eth = balance_wei / (10 ** 18)
+
+                        params = {
+                            "module": "account",
+                            "action": "txlist",
+                            "address": identifier,
+                            "startblock": 0,
+                            "endblock": 99999999,
+                            "sort": "asc",
+                            "apikey": self.etherscan_api_key,
+                        }
+                        async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                            response.raise_for_status()
+                            data = await response.json()
+                            transaction_count = len(data.get("result", []))
+                    except aiohttp.ClientError as e:
+                        self.logger.error(f"Etherscan API error for {identifier}: {e}", exc_info=True)
+
+                if balance_eth is None and self.blockchain_node_url and "YOUR_INFURA_PROJECT_ID" not in self.blockchain_node_url:
+                    rpc_payload_balance = {
+                        "jsonrpc": "2.0",
+                        "method": "eth_getBalance",
+                        "params": [identifier, "latest"],
+                        "id": 1,
                     }
-                    async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
-                        response.raise_for_status()
-                        data = await response.json()
-                        transaction_count = len(data.get("result", []))
-                else:
-                    self.logger.warning("Etherscan API key not configured. Simulating blockchain data.")
+                    rpc_payload_tx = {
+                        "jsonrpc": "2.0",
+                        "method": "eth_getTransactionCount",
+                        "params": [identifier, "latest"],
+                        "id": 2,
+                    }
+                    try:
+                        async with self._session.post(self.blockchain_node_url, json=rpc_payload_balance, timeout=10) as resp:
+                            resp.raise_for_status()
+                            data = await resp.json()
+                            balance_wei = int(data.get("result", "0x0"), 16)
+                            balance_eth = balance_wei / (10 ** 18)
+
+                        async with self._session.post(self.blockchain_node_url, json=rpc_payload_tx, timeout=10) as resp:
+                            resp.raise_for_status()
+                            data = await resp.json()
+                            transaction_count = int(data.get("result", "0x0"), 16)
+                    except aiohttp.ClientError as e:
+                        self.logger.error(f"Blockchain node RPC error for {identifier}: {e}", exc_info=True)
+
+                if balance_eth is None or transaction_count is None:
+                    self.logger.warning("Unable to fetch live blockchain data. Falling back to simulation.")
                     return self._simulate_blockchain_data(identifier)
 
                 extracted_data = {
@@ -166,12 +185,14 @@ class Web3Service:
                     "network": "Ethereum Mainnet",
                     "balance_eth": round(balance_eth, 4),
                     "transaction_count": transaction_count,
-                    "is_contract": False, # Etherscan API needs separate call for contract status
-                    "first_seen_block": random.randint(1000000, 18000000) # Simulated if not from API
+                    "is_contract": False,
+                    "first_seen_block": random.randint(1000000, 18000000),
                 }
                 links_found_web3.append(f"https://etherscan.io/address/{identifier}")
                 if random.random() > 0.6:
-                    links_found_web3.append(f"https://opensea.io/assets/{identifier}/{random.randint(1, 100)}")
+                    links_found_web3.append(
+                        f"https://opensea.io/assets/{identifier}/{random.randint(1, 100)}"
+                    )
 
             else:
                 self.logger.warning(f"Unknown Web3 content identifier format: {identifier}. Returning empty data.")
@@ -268,31 +289,63 @@ class Web3Service:
             self.logger.warning("Web3 Service is disabled. Cannot analyze NFT project.")
             return {}
         
-        if not self.opensea_api_key:
-            self.logger.warning("OpenSea API key not configured. Simulating NFT project analysis.")
+        if not self.opensea_api_key and not self.etherscan_api_key:
+            self.logger.warning("No NFT API credentials configured. Simulating NFT project analysis.")
             simulated_data = self._simulate_nft_project_data(contract_address)
             await self._set_cached_response(cache_key, simulated_data)
             return simulated_data
 
         try:
-            # Example: OpenSea API (requires API key)
-            opensea_api_url = "https://api.opensea.io/api/v1/asset_contract/" # For contract info
-            headers = {"X-API-KEY": self.opensea_api_key}
-            
-            async with self._session.get(f"{opensea_api_url}{contract_address}", headers=headers, timeout=10) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                # Example parsing
+            if self.opensea_api_key:
+                opensea_api_url = "https://api.opensea.io/api/v1/asset_contract/"
+                headers = {"X-API-KEY": self.opensea_api_key}
+
+                async with self._session.get(f"{opensea_api_url}{contract_address}", headers=headers, timeout=10) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+
+                    result = {
+                        "contract_address": contract_address,
+                        "project_name": data.get("name"),
+                        "total_supply": data.get("total_supply"),
+                        "floor_price_eth": data.get("stats", {}).get("floor_price"),
+                        "owners_count": data.get("stats", {}).get("num_owners"),
+                        "marketplace_links": [data.get("opensea_url")] if data.get("opensea_url") else [],
+                        "community_links": [data.get("external_link")] if data.get("external_link") else [],
+                        "last_fetched_at": datetime.utcnow(),
+                    }
+            else:
+                etherscan_api_url = "https://api.etherscan.io/api"
+                params = {
+                    "module": "contract",
+                    "action": "getsourcecode",
+                    "address": contract_address,
+                    "apikey": self.etherscan_api_key,
+                }
+                async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                    info = data.get("result", [{}])[0]
+
+                params = {
+                    "module": "stats",
+                    "action": "tokensupply",
+                    "contractaddress": contract_address,
+                    "apikey": self.etherscan_api_key,
+                }
+                async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                    response.raise_for_status()
+                    supply_data = await response.json()
+
                 result = {
                     "contract_address": contract_address,
-                    "project_name": data.get("name"),
-                    "total_supply": data.get("total_supply"),
-                    "floor_price_eth": data.get("stats", {}).get("floor_price"),
-                    "owners_count": data.get("stats", {}).get("num_owners"),
-                    "marketplace_links": [data.get("opensea_url")] if data.get("opensea_url") else [],
-                    "community_links": [data.get("external_link")] if data.get("external_link") else [],
-                    "last_fetched_at": datetime.utcnow()
+                    "project_name": info.get("ContractName"),
+                    "total_supply": supply_data.get("result"),
+                    "floor_price_eth": None,
+                    "owners_count": None,
+                    "marketplace_links": [f"https://etherscan.io/address/{contract_address}"],
+                    "community_links": [],
+                    "last_fetched_at": datetime.utcnow(),
                 }
                 await self._set_cached_response(cache_key, result)
                 return result
