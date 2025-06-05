@@ -369,8 +369,8 @@ class DataAggregationService:
 
         return security_data
 
-    async def get_domain_content_insights(self, domain: str) -> Dict[str, Any]:
-        """Crawl a few pages from the domain and analyse their content."""
+    async def get_domain_content_insights(self, domain: str, max_pages: int = 3) -> Dict[str, Any]:
+        """Crawl representative pages from the domain and analyse their content."""
         self.logger.debug(f"Fetching content insights for {domain}.")
 
         async def _fetch_page(url: str) -> Optional[str]:
@@ -399,6 +399,18 @@ class DataAggregationService:
             topics = [w for w, _ in Counter(words).most_common(5)]
             return {"entities": [], "sentiment": "neutral", "topics": topics}
 
+        def _estimate_syllables(word: str) -> int:
+            syllables = re.findall(r'[aeiouy]+', word.lower())
+            return max(1, len(syllables))
+
+        def _flesch_reading_ease(text: str) -> float:
+            sentences = [s for s in re.split(r'[.!?]+', text) if s.strip()]
+            words = re.findall(r'\b\w+\b', text)
+            syllables = sum(_estimate_syllables(w) for w in words)
+            word_count = max(1, len(words))
+            sentence_count = max(1, len(sentences))
+            return 206.835 - 1.015 * (word_count / sentence_count) - 84.6 * (syllables / word_count)
+
         await session_manager.__aenter__()
         try:
             homepage_url = f"https://{domain}"
@@ -411,7 +423,7 @@ class DataAggregationService:
                 return {}
 
             urls_to_analyze = [homepage_url]
-            urls_to_analyze.extend(_extract_internal_links(homepage_html, homepage_url))
+            urls_to_analyze.extend(_extract_internal_links(homepage_html, homepage_url, limit=max_pages-1))
 
             page_details = []
             for url in urls_to_analyze:
@@ -419,7 +431,11 @@ class DataAggregationService:
                 if not html:
                     continue
                 text = BeautifulSoup(html, 'lxml').get_text(separator=' ', strip=True)
-                detail = {"url": url, "word_count": len(text.split())}
+                detail = {
+                    "url": url,
+                    "word_count": len(text.split()),
+                    "readability_score": round(_flesch_reading_ease(text), 2)
+                }
 
                 if self.ai_service.enabled:
                     try:
