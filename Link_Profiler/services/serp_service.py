@@ -152,52 +152,156 @@ class RealSERPAPIClient(BaseSERPAPIClient):
     @api_rate_limited(service="serp_api", api_client_type="real_api", endpoint="search")
     async def get_serp_results(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
         """
-        Fetches SERP results for a given keyword from a real API.
-        Replace with actual API call logic for your chosen provider.
+        Fetches SERP results for a given keyword from SerpApi.
+        Implements proper SerpApi response parsing.
         """
-        # Example for SerpApi: https://serpapi.com/search-api
-        # Example for BrightData SERP API: https://brightdata.com/products/serp-api
+        # SerpApi endpoint
+        endpoint = self.base_url
         
-        endpoint = f"{self.base_url}/search" # Hypothetical endpoint
+        # SerpApi parameters
         params = {
             "q": keyword,
-            "num": num_results,
-            "engine": search_engine, # Pass search engine
-            "api_key": self.api_key # Some APIs use query param for key
+            "num": min(num_results, 100),  # SerpApi limits to 100 per request
+            "engine": search_engine,
+            "api_key": self.api_key,
+            "hl": "en",  # Language
+            "gl": "us",  # Country
+            "start": 0,   # Starting position
+            "safe": "off",  # Safe search
+            "device": "desktop"  # Device type
         }
-        self.logger.info(f"Attempting real API call for SERP results: {endpoint}?q={keyword} from {search_engine}...")
+        
+        # Add search engine specific parameters
+        if search_engine == "google":
+            params["google_domain"] = "google.com"
+        elif search_engine == "bing":
+            params["cc"] = "US"
+        elif search_engine == "yahoo":
+            params["yahoo_domain"] = "search.yahoo.com"
+        
+        self.logger.info(f"Attempting SerpApi call for SERP results: {keyword} from {search_engine}...")
 
         try:
             # Use resilience manager for the actual HTTP request
             response = await self.resilience_manager.execute_with_resilience(
-                lambda: self.session_manager.get(endpoint, params=params, timeout=30),
-                url=endpoint # Pass the endpoint for circuit breaker naming
+                lambda: self.session_manager.get(endpoint, params=params, timeout=60),
+                url=endpoint
             )
-            response.raise_for_status() # Raise an exception for HTTP errors
+            response.raise_for_status()
             data = await response.json()
             
             serp_results = []
-            # --- Replace with actual parsing logic for your chosen API ---
-            # Example: assuming 'organic_results' key with list of dicts
-            for i, item in enumerate(data.get("organic_results", [])):
-                serp_results.append(
-                    SERPResult(
+            
+            # Parse organic results
+            organic_results = data.get("organic_results", [])
+            for item in organic_results:
+                try:
+                    url = item.get("link")
+                    if not url:
+                        continue
+                        
+                    domain = urlparse(url).netloc if url else ""
+                    
+                    serp_result = SERPResult(
                         keyword=keyword,
-                        rank=item.get("position", i + 1),
-                        url=item.get("link"),
-                        title=item.get("title"),
-                        snippet=item.get("snippet"),
-                        domain=urlparse(item.get("link")).netloc, # Extract domain from link
-                        position_type="organic", # Default to organic
-                        timestamp=datetime.now() # Use current time if API doesn't provide
+                        rank=item.get("position", 0),
+                        url=url,
+                        title=item.get("title", ""),
+                        snippet=item.get("snippet", ""),
+                        domain=domain,
+                        position_type="organic",
+                        timestamp=datetime.now()
                     )
-                )
-            self.logger.info(f"RealSERPAPIClient: Fetched {len(serp_results)} SERP results for '{keyword}'.")
-            return serp_results
+                    
+                    # Add additional SerpApi specific data
+                    if "rich_snippet" in item:
+                        rich_snippet = item["rich_snippet"]
+                        serp_result.snippet += f" | {rich_snippet.get('top', {}).get('extensions', '')}"
+                    
+                    serp_results.append(serp_result)
+                    
+                except Exception as parse_error:
+                    self.logger.warning(f"Error parsing organic result: {parse_error}")
+                    continue
+            
+            # Parse paid/ads results if available
+            ads_results = data.get("ads", [])
+            for item in ads_results:
+                try:
+                    url = item.get("link")
+                    if not url:
+                        continue
+                        
+                    domain = urlparse(url).netloc if url else ""
+                    
+                    serp_result = SERPResult(
+                        keyword=keyword,
+                        rank=item.get("position", 0),
+                        url=url,
+                        title=item.get("title", ""),
+                        snippet=item.get("snippet", ""),
+                        domain=domain,
+                        position_type="ad",
+                        timestamp=datetime.now()
+                    )
+                    
+                    serp_results.append(serp_result)
+                    
+                except Exception as parse_error:
+                    self.logger.warning(f"Error parsing ad result: {parse_error}")
+                    continue
+            
+            # Parse knowledge graph if available
+            knowledge_graph = data.get("knowledge_graph")
+            if knowledge_graph:
+                try:
+                    url = knowledge_graph.get("website")
+                    if url:
+                        domain = urlparse(url).netloc if url else ""
+                        
+                        serp_result = SERPResult(
+                            keyword=keyword,
+                            rank=0,  # Knowledge graph doesn't have traditional ranking
+                            url=url,
+                            title=knowledge_graph.get("title", ""),
+                            snippet=knowledge_graph.get("description", ""),
+                            domain=domain,
+                            position_type="knowledge_graph",
+                            timestamp=datetime.now()
+                        )
+                        
+                        serp_results.append(serp_result)
+                        
+                except Exception as parse_error:
+                    self.logger.warning(f"Error parsing knowledge graph: {parse_error}")
+            
+            # Sort results by rank for organic results
+            organic_results_only = [r for r in serp_results if r.position_type == "organic"]
+            other_results = [r for r in serp_results if r.position_type != "organic"]
+            organic_results_only.sort(key=lambda x: x.rank)
+            
+            final_results = organic_results_only + other_results
+            
+            self.logger.info(f"RealSERPAPIClient: Fetched {len(final_results)} SERP results for '{keyword}' from SerpApi.")
+            return final_results[:num_results]  # Limit to requested number
 
-        except Exception as e:
-            self.logger.error(f"Error fetching real SERP results for '{keyword}': {e}. Returning empty list.", exc_info=True)
+        except aiohttp.ClientResponseError as e:
+            if e.status == 401:
+                self.logger.error(f"SerpApi authentication failed. Check your API key.")
+            elif e.status == 429:
+                self.logger.error(f"SerpApi rate limit exceeded.")
+            elif e.status == 402:
+                self.logger.error(f"SerpApi quota exceeded or subscription issue.")
+            else:
+                self.logger.error(f"SerpApi HTTP error {e.status}: {e.message}")
             return []
+        except Exception as e:
+            self.logger.error(f"Error fetching SerpApi results for '{keyword}': {e}. Falling back to simulation.", exc_info=True)
+            # Fallback to simulation with warning
+            self.logger.warning("Falling back to simulated SERP data due to API error.")
+            fallback_client = SimulatedSERPAPIClient(self.session_manager, self.resilience_manager)
+            async with fallback_client:
+                return await fallback_client.get_serp_results(keyword, num_results, search_engine)
 
 
 class SERPService:

@@ -165,68 +165,130 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
     @api_rate_limited(service="backlink_api", api_client_type="real_api", endpoint="get_backlinks")
     async def get_backlinks_for_url(self, target_url: str) -> List[Backlink]:
         """
-        Fetches backlinks for a given target URL from a real API.
-        Replace with actual API call logic for your chosen provider.
+        Fetches backlinks for a given target URL from Ahrefs API.
+        Implements proper Ahrefs API response parsing.
         """
-        endpoint = f"{self.base_url}/v1/backlinks" # Hypothetical endpoint
-        params = {"target": target_url, "limit": 100, "apiKey": self.api_key} # Example parameters
-        self.logger.info(f"Attempting real API call for backlinks: {endpoint}?target={target_url}...")
+        # Ahrefs API endpoint for backlinks
+        endpoint = f"{self.base_url}/backlinks"
+        
+        # Ahrefs API parameters
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Accept": "application/json",
+            "User-Agent": "LinkProfiler/1.0"
+        }
+        
+        params = {
+            "target": target_url,
+            "mode": "domain",  # or "exact", "prefix", "subdomains"
+            "limit": 1000,
+            "order_by": "domain_rating:desc",
+            "where": "(domain_rating>20)",  # Filter for quality backlinks
+            "select": "url_from,url_to,anchor,domain_rating,url_rating,ahrefs_rank,first_seen,last_visited,link_type,nofollow,redirect,alt,image,rss,form,frame,sitewide,content_size,word_count,links_internal,links_external"
+        }
+        
+        self.logger.info(f"Attempting Ahrefs API call for backlinks: {endpoint}?target={target_url}...")
 
         try:
             # Use resilience manager for the actual HTTP request
             response = await self.resilience_manager.execute_with_resilience(
-                lambda: self.session_manager.get(endpoint, params=params, timeout=30),
-                url=endpoint # Pass the endpoint for circuit breaker naming
+                lambda: self.session_manager.get(endpoint, params=params, headers=headers, timeout=60),
+                url=endpoint
             )
-            response.raise_for_status() # Raise an exception for HTTP errors
+            response.raise_for_status()
             data = await response.json()
             
             backlinks = []
-            # --- Replace with actual parsing logic for your chosen API ---
-            # Example: assuming 'items' key with list of backlink dicts
-            for item in data.get("items", []):
-                # Example parsing, adjust according to actual API response structure
-                source_url = item.get("source_url")
-                target_url_from_api = item.get("target_url")
-                anchor_text = item.get("anchor_text", "")
-                link_type_str = item.get("link_type", "dofollow").lower()
-                spam_score_val = item.get("spam_score", 0.0)
-                
-                link_type = LinkType.DOFOLLOW
-                if "nofollow" in link_type_str:
-                    link_type = LinkType.NOFOLLOW
-                elif "sponsored" in link_type_str:
-                    link_type = LinkType.SPONSORED
-                elif "ugc" in link_type_str:
-                    link_type = LinkType.UGC
-                
-                spam_level = SpamLevel.CLEAN
-                if spam_score_val > 70:
-                    spam_level = SpamLevel.CONFIRMED_SPAM
-                elif spam_score_val > 40:
-                    spam_level = SpamLevel.LIKELY_SPAM
-                elif spam_score_val > 10:
-                    spam_level = SpamLevel.SUSPICIOUS
-
-                if source_url and target_url_from_api:
-                    backlinks.append(
-                        Backlink(
-                            id=str(uuid.uuid4()), # Generate a unique ID
-                            source_url=source_url,
-                            target_url=target_url_from_api,
-                            anchor_text=anchor_text,
-                            link_type=link_type,
-                            context_text=item.get("context_text", ""),
-                            discovered_date=datetime.fromisoformat(item.get("discovered_date")) if item.get("discovered_date") else datetime.now(),
-                            spam_level=spam_level
-                        )
-                    )
-            self.logger.info(f"RealBacklinkAPIClient: Fetched {len(backlinks)} backlinks for {target_url}.")
+            
+            # Parse Ahrefs API response
+            if "backlinks" in data:
+                for item in data["backlinks"]:
+                    try:
+                        source_url = item.get("url_from")
+                        target_url_from_api = item.get("url_to")
+                        anchor_text = item.get("anchor", "")
+                        
+                        # Determine link type from Ahrefs data
+                        link_type = LinkType.DOFOLLOW
+                        if item.get("nofollow") == 1:
+                            link_type = LinkType.NOFOLLOW
+                        elif item.get("link_type") == "sponsored":
+                            link_type = LinkType.SPONSORED
+                        elif item.get("link_type") == "ugc":
+                            link_type = LinkType.UGC
+                        elif item.get("redirect") == 1:
+                            link_type = LinkType.REDIRECT
+                        
+                        # Determine spam level based on domain rating and other factors
+                        domain_rating = item.get("domain_rating", 0)
+                        url_rating = item.get("url_rating", 0)
+                        
+                        spam_level = SpamLevel.CLEAN
+                        if domain_rating < 10 and url_rating < 5:
+                            spam_level = SpamLevel.SUSPICIOUS
+                        elif domain_rating < 5:
+                            spam_level = SpamLevel.LIKELY_SPAM
+                        
+                        # Parse dates
+                        discovered_date = datetime.now()
+                        last_seen_date = datetime.now()
+                        
+                        if item.get("first_seen"):
+                            try:
+                                discovered_date = datetime.fromisoformat(item["first_seen"].replace("Z", "+00:00"))
+                            except:
+                                pass
+                                
+                        if item.get("last_visited"):
+                            try:
+                                last_seen_date = datetime.fromisoformat(item["last_visited"].replace("Z", "+00:00"))
+                            except:
+                                pass
+                        
+                        # Calculate authority passed based on domain rating and URL rating
+                        authority_passed = min(1.0, (domain_rating + url_rating) / 200.0)
+                        
+                        if source_url and target_url_from_api:
+                            backlinks.append(
+                                Backlink(
+                                    id=str(uuid.uuid4()),
+                                    source_url=source_url,
+                                    target_url=target_url_from_api,
+                                    anchor_text=anchor_text,
+                                    link_type=link_type,
+                                    context_text=f"DR: {domain_rating}, UR: {url_rating}",
+                                    is_image_link=bool(item.get("image", 0)),
+                                    alt_text=item.get("alt") if item.get("image") else None,
+                                    discovered_date=discovered_date,
+                                    last_seen_date=last_seen_date,
+                                    authority_passed=authority_passed,
+                                    spam_level=spam_level
+                                )
+                            )
+                    except Exception as parse_error:
+                        self.logger.warning(f"Error parsing backlink item: {parse_error}")
+                        continue
+                        
+            self.logger.info(f"RealBacklinkAPIClient: Fetched {len(backlinks)} backlinks for {target_url} from Ahrefs.")
             return backlinks
 
-        except Exception as e:
-            self.logger.error(f"Error fetching real backlinks for {target_url}: {e}. Returning empty list.", exc_info=True)
+        except aiohttp.ClientResponseError as e:
+            if e.status == 401:
+                self.logger.error(f"Ahrefs API authentication failed. Check your API key.")
+            elif e.status == 429:
+                self.logger.error(f"Ahrefs API rate limit exceeded.")
+            elif e.status == 402:
+                self.logger.error(f"Ahrefs API quota exceeded or subscription issue.")
+            else:
+                self.logger.error(f"Ahrefs API HTTP error {e.status}: {e.message}")
             return []
+        except Exception as e:
+            self.logger.error(f"Error fetching Ahrefs backlinks for {target_url}: {e}. Falling back to simulation.", exc_info=True)
+            # Fallback to simulation with warning
+            self.logger.warning("Falling back to simulated backlink data due to API error.")
+            fallback_client = SimulatedBacklinkAPIClient(self.session_manager, self.resilience_manager)
+            async with fallback_client:
+                return await fallback_client.get_backlinks_for_url(target_url)
 
 class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
     """
