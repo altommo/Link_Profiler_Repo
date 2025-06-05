@@ -410,5 +410,140 @@ class Database:
         orm_job = self._execute_operation('select', 'report_jobs', _get)
         return self._from_orm(orm_job) if orm_job else None
 
+    # --- User Operations ---
+    def create_user(self, user: User) -> User:
+        """Creates a new user if the username and email are unique."""
+        def _create(session):
+            existing = session.query(UserORM).filter(
+                (UserORM.username == user.username) | (UserORM.email == user.email)
+            ).first()
+            if existing:
+                raise ValueError("User with this username or email already exists")
+            orm_user = self._to_orm(user)
+            session.add(orm_user)
+            return orm_user
+
+        orm_user = self._execute_operation('insert', 'users', _create)
+        self.logger.info(f"Created user {user.username}.")
+        return self._from_orm(orm_user)
+
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        """Fetches a user by username."""
+        def _get(session):
+            return session.query(UserORM).filter_by(username=username).first()
+        orm_user = self._execute_operation('select', 'users', _get)
+        return self._from_orm(orm_user) if orm_user else None
+
+    def get_user_by_email(self, email: str) -> Optional[User]:
+        """Fetches a user by email address."""
+        def _get(session):
+            return session.query(UserORM).filter_by(email=email).first()
+        orm_user = self._execute_operation('select', 'users', _get)
+        return self._from_orm(orm_user) if orm_user else None
+
+    # --- Backlink Update ---
+    def update_backlink(self, backlink: Backlink) -> None:
+        """Updates an existing backlink or inserts it if not present."""
+        def _update(session):
+            orm_backlink = session.query(BacklinkORM).filter_by(
+                source_url=backlink.source_url,
+                target_url=backlink.target_url
+            ).first()
+            new_data = self._to_orm(backlink)
+            if orm_backlink:
+                for key, value in new_data.__dict__.items():
+                    if key != '_sa_instance_state':
+                        setattr(orm_backlink, key, value)
+            else:
+                session.add(new_data)
+
+        self._execute_operation('upsert', 'backlinks', _update)
+
+    # --- SEO Metrics Operations ---
+    def save_seo_metrics(self, metrics: SEOMetrics) -> None:
+        """Saves or updates SEO metrics for a URL."""
+        def _save(session):
+            orm_metrics = self._to_orm(metrics)
+            existing = session.query(SEOMetricsORM).filter_by(url=metrics.url).first()
+            if existing:
+                for key, value in orm_metrics.__dict__.items():
+                    if key != '_sa_instance_state':
+                        setattr(existing, key, value)
+            else:
+                session.add(orm_metrics)
+
+        self._execute_operation('upsert', 'seo_metrics', _save)
+
+    def get_seo_metrics(self, url: str) -> Optional[SEOMetrics]:
+        """Retrieves SEO metrics for a specific URL."""
+        def _get(session):
+            return session.query(SEOMetricsORM).filter_by(url=url).first()
+        orm_metrics = self._execute_operation('select', 'seo_metrics', _get)
+        return self._from_orm(orm_metrics) if orm_metrics else None
+
+    # --- SERP and Keyword Operations ---
+    def add_serp_results(self, results: List[SERPResult]) -> None:
+        """Bulk insert SERP results."""
+        def _add(session):
+            orm_results = [self._to_orm(r) for r in results]
+            session.add_all(orm_results)
+
+        self._execute_operation('insert', 'serp_results', _add)
+
+    def add_keyword_suggestions(self, suggestions: List[KeywordSuggestion]) -> None:
+        """Bulk insert keyword suggestions."""
+        def _add(session):
+            orm_suggestions = [self._to_orm(s) for s in suggestions]
+            session.add_all(orm_suggestions)
+
+        self._execute_operation('insert', 'keyword_suggestions', _add)
+
+    # --- Content Gap Analysis ---
+    def get_latest_content_gap_analysis_result(self, target_url: str) -> Optional[ContentGapAnalysisResult]:
+        """Gets the most recent content gap analysis result for a target URL."""
+        def _get(session):
+            return (
+                session.query(ContentGapAnalysisResultORM)
+                .filter_by(target_url=target_url)
+                .order_by(ContentGapAnalysisResultORM.analysis_date.desc())
+                .first()
+            )
+
+        orm_result = self._execute_operation('select', 'content_gap_analysis_results', _get)
+        return self._from_orm(orm_result) if orm_result else None
+
+    def save_content_gap_analysis_result(self, result: ContentGapAnalysisResult) -> None:
+        """Saves a content gap analysis result."""
+        def _save(session):
+            orm_result = self._to_orm(result)
+            session.add(orm_result)
+
+        self._execute_operation('insert', 'content_gap_analysis_results', _save)
+
+    # --- Domain Intelligence ---
+    def get_domain_intelligence(self, domain_name: str) -> Optional[DomainIntelligence]:
+        """Retrieves stored domain intelligence for a domain."""
+        def _get(session):
+            return session.query(DomainIntelligenceORM).filter_by(domain_name=domain_name).first()
+
+        orm_obj = self._execute_operation('select', 'domain_intelligence', _get)
+        return self._from_orm(orm_obj) if orm_obj else None
+
+    def get_source_domains_for_target_domains(self, target_domains: List[str]) -> Dict[str, Set[str]]:
+        """Returns mapping of target domains to unique source domains that link to them."""
+        def _get(session):
+            rows = (
+                session.query(BacklinkORM.target_domain_name, BacklinkORM.source_domain_name)
+                .filter(BacklinkORM.target_domain_name.in_(target_domains))
+                .all()
+            )
+            return rows
+
+        rows = self._execute_operation('select', 'backlinks', _get)
+        mapping: Dict[str, Set[str]] = {}
+        for target, source in rows:
+            mapping.setdefault(target, set()).add(source)
+        return mapping
+
 # Create a singleton instance
 db = Database()

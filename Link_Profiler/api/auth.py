@@ -4,8 +4,11 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-# Import the globally initialized instances from main.py
-from Link_Profiler.main import auth_service_instance, logger, config_loader
+# Import the auth service instance and config loader directly to avoid circular imports
+from Link_Profiler.services.auth_service import auth_service_instance
+from Link_Profiler.config.config_loader import config_loader
+
+logger = logging.getLogger(__name__)
 
 
 # Import Pydantic models from the shared schemas file
