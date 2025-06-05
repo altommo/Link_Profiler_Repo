@@ -14,6 +14,11 @@ setup(
         "psycopg2-binary",
         "google-api-python-client",
         "google-auth-oauthlib",
+        # NEW: Added dependencies for crawler improvements
+        "numpy>=1.21.0",      # Required for ML rate limiter
+        "psutil>=5.8.0",      # Required for resource monitoring  
+        "redis>=4.0.0",       # Required for smart queue system
+        "playwright>=1.40.0", # Required for browser crawling
     ],
     # Add other metadata as needed
     author="Your Name",

@@ -179,6 +179,17 @@ from Link_Profiler.api.schemas import (
     OutreachEventResponse, SEOMetricsResponse, QueueCrawlRequest # Added QueueCrawlRequest
 )
 
+# Import API Routers
+from Link_Profiler.api.ai import ai_router
+from Link_Profiler.api.analytics import analytics_router
+from Link_Profiler.api.competitive_analysis import competitive_analysis_router
+from Link_Profiler.api.crawl_audit import crawl_audit_router
+from Link_Profiler.api.link_building import link_building_router
+from Link_Profiler.api.public_jobs import public_jobs_router
+from Link_Profiler.api.reports import reports_router
+from Link_Profiler.api.users import users_router
+from Link_Profiler.api.websocket import websocket_router
+
 
 # Initialize ClickHouse Loader conditionally
 clickhouse_loader_instance: Optional[ClickHouseLoader] = None
@@ -646,88 +657,16 @@ async def get_domain_info(domain_name: str, current_user: User = Depends(get_cur
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Domain info not found")
     return DomainResponse.from_domain(domain)
 
-# --- Placeholder for other API endpoints ---
-# @app.post("/crawl/start", response_model=CrawlJobResponse)
-# async def start_crawl_job(request: StartCrawlRequest, current_user: User = Depends(get_current_user)):
-#     # Logic to submit crawl job to queue
-#     pass
-
-# @app.get("/jobs/{job_id}", response_model=CrawlJobResponse)
-# async def get_job_status(job_id: str, current_user: User = Depends(get_current_user)):
-#     job = db.get_crawl_job(job_id)
-#     if not job:
-#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-#     return CrawlJobResponse.from_crawl_job(job)
-
-# @app.get("/reports/{report_id}", response_model=ReportJobResponse)
-# async def get_report_status(report_id: str, current_user: User = Depends(get_current_user)):
-#     report = db.get_report_job(report_id)
-#     if not report:
-#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report job not found")
-#     return ReportJobResponse.from_report_job(report)
-
-# @app.get("/queue/stats", response_model=QueueStatsResponse)
-# async def get_queue_stats(current_user: User = Depends(get_current_user)):
-#     # Logic to get queue stats from Redis/JobCoordinator
-#     pass
-
-# @app.get("/serp/search", response_model=List[SERPResultResponse])
-# async def serp_search(request: SERPSearchRequest, current_user: User = Depends(get_current_user)):
-#     # Logic to perform SERP search
-#     pass
-
-# @app.get("/keywords/suggest", response_model=List[KeywordSuggestionResponse])
-# async def suggest_keywords(request: KeywordSuggestRequest, current_user: User = Depends(get_current_user)):
-#     # Logic to suggest keywords using AI service
-#     pass
-
-# @app.post("/link_intersect", response_model=LinkIntersectResponse)
-# async def link_intersect_analysis(request: LinkIntersectRequest, current_user: User = Depends(get_current_user)):
-#     # Logic to perform link intersect analysis
-#     pass
-
-# @app.post("/competitive_keyword_analysis", response_model=CompetitiveKeywordAnalysisResponse)
-# async def competitive_keyword_analysis(request: CompetitiveKeywordAnalysisRequest, current_user: User = Depends(get_current_user)):
-#     # Logic to perform competitive keyword analysis
-#     pass
-
-# @app.post("/alerts/rules", response_model=AlertRuleResponse)
-# async def create_alert_rule(rule: AlertRuleCreateRequest, current_user: User = Depends(get_current_admin_user)):
-#     # Logic to create alert rule
-#     pass
-
-# @app.get("/alerts/rules", response_model=List[AlertRuleResponse])
-# async def get_alert_rules(current_user: User = Depends(get_current_user)):
-#     # Logic to get alert rules
-#     pass
-
-# @app.post("/content_gap_analysis", response_model=ContentGapAnalysisResultResponse)
-# async def content_gap_analysis(request: ContentGapAnalysisRequest, current_user: User = Depends(get_current_user)):
-#     # Logic to perform content gap analysis
-#     pass
-
-# @app.post("/link_prospects/identify", response_model=List[LinkProspectResponse])
-# async def identify_link_prospects(request: ProspectIdentificationRequest, current_user: User = Depends(get_current_user)):
-#     # Logic to identify link prospects
-#     pass
-
-# @app.post("/outreach/campaigns", response_model=OutreachCampaignResponse)
-# async def create_outreach_campaign(request: OutreachCampaignCreateRequest, current_user: User = Depends(get_current_user)):
-#     # Logic to create outreach campaign
-#     pass
-
-# @app.post("/outreach/events", response_model=OutreachEventResponse)
-# async def create_outreach_event(request: OutreachEventCreateRequest, current_user: User = Depends(get_current_user)):
-#     # Logic to create outreach event
-#     pass
-
-# @app.get("/seo_metrics/{url:path}", response_model=SEOMetricsResponse)
-# async def get_seo_metrics(url: str, current_user: User = Depends(get_current_user)):
-#     # Logic to get SEO metrics for a URL
-#     pass
-
-# Serve static files (e.g., a simple dashboard or documentation)
-# app.mount("/static", StaticFiles(directory="static"), name="static")
+# --- Include API Routers ---
+app.include_router(ai_router)
+app.include_router(analytics_router)
+app.include_router(competitive_analysis_router)
+app.include_router(crawl_audit_router)
+app.include_router(link_building_router)
+app.include_router(public_jobs_router)
+app.include_router(reports_router)
+app.include_router(users_router)
+app.include_router(websocket_router)
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
