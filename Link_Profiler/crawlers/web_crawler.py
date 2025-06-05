@@ -222,10 +222,11 @@ class EnhancedWebCrawler:
         """HTTP-based crawling with session reuse"""
         headers = self._get_request_headers(domain)
         proxy = None
+        proxy_details = None # New: Store ProxyDetails object
         if self.config.use_proxies:
-            proxy_info = proxy_manager.get_next_proxy(desired_region=self.config.proxy_region)
-            if proxy_info:
-                proxy = proxy_info.get('url')
+            proxy_details = proxy_manager.get_next_proxy(desired_region=self.config.proxy_region)
+            if proxy_details:
+                proxy = proxy_details.url
             else:
                 logger.warning(f"No proxy available for region {self.config.proxy_region}. Proceeding without proxy.")
 
@@ -242,6 +243,10 @@ class EnhancedWebCrawler:
                 seo_metrics.http_status = response.status
                 seo_metrics.response_time_ms = (time.time() - request_context.get('start_time', time.time())) * 1000
                 
+                # Mark proxy good if used
+                if proxy_details:
+                    proxy_manager.mark_proxy_good(proxy_details.url)
+
                 return CrawlResult(
                     url=url,
                     status_code=response.status,
@@ -253,10 +258,16 @@ class EnhancedWebCrawler:
                 )
                 
         except aiohttp.ClientError as e:
+            if proxy_details:
+                proxy_manager.mark_proxy_bad(proxy_details.url, reason=f"ClientError: {e}")
             return self._create_error_result(url, 0, f"HTTP error: {e}", error_type="ClientError")
         except asyncio.TimeoutError:
+            if proxy_details:
+                proxy_manager.mark_proxy_bad(proxy_details.url, reason="TimeoutError")
             return self._create_error_result(url, 408, "Request timeout", error_type="TimeoutError")
         except Exception as e:
+            if proxy_details:
+                proxy_manager.mark_proxy_bad(proxy_details.url, reason=f"UnexpectedHTTPError: {e}")
             return self._create_error_result(url, 500, f"Unexpected HTTP crawl error: {e}", error_type="UnexpectedHTTPError")
     
     async def _crawl_with_browser(self, url: str, domain: str,
@@ -266,11 +277,20 @@ class EnhancedWebCrawler:
             return self._create_error_result(url, 500, "Browser not initialized for JavaScript rendering.", error_type="BrowserNotInitialized")
 
         context: Optional[BrowserContext] = None
+        proxy = None
+        proxy_details = None # New: Store ProxyDetails object
+        if self.config.use_proxies:
+            proxy_details = proxy_manager.get_next_proxy(desired_region=self.config.proxy_region)
+            if proxy_details:
+                proxy = {"server": proxy_details.url}
+            else:
+                logger.warning(f"No proxy available for region {self.config.proxy_region}. Proceeding without proxy.")
+
         try:
             context = await self.browser.new_context(
                 user_agent=self._get_user_agent_for_domain(domain),
                 viewport={'width': 1920, 'height': 1080},
-                proxy={"server": self._get_proxy()} if self.config.use_proxies and self._get_proxy() else None
+                proxy=proxy # Pass proxy dict directly
             )
             
             page = await context.new_page()
@@ -287,6 +307,10 @@ class EnhancedWebCrawler:
             seo_metrics.http_status = response.status if response else 200
             seo_metrics.response_time_ms = (time.time() - request_context.get('start_time', time.time())) * 1000
             
+            # Mark proxy good if used
+            if proxy_details:
+                proxy_manager.mark_proxy_good(proxy_details.url)
+
             return CrawlResult(
                 url=url,
                 status_code=response.status if response else 200,
@@ -297,6 +321,8 @@ class EnhancedWebCrawler:
             )
             
         except Exception as e:
+            if proxy_details:
+                proxy_manager.mark_proxy_bad(proxy_details.url, reason=f"BrowserCrawlError: {e}")
             return self._create_error_result(url, 500, f"Browser error: {e}", error_type="BrowserCrawlError")
         finally:
             if context:
