@@ -4,11 +4,14 @@ File: Link_Profiler/database/database.py
 """
 
 import logging
+import os
 from typing import List, Optional, Any, Dict, Set, Callable
 from datetime import datetime
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
+from alembic import command
+from alembic.config import Config
 import json # Import json for serializing/deserializing JSONB fields
 
 from Link_Profiler.config.config_loader import config_loader
@@ -63,29 +66,31 @@ class Database:
             return
 
         try:
-            self.engine = create_engine(self.database_url, pool_size=10, max_overflow=20, pool_timeout=30, pool_recycle=1800)
-            self.Session = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=self.engine))
+            self.engine = create_engine(
+                self.database_url,
+                pool_size=10,
+                max_overflow=20,
+                pool_timeout=30,
+                pool_recycle=1800,
+            )
+            self.Session = scoped_session(
+                sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+            )
             self.logger.info("Database connection established.")
-            self._create_tables_if_not_exist()
+            self._run_migrations()
         except SQLAlchemyError as e:
             self.logger.critical(f"Failed to connect to database: {e}", exc_info=True)
             self.engine = None
             self.Session = None
 
-    def _create_tables_if_not_exist(self):
-        """Creates database tables if they do not already exist."""
-        if self.engine:
-            try:
-                inspector = inspect(self.engine)
-                # Check for at least one table to determine if schema exists
-                if not inspector.has_table(DomainORM.__tablename__):
-                    self.logger.info("Creating database tables...")
-                    Base.metadata.create_all(self.engine)
-                    self.logger.info("Database tables created successfully.")
-                else:
-                    self.logger.info("Database tables already exist.")
-            except SQLAlchemyError as e:
-                self.logger.error(f"Error checking/creating tables: {e}", exc_info=True)
+    def _run_migrations(self):
+        """Applies Alembic migrations to ensure the database schema is up to date."""
+        try:
+            alembic_cfg = Config(os.path.join(os.path.dirname(__file__), '..', '..', 'alembic.ini'))
+            command.upgrade(alembic_cfg, 'head')
+            self.logger.info("Database migrations applied.")
+        except Exception as e:
+            self.logger.error(f"Failed to run migrations: {e}")
 
     def get_session(self):
         """Returns a SQLAlchemy session."""

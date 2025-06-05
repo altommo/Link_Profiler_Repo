@@ -50,11 +50,11 @@ api:
 
 # Database settings (PostgreSQL)
 database:
-  url: "${LP_DATABASE_URL:-postgresql://postgres:postgres@localhost:5432/link_profiler_db}"
+  url: "${LP_DATABASE_URL}"
 
 # Redis settings (for queues and caching)
 redis:
-  url: "${LP_REDIS_URL:-redis://localhost:6379/0}" # Use environment variable with default
+  url: "${LP_REDIS_URL}"
   cache_ttl: 3600 # Default cache TTL in seconds (1 hour)
 
 # Queue system settings
@@ -286,7 +286,7 @@ historical_data:
 local_seo:
   nominatim_api: # New: OpenStreetMap Nominatim API
     enabled: false
-    base_url: "https://nominatim.openstreetmap.org/search",
+    base_url: "https://nominatim.openstreetmap.org/search"
     user_agent: "LinkProfilerApp/1.0 (your_email@example.com)" # Required for Nominatim
 
 # Notifications & Alerting
@@ -311,7 +311,7 @@ monitoring:
   performance_window: 3600 # Time window in seconds for performance calculations (e.g., jobs per hour)
   max_job_history: 50 # Max number of recent jobs to show on dashboard
   monitor_auth: # New: Credentials for the monitor to authenticate with the main API
-    username: "monitor_user" # IMPORTANT: Create this user in your main API's database
+    username: "${LP_MONITOR_USERNAME}" # IMPORTANT: Set via environment variable
     password: "${LP_MONITOR_PASSWORD}" # IMPORTANT: Use a strong password
   enabled: true # Enable/disable health monitoring
   metrics_interval: 30 # Interval in seconds for collecting metrics
@@ -337,7 +337,7 @@ rate_limiting:
 
 # Queue System settings
 queue_system:
-  redis_url: "${LP_REDIS_URL:-redis://localhost:6379/0}"
+  redis_url: "${LP_REDIS_URL}"
   max_queue_size: 100000
   domain_max_concurrent: 2
   scheduled_jobs_queue: "scheduled_crawl_jobs" # New: Name of the queue for scheduled jobs
