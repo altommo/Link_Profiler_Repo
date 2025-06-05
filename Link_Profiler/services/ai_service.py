@@ -668,10 +668,22 @@ class AIService:
         # For simplicity, we'll treat this as a live-only operation for now,
         # but respect the allow_live flag.
         if not self.allow_live and source == "live":
-            raise NotImplementedError("Live AI video analysis not allowed by configuration.")
+            self.logger.warning("Live AI video analysis not allowed by configuration. Returning empty result.")
+            return {
+                "transcription": "",
+                "topics": [],
+                "timeline": [],
+                "summary": "AI video analysis disabled"
+            }
 
         if not self.enabled or not self.openrouter_client:
-            raise NotImplementedError("AI service is disabled. Video analysis requires AI integration.")
+            self.logger.warning("AI service is disabled. Cannot analyze video content. Returning empty result.")
+            return {
+                "transcription": "",
+                "topics": [],
+                "timeline": [],
+                "summary": "AI service disabled"
+            }
         
         # Download video if only URL provided
         if video_data is None and video_url:
@@ -772,7 +784,7 @@ class AIService:
             
             # Make API call with image
             response = await self.openrouter_client.http_client.chat.completions.create(
-                model=self.models.get("content_nlp_analysis", "anthropic/claude-3-haiku"),
+                model=self.models.get("video_frame_analysis", "openai/gpt-4o"),
                 messages=[
                     {
                         "role": "user",
