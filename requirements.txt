@@ -20,6 +20,7 @@ pyyaml
 jinja2
 numpy
 redis
+aiosmtplib
 
 # Authentication Dependencies
 passlib[bcrypt]
