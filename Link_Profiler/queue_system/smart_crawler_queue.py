@@ -1,186 +1,279 @@
 """
-ML-Enhanced Adaptive Rate Limiter
-Learns optimal crawling patterns for each domain
+Smart Crawl Queue System with Priority and Domain Management
+Handles unlimited scale crawling with intelligent scheduling
 """
 
 import asyncio
+import heapq
 import time
-import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Any
 from dataclasses import dataclass, field
-from collections import deque
+from urllib.parse import urlparse
+from enum import IntEnum
+import redis.asyncio as redis
+import json
 import logging
 
 logger = logging.getLogger(__name__)
 
+class Priority(IntEnum):
+    """Priority levels for crawl tasks"""
+    CRITICAL = 1    # Immediate crawling needed
+    HIGH = 2        # Important URLs
+    NORMAL = 3      # Standard crawling
+    LOW = 4         # Background crawling
+    BULK = 5        # Mass crawling operations
+
 @dataclass
-class DomainProfile:
-    """ML-based profile for a domain's crawling characteristics"""
-    domain: str
-    request_history: deque = field(default_factory=lambda: deque(maxlen=100))
-    response_times: deque = field(default_factory=lambda: deque(maxlen=50))
-    success_rate: float = 1.0
-    optimal_delay: float = 1.0
-    last_updated: float = field(default_factory=time.time)
+class CrawlTask:
+    """Represents a single crawl task"""
+    url: str
+    priority: Priority = Priority.NORMAL
+    scheduled_time: float = field(default_factory=time.time)
+    retry_count: int = 0
+    max_retries: int = 3
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    job_id: Optional[str] = None
+    created_at: float = field(default_factory=time.time)
     
-    # ML features
-    avg_response_time: float = 0.0
-    p95_response_time: float = 0.0
-    error_rate: float = 0.0
-    server_load_indicator: float = 0.0
-
-class ResponseAnalyzer:
-    """Analyzes server responses to detect load and adjust timing"""
+    def __lt__(self, other):
+        """For priority queue sorting"""
+        if self.priority != other.priority:
+            return self.priority < other.priority
+        return self.scheduled_time < other.scheduled_time
     
-    def extract_signals(self, crawl_result) -> Dict[str, float]:
-        """Extract ML features from crawl result"""
-        signals = {
-            'response_time': crawl_result.crawl_time_ms / 1000.0,
-            'content_length': len(crawl_result.content) if crawl_result.content else 0,
-            'status_code': crawl_result.status_code,
-            'is_success': 1.0 if 200 <= crawl_result.status_code < 400 else 0.0,
-            'server_time': self._extract_server_time(crawl_result),
-            'content_encoding': self._analyze_content_encoding(crawl_result)
-        }
-        return signals
-    
-    def _extract_server_time(self, result) -> float:
-        """Extract server processing time from headers"""
-        if hasattr(result, 'headers') and result.headers:
-            # Look for common server timing headers
-            timing_headers = ['X-Response-Time', 'X-Runtime', 'Server-Timing']
-            for header in timing_headers:
-                if header in result.headers:
-                    try:
-                        return float(result.headers[header].split()[0])
-                    except (ValueError, IndexError):
-                        continue
-        return 0.0
-    
-    def _analyze_content_encoding(self, result) -> float:
-        """Analyze content encoding efficiency"""
-        if hasattr(result, 'headers') and result.headers:
-            encoding = result.headers.get('Content-Encoding', '')
-            if 'gzip' in encoding or 'br' in encoding:
-                return 1.0  # Compressed content indicates efficient server
-        return 0.5
-
-class MLRateLimiter:
-    """Machine Learning enhanced rate limiter"""
-    
-    def __init__(self):
-        self.domain_profiles: Dict[str, DomainProfile] = {}
-        self.response_analyzer = ResponseAnalyzer()
-        self.global_config = {
-            'min_delay': 0.1,
-            'max_delay': 30.0,
-            'learning_rate': 0.1,
-            'aggression_factor': 0.8  # How aggressive to be with optimization
+    def to_dict(self) -> Dict:
+        """Serialize to dictionary"""
+        return {
+            'url': self.url,
+            'priority': self.priority.value,
+            'scheduled_time': self.scheduled_time,
+            'retry_count': self.retry_count,
+            'max_retries': self.max_retries,
+            'metadata': self.metadata,
+            'job_id': self.job_id,
+            'created_at': self.created_at
         }
     
-    def get_domain_profile(self, domain: str) -> DomainProfile:
-        """Get or create domain profile"""
-        if domain not in self.domain_profiles:
-            self.domain_profiles[domain] = DomainProfile(domain=domain)
-        return self.domain_profiles[domain]
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'CrawlTask':
+        """Deserialize from dictionary"""
+        return cls(
+            url=data['url'],
+            priority=Priority(data['priority']),
+            scheduled_time=data['scheduled_time'],
+            retry_count=data['retry_count'],
+            max_retries=data['max_retries'],
+            metadata=data['metadata'],
+            job_id=data.get('job_id'),
+            created_at=data['created_at']
+        )
+
+class DomainBucket:
+    """Manages crawling for a specific domain"""
     
-    async def adaptive_wait(self, domain: str, last_response=None):
-        """ML-enhanced adaptive waiting"""
-        profile = self.get_domain_profile(domain)
+    def __init__(self, domain: str, min_delay: float = 1.0):
+        self.domain = domain
+        self.min_delay = min_delay
+        self.last_crawl_time = 0.0
+        self.queue: List[CrawlTask] = []
+        self.active_count = 0
+        self.max_concurrent = 2
         
-        if last_response:
-            # Update profile with new data
-            self._update_profile(profile, last_response)
+    def can_crawl_now(self) -> bool:
+        """Check if this domain can be crawled now"""
+        now = time.time()
+        time_since_last = now - self.last_crawl_time
         
-        # Calculate optimal delay using ML model
-        optimal_delay = self._predict_optimal_delay(profile)
-        
-        # Apply server stress detection
-        if last_response and self._detect_server_stress(last_response):
-            optimal_delay *= 1.5
-            logger.info(f"Server stress detected for {domain}, increasing delay to {optimal_delay:.2f}s")
-        
-        # Ensure delay is within bounds
-        optimal_delay = max(self.global_config['min_delay'], 
-                          min(optimal_delay, self.global_config['max_delay']))
-        
-        await asyncio.sleep(optimal_delay)
-        profile.last_updated = time.time()
+        return (time_since_last >= self.min_delay and 
+                self.active_count < self.max_concurrent and 
+                len(self.queue) > 0)
     
-    def _update_profile(self, profile: DomainProfile, response):
-        """Update domain profile with new response data"""
-        signals = self.response_analyzer.extract_signals(response)
-        
-        # Add to history
-        profile.request_history.append({
-            'timestamp': time.time(),
-            'response_time': signals['response_time'],
-            'success': signals['is_success'],
-            'status_code': signals['status_code']
-        })
-        
-        profile.response_times.append(signals['response_time'])
-        
-        # Update statistics
-        if profile.response_times:
-            profile.avg_response_time = np.mean(profile.response_times)
-            profile.p95_response_time = np.percentile(profile.response_times, 95)
-        
-        # Update success rate
-        recent_requests = list(profile.request_history)[-20:]  # Last 20 requests
-        if recent_requests:
-            profile.success_rate = sum(r['success'] for r in recent_requests) / len(recent_requests)
-            profile.error_rate = 1.0 - profile.success_rate
+    def add_task(self, task: CrawlTask):
+        """Add task to domain queue"""
+        heapq.heappush(self.queue, task)
     
-    def _predict_optimal_delay(self, profile: DomainProfile) -> float:
-        """Use lightweight ML model to predict optimal delay"""
-        # Simple linear regression model based on key features
-        base_delay = 1.0
-        
-        # Factor in response time (slower server = longer delay)
-        if profile.avg_response_time > 0:
-            response_factor = min(profile.avg_response_time / 2.0, 3.0)
-            base_delay *= (1.0 + response_factor * 0.3)
-        
-        # Factor in success rate (lower success = longer delay)
-        if profile.success_rate < 0.9:
-            error_factor = (1.0 - profile.success_rate) * 5.0
-            base_delay *= (1.0 + error_factor)
-        
-        # Factor in server load
-        if profile.p95_response_time > profile.avg_response_time * 2:
-            load_factor = 1.5
-            base_delay *= load_factor
-        
-        # Apply learning - gradually optimize based on success
-        if profile.success_rate > 0.95 and profile.avg_response_time < 2.0:
-            # Server is happy, we can be more aggressive
-            base_delay *= self.global_config['aggression_factor']
-        
-        return base_delay
+    def get_next_task(self) -> Optional[CrawlTask]:
+        """Get next task if available"""
+        if self.can_crawl_now():
+            task = heapq.heappop(self.queue)
+            self.last_crawl_time = time.time()
+            self.active_count += 1
+            return task
+        return None
     
-    def _detect_server_stress(self, response) -> bool:
-        """Detect if server is under stress"""
-        if not response:
+    def mark_task_completed(self):
+        """Mark a task as completed"""
+        self.active_count = max(0, self.active_count - 1)
+    
+    def next_priority(self) -> int:
+        """Get priority of next task"""
+        return self.queue[0].priority.value if self.queue else Priority.BULK.value
+
+class SmartCrawlQueue:
+    """Intelligent crawl queue with Redis persistence"""
+    
+    def __init__(self, redis_client: redis.Redis):
+        self.redis = redis_client
+        self.domain_buckets: Dict[str, DomainBucket] = {}
+        self.processed_urls: Set[str] = set()
+        self.stats = {
+            'total_enqueued': 0,
+            'total_processed': 0,
+            'total_failed': 0,
+            'queue_size': 0,
+            'start_time': time.time() # Added start_time for queue's operational duration
+        }
+        
+    async def enqueue_url(self, url: str, priority: Priority = Priority.NORMAL, 
+                         metadata: Dict = None, job_id: str = None) -> bool:
+        """Add URL to crawl queue"""
+        if url in self.processed_urls:
+            logger.debug(f"URL already processed: {url}")
             return False
         
-        stress_indicators = [
-            response.status_code in [429, 503, 504],  # Rate limit or server error
-            response.crawl_time_ms > 10000,  # Very slow response
-            hasattr(response, 'headers') and 'Retry-After' in response.headers
+        domain = urlparse(url).netloc
+        if not domain:
+            logger.warning(f"Invalid URL: {url}")
+            return False
+        
+        if domain not in self.domain_buckets:
+            self.domain_buckets[domain] = DomainBucket(domain)
+        
+        next_crawl_time = self._calculate_next_crawl_time(domain)
+        
+        task = CrawlTask(
+            url=url,
+            priority=priority,
+            scheduled_time=next_crawl_time,
+            metadata=metadata or {},
+            job_id=job_id
+        )
+        
+        self.domain_buckets[domain].add_task(task)
+        await self._persist_task(task)
+        
+        self.stats['total_enqueued'] += 1
+        self.stats['queue_size'] += 1
+        
+        logger.debug(f"Enqueued {url} for domain {domain} with priority {priority}")
+        return True
+    
+    async def get_next_task(self) -> Optional[CrawlTask]:
+        """Get next available task respecting domain limits"""
+        available_domains = [
+            domain for domain, bucket in self.domain_buckets.items()
+            if bucket.can_crawl_now()
         ]
         
-        return any(stress_indicators)
+        if not available_domains:
+            return None
+        
+        selected_domain = min(available_domains, 
+                            key=lambda d: self.domain_buckets[d].next_priority())
+        
+        task = self.domain_buckets[selected_domain].get_next_task()
+        if task:
+            self.processed_urls.add(task.url)
+            await self._remove_persisted_task(task)
+            self.stats['queue_size'] -= 1
+            
+        return task
     
-    def get_statistics(self) -> Dict[str, Any]:
-        """Get statistics for all domains"""
-        stats = {}
-        for domain, profile in self.domain_profiles.items():
-            stats[domain] = {
-                'success_rate': profile.success_rate,
-                'avg_response_time': profile.avg_response_time,
-                'optimal_delay': profile.optimal_delay,
-                'requests_count': len(profile.request_history),
-                'last_updated': profile.last_updated
+    async def mark_task_completed(self, task: CrawlTask, success: bool = True):
+        """Mark task as completed"""
+        domain = urlparse(task.url).netloc
+        if domain in self.domain_buckets:
+            self.domain_buckets[domain].mark_task_completed()
+        
+        if success:
+            self.stats['total_processed'] += 1
+        else:
+            self.stats['total_failed'] += 1
+            if task.retry_count < task.max_retries:
+                await self._requeue_failed_task(task)
+    
+    async def _requeue_failed_task(self, task: CrawlTask):
+        """Re-queue failed task with backoff"""
+        task.retry_count += 1
+        delay = min(300, 30 * (2 ** task.retry_count))
+        task.scheduled_time = time.time() + delay
+        task.priority = Priority(min(task.priority.value + 1, Priority.BULK.value))
+        
+        domain = urlparse(task.url).netloc
+        if domain in self.domain_buckets:
+            self.domain_buckets[domain].add_task(task)
+            await self._persist_task(task)
+            self.stats['queue_size'] += 1
+    
+    def _calculate_next_crawl_time(self, domain: str) -> float:
+        """Calculate when domain can next be crawled"""
+        if domain not in self.domain_buckets:
+            return time.time()
+        
+        bucket = self.domain_buckets[domain]
+        return max(time.time(), bucket.last_crawl_time + bucket.min_delay)
+    
+    async def _persist_task(self, task: CrawlTask):
+        """Persist task to Redis"""
+        key = f"crawl_queue:{task.job_id or 'default'}:{urlparse(task.url).netloc}"
+        await self.redis.lpush(key, json.dumps(task.to_dict()))
+    
+    async def _remove_persisted_task(self, task: CrawlTask):
+        """Remove task from Redis"""
+        key = f"crawl_queue:{task.job_id or 'default'}:{urlparse(task.url).netloc}"
+        await self.redis.lrem(key, 1, json.dumps(task.to_dict()))
+    
+    async def load_persisted_tasks(self):
+        """Load tasks from Redis on startup"""
+        pattern = "crawl_queue:*"
+        async for key in self.redis.scan_iter(match=pattern):
+            tasks_data = await self.redis.lrange(key, 0, -1)
+            for task_data in tasks_data:
+                try:
+                    task = CrawlTask.from_dict(json.loads(task_data))
+                    domain = urlparse(task.url).netloc
+                    if domain not in self.domain_buckets:
+                        self.domain_buckets[domain] = DomainBucket(domain)
+                    self.domain_buckets[domain].add_task(task)
+                    self.stats['queue_size'] += 1
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.error(f"Failed to load persisted task: {e}")
+    
+    async def __aenter__(self):
+        """Context manager entry point."""
+        await self.load_persisted_tasks()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit point."""
+        # No specific cleanup needed here as Redis client is managed externally
+        pass
+
+    def get_queue_stats(self) -> Dict[str, Any]:
+        """Get comprehensive queue statistics"""
+        domain_stats = {}
+        for domain, bucket in self.domain_buckets.items():
+            domain_stats[domain] = {
+                'queue_size': len(bucket.queue),
+                'active_tasks': bucket.active_count,
+                'last_crawl': bucket.last_crawl_time,
+                'can_crawl_now': bucket.can_crawl_now()
             }
-        return stats
+        
+        return {
+            **self.stats,
+            'domains': domain_stats,
+            'total_domains': len(self.domain_buckets)
+        }
+    
+    async def bulk_enqueue(self, urls: List[str], priority: Priority = Priority.BULK, 
+                          job_id: str = None) -> int:
+        """Efficiently enqueue many URLs"""
+        enqueued_count = 0
+        for url in urls:
+            if await self.enqueue_url(url, priority, job_id=job_id):
+                enqueued_count += 1
+        
+        logger.info(f"Bulk enqueued {enqueued_count}/{len(urls)} URLs")
+        return enqueued_count
