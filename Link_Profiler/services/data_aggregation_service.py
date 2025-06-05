@@ -9,6 +9,11 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import json
 import redis.asyncio as redis
+from collections import Counter
+from urllib.parse import urljoin, urlparse
+import re
+
+from bs4 import BeautifulSoup
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.core.models import DomainIntelligence, SocialMention, serialize_model
@@ -38,6 +43,7 @@ from Link_Profiler.services.historical_data_service import HistoricalDataService
 from Link_Profiler.services.local_seo_service import LocalSEOService
 from Link_Profiler.services.security_audit_service import SecurityAuditService
 from Link_Profiler.services.ai_service import AIService # For content analysis, sentiment etc.
+from Link_Profiler.utils.session_manager import session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -364,33 +370,83 @@ class DataAggregationService:
         return security_data
 
     async def get_domain_content_insights(self, domain: str) -> Dict[str, Any]:
-        """
-        Aggregates content-related insights for a domain, potentially using AI.
-        This is a conceptual placeholder.
-        """
+        """Crawl a few pages from the domain and analyse their content."""
         self.logger.debug(f"Fetching content insights for {domain}.")
-        content_insights = {}
 
-        # This would typically involve crawling some pages from the domain
-        # and then running AI analysis on their content.
-        # For now, we'll simulate or use existing AI capabilities.
+        async def _fetch_page(url: str) -> Optional[str]:
+            try:
+                async with session_manager.get(url, timeout=10) as resp:
+                    if resp.status == 200 and 'text/html' in resp.headers.get('Content-Type', ''):
+                        return await resp.text()
+            except Exception as e:
+                self.logger.warning(f"Failed to fetch {url}: {e}")
+            return None
 
-        # Example: Simulate content quality score based on domain name
-        import random
-        content_insights['avg_content_quality_score'] = round(random.uniform(50.0, 95.0), 2)
-        content_insights['content_gaps_identified'] = random.randint(0, 5)
-        content_insights['top_content_topics'] = random.sample(["Marketing", "Technology", "Finance", "Health", "Education"], random.randint(1,3))
-        
-        # If AI service is enabled, you could potentially fetch a sample page
-        # and run `ai_service.analyze_content_nlp` or `ai_service.score_content`
-        # For example:
-        # if self.ai_service.enabled:
-        #     sample_url = f"https://{domain}/" # Or fetch a popular page from DB
-        #     # You'd need to crawl this page first to get its content
-        #     # For now, simulate content
-        #     simulated_content = f"This is a simulated content from {domain} about {random.choice(['SEO', 'digital marketing', 'web development'])}."
-        #     nlp_analysis = await self.ai_service.analyze_content_nlp(simulated_content)
-        #     content_insights['nlp_analysis_sample'] = nlp_analysis
+        def _extract_internal_links(html: str, base_url: str, limit: int = 2) -> List[str]:
+            soup = BeautifulSoup(html, 'lxml')
+            links: List[str] = []
+            for a in soup.find_all('a', href=True):
+                href = urljoin(base_url, a['href'])
+                if urlparse(href).netloc.endswith(domain) and href not in links:
+                    links.append(href)
+                if len(links) >= limit:
+                    break
+            return links
 
-        return content_insights
+        def _basic_nlp(text: str) -> Dict[str, Any]:
+            words = re.findall(r"\b\w+\b", text.lower())
+            words = [w for w in words if len(w) > 4]
+            topics = [w for w, _ in Counter(words).most_common(5)]
+            return {"entities": [], "sentiment": "neutral", "topics": topics}
+
+        await session_manager.__aenter__()
+        try:
+            homepage_url = f"https://{domain}"
+            homepage_html = await _fetch_page(homepage_url)
+            if not homepage_html:
+                homepage_url = f"http://{domain}"
+                homepage_html = await _fetch_page(homepage_url)
+            if not homepage_html:
+                self.logger.warning(f"Unable to fetch homepage for {domain}")
+                return {}
+
+            urls_to_analyze = [homepage_url]
+            urls_to_analyze.extend(_extract_internal_links(homepage_html, homepage_url))
+
+            page_details = []
+            for url in urls_to_analyze:
+                html = homepage_html if url == homepage_url else await _fetch_page(url)
+                if not html:
+                    continue
+                text = BeautifulSoup(html, 'lxml').get_text(separator=' ', strip=True)
+                detail = {"url": url, "word_count": len(text.split())}
+
+                if self.ai_service.enabled:
+                    try:
+                        nlp_res = await self.ai_service.analyze_content_nlp(text[:4000])
+                        score_res = await self.ai_service.score_content(text[:4000], domain)
+                        detail.update(nlp_res)
+                        detail.update(score_res)
+                    except Exception as e:
+                        self.logger.error(f"AI analysis failed for {url}: {e}")
+                else:
+                    detail.update(_basic_nlp(text))
+                page_details.append(detail)
+
+            if not page_details:
+                return {}
+
+            avg_quality = sum(d.get('seo_score', 0) for d in page_details) / len(page_details)
+            avg_readability = sum(d.get('readability_score', 0) for d in page_details) / len(page_details)
+            topics_counter = Counter(t for d in page_details for t in d.get('topics', []))
+            content_insights = {
+                'avg_content_quality_score': round(avg_quality, 2),
+                'avg_readability_score': round(avg_readability, 2),
+                'content_gaps_identified': sum(len(d.get('improvement_suggestions', [])) for d in page_details),
+                'top_content_topics': [t for t, _ in topics_counter.most_common(5)],
+                'pages_analyzed': page_details
+            }
+            return content_insights
+        finally:
+            await session_manager.__aexit__(None, None, None)
 
