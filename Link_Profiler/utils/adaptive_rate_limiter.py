@@ -21,7 +21,7 @@ class DomainProfile:
     request_history: deque = field(default_factory=lambda: deque(maxlen=100))
     response_times: deque = field(default_factory=lambda: deque(maxlen=50))
     success_rate: float = 1.0
-    optimal_delay: float = 1.0
+    # Removed optimal_delay as it's now calculated dynamically
     last_updated: float = field(default_factory=time.time)
     
     # ML features
@@ -183,7 +183,7 @@ class MLRateLimiter:
             stats[domain] = {
                 'success_rate': profile.success_rate,
                 'avg_response_time': profile.avg_response_time,
-                'optimal_delay': profile.optimal_delay,
+                'optimal_delay': self._predict_optimal_delay(profile), # Calculate optimal_delay dynamically
                 'requests_count': len(profile.request_history),
                 'last_updated': profile.last_updated
             }
