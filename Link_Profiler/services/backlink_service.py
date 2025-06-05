@@ -24,7 +24,7 @@ from Link_Profiler.monitoring.prometheus_metrics import ( # Import Prometheus me
 )
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.database.database import Database # Import Database
-from Link_Profiler.clients.google_search_console_client import CREDENTIALS_FILE, TOKEN_FILE, SCOPES # Import GSC specific constants
+from Link_Profiler.clients.google_search_console_client import GoogleSearchConsoleClient # Import GSC Client
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to SimulatedBacklinkAPIClient. Falling back to local SessionManager.")
 
@@ -120,7 +120,7 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
                     source_url="http://example.com/blog/quotes-review",
                     target_url="http://quotes.toscrape.com/",
                     anchor_text="Great Quotes Site",
-                    link_type=LinkType.FOLLOW,
+                    link_type=LinkType.DOFOLLOW,
                     context_text="Check out this great quotes site.",
                     spam_level=SpamLevel.CLEAN
                 ),
@@ -150,7 +150,7 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to RealBacklinkAPIClient. Falling back to local SessionManager.")
 
@@ -204,7 +204,7 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
                         source_url="http://real-api-source1.com/page/1",
                         target_url=target_url,
                         anchor_text="Real API Link 1",
-                        link_type=LinkType.FOLLOW,
+                        link_type=LinkType.DOFOLLOW,
                         context_text="Context from real API source 1",
                         discovered_date=datetime.now() - timedelta(days=30),
                         spam_level=SpamLevel.CLEAN
@@ -239,7 +239,7 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to OpenLinkProfilerAPIClient. Falling back to local SessionManager.")
 
@@ -288,7 +288,7 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
                     spam_score_val = item.get("spam_score", 0.0) # Assuming a score
                     
                     # Map OpenLinkProfiler's link types to our LinkType enum
-                    link_type = LinkType.FOLLOW
+                    link_type = LinkType.DOFOLLOW
                     if "nofollow" in link_type_str:
                         link_type = LinkType.NOFOLLOW
                     elif "sponsored" in link_type_str:
@@ -345,7 +345,7 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to GSCBacklinkAPIClient. Falling back to local SessionManager.")
 
@@ -450,7 +450,7 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
                             source_url=source_domain,
                             target_url=property_url, # Target is the property itself
                             anchor_text="", # GSC API doesn't provide anchor text for this report
-                            link_type=LinkType.FOLLOW, # GSC doesn't specify nofollow for this report
+                            link_type=LinkType.DOFOLLOW, # GSC doesn't specify nofollow for this report
                             context_text="From GSC Top Linking Site",
                             discovered_date=datetime.now(), # GSC doesn't provide discovery date for this report
                             spam_level=SpamLevel.CLEAN
@@ -477,7 +477,7 @@ class BacklinkService:
         self.session_manager = session_manager # Store the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to BacklinkService. Falling back to local SessionManager.")
         
