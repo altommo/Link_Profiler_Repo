@@ -100,7 +100,7 @@ from Link_Profiler.core.models import CrawlStatus, User
 
 # Determine project root for templates and static files
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-templates = Jinja2Templates(directory=os.path.join(project_root, "Link_Profiler", "templates"))
+templates = Jinja2Templates(directory=os.path.join(project_root, "admin-management-console"))
 
 # Initialize FastAPI app
 dashboard_app = FastAPI(
@@ -112,7 +112,7 @@ dashboard_app = FastAPI(
 # Mount static files
 dashboard_app.mount(
     "/static",
-    StaticFiles(directory=os.path.join(project_root, "Link_Profiler", "templates", "static")),
+    StaticFiles(directory=os.path.join(project_root, "admin-management-console", "static")),
     name="static",
 )
 

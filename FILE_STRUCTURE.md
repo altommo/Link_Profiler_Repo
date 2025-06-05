@@ -45,7 +45,7 @@ Link_Profiler/                                    # Project root
 │   ├── monitoring/                             # ✅ NEW: Monitoring tools
 │   │   ├── 📄 __init__.py                       # ✅ NEW: Package init  
 │   │   ├── 📄 dashboard.py                      # ✅ NEW: Web dashboard
-│   ├── templates/                              # Dashboard UI (single location)
+│   ├── admin-management-console/               # Admin/Management Console UI
 │   │   ├── static/                             # CSS and JS assets
 │   │   │   ├── css/
 │   │   │   └── js/
