@@ -391,17 +391,23 @@ class CrawlService:
     async def _filter_and_score_backlinks(self, backlinks: List[Backlink], config: CrawlConfig) -> List[Backlink]:
         """
         Applies quality filtering and scoring to a list of backlinks based on configuration.
+        Also performs early deduplication using a Redis set.
         """
         filtered_backlinks: List[Backlink] = []
         
         spam_filtering_enabled = config_loader.get("quality_assurance.spam_filtering", False)
         data_quality_scoring_enabled = config_loader.get("quality_assurance.data_quality_scoring", False)
         
-        if not spam_filtering_enabled and not data_quality_scoring_enabled:
-            self.logger.debug("Backlink quality assurance and spam filtering are disabled. Returning all backlinks.")
+        if not spam_filtering_enabled and not data_quality_scoring_enabled and not self.redis:
+            self.logger.debug("Backlink quality assurance, spam filtering, and Redis deduplication are disabled. Returning all backlinks.")
             return backlinks
 
         for backlink in backlinks:
+            # Early deduplication using Redis set
+            if await self._is_duplicate_backlink(backlink.source_url, backlink.target_url):
+                self.logger.debug(f"Skipping duplicate backlink: {backlink.source_url} -> {backlink.target_url}")
+                continue
+
             is_valid = True
             reasons_for_filtering = []
 
@@ -429,7 +435,7 @@ class CrawlService:
             else:
                 self.logger.info(f"Filtered out backlink {backlink.source_url} -> {backlink.target_url}. Reasons: {', '.join(reasons_for_filtering)}")
 
-        self.logger.info(f"Filtered {len(backlinks) - len(filtered_backlinks)} backlinks. {len(filtered_backlinks)} remaining after quality checks.")
+        self.logger.info(f"Filtered {len(backlinks) - len(filtered_backlinks)} backlinks. {len(filtered_backlinks)} remaining after quality checks and deduplication.")
         return filtered_backlinks
 
     async def _run_backlink_crawl(self, job: CrawlJob, initial_seed_urls: List[str], config: CrawlConfig):
@@ -450,17 +456,13 @@ class CrawlService:
 
         self.logger.info(f"Attempting to fetch backlinks for {job.target_url} from API.")
         async with self.backlink_service as bs:
-            api_backlinks = await bs.get_backlinks_from_api(job.target_url)
+            api_backlinks = await bs.get_backlinks_for_url(job.target_url)
                 
             if api_backlinks:
                 self.logger.info(f"Found {len(api_backlinks)} backlinks from API for {job.target_url}.")
                 
-                deduplicated_api_backlinks = []
-                for bl in api_backlinks:
-                    if not await self._is_duplicate_backlink(bl.source_url, bl.target_url):
-                        deduplicated_api_backlinks.append(bl)
-                
-                filtered_api_backlinks = await self._filter_and_score_backlinks(deduplicated_api_backlinks, config)
+                # Apply filtering and deduplication for API backlinks
+                filtered_api_backlinks = await self._filter_and_score_backlinks(api_backlinks, config)
 
                 if filtered_api_backlinks:
                     discovered_backlinks.extend(filtered_api_backlinks)
@@ -557,12 +559,8 @@ class CrawlService:
                             if crawl_result.links_found:
                                 self.logger.info(f"Found {len(crawl_result.links_found)} backlinks on {crawl_result.url} via crawl.")
                                 
-                                deduplicated_crawled_backlinks = []
-                                for bl in crawl_result.links_found:
-                                    if not await self._is_duplicate_backlink(bl.source_url, bl.target_url):
-                                        deduplicated_crawled_backlinks.append(bl)
-
-                                filtered_crawled_backlinks = await self._filter_and_score_backlinks(deduplicated_crawled_backlinks, config)
+                                # Apply filtering and deduplication for crawled backlinks
+                                filtered_crawled_backlinks = await self._filter_and_score_backlinks(crawl_result.links_found, config)
 
                                 if filtered_crawled_backlinks:
                                     discovered_backlinks.extend(filtered_crawled_backlinks)
@@ -1042,7 +1040,7 @@ class CrawlService:
         
         job.results['web3_crawl_data'] = serialize_model(web3_data)
         job.urls_crawled = 1 # Count the identifier as one crawled item
-        job.links_found = len(web3_data.get("links_found_web3", []))
+        job.links_found = web3_data.get("links_found_web3", []).count # Re-use links_found for posts found
         job.progress_percentage = 100.0
         self.logger.info(f"Web3 crawl job {job.id} completed for '{web3_content_identifier}'. Data extracted.")
 
