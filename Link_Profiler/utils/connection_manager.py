@@ -5,7 +5,7 @@ File: Link_Profiler/utils/connection_manager.py
 
 import logging
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 from fastapi import WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
@@ -40,9 +40,12 @@ class ConnectionManager:
         except Exception as e:
             self.logger.error(f"Error sending personal message to WebSocket {websocket.client.host}:{websocket.client.port}: {e}", exc_info=True)
 
-    async def broadcast(self, message: Dict[str, Any]):
-        """Broadcasts a JSON message to all active WebSocket connections."""
-        message_str = json.dumps(message)
+    async def broadcast(self, message: Union[str, Dict[str, Any]]):
+        """Broadcasts a message to all active WebSocket connections."""
+        if isinstance(message, (dict, list)):
+            message_str = json.dumps(message)
+        else:
+            message_str = str(message)
         disconnected_websockets = []
         for connection in self.active_connections:
             try:
@@ -56,9 +59,22 @@ class ConnectionManager:
         
         # Clean up disconnected websockets after iterating
         for ws in disconnected_websockets:
-            if ws in self.active_connections: # Ensure it's still in the list before removing
+            if ws in self.active_connections:
                 self.active_connections.remove(ws)
-        self.logger.debug(f"Broadcasted message to {len(self.active_connections)} active connections. Message type: {message.get('type')}")
+        self.logger.debug(
+            f"Broadcasted message to {len(self.active_connections)} active connections. Message type: {message.get('type') if isinstance(message, dict) else 'text'}"
+        )
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        for ws in list(self.active_connections):
+            try:
+                await ws.close()
+            except Exception:
+                pass
+            self.disconnect(ws)
 
 # Global instance of ConnectionManager
 connection_manager = ConnectionManager()

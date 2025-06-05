@@ -1,17 +1,11 @@
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-# Import globally initialized instances from main.py
-try:
-    from Link_Profiler.main import logger, connection_manager
-except ImportError:
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(level=logging.INFO)
-    # Dummy connection_manager for testing or if main.py is not fully initialized
-    class DummyConnectionManager:
-        async def connect(self, websocket): pass
-        def disconnect(self, websocket): pass
-    connection_manager = DummyConnectionManager()
+# Use the shared ConnectionManager instance
+from Link_Profiler.utils.connection_manager import connection_manager
+
+# Get module logger
+logger = logging.getLogger(__name__)
 
 
 websocket_router = APIRouter(tags=["WebSockets"])

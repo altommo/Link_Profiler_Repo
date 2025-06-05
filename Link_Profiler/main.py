@@ -28,7 +28,7 @@ from Link_Profiler.config.config_loader import ConfigLoader, config_loader # Imp
 from Link_Profiler.database.database import Database, db # Import both class and singleton
 from Link_Profiler.services.auth_service import AuthService, auth_service_instance # Import both class and singleton
 from Link_Profiler.utils.logging_config import LoggingConfig # Import LoggingConfig class
-from Link_Profiler.utils.connection_manager import ConnectionManager # Assuming this exists
+from Link_Profiler.utils.connection_manager import ConnectionManager, connection_manager
 
 # Setup logging using the loaded configuration
 # Use LoggingConfig.setup_logging directly
@@ -284,7 +284,7 @@ technical_auditor_instance = TechnicalAuditor(
 ai_service_instance = AIService(session_manager=session_manager)
 
 # New: Initialize Alert Service
-alert_service_instance = AlertService(db, ConnectionManager()) # Pass connection_manager here
+alert_service_instance = AlertService(db, connection_manager)
 
 # New: Initialize Report Service
 report_service_instance = ReportService(db)
@@ -395,8 +395,7 @@ async def lifespan(app: FastAPI):
     Context manager for managing the lifespan of the FastAPI application.
     Ensures resources like aiohttp sessions are properly opened and closed.
     """
-    # Initialize ConnectionManager here, as it's used by alert_service and queue_endpoints
-    connection_manager_instance = ConnectionManager()
+    # Use the shared ConnectionManager instance for WebSocket communication
 
     context_managers = [
         session_manager, # New: Add SessionManager to lifespan
@@ -404,7 +403,7 @@ async def lifespan(app: FastAPI):
         ai_service_instance,
         api_cache, # Initialize API cache
         auth_service_instance, # New: Add AuthService to lifespan
-        connection_manager_instance, # Add ConnectionManager to lifespan
+        connection_manager,
         # The following services are initialized with dependencies that might not be ready yet
         # or are managed by their own internal lifecycles.
         # They should be initialized within the lifespan if they need async setup/teardown.
@@ -493,7 +492,7 @@ async def lifespan(app: FastAPI):
             config_loader=config_loader,
             db=db,
             alert_service=alert_service_instance,
-            connection_manager=connection_manager_instance # Pass the initialized instance
+            connection_manager=connection_manager
         )
 
         # Initialize and start JobCoordinator background tasks
