@@ -1,6 +1,10 @@
 """
 Google Trends Client - Fetches Google Trends data using pytrends.
 File: Link_Profiler/clients/google_trends_client.py
+
+Google Trends free tier allows approximately 10 requests/minute.
+Ingestion jobs must ensure a delay of at least 6 seconds between consecutive calls
+to `get_interest_over_time` to stay within these limits.
 """
 
 import asyncio
@@ -8,6 +12,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import random
+import time # Import time for time.monotonic()
 
 from pytrends.request import TrendReq
 from pytrends.exceptions import ResponseError as PytrendsResponseError
@@ -42,6 +47,7 @@ class GoogleTrendsClient:
 
 
         self.pytrends_client: Optional[TrendReq] = None
+        self._last_call_time: float = 0.0 # For explicit throttling
 
         if not self.enabled:
             self.logger.info("Google Trends API is disabled by configuration.")
@@ -63,22 +69,34 @@ class GoogleTrendsClient:
             await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     @api_rate_limited(service="google_trends_api", api_client_type="google_trends_client", endpoint="get_interest_over_time")
-    async def get_interest_over_time(self, keywords: List[str], timeframe: str = 'today 12-m') -> Dict[str, List[float]]:
+    async def get_interest_over_time(self, keywords: List[str], timeframe: str = 'today 12-m') -> Dict[str, Dict[str, int]]:
         """
         Fetches historical monthly interest data for keywords using Pytrends.
-        Pytrends is synchronous, so this method runs in a thread pool.
+        Pytrends is synchronous, so its methods are run in a thread pool.
+        
+        Returns:
+            Dict[str, Dict[str, int]]: keyword -> {date_str: trend_value}
         """
         if not self.enabled or not self.pytrends_client:
             self.logger.warning("GoogleTrendsClient is disabled or not initialized. Cannot fetch trends.")
-            return {kw: [] for kw in keywords}
+            return {kw: {} for kw in keywords}
 
-        trends_data: Dict[str, List[float]] = {}
+        all_trends_data: Dict[str, Dict[str, int]] = {kw: {} for kw in keywords}
         
         # Pytrends has a limit on the number of keywords per request (usually 5)
-        # and also rate limits.
         chunk_size = 4 # Pytrends allows up to 5, but 4 is safer for related queries
+        
         for i in range(0, len(keywords), chunk_size):
             chunk = keywords[i:i + chunk_size]
+            
+            # Explicit throttling to respect Google Trends free tier (approx. 10 requests/min)
+            elapsed = time.monotonic() - self._last_call_time
+            if elapsed < 6.0: # Ensure at least 6 seconds between calls
+                wait_time = 6.0 - elapsed
+                self.logger.info(f"Throttling Google Trends API. Waiting for {wait_time:.2f} seconds.")
+                await asyncio.sleep(wait_time)
+            self._last_call_time = time.monotonic()
+
             try:
                 # Use resilience manager for the synchronous pytrends call
                 await self.resilience_manager.execute_with_resilience(
@@ -93,31 +111,28 @@ class GoogleTrendsClient:
                 if not interest_over_time_df.empty:
                     for kw in chunk:
                         if kw in interest_over_time_df.columns:
-                            # Convert to list of floats, handling 'isPartial' column if present
-                            # Ensure the column exists before accessing
-                            if kw in interest_over_time_df.columns:
-                                trends_data[kw] = interest_over_time_df[kw].tolist()
-                            else:
-                                trends_data[kw] = [] # Keyword not found in trends data
+                            trends_for_kw: Dict[str, int] = {}
+                            for date_index, row in interest_over_time_df.iterrows():
+                                date_str = date_index.strftime("%Y-%m-%d")
+                                # Check for 'isPartial' column if it exists and is True
+                                if "isPartial" in row and row["isPartial"]:
+                                    continue # Skip partial data
+                                trends_for_kw[date_str] = int(row[kw])
+                            all_trends_data[kw] = trends_for_kw
                         else:
-                            trends_data[kw] = []
+                            all_trends_data[kw] = {} # Keyword not found in trends data
                 else:
                     for kw in chunk:
-                        trends_data[kw] = []
+                        all_trends_data[kw] = {} # No data for this chunk
+
             except PytrendsResponseError as e:
                 self.logger.warning(f"Pytrends API error for keywords {chunk}: {e}. Skipping trends for this chunk.")
                 for kw in chunk:
-                    trends_data[kw] = []
+                    all_trends_data[kw] = {}
             except Exception as e:
                 self.logger.error(f"Unexpected error fetching trends for keywords {chunk}: {e}", exc_info=True)
                 for kw in chunk:
-                    trends_data[kw] = []
+                    all_trends_data[kw] = {}
             
-            # Add human-like delays if configured
-            if config_loader.get("anti_detection.human_like_delays", False):
-                await asyncio.sleep(random.uniform(1, 3)) # Be respectful to Google Trends rate limits
-            else:
-                await asyncio.sleep(random.uniform(0.5, 1.0)) # Default delay
-
-        return trends_data
+        return all_trends_data
 

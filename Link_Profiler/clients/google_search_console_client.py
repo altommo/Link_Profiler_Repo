@@ -75,9 +75,14 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
                         lambda: self._creds.refresh(Request()),
                         url="https://oauth2.googleapis.com/token" # Representative URL for CB
                     )
+                    # Save the refreshed token
+                    with open(self.token_file_path, 'w') as token:
+                        token.write(self._creds.to_json())
                 except Exception as e:
-                    self.logger.error(f"Error refreshing GSC token: {e}")
+                    self.logger.error(f"Error refreshing GSC token: {e}. Will retry in 5 minutes.", exc_info=True)
+                    # Do not disable, allow retry
                     self._creds = None # Invalidate credentials if refresh fails
+                    self.enabled = False # Temporarily disable until next retry
             else:
                 self.logger.warning(f"GSC token.json not found or invalid. Attempting interactive flow. Ensure {self.credentials_file_path} exists.")
                 # This interactive flow is not suitable for a headless server.
@@ -95,9 +100,11 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
                 except FileNotFoundError:
                     self.logger.error(f"GSC credentials.json not found at {self.credentials_file_path}. GSC API will not function.")
                     self._creds = None
+                    self.enabled = False
                 except Exception as e:
                     self.logger.error(f"Error during GSC interactive authentication flow: {e}", exc_info=True)
                     self._creds = None
+                    self.enabled = False
 
         if self._creds:
             # Build GSC service synchronously, as build() is not async
@@ -137,36 +144,49 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
         if not dimensions:
             dimensions = ['query', 'page']
         
-        request_body = {
-            'startDate': start_date,
-            'endDate': end_date,
-            'dimensions': dimensions,
-            'rowLimit': row_limit
-        }
+        all_rows: List[Dict[str, Any]] = []
+        start_row = 0
+        hard_cap = 5000 # Prevent infinite loops, configurable if needed
+
+        while True:
+            request_body = {
+                'startDate': start_date,
+                'endDate': end_date,
+                'dimensions': dimensions,
+                'rowLimit': row_limit,
+                'startRow': start_row
+            }
+            
+            try:
+                # Use resilience manager for the synchronous GSC API call
+                response = await self.resilience_manager.execute_with_resilience(
+                    lambda: self.service.searchanalytics().query(
+                        siteUrl=site_url,
+                        body=request_body
+                    ).execute(),
+                    url=f"https://www.googleapis.com/webmasters/v3/sites/{site_url}/searchAnalytics/query" # Representative URL for CB
+                )
+                
+                rows = response.get('rows', [])
+                all_rows.extend(rows)
+                
+                if len(rows) < row_limit or (start_row + len(rows)) >= hard_cap:
+                    break # No more pages or hit hard cap
+                
+                start_row += len(rows)
+                await asyncio.sleep(1) # Delay between pages to avoid 429s
+                
+            except Exception as e:
+                self.logger.error(f"Error fetching search analytics for {site_url} (startRow: {start_row}): {e}")
+                break # Break on error
         
-        try:
-            # Use resilience manager for the synchronous GSC API call
-            response = await self.resilience_manager.execute_with_resilience(
-                lambda: self.service.searchanalytics().query(
-                    siteUrl=site_url,
-                    body=request_body
-                ).execute(),
-                url=f"https://www.googleapis.com/webmasters/v3/sites/{site_url}/searchAnalytics/query" # Representative URL for CB
-            )
-            
-            rows = response.get('rows', [])
-            
-            # Add last_fetched_at to each row
-            now = datetime.utcnow().isoformat()
-            for row in rows:
-                row['last_fetched_at'] = now
-            
-            self.logger.info(f"Retrieved {len(rows)} search analytics rows for {site_url}")
-            return rows
-            
-        except Exception as e:
-            self.logger.error(f"Error fetching search analytics for {site_url}: {e}")
-            return []
+        # Add last_fetched_at to each row
+        now = datetime.utcnow().isoformat()
+        for row in all_rows:
+            row['last_fetched_at'] = now
+        
+        self.logger.info(f"Retrieved {len(all_rows)} search analytics rows for {site_url}")
+        return all_rows
     
     async def get_sites(self) -> List[Dict[str, Any]]:
         """Get list of sites in Search Console account."""
@@ -252,27 +272,50 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             self.logger.error(f"Error inspecting URL {inspection_url}: {e}")
             return None
     
-    # NOTE: Backlink methods are NOT possible with GSC API
-    async def get_backlinks_note(self, site_url: str) -> Dict[str, str]:
+    async def fetch_backlinks(self, site_url: str) -> List[Dict[str, Any]]:
         """
-        Important note about backlinks in GSC API.
-        
-        The Google Search Console API does NOT provide access to backlink data.
-        This functionality is only available through the web interface.
-        
-        For backlink data, you need to use:
-        1. Third-party APIs (Ahrefs, SEMrush, Moz)
-        2. Web scraping of GSC interface (against ToS)
-        3. Manual export from GSC web interface
+        Fetches backlink data using the legacy Webmasters V3 Links API.
+        Note: This API provides aggregated data (top linking sites, top linked URLs),
+        not individual backlinks with anchor text or specific page URLs.
         """
-        return {
-            "error": "Backlinks not available via GSC API",
-            "message": "Google Search Console API does not provide backlink data. Use third-party services.",
-            "alternatives": [
-                "Ahrefs API",
-                "SEMrush API", 
-                "Moz API",
-                "Manual GSC export"
-            ],
-            'last_fetched_at': datetime.utcnow().isoformat()
-        }
+        if not self.enabled or not self._creds:
+            self.logger.warning("GSC API is disabled or not authenticated. Cannot fetch backlinks.")
+            return []
+
+        try:
+            # Build a webmasters v3 service specifically for the links API
+            wm_service = await asyncio.to_thread(build, 'webmasters', 'v3', credentials=self._creds)
+            
+            # Fetch top linking sites
+            # This is the closest to "backlinks" that the GSC API offers for general use.
+            # It provides domains linking to your site, not specific URLs or anchor texts.
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: wm_service.links().get(
+                    siteUrl=site_url,
+                    resource_name='topLinkingSites' # Or 'topLinkedUrls'
+                ).execute(),
+                url=f"https://www.googleapis.com/webmasters/v3/sites/{site_url}/links" # Representative URL for CB
+            )
+            
+            linking_sites = response.get('topLinkingSites', [])
+            
+            # Normalize the output
+            normalized_backlinks = []
+            now = datetime.utcnow().isoformat()
+            for site_data in linking_sites:
+                normalized_backlinks.append({
+                    "source_url": site_data.get("url"), # This is the linking domain, not a specific URL
+                    "target_url": site_url,
+                    "anchor_text": "N/A (GSC API limitation)",
+                    "link_type": "external", # Assuming external
+                    "last_fetched_at": now,
+                    "gsc_data": site_data # Keep raw GSC data for context
+                })
+            
+            self.logger.info(f"Retrieved {len(normalized_backlinks)} linking sites from GSC for {site_url}.")
+            return normalized_backlinks
+
+        except Exception as e:
+            self.logger.error(f"Error fetching backlinks from GSC for {site_url}: {e}", exc_info=True)
+            return []
+

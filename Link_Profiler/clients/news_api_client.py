@@ -79,42 +79,68 @@ class NewsAPIClient:
             return self._simulate_articles(query, page_size)
 
         endpoint = f"{self.base_url}/everything" # Or /top-headlines
-        params = {
-            'q': query,
-            'sortBy': sort_by,
-            'language': language,
-            'pageSize': page_size,
-            'apiKey': self.api_key
-        }
+        
+        all_articles: List[Dict[str, Any]] = []
+        max_pages = 5 # NewsAPI free tier allows pages 1-5
+        
+        for page in range(1, max_pages + 1):
+            params = {
+                'q': query,
+                'sortBy': sort_by,
+                'language': language,
+                'pageSize': page_size,
+                'apiKey': self.api_key,
+                'page': page
+            }
 
-        self.logger.info(f"Calling NewsAPI.org for news search: '{query}' (page_size: {page_size})...")
-        results = []
-        try:
-            # Use resilience manager for the actual HTTP request
-            response = await self.resilience_manager.execute_with_resilience(
-                lambda: self.session_manager.get(endpoint, params=params, timeout=15),
-                url=endpoint # Pass the endpoint for circuit breaker naming
-            )
-            response.raise_for_status()
-            data = await response.json()
-            
-            for article in data.get('articles', []):
-                results.append({
-                    'platform': 'newsapi',
-                    'title': article.get('title'),
-                    'description': article.get('description'),
-                    'url': article.get('url'),
-                    'author': article.get('author'),
-                    'source': article.get('source', {}).get('name'),
-                    'published_at': article.get('published_at'),
-                    'content': article.get('content'),
-                    'last_fetched_at': datetime.utcnow() # Set last_fetched_at for live data
-                })
-            self.logger.info(f"Found {len(results)} news articles for '{query}'.")
-            return results
-        except Exception as e:
-            self.logger.error(f"Error searching NewsAPI.org for '{query}': {e}", exc_info=True)
-            return self._simulate_articles(query, page_size) # Fallback to simulation on error
+            self.logger.info(f"Calling NewsAPI.org for news search: '{query}' (page: {page}, page_size: {page_size})...")
+            try:
+                response = await self.resilience_manager.execute_with_resilience(
+                    lambda: self.session_manager.get(endpoint, params=params, timeout=15),
+                    url=endpoint # Pass the endpoint for circuit breaker naming
+                )
+                response.raise_for_status()
+                data = await response.json()
+                
+                articles_on_page = data.get('articles', [])
+                if not articles_on_page:
+                    self.logger.info(f"No more articles found for '{query}' on page {page}. Breaking pagination loop.")
+                    break # No more articles
+                
+                for article in articles_on_page:
+                    all_articles.append({
+                        'platform': 'newsapi',
+                        'title': article.get('title'),
+                        'description': article.get('description'),
+                        'url': article.get('url'),
+                        'author': article.get('author'),
+                        'source': article.get('source', {}).get('name'),
+                        'published_at': article.get('publishedAt'),
+                        'content': article.get('content'),
+                        'last_fetched_at': datetime.utcnow() # Set last_fetched_at for live data
+                    })
+                
+                # NewsAPI free tier limits total results, so we might not get all pages
+                if len(articles_on_page) < page_size:
+                    self.logger.info(f"Less than page_size articles on page {page}. Assuming last page for '{query}'.")
+                    break # Last page
+                
+                await asyncio.sleep(1) # Delay between pages to avoid rate limits
+
+            except aiohttp.ClientResponseError as e:
+                if e.status == 429:
+                    self.logger.warning(f"NewsAPI.org rate limit exceeded for '{query}'. Retrying after 60 seconds.")
+                    await asyncio.sleep(60) # Wait for 1 minute
+                    continue # Retry the current page
+                else:
+                    self.logger.error(f"Network/API error searching NewsAPI.org for '{query}' (page: {page}): {e}", exc_info=True)
+                    break # Break on other errors
+            except Exception as e:
+                self.logger.error(f"Unexpected error searching NewsAPI.org for '{query}' (page: {page}): {e}", exc_info=True)
+                break # Break on unexpected errors
+
+        self.logger.info(f"Found {len(all_articles)} news articles for '{query}'.")
+        return all_articles
 
     def _simulate_articles(self, query: str, limit: int) -> List[Dict[str, Any]]:
         """Helper to generate simulated news articles."""
