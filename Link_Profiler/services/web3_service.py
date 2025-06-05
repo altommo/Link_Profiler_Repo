@@ -296,25 +296,32 @@ class Web3Service:
             return simulated_data
 
         try:
+            # Prefer OpenSea if an API key is available
             if self.opensea_api_key:
                 opensea_api_url = "https://api.opensea.io/api/v1/asset_contract/"
                 headers = {"X-API-KEY": self.opensea_api_key}
 
-                async with self._session.get(f"{opensea_api_url}{contract_address}", headers=headers, timeout=10) as response:
-                    response.raise_for_status()
-                    data = await response.json()
+                try:
+                    async with self._session.get(f"{opensea_api_url}{contract_address}", headers=headers, timeout=10) as response:
+                        response.raise_for_status()
+                        data = await response.json()
 
-                    result = {
-                        "contract_address": contract_address,
-                        "project_name": data.get("name"),
-                        "total_supply": data.get("total_supply"),
-                        "floor_price_eth": data.get("stats", {}).get("floor_price"),
-                        "owners_count": data.get("stats", {}).get("num_owners"),
-                        "marketplace_links": [data.get("opensea_url")] if data.get("opensea_url") else [],
-                        "community_links": [data.get("external_link")] if data.get("external_link") else [],
-                        "last_fetched_at": datetime.utcnow(),
-                    }
-            else:
+                        result = {
+                            "contract_address": contract_address,
+                            "project_name": data.get("name"),
+                            "total_supply": data.get("total_supply"),
+                            "floor_price_eth": data.get("stats", {}).get("floor_price"),
+                            "owners_count": data.get("stats", {}).get("num_owners"),
+                            "marketplace_links": [data.get("opensea_url")] if data.get("opensea_url") else [],
+                            "community_links": [data.get("external_link")] if data.get("external_link") else [],
+                            "last_fetched_at": datetime.utcnow(),
+                        }
+                        await self._set_cached_response(cache_key, result)
+                        return result
+                except aiohttp.ClientError as e:
+                    self.logger.error(f"OpenSea API error for {contract_address}: {e}", exc_info=True)
+
+            if self.etherscan_api_key:
                 etherscan_api_url = "https://api.etherscan.io/api"
                 params = {
                     "module": "contract",
@@ -322,38 +329,42 @@ class Web3Service:
                     "address": contract_address,
                     "apikey": self.etherscan_api_key,
                 }
-                async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
-                    response.raise_for_status()
-                    data = await response.json()
-                    info = data.get("result", [{}])[0]
+                try:
+                    async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                        response.raise_for_status()
+                        data = await response.json()
+                        info = data.get("result", [{}])[0]
 
-                params = {
-                    "module": "stats",
-                    "action": "tokensupply",
-                    "contractaddress": contract_address,
-                    "apikey": self.etherscan_api_key,
-                }
-                async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
-                    response.raise_for_status()
-                    supply_data = await response.json()
+                    params = {
+                        "module": "stats",
+                        "action": "tokensupply",
+                        "contractaddress": contract_address,
+                        "apikey": self.etherscan_api_key,
+                    }
+                    async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                        response.raise_for_status()
+                        supply_data = await response.json()
 
-                result = {
-                    "contract_address": contract_address,
-                    "project_name": info.get("ContractName"),
-                    "total_supply": supply_data.get("result"),
-                    "floor_price_eth": None,
-                    "owners_count": None,
-                    "marketplace_links": [f"https://etherscan.io/address/{contract_address}"],
-                    "community_links": [],
-                    "last_fetched_at": datetime.utcnow(),
-                }
-                await self._set_cached_response(cache_key, result)
-                return result
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/API error while analyzing NFT project {contract_address}: {e}", exc_info=True)
+                    result = {
+                        "contract_address": contract_address,
+                        "project_name": info.get("ContractName"),
+                        "total_supply": supply_data.get("result"),
+                        "floor_price_eth": None,
+                        "owners_count": None,
+                        "marketplace_links": [f"https://etherscan.io/address/{contract_address}"],
+                        "community_links": [],
+                        "last_fetched_at": datetime.utcnow(),
+                    }
+                    await self._set_cached_response(cache_key, result)
+                    return result
+                except aiohttp.ClientError as e:
+                    self.logger.error(f"Etherscan API error for {contract_address}: {e}", exc_info=True)
+
+            self.logger.warning("Unable to fetch live NFT project data. Falling back to simulation.")
             simulated_data = self._simulate_nft_project_data(contract_address)
             await self._set_cached_response(cache_key, simulated_data)
             return simulated_data
+
         except Exception as e:
             self.logger.error(f"Unexpected error while analyzing NFT project {contract_address}: {e}", exc_info=True)
             simulated_data = self._simulate_nft_project_data(contract_address)
