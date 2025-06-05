@@ -115,17 +115,17 @@ api_cache:
 domain_api:
   abstract_api:
     enabled: false
-    api_key: "" # Your AbstractAPI key for domain validation/WHOIS
+    api_key: "${LP_DOMAIN_ABSTRACT_API_KEY}" # Your AbstractAPI key for domain validation/WHOIS
     base_url: "https://domain-validation.abstractapi.com/v1/" # Base URL for AbstractAPI Domain Validation
     whois_base_url: "https://whois.abstractapi.com/v1/" # Base URL for AbstractAPI WHOIS
   real_api:
     enabled: false
-    api_key: "" # Your API key for a real domain provider (e.g., WhoisXMLAPI, DomainTools)
-    base_url: "https://api.example-domain-provider.com" # Example base URL for a real domain API
+    api_key: "${LP_DOMAIN_REAL_API_KEY}" # Your API key for a real domain provider (e.g., WhoisXMLAPI, DomainTools)
+    base_url: "https://api.whoisxmlapi.com/v1" # WhoisXMLAPI base URL
   whois_json_api: # New: WHOIS-JSON.com API
     enabled: false
     base_url: "https://www.whois-json.com/api/v1/whois"
-    api_key: "" # WHOIS-JSON.com might require an API key for higher limits
+    api_key: "${LP_WHOIS_JSON_API_KEY}" # WHOIS-JSON.com API key
   dns_over_https_api: # New: DNS over HTTPS (Cloudflare/Google)
     enabled: false
     cloudflare_url: "https://cloudflare-dns.com/dns-query"
@@ -141,17 +141,17 @@ backlink_api:
     base_url: "http://www.openlinkprofiler.org/api/index.php" # OpenLinkProfiler API base URL
   real_api:
     enabled: false
-    api_key: "" # Your API key for a real backlink provider (e.g., Ahrefs, Moz, SEMrush)
-    base_url: "https://api.example-backlink-provider.com" # Example base URL for a real backlink API
+    api_key: "${LP_BACKLINK_REAL_API_KEY}" # Your API key for a real backlink provider (e.g., Ahrefs, Moz, SEMrush)
+    base_url: "https://api.ahrefs.com/v3" # Ahrefs API base URL
 
 serp_api:
   real_api:
     enabled: false
-    api_key: "" # Your API key for a real SERP API (e.g., SerpApi, BrightData SERP API)
-    base_url: "https://api.example-serp-provider.com" # Example base URL for a real SERP API
+    api_key: "${LP_SERP_REAL_API_KEY}" # Your API key for a real SERP API (e.g., SerpApi, BrightData SERP API)
+    base_url: "https://serpapi.com/search" # SerpApi base URL
   pagespeed_insights_api: # New: Google PageSpeed Insights API
     enabled: false
-    api_key: "" # Your Google Cloud API Key
+    api_key: "${LP_PAGESPEED_API_KEY}" # Your Google Cloud API Key
     base_url: "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
 
 serp_crawler:
@@ -163,12 +163,12 @@ serp_crawler:
 keyword_api:
   real_api:
     enabled: false
-    api_key: "" # Your API key for a real keyword research API (e.g., Ahrefs, SEMrush)
-    base_url: "https://api.example-keyword-research.com" # Example base URL for a real keyword research API
+    api_key: "${LP_KEYWORD_REAL_API_KEY}" # Your API key for a real keyword research API (e.g., Ahrefs, SEMrush)
+    base_url: "https://api.ahrefs.com/v3" # Ahrefs API base URL
   metrics_api:
     enabled: false
-    api_key: "" # Your API key for a real keyword metrics API (e.g., Google Ads API, Ahrefs)
-    base_url: "https://api.example-keyword-metrics.com" # Example base URL for a real keyword metrics API
+    api_key: "${LP_KEYWORD_METRICS_API_KEY}" # Your API key for a real keyword metrics API (e.g., Google Ads API, Ahrefs)
+    base_url: "https://googleads.googleapis.com/v16" # Google Ads API base URL
   google_trends_api: # New: Google Trends (pytrends)
     enabled: false
     # pytrends is unofficial, no API key needed, but uses Google's infrastructure
@@ -199,41 +199,41 @@ technical_auditor:
     base_url: "https://api.ssllabs.com/api/v3/analyze"
   security_trails_api: # New: SecurityTrails API
     enabled: false
-    api_key: "" # Your SecurityTrails API Key
+    api_key: "${LP_SECURITY_TRAILS_API_KEY}" # Your SecurityTrails API Key
     base_url: "https://api.securitytrails.com/v1"
 
 # Social Media Integration
 social_media_crawler:
   enabled: false
   platforms: ["twitter", "facebook", "linkedin", "reddit", "youtube"] # Supported platforms
-  twitter_api_key: "" # Your Twitter/X API Key
-  twitter_api_secret: "" # Your Twitter/X API Secret
-  twitter_bearer_token: "" # Your Twitter/X Bearer Token (for v2 API)
-  facebook_app_id: "" # Your Facebook App ID
-  facebook_app_secret: "" # Your Facebook App Secret
-  linkedin_client_id: "" # Your LinkedIn Client ID
-  linkedin_client_secret: "" # Your LinkedIn Client Secret
+  twitter_api_key: "${LP_TWITTER_API_KEY}" # Your Twitter/X API Key
+  twitter_api_secret: "${LP_TWITTER_API_SECRET}" # Your Twitter/X API Secret
+  twitter_bearer_token: "${LP_TWITTER_BEARER_TOKEN}" # Your Twitter/X Bearer Token (for v2 API)
+  facebook_app_id: "${LP_FACEBOOK_APP_ID}" # Your Facebook App ID
+  facebook_app_secret: "${LP_FACEBOOK_APP_SECRET}" # Your Facebook App Secret
+  linkedin_client_id: "${LP_LINKEDIN_CLIENT_ID}" # Your LinkedIn Client ID
+  linkedin_client_secret: "${LP_LINKEDIN_CLIENT_SECRET}" # Your LinkedIn Client Secret
   reddit_api: # New: Reddit API (PRAW)
     enabled: false
-    client_id: "" # Your Reddit Client ID
-    client_secret: "" # Your Reddit Client ID
+    client_id: "${LP_REDDIT_CLIENT_ID}" # Your Reddit Client ID
+    client_secret: "${LP_REDDIT_CLIENT_SECRET}" # Your Reddit Client Secret
     user_agent: "LinkProfilerBot/1.0" # Custom user agent for Reddit API
   youtube_api: # New: YouTube Data API v3
     enabled: false
-    api_key: "" # Your Google Cloud API Key
+    api_key: "${LP_YOUTUBE_API_KEY}" # Your Google Cloud API Key
     base_url: "https://www.googleapis.com/youtube/v3"
   news_api: # New: NewsAPI.org
     enabled: false
-    api_key: "" # Your NewsAPI.org API Key
+    api_key: "${LP_NEWS_API_KEY}" # Your NewsAPI.org API Key
     base_url: "https://newsapi.org/v2"
 
 # Web3 Integration
 web3_crawler:
   enabled: false
   ipfs_gateway_url: "https://ipfs.io/ipfs/" # Default public IPFS gateway
-  blockchain_node_url: "https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID" # Example Ethereum node (replace with your Infura Project ID)
-  etherscan_api_key: "" # Your Etherscan API Key (for blockchain data)
-  opensea_api_key: "" # Your OpenSea API Key (for NFT data)
+  blockchain_node_url: "https://mainnet.infura.io/v3/${LP_INFURA_PROJECT_ID}" # Ethereum node with your Infura Project ID
+  etherscan_api_key: "${LP_ETHERSCAN_API_KEY}" # Your Etherscan API Key (for blockchain data)
+  opensea_api_key: "${LP_OPENSEA_API_KEY}" # Your OpenSea API Key (for NFT data)
   # Add other Web3 API keys as needed (e.g., for Polygonscan, Covalent, etc.)
 
 # Historical Data Integration
@@ -259,14 +259,14 @@ notifications:
     urls: [] # List of webhook URLs to send job completion notifications
   email:
     enabled: false
-    smtp_server: ""
-    smtp_port: 587
-    smtp_username: ""
-    smtp_password: ""
-    sender_email: ""
+    smtp_server: "${LP_SMTP_SERVER}"
+    smtp_port: "${LP_SMTP_PORT:-587}"
+    smtp_username: "${LP_SMTP_USERNAME}"
+    smtp_password: "${LP_SMTP_PASSWORD}"
+    sender_email: "${LP_SENDER_EMAIL}"
   slack:
     enabled: false
-    webhook_url: ""
+    webhook_url: "${LP_SLACK_WEBHOOK_URL}"
 
 # Monitoring settings
 monitoring:
