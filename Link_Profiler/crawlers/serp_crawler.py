@@ -13,7 +13,7 @@ import random # New: Import random for human-like delays
 from playwright.async_api import async_playwright, Page, BrowserContext, Browser
 from playwright_stealth import stealth_async
 
-from Link_Profiler.core.models import SERPResult, CrawlResult # Absolute import CrawlResult
+from Link_Profiler.core.models import SERPResult, CrawlResult, ContentType # Absolute import CrawlResult, ContentType
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.utils.content_validator import ContentValidator # New: Import ContentValidator
 from Link_Profiler.utils.anomaly_detector import anomaly_detector # New: Import AnomalyDetector
