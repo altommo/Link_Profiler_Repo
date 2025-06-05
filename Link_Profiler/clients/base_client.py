@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 from Link_Profiler.utils.session_manager import SessionManager
+from datetime import datetime # Import datetime
 
 class BaseAPIClient:
     """
@@ -39,7 +40,15 @@ class BaseAPIClient:
         try:
             response = await self.session_manager.request(method, url, **kwargs)
             response.raise_for_status()  # Raise an exception for bad status codes
-            return response
+            
+            # Add last_fetched_at to the response object if it's a dict/json
+            try:
+                json_data = await response.json()
+                json_data['last_fetched_at'] = datetime.utcnow().isoformat()
+                return json_data
+            except Exception:
+                # If response is not JSON, return the response object itself
+                return response
         except Exception as e:
             self.logger.error(f"Request to {url} failed: {e}")
             raise

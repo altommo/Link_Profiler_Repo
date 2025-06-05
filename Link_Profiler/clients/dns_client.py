@@ -137,6 +137,10 @@ class DNSClient:
             data = await response.json()
             
             if data and data.get("Answer"):
+                # Add last_fetched_at to each answer entry
+                now = datetime.utcnow().isoformat()
+                for answer in data["Answer"]:
+                    answer['last_fetched_at'] = now
                 return data["Answer"]
                 self.logger.info(f"No DNS records found for {domain}.")
                 return []

@@ -156,6 +156,11 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             
             rows = response.get('rows', [])
             
+            # Add last_fetched_at to each row
+            now = datetime.utcnow().isoformat()
+            for row in rows:
+                row['last_fetched_at'] = now
+            
             self.logger.info(f"Retrieved {len(rows)} search analytics rows for {site_url}")
             return rows
             
@@ -176,6 +181,11 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             )
             sites = response.get('siteEntry', [])
             
+            # Add last_fetched_at to each site entry
+            now = datetime.utcnow().isoformat()
+            for site in sites:
+                site['last_fetched_at'] = now
+
             self.logger.info(f"Found {len(sites)} sites in GSC account")
             return sites
             
@@ -196,6 +206,11 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             )
             sitemaps = response.get('sitemap', [])
             
+            # Add last_fetched_at to each sitemap entry
+            now = datetime.utcnow().isoformat()
+            for sitemap in sitemaps:
+                sitemap['last_fetched_at'] = now
+
             self.logger.info(f"Found {len(sitemaps)} sitemaps for {site_url}")
             return sitemaps
             
@@ -229,6 +244,7 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
                 url=f"https://www.googleapis.com/webmasters/v3/urlInspection/index:inspect" # Representative URL for CB
             )
             
+            response['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
             self.logger.info(f"URL inspection completed for {inspection_url}")
             return response
             
@@ -257,5 +273,6 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
                 "SEMrush API", 
                 "Moz API",
                 "Manual GSC export"
-            ]
+            ],
+            'last_fetched_at': datetime.utcnow().isoformat()
         }
