@@ -1,37 +1,44 @@
-"""
-Proxy Manager - Provides a mechanism for rotating and managing proxies.
-File: Link_Profiler/utils/proxy_manager.py
-"""
-
 import random
-import logging
+import time # Added for time.time()
+import asyncio # Added for asyncio.sleep
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timedelta
 from collections import deque
-from dataclasses import dataclass, field # Import dataclass and field
+from dataclasses import dataclass, field
+import logging
+import aiohttp # Added for aiohttp.ClientSession and ClientTimeout
+
+# Assuming config_loader is available globally or passed via dependency injection
+from Link_Profiler.config.config_loader import config_loader
+
+logger = logging.getLogger(__name__)
+
+class ProxyStatus(Enum): # Defined outside dataclass for clarity
+    ACTIVE = "active"
+    FAILED = "failed"
+    BANNED = "banned"
+    TESTING = "testing"
 
 @dataclass
 class ProxyDetails:
     url: str
-    region: str = "global"
-    # Optional: add more fields for health tracking
-    last_used: Optional[datetime] = None
+    region: str = "unknown"
+    status: ProxyStatus = ProxyStatus.TESTING # Default status
+    last_used: float = 0 # Changed to float for time.time()
     failure_count: int = 0
-    success_count: int = 0 # New: Track success count
-    last_failure_reason: Optional[str] = None # New: Store last failure reason
+    success_count: int = 0
+    avg_response_time: float = 0
+    last_failure_reason: str = ""
 
 class ProxyManager:
-    """
-    Manages a pool of proxies, providing rotation and temporary blacklisting
-    of proxies that fail. Supports geographic distribution.
-    Implemented as a singleton.
-    """
+    """Real proxy management with health checking and rotation."""
+    
     _instance = None
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(ProxyManager, cls).__new__(cls)
-            cls._instance._initialized = False # Flag to ensure __init__ runs only once
+            cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):
@@ -39,118 +46,175 @@ class ProxyManager:
             return
         self._initialized = True
 
-        # Stores proxies grouped by region: { "region_name": deque[ProxyDetails] }
-        self._regional_proxies: Dict[str, deque[ProxyDetails]] = {}
-        # Stores proxies that are temporarily blacklisted: { "proxy_url": datetime_can_retry }
-        self._bad_proxies_until: Dict[str, datetime] = {}
         self.logger = logging.getLogger(__name__ + ".ProxyManager")
-        self.proxy_retry_delay_seconds = 300 # Default 5 minutes
-        self.max_proxy_failures = 5 # New: Max failures before longer blacklist
+        
+        # Configuration from config_loader
+        self.use_proxies = config_loader.get("proxy.use_proxies", False)
+        self.retry_delay = config_loader.get("proxy.proxy_retry_delay_seconds", 300)
+        self.max_failures = config_loader.get("proxy.max_failures_before_ban", 5) # Default added
 
-    def load_proxies(self, proxy_list_raw: List[Dict[str, str]], proxy_retry_delay_seconds: int = 300):
-        """
-        Loads proxies into the manager.
-        proxy_list_raw: List of dictionaries, e.g., [{"url": "http://ip:port", "region": "us-east"}]
-        """
-        self._regional_proxies.clear() # Clear existing proxies
-        self._bad_proxies_until = {} # Clear blacklist on reload
-
-        for proxy_data in proxy_list_raw:
-            proxy_url = proxy_data.get("url")
-            proxy_region = proxy_data.get("region", "global")
-            if not proxy_url:
-                self.logger.warning(f"Skipping proxy entry with missing 'url': {proxy_data}")
-                continue
+        self.proxies: List[ProxyDetails] = []
+        # Load proxies from config
+        proxy_list = config_loader.get("proxy.proxy_list", [])
+        for proxy_config in proxy_list:
+            if isinstance(proxy_config, dict):
+                proxy = ProxyDetails(
+                    url=proxy_config.get("url", ""),
+                    region=proxy_config.get("region", "unknown")
+                )
+                self.proxies.append(proxy)
+        
+        self.logger.info(f"Initialized ProxyManager with {len(self.proxies)} proxies")
+    
+    def get_next_proxy(self) -> Optional[ProxyDetails]:
+        """Get the next available proxy using round-robin with health checking."""
+        if not self.use_proxies or not self.proxies:
+            return None
+        
+        # Filter active proxies
+        active_proxies = [
+            p for p in self.proxies 
+            if p.status == ProxyStatus.ACTIVE or 
+            (p.status == ProxyStatus.FAILED and time.time() - p.last_used > self.retry_delay)
+        ]
+        
+        if not active_proxies:
+            # If no active proxies, try testing failed ones
+            failed_proxies = [p for p in self.proxies if p.status == ProxyStatus.FAILED]
+            if failed_proxies:
+                # Reset the proxy with least recent failure
+                proxy = min(failed_proxies, key=lambda p: p.last_used)
+                proxy.status = ProxyStatus.TESTING
+                return proxy
+            return None
+        
+        # Sort by success rate and response time
+        active_proxies.sort(key=lambda p: (
+            p.success_count / max(1, p.success_count + p.failure_count),  # Success rate
+            -p.avg_response_time  # Faster is better (negative for reverse sort)
+        ), reverse=True)
+        
+        # Use weighted random selection favoring better proxies
+        if len(active_proxies) > 1:
+            # 70% chance for best proxy, 30% for others
+            if random.random() < 0.7:
+                return active_proxies[0]
+            else:
+                return random.choice(active_proxies[1:])
+        
+        return active_proxies[0]
+    
+    def mark_proxy_good(self, proxy_url: str, response_time: float = 0):
+        """Mark a proxy as working."""
+        proxy = self._find_proxy(proxy_url)
+        if proxy:
+            proxy.status = ProxyStatus.ACTIVE
+            proxy.success_count += 1
+            proxy.last_used = time.time()
             
-            proxy_details = ProxyDetails(url=proxy_url, region=proxy_region)
-            if proxy_region not in self._regional_proxies:
-                self._regional_proxies[proxy_region] = deque()
-            self._regional_proxies[proxy_region].append(proxy_details)
-        
-        total_loaded = sum(len(d) for d in self._regional_proxies.values())
-        self.proxy_retry_delay_seconds = proxy_retry_delay_seconds
-        self.logger.info(f"Loaded {total_loaded} proxies across {len(self._regional_proxies)} regions. Retry delay: {proxy_retry_delay_seconds}s.")
-
-    def get_next_proxy(self, desired_region: Optional[str] = None) -> Optional[ProxyDetails]: # Changed return type to ProxyDetails
-        """
-        Returns the next available proxy URL.
-        Prioritizes the desired_region if specified and available.
-        """
-        candidate_regions = []
-        if desired_region and desired_region in self._regional_proxies:
-            candidate_regions.append(desired_region)
-        
-        # Add all other regions for fallback, shuffled to ensure fair distribution
-        other_regions = list(self._regional_proxies.keys())
-        if desired_region and desired_region in other_regions: # Ensure desired_region is not duplicated if it was already added
-            other_regions.remove(desired_region)
-        random.shuffle(other_regions)
-        candidate_regions.extend(other_regions)
-
-        for region in candidate_regions:
-            if region not in self._regional_proxies or not self._regional_proxies[region]:
-                continue # Skip empty regions
-
-            num_proxies_in_region = len(self._regional_proxies[region])
-            for _ in range(num_proxies_in_region): # Iterate through proxies in this region once
-                proxy_details = self._regional_proxies[region][0] # Get the current head
-                self._regional_proxies[region].rotate(-1) # Rotate for next time
-
-                if proxy_details.url in self._bad_proxies_until:
-                    if datetime.now() < self._bad_proxies_until[proxy_details.url]:
-                        self.logger.debug(f"Skipping bad proxy {proxy_details.url} (Region: {region}). Will retry after {self._bad_proxies_until[proxy_details.url]}.")
-                        continue # This proxy is still bad
-                    else:
-                        # Proxy is no longer bad, remove from blacklist
-                        del self._bad_proxies_until[proxy_details.url]
-                        self.logger.info(f"Rehabilitated proxy: {proxy_details.url} (Region: {region}).")
-                
-                proxy_details.last_used = datetime.now()
-                self.logger.debug(f"Using proxy: {proxy_details.url} (Region: {region})")
-                return proxy_details # Return ProxyDetails object
-        
-        self.logger.warning("No available proxies found across all regions.")
-        return None # All proxies are currently bad or no proxies loaded
-
-    def mark_proxy_bad(self, proxy_url: str, reason: str = "unknown"):
-        """
-        Marks a proxy URL as bad, preventing its use for a specified duration.
-        Increments failure count and adjusts blacklist duration.
-        """
-        for region in self._regional_proxies:
-            for proxy_details in self._regional_proxies[region]:
-                if proxy_details.url == proxy_url:
-                    proxy_details.failure_count += 1
-                    proxy_details.last_failure_reason = reason
-                    proxy_details.success_count = 0 # Reset success count on failure
-
-                    # Exponentially increase blacklist time based on consecutive failures
-                    blacklist_duration = self.proxy_retry_delay_seconds * (2 ** (proxy_details.failure_count - 1))
-                    # Cap the blacklist duration to prevent permanent removal for transient issues
-                    blacklist_duration = min(blacklist_duration, 24 * 3600) # Max 24 hours
+            # Update average response time
+            if response_time > 0:
+                if proxy.avg_response_time == 0:
+                    proxy.avg_response_time = response_time
+                else:
+                    # Moving average
+                    proxy.avg_response_time = (proxy.avg_response_time * 0.8) + (response_time * 0.2)
+            
+            self.logger.debug(f"Proxy {proxy_url} marked as good (success: {proxy.success_count})")
+    
+    def mark_proxy_bad(self, proxy_url: str, reason: str = ""):
+        """Mark a proxy as failed."""
+        proxy = self._find_proxy(proxy_url)
+        if proxy:
+            proxy.failure_count += 1
+            proxy.last_used = time.time()
+            proxy.last_failure_reason = reason
+            
+            if proxy.failure_count >= self.max_failures:
+                proxy.status = ProxyStatus.BANNED
+                self.logger.warning(f"Proxy {proxy_url} banned after {proxy.failure_count} failures")
+            else:
+                proxy.status = ProxyStatus.FAILED
+                self.logger.debug(f"Proxy {proxy_url} marked as failed: {reason}")
+    
+    def _find_proxy(self, proxy_url: str) -> Optional[ProxyDetails]:
+        """Find proxy by URL."""
+        return next((p for p in self.proxies if p.url == proxy_url), None)
+    
+    async def test_proxy(self, proxy: ProxyDetails, test_url: str = "http://httpbin.org/ip") -> bool:
+        """Test if a proxy is working."""
+        try:
+            start_time = time.time()
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    test_url,
+                    proxy=proxy.url,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    response_time = time.time() - start_time
                     
-                    retry_time = datetime.now() + timedelta(seconds=blacklist_duration)
-                    self._bad_proxies_until[proxy_url] = retry_time
-                    self.logger.warning(f"Marked proxy {proxy_url} as bad until {retry_time} due to: {reason}. Failures: {proxy_details.failure_count}")
-                    return
-        self.logger.warning(f"Attempted to mark non-existent proxy {proxy_url} as bad.")
-
-    def mark_proxy_good(self, proxy_url: str):
-        """
-        Marks a proxy URL as good, removing it from the blacklist and incrementing success count.
-        """
-        if proxy_url in self._bad_proxies_until:
-            del self._bad_proxies_until[proxy_url]
-            self.logger.info(f"Proxy {proxy_url} marked as good and removed from blacklist.")
+                    if response.status == 200:
+                        self.mark_proxy_good(proxy.url, response_time)
+                        return True
+                    else:
+                        self.mark_proxy_bad(proxy.url, f"HTTP {response.status}")
+                        return False
         
-        for region in self._regional_proxies:
-            for proxy_details in self._regional_proxies[region]:
-                if proxy_details.url == proxy_url:
-                    proxy_details.success_count += 1
-                    # Gradually reduce failure count on success
-                    proxy_details.failure_count = max(0, proxy_details.failure_count - 1)
-                    self.logger.debug(f"Proxy {proxy_url} recorded success. Successes: {proxy_details.success_count}, Failures: {proxy_details.failure_count}")
-                    return
+        except Exception as e:
+            self.mark_proxy_bad(proxy.url, str(e))
+            return False
+    
+    async def test_all_proxies(self) -> Dict[str, bool]:
+        """Test all proxies and return results."""
+        if not self.proxies:
+            return {}
+        
+        self.logger.info(f"Testing {len(self.proxies)} proxies...")
+        
+        tasks = []
+        for proxy in self.proxies:
+            task = asyncio.create_task(self.test_proxy(proxy))
+            tasks.append((proxy.url, task))
+        
+        results = {}
+        for proxy_url, task in tasks:
+            try:
+                result = await task
+                results[proxy_url] = result
+            except Exception as e:
+                self.logger.error(f"Error testing proxy {proxy_url}: {e}")
+                results[proxy_url] = False
+        
+        active_count = sum(1 for r in results.values() if r)
+        self.logger.info(f"Proxy testing complete: {active_count}/{len(self.proxies)} active")
+        
+        return results
+    
+    def get_proxy_stats(self) -> Dict[str, Any]:
+        """Get statistics about proxy performance."""
+        if not self.proxies:
+            return {"total": 0, "active": 0, "failed": 0, "banned": 0}
+        
+        stats = {
+            "total": len(self.proxies),
+            "active": sum(1 for p in self.proxies if p.status == ProxyStatus.ACTIVE),
+            "failed": sum(1 for p in self.proxies if p.status == ProxyStatus.FAILED),
+            "banned": sum(1 for p in self.proxies if p.status == ProxyStatus.BANNED),
+            "testing": sum(1 for p in self.proxies if p.status == ProxyStatus.TESTING)
+        }
+        
+        # Average success rate
+        total_attempts = sum(p.success_count + p.failure_count for p in self.proxies)
+        total_successes = sum(p.success_count for p in self.proxies)
+        
+        stats["success_rate"] = (total_successes / total_attempts) if total_attempts > 0 else 0
+        
+        # Calculate average response time only for proxies with recorded response times
+        response_times = [p.avg_response_time for p in self.proxies if p.avg_response_time > 0]
+        stats["avg_response_time"] = sum(response_times) / max(1, len(response_times))
+        
+        return stats
 
-# Create a singleton instance
+# Create singleton instance
 proxy_manager = ProxyManager()

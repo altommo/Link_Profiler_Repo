@@ -1,0 +1,7 @@
+
+## 2. Environment Setup
+
+1. Copy `.env.example` to `.env`
+2. Fill in your API keys and credentials
+3. Generate a secure secret key:
+

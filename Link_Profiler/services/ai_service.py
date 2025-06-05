@@ -13,6 +13,12 @@ import redis.asyncio as redis
 import random # New: Import random for simulated video analysis
 import httpx # New: Import httpx for OpenAI client compatibility
 
+# New: Imports for video analysis
+import cv2
+import base64
+import tempfile
+import os
+
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.core.models import Domain, LinkProfile, ContentGapAnalysisResult, SEOMetrics # New: Import SEOMetrics
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
@@ -460,26 +466,205 @@ class AIService:
 
         return result
 
-    async def analyze_video_content(self, video_url: str, video_data: Optional[bytes] = None) -> Dict[str, Any]:
+    async def analyze_video_content(self, video_url: str, video_data: Optional[bytes] = None, 
+                                  max_frames: int = 10) -> Dict[str, Any]:
         """
-        Simulates AI-powered video content analysis and transcription.
-        In a real scenario, this would involve sending video data to a specialized API.
+        Real video content analysis using OpenAI Vision API.
+        Extracts frames from video and analyzes them with GPT-4 Vision.
+        
+        Args:
+            video_url: URL of the video
+            video_data: Raw video bytes (optional)
+            max_frames: Maximum number of frames to extract and analyze
+            
+        Returns:
+            Dictionary with transcription, topics, and analysis
         """
-        if not self.enabled:
-            self.logger.warning("AI service is disabled. Cannot perform video analysis.")
-            return {}
-
-        # For simulation, we'll generate dummy data.
-        # In a real implementation, video_data (bytes) would be sent to a specialized API.
+        if not self.enabled or not self.openrouter_client:
+            raise NotImplementedError("AI service is disabled. Video analysis requires AI integration.")
         
-        simulated_transcription = f"Simulated transcription for video at {video_url}. This video discusses {random.choice(['SEO strategies', 'digital marketing trends', 'web development', 'link building techniques'])} and provides actionable insights."
-        simulated_topics = random.sample(["SEO", "Marketing", "Video Content", "Analytics", "Strategy"], random.randint(1, 3))
+        # Download video if only URL provided
+        if video_data is None and video_url:
+            video_data = await self._download_video(video_url)
         
-        self.logger.info(f"Simulated video analysis for {video_url}. Topics: {simulated_topics}")
+        if not video_data:
+            raise ValueError("No video data available for analysis")
+        
+        # Extract frames from video
+        frames = await self._extract_video_frames(video_data, max_frames)
+        
+        if not frames:
+            raise ValueError("No frames could be extracted from video")
+        
+        # Analyze frames with Vision API
+        analysis_results = []
+        for i, frame in enumerate(frames):
+            frame_analysis = await self._analyze_video_frame(frame, i)
+            if frame_analysis:
+                analysis_results.append(frame_analysis)
+        
+        # Synthesize results
+        return await self._synthesize_video_analysis(analysis_results, video_url)
+    
+    async def _download_video(self, video_url: str) -> Optional[bytes]:
+        """Download video from URL."""
+        try:
+            async with self.session_manager.get(video_url, timeout=60) as response:
+                response.raise_for_status()
+                return await response.read()
+        except Exception as e:
+            self.logger.error(f"Error downloading video from {video_url}: {e}")
+            return None
+    
+    async def _extract_video_frames(self, video_data: bytes, max_frames: int) -> List[bytes]:
+        """Extract frames from video using OpenCV."""
+        frames = []
+        
+        # Save video data to temporary file
+        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
+            temp_file.write(video_data)
+            temp_path = temp_file.name
+        
+        try:
+            # Open video with OpenCV
+            cap = cv2.VideoCapture(temp_path)
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
+            if total_frames == 0:
+                return frames
+            
+            # Calculate frame interval
+            interval = max(1, total_frames // max_frames)
+            
+            frame_count = 0
+            while len(frames) < max_frames:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                if frame_count % interval == 0:
+                    # Convert frame to JPEG bytes
+                    _, buffer = cv2.imencode('.jpg', frame)
+                    frames.append(buffer.tobytes())
+                
+                frame_count += 1
+            
+            cap.release()
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting video frames: {e}")
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+        
+        return frames
+    
+    async def _analyze_video_frame(self, frame_data: bytes, frame_index: int) -> Optional[Dict[str, Any]]:
+        """Analyze a single video frame with Vision API."""
+        try:
+            # Encode frame as base64
+            frame_b64 = base64.b64encode(frame_data).decode('utf-8')
+            
+            prompt = f"""
+            Analyze this video frame (frame #{frame_index}). Describe:
+            1. What objects, people, or text you see
+            2. Any actions or activities taking place
+            3. The setting or environment
+            4. Any text that appears on screen
+            
+            Provide response as JSON with keys: objects, actions, setting, text_content
+            """
+            
+            # Make API call with image
+            response = await self.openrouter_client.http_client.chat.completions.create(
+                model=self.models.get("content_nlp_analysis", "anthropic/claude-3-haiku"),
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{frame_b64}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=500
+            )
+            
+            content = response.choices[0].message.content
+            import json
+            return json.loads(content)
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing video frame {frame_index}: {e}")
+            return None
+    
+    async def _synthesize_video_analysis(self, frame_analyses: List[Dict[str, Any]], 
+                                       video_url: str) -> Dict[str, Any]:
+        """Synthesize individual frame analyses into comprehensive video analysis."""
+        if not frame_analyses:
+            return {
+                "transcription": "",
+                "topics": [],
+                "timeline": [],
+                "summary": "No analysis data available"
+            }
+        
+        # Combine all text content found in frames
+        all_text = []
+        all_objects = []
+        all_actions = []
+        timeline = []
+        
+        for i, analysis in enumerate(frame_analyses):
+            if analysis.get('text_content'):
+                all_text.append(analysis['text_content'])
+            if analysis.get('objects'):
+                all_objects.extend(analysis['objects'])
+            if analysis.get('actions'):
+                all_actions.extend(analysis['actions'])
+            
+            # Build timeline
+            timeline.append({
+                "frame": i,
+                "timestamp": f"{i*2}s",  # Approximate 2 seconds per frame
+                "description": f"{analysis.get('setting', '')} - {analysis.get('actions', '')}"
+            })
+        
+        # Extract unique topics
+        topics = list(set(all_objects + all_actions))
+        
+        # Generate summary
+        summary_prompt = f"""
+        Based on the following video frame analyses, provide a comprehensive summary:
+        
+        Objects seen: {', '.join(set(all_objects))}
+        Actions observed: {', '.join(set(all_actions))}
+        Text found: {', '.join(all_text)}
+        
+        Provide a coherent summary of what this video appears to be about.
+        """
+        
+        summary = await self._call_ai_with_cache(
+            "content_generation", 
+            summary_prompt, 
+            f"video_summary:{hash(str(frame_analyses))}"
+        )
         
         return {
-            "transcription": simulated_transcription,
-            "topics": simulated_topics
+            "transcription": ' '.join(all_text),
+            "topics": topics[:10],  # Limit to top 10 topics
+            "timeline": timeline,
+            "summary": summary.get('summary', 'Video analysis completed') if summary else "Analysis completed",
+            "objects_detected": list(set(all_objects)),
+            "actions_detected": list(set(all_actions))
         }
 
     async def assess_content_quality(self, content: str, url: str) -> Tuple[Optional[float], Optional[str]]:

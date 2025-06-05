@@ -50,11 +50,11 @@ api:
 
 # Database settings (PostgreSQL)
 database:
-  url: "postgresql://postgres:postgres@localhost:5432/link_profiler_db"
+  url: "${LP_DATABASE_URL:-postgresql://postgres:postgres@localhost:5432/link_profiler_db}"
 
 # Redis settings (for queues and caching)
 redis:
-  url: "${REDIS_URL:-redis://localhost:6379/0}" # Use environment variable with default
+  url: "${LP_REDIS_URL:-redis://localhost:6379/0}" # Use environment variable with default
   cache_ttl: 3600 # Default cache TTL in seconds (1 hour)
 
 # Queue system settings
@@ -177,7 +177,7 @@ keyword_api:
 # AI Service Integration (e.g., OpenRouter, OpenAI, Anthropic)
 ai:
   enabled: false
-  openrouter_api_key: "" # Your OpenRouter API key
+  openrouter_api_key: "${LP_AI_OPENROUTER_API_KEY}" # Your OpenRouter API key
   models: # Map task types to specific models available on OpenRouter
     content_scoring: "anthropic/claude-3-haiku"
     content_classification: "anthropic/claude-3-haiku"
@@ -275,7 +275,7 @@ monitoring:
   max_job_history: 50 # Max number of recent jobs to show on dashboard
   monitor_auth: # New: Credentials for the monitor to authenticate with the main API
     username: "monitor_user" # IMPORTANT: Create this user in your main API's database
-    password: "monitor_secure_password_123" # IMPORTANT: Use a strong password
+    password: "${LP_MONITOR_PASSWORD}" # IMPORTANT: Use a strong password
   enabled: true # Enable/disable health monitoring
   metrics_interval: 30 # Interval in seconds for collecting metrics
   health_check_interval: 60 # Interval in seconds for running health checks
@@ -300,7 +300,7 @@ rate_limiting:
 
 # Queue System settings
 queue_system:
-  redis_url: "redis://:redis_secure_pass_456@127.0.0.1:6379/0"
+  redis_url: "${LP_REDIS_URL:-redis://localhost:6379/0}"
   max_queue_size: 100000
   domain_max_concurrent: 2
   scheduled_jobs_queue: "scheduled_crawl_jobs" # New: Name of the queue for scheduled jobs
@@ -359,7 +359,7 @@ satellite:
 
 # Authentication settings
 auth:
-  secret_key: "${SECRET_KEY}" # REQUIRED: This is your generated key
+  secret_key: "${LP_AUTH_SECRET_KEY}" # REQUIRED: This is your generated key
   algorithm: "HS256"
   access_token_expire_minutes: 30 # Token expiry time in minutes
 

@@ -1,22 +1,18 @@
-"""
-Google Search Console Client - Authenticates and interacts with Google Search Console API.
-File: Link_Profiler/clients/google_search_console_client.py
-"""
-
-import asyncio
-import logging
+import json
 import os
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
-
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from typing import Dict, Any, List, Optional
+from datetime import datetime, timedelta
+import logging
+import asyncio # Added for asyncio.to_thread
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
-from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
+from Link_Profiler.clients.base_client import BaseAPIClient # Assuming this exists
 
 logger = logging.getLogger(__name__)
 
@@ -29,40 +25,36 @@ SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
 TOKEN_FILE = 'token.json'
 CREDENTIALS_FILE = 'credentials.json'
 
-class GSCClient:
+class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
     """
-    Client for interacting with the Google Search Console API.
-    Handles OAuth 2.0 authentication.
+    Real Google Search Console API client.
+    
+    Note: The GSC API does NOT provide backlink data. That's only available
+    in the web interface. This client provides search analytics data.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
-        self.logger = logging.getLogger(__name__ + ".GSCClient")
+    
+    def __init__(self, session_manager: Optional[SessionManager] = None): # Accept session_manager
+        super().__init__(session_manager) # Call BaseAPIClient's init
+        self.logger = logging.getLogger(__name__ + ".GoogleSearchConsoleClient")
         self.service = None
         self._creds = None
         self.enabled = config_loader.get("backlink_api.gsc_api.enabled", False)
-        self.credentials_file = config_loader.get("backlink_api.gsc_api.credentials_file", CREDENTIALS_FILE)
-        self.token_file = config_loader.get("backlink_api.gsc_api.token_file", TOKEN_FILE)
-        self.session_manager = session_manager # Use the injected session manager
-        if self.session_manager is None:
-            # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
-            self.session_manager = LocalSessionManager()
-            logger.warning("No SessionManager provided to GSCClient. Falling back to local SessionManager.")
-
+        self.credentials_file_path = config_loader.get("backlink_api.gsc_api.credentials_file", CREDENTIALS_FILE)
+        self.token_file_path = config_loader.get("backlink_api.gsc_api.token_file", TOKEN_FILE)
+        
         if not self.enabled:
             self.logger.info("Google Search Console API is disabled by configuration.")
         elif not os.path.exists(self.credentials_file_path):
             self.logger.error(f"GSC API enabled but credentials.json not found at {self.credentials_file_path}. GSC API will not function.")
             self.enabled = False
-
+    
     async def __aenter__(self):
-        """Authenticates and builds the GSC service."""
+        """Initialize the GSC API service."""
+        await super().__aenter__() # Call base client's __aenter__
         if not self.enabled:
             return self
-
+            
         self.logger.info("Entering GSCClient context. Attempting authentication.")
-        
-        # Ensure session manager is entered
-        await self.session_manager.__aenter__()
 
         if os.path.exists(self.token_file_path):
             self._creds = Credentials.from_authorized_user_file(self.token_file_path, SCOPES)
@@ -103,59 +95,146 @@ class GSCClient:
             self.enabled = False # Disable if auth fails
         
         return self
-
+    
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """No specific cleanup needed for GSC service object."""
-        if self.enabled:
-            self.logger.info("Exiting GSCClient context.")
-            await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
-
-    @api_rate_limited(service="google_search_console_api", api_client_type="gsc_client", endpoint="list_sites")
-    async def list_sites(self) -> List[str]:
+        """Clean up resources."""
+        await super().__aexit__(exc_type, exc_val, exc_tb) # Call base client's __aexit__
+        pass # No explicit cleanup for GSC service object
+    
+    @api_rate_limited(service="gsc_api", api_client_type="gsc_client", endpoint="get_search_analytics")
+    async def get_search_analytics(self, site_url: str, start_date: str, end_date: str,
+                                 dimensions: List[str] = None, row_limit: int = 1000) -> List[Dict[str, Any]]:
         """
-        Lists all sites verified in the authenticated Google Search Console account.
+        Get search analytics data from Google Search Console.
+        
+        Args:
+            site_url: The site URL (must be verified in GSC)
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format  
+            dimensions: List of dimensions (query, page, country, device, etc.)
+            row_limit: Maximum rows to return (default 1000)
+            
+        Returns:
+            List of search analytics data
         """
-        if not self.service:
-            self.logger.error("GSC service not initialized. Cannot list sites.")
-            return []
-        try:
-            # Use asyncio.to_thread to run the synchronous GSC API call
-            response = await asyncio.to_thread(self.service.sites().list().execute)
-            site_urls = [site['siteUrl'] for site in response.get('siteEntry', [])]
-            self.logger.info(f"Found {len(site_urls)} sites in GSC.")
-            return site_urls
-        except Exception as e:
-            self.logger.error(f"Error listing GSC sites: {e}. Returning empty list.", exc_info=True)
-            return []
-
-    @api_rate_limited(service="google_search_console_api", api_client_type="gsc_client", endpoint="query_search_analytics")
-    async def query_search_analytics(self, site_url: str, start_date: datetime, end_date: datetime, dimensions: List[str], row_limit: int = 1000) -> List[Dict[str, Any]]:
-        """
-        Queries Search Analytics data for a given site.
-        """
-        if not self.service:
-            self.logger.error("GSC service not initialized. Cannot query search analytics.")
+        if not self.enabled or not self.service:
+            self.logger.warning("GSC API is disabled or not authenticated.")
             return []
         
+        if not dimensions:
+            dimensions = ['query', 'page']
+        
         request_body = {
-            'startDate': start_date.strftime('%Y-%m-%d'),
-            'endDate': end_date.strftime('%Y-%m-%d'),
+            'startDate': start_date,
+            'endDate': end_date,
             'dimensions': dimensions,
             'rowLimit': row_limit
         }
-        self.logger.info(f"Querying GSC Search Analytics for {site_url} from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}...")
-
+        
         try:
             # Use asyncio.to_thread to run the synchronous GSC API call
             response = await asyncio.to_thread(
-                self.service.searchanalytics().query,
-                siteUrl=site_url,
-                body=request_body
-            ).execute()
+                self.service.searchanalytics().query(
+                    siteUrl=site_url,
+                    body=request_body
+                ).execute
+            )
             
             rows = response.get('rows', [])
-            self.logger.info(f"Found {len(rows)} rows of search analytics data for {site_url}.")
+            
+            self.logger.info(f"Retrieved {len(rows)} search analytics rows for {site_url}")
             return rows
+            
         except Exception as e:
-            self.logger.error(f"Error querying GSC Search Analytics for {site_url}: {e}. Returning empty list.", exc_info=True)
+            self.logger.error(f"Error fetching search analytics for {site_url}: {e}")
             return []
+    
+    async def get_sites(self) -> List[Dict[str, Any]]:
+        """Get list of sites in Search Console account."""
+        if not self.enabled or not self.service:
+            return []
+        
+        try:
+            # Use asyncio.to_thread to run the synchronous GSC API call
+            response = await asyncio.to_thread(self.service.sites().list().execute)
+            sites = response.get('siteEntry', [])
+            
+            self.logger.info(f"Found {len(sites)} sites in GSC account")
+            return sites
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching GSC sites: {e}")
+            return []
+    
+    async def get_sitemaps(self, site_url: str) -> List[Dict[str, Any]]:
+        """Get sitemaps for a site."""
+        if not self.enabled or not self.service:
+            return []
+        
+        try:
+            # Use asyncio.to_thread to run the synchronous GSC API call
+            response = await asyncio.to_thread(self.service.sitemaps().list(siteUrl=site_url).execute)
+            sitemaps = response.get('sitemap', [])
+            
+            self.logger.info(f"Found {len(sitemaps)} sitemaps for {site_url}")
+            return sitemaps
+            
+        except Exception as e:
+            self.logger.error(f"Error fetching sitemaps for {site_url}: {e}")
+            return []
+    
+    async def inspect_url(self, site_url: str, inspection_url: str) -> Optional[Dict[str, Any]]:
+        """
+        Inspect a URL (equivalent to URL Inspection tool in GSC).
+        
+        Args:
+            site_url: The property URL
+            inspection_url: The URL to inspect
+            
+        Returns:
+            URL inspection results
+        """
+        if not self.enabled or not self.service:
+            return None
+        
+        try:
+            request_body = {
+                'inspectionUrl': inspection_url,
+                'siteUrl': site_url
+            }
+            
+            # Use asyncio.to_thread to run the synchronous GSC API call
+            response = await asyncio.to_thread(
+                self.service.urlInspection().index().inspect(body=request_body).execute
+            )
+            
+            self.logger.info(f"URL inspection completed for {inspection_url}")
+            return response
+            
+        except Exception as e:
+            self.logger.error(f"Error inspecting URL {inspection_url}: {e}")
+            return None
+    
+    # NOTE: Backlink methods are NOT possible with GSC API
+    async def get_backlinks_note(self, site_url: str) -> Dict[str, str]:
+        """
+        Important note about backlinks in GSC API.
+        
+        The Google Search Console API does NOT provide access to backlink data.
+        This functionality is only available through the web interface.
+        
+        For backlink data, you need to use:
+        1. Third-party APIs (Ahrefs, SEMrush, Moz)
+        2. Web scraping of GSC interface (against ToS)
+        3. Manual export from GSC web interface
+        """
+        return {
+            "error": "Backlinks not available via GSC API",
+            "message": "Google Search Console API does not provide backlink data. Use third-party services.",
+            "alternatives": [
+                "Ahrefs API",
+                "SEMrush API", 
+                "Moz API",
+                "Manual GSC export"
+            ]
+        }
