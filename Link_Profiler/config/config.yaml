@@ -206,6 +206,7 @@ ai:
     content_nlp_analysis: "anthropic/claude-3-haiku"
     topic_clustering: "mistralai/mistral-7b-instruct"
     content_quality_assessment: "anthropic/claude-3-haiku" # Added for content quality assessment
+    video_frame_analysis: "openai/gpt-4o" # Model used for analyzing individual video frames
   # Live/Cache settings for AI Service
   ai_service:
     allow_live: true
