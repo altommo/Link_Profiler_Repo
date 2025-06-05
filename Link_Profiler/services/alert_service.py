@@ -8,6 +8,7 @@ import logging
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime, timedelta
 import re # For regex pattern matching
+from urllib.parse import urlparse # Import urlparse
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import AlertRule, CrawlJob, CrawlStatus, SEOMetrics, AlertSeverity, AlertChannel # Import AlertChannel and SEOMetrics
