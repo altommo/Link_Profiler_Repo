@@ -21,7 +21,7 @@ from Link_Profiler.core.models import (
     CrawlJob, ContentType, serialize_model, SEOMetrics, SpamLevel, CrawlError,
     SERPResult, KeywordSuggestion, LinkProfile, ContentGapAnalysisResult, LinkProspect, ReportJob # New: Import ContentGapAnalysisResult, LinkProspect, ReportJob
 )
-from Link_Profiler.crawlers.web_crawler import WebCrawler, CrawlResult
+from Link_Profiler.crawlers.web_crawler import EnhancedWebCrawler # Changed from WebCrawler
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
 from Link_Profiler.crawlers.social_media_crawler import SocialMediaCrawler # New: Import SocialMediaCrawler
 from Link_Profiler.database.database import Database
@@ -33,10 +33,10 @@ from Link_Profiler.services.keyword_service import KeywordService
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
 from Link_Profiler.services.ai_service import AIService
-from Link_Profiler.services.social_media_service import SocialMediaService # New: Import SocialMediaService
-from Link_Profiler.services.web3_service import Web3Service # New: Import Web3Service
-from Link_Profiler.services.link_building_service import LinkBuildingService # New: Import LinkBuildingService
-from Link_Profiler.services.report_service import ReportService # New: Import ReportService
+from Link_Profiler.services.social_media_service import SocialMediaService # New: Add SocialMediaService
+from Link_Profiler.services.web3_service import Web3Service # New: Add Web3Service
+from Link_Profiler.services.link_building_service import LinkBuildingService # New: Add LinkBuildingService
+from Link_Profiler.services.report_service import ReportService # New: Add ReportService
 from Link_Profiler.utils.content_validator import ContentValidator
 from Link_Profiler.utils.anomaly_detector import anomaly_detector
 from Link_Profiler.config.config_loader import config_loader
@@ -72,7 +72,7 @@ class CrawlService:
     ):
         self.db = database
         self.logger = logging.getLogger(__name__)
-        self.active_crawlers: Dict[str, WebCrawler] = {}
+        self.active_crawlers: Dict[str, EnhancedWebCrawler] = {} # Changed to EnhancedWebCrawler
         self.domain_service = domain_service
         self.backlink_service = backlink_service
         self.serp_service = serp_service
@@ -439,7 +439,7 @@ class CrawlService:
         self.logger.info(f"Starting backlink crawl logic for job {job.id} for {job.target_url}")
 
         # Pass playwright_browser to WebCrawler
-        crawler = WebCrawler(config, self.db, job.id, self.ai_service, playwright_browser=self.playwright_browser)
+        crawler = EnhancedWebCrawler(config, self.db, job.id, self.ai_service, playwright_browser=self.playwright_browser) # Changed to EnhancedWebCrawler
         self.active_crawlers[job.id] = crawler
 
         discovered_backlinks: List[Backlink] = []
@@ -981,7 +981,7 @@ class CrawlService:
         Internal method to execute a full SEO audit job.
         This orchestrates technical audit and link health audit for the given URLs.
         """
-        self.logger.info(f"Starting full SEO audit logic for job {job.id} for {len(urls_to_audit)} URLs.")
+        self.logger.info(f"Starting full SEO audit logic for job {job.id}.")
 
         total_urls = len(urls_to_audit)
         completed_sub_audits = 0
