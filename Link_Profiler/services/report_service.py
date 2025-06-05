@@ -78,12 +78,14 @@ class ReportService:
         if not self.REPORTLAB_AVAILABLE:
             self.logger.error("ReportLab is not installed. Cannot generate PDF report. Returning simulated PDF.")
             # Simulate a PDF for demonstration if ReportLab is missing
-            dummy_pdf_content = f"Simulated PDF Report for Link Profile: {target_url}\n\n" \
-                                f"Total Backlinks: {link_profile.total_backlinks}\n" \
-                                f"Unique Domains: {link_profile.unique_domains}\n" \
-                                f"Authority Score: {link_profile.authority_score}\n" \
-                                f"This is a placeholder. Install ReportLab for real PDF generation."
-            return io.BytesIO(dummy_pdf_content.encode('utf-8'))
+            dummy_pdf_content = (
+                f"Simulated PDF Report for Link Profile: {target_url}\n\n"
+                f"Total Backlinks: {link_profile.total_backlinks}\n"
+                f"Unique Domains: {link_profile.unique_domains}\n"
+                f"Authority Score: {link_profile.authority_score}\n"
+                f"This is a placeholder. Install ReportLab for real PDF generation."
+            )
+            return io.BytesIO(dummy_pdf_content.encode("utf-8"))
 
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=letter)
@@ -199,8 +201,18 @@ class ReportService:
             self.logger.info(f"PDF report generated for link profile: {target_url}")
             return buffer
         except Exception as e:
-            self.logger.error(f"Error building PDF for {target_url}: {e}", exc_info=True)
-            return None
+            self.logger.error(
+                f"Error building PDF for {target_url}: {e}. Falling back to dummy PDF.",
+                exc_info=True,
+            )
+            dummy_pdf_content = (
+                f"Simulated PDF Report for Link Profile: {target_url}\n\n"
+                f"Total Backlinks: {link_profile.total_backlinks}\n"
+                f"Unique Domains: {link_profile.unique_domains}\n"
+                f"Authority Score: {link_profile.authority_score}\n"
+                f"This is a placeholder due to an error generating the real PDF."
+            )
+            return io.BytesIO(dummy_pdf_content.encode("utf-8"))
 
     async def generate_link_profile_excel_report(self, target_url: str) -> Optional[io.BytesIO]:
         """
