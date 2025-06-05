@@ -194,8 +194,9 @@ class CrawlerMetrics:
         
         # Track success/failure
         if response.error_message:
-            self.requests_failed.inc(labels={**labels, 'error_type': 'request_error'})
-            self.error_types.inc(labels={'type': 'request_error', 'domain': domain})
+            error_type = response.error_message.split(':')[0].strip() if ':' in response.error_message else "unknown_error"
+            self.requests_failed.inc(labels={**labels, 'error_type': error_type})
+            self.error_types.inc(labels={'type': error_type, 'domain': domain})
         elif response.status_code >= 400:
             error_type = f"http_{response.status_code}"
             self.requests_failed.inc(labels={**labels, 'error_type': error_type})
@@ -212,6 +213,19 @@ class CrawlerMetrics:
         # Update throughput tracking
         self.request_times.append(end_time)
         self._update_throughput()
+
+    def _update_throughput(self):
+        """Update throughput metrics"""
+        now = time.time()
+        # Get the time window for throughput calculation from config, default to 60 seconds
+        performance_window = config_loader.get("monitoring.performance_window", 60)
+        
+        # Filter requests within the performance window
+        recent_requests = [t for t in self.request_times if now - t <= performance_window]
+        
+        # Calculate requests per second (RPS)
+        rps = len(recent_requests) / performance_window
+        self.throughput_rps.set(rps)
 
     async def track_queue_metrics(self, queue_stats: Dict[str, Any]):
         """Track queue-related metrics"""
@@ -239,7 +253,7 @@ class CrawlerMetrics:
             self.memory_usage.set(memory_info.rss)
             
             # CPU usage
-            cpu_percent = process.cpu_percent(interval=None) # Non-blocking call
+            cpu_percent = psutil.cpu_percent(interval=None) # Non-blocking call
             self.cpu_usage.set(cpu_percent)
             
         except ImportError:
@@ -301,7 +315,8 @@ class CrawlerMetrics:
         # Overall health metrics
         total_requests = self.requests_total.get()
         total_failures = self.requests_failed.get()
-        overall_success_rate = (total_requests - total_failures) / total_requests if total_requests > 0 else 1.0
+        overall_success_rate = (total_requests - total_failures) / total_requests if total_requests > 0 else 0.0
+        overall_error_rate = total_failures / total_requests if total_requests > 0 else 0.0
         
         efficiency = self.calculate_efficiency_score()
         
@@ -310,6 +325,7 @@ class CrawlerMetrics:
             'uptime_seconds': uptime,
             'overall_health': {
                 'success_rate': overall_success_rate,
+                'overall_error_rate': overall_error_rate, # Added overall error rate
                 'efficiency_score': efficiency,
                 'throughput_rps': self.throughput_rps.get(),
                 'total_requests': total_requests,
@@ -341,144 +357,49 @@ class CrawlerMetrics:
         """Generate health alerts"""
         alerts = []
         
+        # Alert for low success rate
         if success_rate < 0.8:
             alerts.append({
                 'level': 'critical' if success_rate < 0.5 else 'warning',
-                'message': f"Low success rate: {success_rate:.1%}",
-                'metric': 'success_rate',
+                'message': f"Low overall success rate: {success_rate:.1%}",
+                'metric': 'overall_success_rate',
                 'value': success_rate
             })
         
+        # Alert for low efficiency score
         if efficiency < 50:
             alerts.append({
                 'level': 'warning',
-                'message': f"Low efficiency score: {efficiency:.1f}",
-                'metric': 'efficiency',
+                'message': f"Low overall efficiency score: {efficiency:.1f}",
+                'metric': 'overall_efficiency',
                 'value': efficiency
             })
         
+        # Alert for high average response time
         avg_response_time = self.response_time.get_average()
-        if avg_response_time > 10:
+        if avg_response_time > 10: # Example threshold: 10 seconds
             alerts.append({
-                'level': 'warning',
-                'message': f"High response time: {avg_response_time:.2f}s",
-                'metric': 'response_time',
+                'level': 'critical' if avg_response_time > 20 else 'warning',
+                'message': f"High average response time: {avg_response_time:.2f}s",
+                'metric': 'avg_response_time',
                 'value': avg_response_time
             })
+
+        # Alert for high error rate (e.g., more than 5% of requests failing)
+        total_requests = self.requests_total.get()
+        total_failed_requests = self.requests_failed.get()
+        if total_requests > 0:
+            error_rate = total_failed_requests / total_requests
+            if error_rate > 0.05: # 5% error rate
+                alerts.append({
+                    'level': 'critical' if error_rate > 0.15 else 'warning', # 15% critical
+                    'message': f"High overall error rate: {error_rate:.1%}",
+                    'metric': 'overall_error_rate',
+                    'value': error_rate
+                })
         
         return alerts
 
     def export_prometheus_metrics(self) -> str:
-        """Export metrics in Prometheus format"""
-        lines = []
-        
-        # Helper to format metric lines
-        def add_metric_lines(metric_name: str, metric_type: str, description: str, values: Dict[str, float], is_histogram: bool = False):
-            lines.append(f"# HELP {metric_name} {description}")
-            lines.append(f"# TYPE {metric_name} {metric_type}")
-            
-            for labels_key, value in values.items():
-                labels_dict = json.loads(labels_key) if labels_key else {}
-                labels_str = ','.join([f'{k}="{v}"' for k, v in labels_dict.items()])
-                
-                if is_histogram:
-                    # Histograms have _bucket, _sum, _count
-                    # This simplified export only shows sum and count, not buckets
-                    pass # Handled separately below for histograms
-                else:
-                    if labels_str:
-                        lines.append(f"{metric_name}{{{labels_str}}} {value}")
-                    else:
-                        lines.append(f"{metric_name} {value}")
-
-        # Export counters
-        add_metric_lines(self.requests_total.name, "counter", 
-                        self.requests_total.description, self.requests_total.values)
-        
-        add_metric_lines(self.requests_failed.name, "counter",
-                        self.requests_failed.description, self.requests_failed.values)
-        
-        add_metric_lines(self.links_discovered.name, "counter",
-                        self.links_discovered.description, self.links_discovered.values)
-        
-        add_metric_lines(self.pages_crawled.name, "counter",
-                        self.pages_crawled.description, self.pages_crawled.values)
-        
-        add_metric_lines(self.data_extracted.name, "counter",
-                        self.data_extracted.description, self.data_extracted.values)
-        
-        add_metric_lines(self.error_types.name, "counter",
-                        self.error_types.description, self.error_types.values)
-
-        # Export gauges
-        add_metric_lines(self.queue_size.name, "gauge",
-                        self.queue_size.description, self.queue_size.values)
-        
-        add_metric_lines(self.active_domains.name, "gauge",
-                        self.active_domains.description, self.active_domains.values)
-        
-        add_metric_lines(self.domain_success_rate.name, "gauge",
-                        self.domain_success_rate.description, self.domain_success_rate.values)
-        
-        add_metric_lines(self.active_connections.name, "gauge",
-                        self.active_connections.description, self.active_connections.values)
-        
-        add_metric_lines(self.memory_usage.name, "gauge",
-                        self.memory_usage.description, self.memory_usage.values)
-        
-        add_metric_lines(self.cpu_usage.name, "gauge",
-                        self.cpu_usage.description, self.cpu_usage.values)
-        
-        add_metric_lines(self.throughput_rps.name, "gauge",
-                        self.throughput_rps.description, self.throughput_rps.values)
-        
-        add_metric_lines(self.efficiency_score.name, "gauge",
-                        self.efficiency_score.description, self.efficiency_score.values)
-        
-        add_metric_lines(self.circuit_breaker_state.name, "gauge",
-                        self.circuit_breaker_state.description, self.circuit_breaker_state.values)
-
-        # Export histograms (sum and count)
-        lines.append(f"# HELP {self.response_time.name} {self.response_time.description}")
-        lines.append(f"# TYPE {self.response_time.name} histogram")
-        for labels_key in self.response_time.sum_values:
-            labels_dict = json.loads(labels_key) if labels_key else {}
-            labels_str = ','.join([f'{k}="{v}"' for k, v in labels_dict.items()])
-            
-            for bucket in self.response_time.buckets:
-                count = self.response_time.bucket_counts[labels_key].get(bucket, 0)
-                lines.append(f"{self.response_time.name}_bucket{{{labels_str},le=\"{bucket}\"}} {count}")
-            lines.append(f"{self.response_time.name}_bucket{{{labels_str},le=\"+Inf\"}} {self.response_time.count_values[labels_key]}")
-            lines.append(f"{self.response_time.name}_sum{{{labels_str}}} {self.response_time.sum_values[labels_key]}")
-            lines.append(f"{self.response_time.name}_count{{{labels_str}}} {self.response_time.count_values[labels_key]}")
-
-        lines.append(f"# HELP {self.content_size.name} {self.content_size.description}")
-        lines.append(f"# TYPE {self.content_size.name} histogram")
-        for labels_key in self.content_size.sum_values:
-            labels_dict = json.loads(labels_key) if labels_key else {}
-            labels_str = ','.join([f'{k}="{v}"' for k, v in labels_dict.items()])
-            
-            for bucket in self.content_size.buckets:
-                count = self.content_size.bucket_counts[labels_key].get(bucket, 0)
-                lines.append(f"{self.content_size.name}_bucket{{{labels_str},le=\"{bucket}\"}} {count}")
-            lines.append(f"{self.content_size.name}_bucket{{{labels_str},le=\"+Inf\"}} {self.content_size.count_values[labels_key]}")
-            lines.append(f"{self.content_size.name}_sum{{{labels_str}}} {self.content_size.sum_values[labels_key]}")
-            lines.append(f"{self.content_size.name}_count{{{labels_str}}} {self.content_size.count_values[labels_key]}")
-
-        lines.append(f"# HELP {self.queue_wait_time.name} {self.queue_wait_time.description}")
-        lines.append(f"# TYPE {self.queue_wait_time.name} histogram")
-        for labels_key in self.queue_wait_time.sum_values:
-            labels_dict = json.loads(labels_key) if labels_key else {}
-            labels_str = ','.join([f'{k}="{v}"' for k, v in labels_dict.items()])
-            
-            for bucket in self.queue_wait_time.buckets:
-                count = self.queue_wait_time.bucket_counts[labels_key].get(bucket, 0)
-                lines.append(f"{self.queue_wait_time.name}_bucket{{{labels_str},le=\"{bucket}\"}} {count}")
-            lines.append(f"{self.queue_wait_time.name}_bucket{{{labels_str},le=\"+Inf\"}} {self.queue_wait_time.count_values[labels_key]}")
-            lines.append(f"{self.queue_wait_time.name}_sum{{{labels_str}}} {self.queue_wait_time.sum_values[labels_key]}")
-            lines.append(f"{self.queue_wait_time.name}_count{{{labels_str}}} {self.queue_wait_time.count_values[labels_key]}")
-
-        return '\n'.join(lines)
-
-# Global metrics instance
-crawler_metrics = CrawlerMetrics()
+        """Returns the current metrics in Prometheus text format."""
+        return generate_latest().decode('utf-8')
