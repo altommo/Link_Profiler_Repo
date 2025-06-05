@@ -6,7 +6,7 @@ File: Link_Profiler/utils/api_cache.py
 import json
 import logging
 import redis.asyncio as redis
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Callable # Added Callable import
 from functools import wraps
 import hashlib
 
