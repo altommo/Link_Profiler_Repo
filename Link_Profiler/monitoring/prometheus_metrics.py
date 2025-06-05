@@ -92,6 +92,20 @@ DB_READS_TOTAL = Counter(
     ['table']
 )
 
+# Counter for all database operations with status
+DB_OPERATIONS_TOTAL = Counter(
+    'link_profiler_db_operations_total',
+    'Total number of database operations grouped by type and status',
+    ['operation_type', 'table_name', 'status']
+)
+
+# Histogram for measuring query duration
+DB_QUERY_DURATION_SECONDS = Histogram(
+    'link_profiler_db_query_duration_seconds',
+    'Duration of database queries in seconds',
+    ['query_type', 'table_name']
+)
+
 # --- Redis Metrics (can be extended) ---
 # Gauge for Redis queue size
 REDIS_QUEUE_SIZE = Gauge(
