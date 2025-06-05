@@ -54,6 +54,7 @@ class CrawlStatus(str, enum.Enum):
     PAUSED = "paused"
     STOPPED = "stopped"
     CANCELLED = "cancelled"
+    QUEUED = "queued" # New status for jobs in Redis queue
 
 class SpamLevel(str, enum.Enum):
     NONE = "none"
@@ -94,9 +95,36 @@ class CrawlConfig(BaseModel):
     rate_limit_rps: float = 1.0
     enable_anti_detection: bool = False
     capture_har: bool = False # Capture HTTP Archive (HAR) data
+    # New fields for anti-detection and browser-based crawling
+    user_agent_rotation: bool = False
+    request_header_randomization: bool = False
+    human_like_delays: bool = False
+    stealth_mode: bool = False
+    browser_fingerprint_randomization: bool = False
+    captcha_solving_enabled: bool = False
+    anomaly_detection_enabled: bool = False
+    use_proxies: bool = False
+    proxy_list: Optional[List[Dict[str, str]]] = None
+    proxy_region: Optional[str] = None
+    render_javascript: bool = False
+    browser_type: Optional[str] = "chromium"
+    headless_browser: bool = True
+    extract_image_text: bool = False
+    crawl_web3_content: bool = False
+    crawl_social_media: bool = False
+    job_type: str = "unknown"
+    ml_rate_limiter_enabled: bool = False # From rate_limiting.ml_enhanced
+
+    def is_domain_allowed(self, domain: str) -> bool:
+        if not self.allowed_domains: # If allowed_domains is empty, all are allowed
+            return True
+        return domain in self.allowed_domains
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'CrawlConfig':
+        # Convert 'allowed_domains' from list to set if it's a list
+        if 'allowed_domains' in data and isinstance(data['allowed_domains'], list):
+            data['allowed_domains'] = set(data['allowed_domains'])
         return cls(**data)
 
 # Dataclasses for Data Models
@@ -158,12 +186,70 @@ class SEOMetrics:
     ai_suggestions: List[str] = field(default_factory=list) # AI-generated suggestions
     ai_semantic_keywords: List[str] = field(default_factory=list) # AI-generated semantic keywords
     ai_readability_score: Optional[float] = None # AI-generated readability score
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+
+    def calculate_seo_score(self):
+        """Calculates an overall SEO score based on available metrics."""
+        weights = {
+            'performance_score': 0.3,
+            'accessibility_score': 0.2,
+            'title_length': 0.1,
+            'meta_description_length': 0.1,
+            'h1_count': 0.05,
+            'has_canonical': 0.05,
+            'has_robots_meta': 0.05,
+            'has_schema_markup': 0.05,
+            'broken_links': -0.1, # Penalty
+            'ai_content_score': 0.1 # AI content score contribution
+        }
+        
+        score = 0.0
+        
+        # Normalize and add scores
+        if self.performance_score is not None:
+            score += (self.performance_score / 100) * weights['performance_score']
+        if self.accessibility_score is not None:
+            score += (self.accessibility_score / 100) * weights['accessibility_score']
+        if self.title_length is not None:
+            # Optimal title length is 30-60 chars. Score based on proximity to this range.
+            if 30 <= self.title_length <= 60:
+                score += weights['title_length']
+            elif self.title_length > 0: # Some title is better than none
+                score += weights['title_length'] * 0.5
+        if self.meta_description_length is not None:
+            # Optimal meta description length is 50-160 chars.
+            if 50 <= self.meta_description_length <= 160:
+                score += weights['meta_description_length']
+            elif self.meta_description_length > 0:
+                score += weights['meta_description_length'] * 0.5
+        if self.h1_count is not None:
+            if self.h1_count == 1:
+                score += weights['h1_count']
+            elif self.h1_count > 1: # Multiple H1s are a minor issue
+                score += weights['h1_count'] * 0.5
+        if self.has_canonical is not None and self.has_canonical:
+            score += weights['has_canonical']
+        if self.has_robots_meta is not None and self.has_robots_meta:
+            score += weights['has_robots_meta']
+        if self.has_schema_markup is not None and self.has_schema_markup:
+            score += weights['has_schema_markup']
+        if self.broken_links:
+            score += weights['broken_links'] # Apply penalty if broken links exist
+        if self.ai_content_score is not None:
+            score += (self.ai_content_score / 100) * weights['ai_content_score']
+
+        # Scale to 0-100
+        self.seo_score = max(0, min(100, score * 100 / sum(abs(w) for w in weights.values()))) # Normalize by sum of absolute weights
 
     def to_dict(self) -> Dict[str, Any]:
-        return {k: v for k, v in self.__dict__.items() if v is not None}
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'SEOMetrics':
+        if 'audit_timestamp' in data and isinstance(data['audit_timestamp'], str):
+            data['audit_timestamp'] = datetime.fromisoformat(data['audit_timestamp'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -185,6 +271,7 @@ class Domain:
     country: Optional[str] = None # Country of registrant or IP location
     seo_metrics: SEOMetrics = field(default_factory=SEOMetrics) # Nested SEO metrics
     last_checked: datetime = field(default_factory=datetime.now)
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         data = {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -205,6 +292,8 @@ class Domain:
             data['expiration_date'] = datetime.fromisoformat(data['expiration_date'])
         if 'last_checked' in data and isinstance(data['last_checked'], str):
             data['last_checked'] = datetime.fromisoformat(data['last_checked'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass 
@@ -225,6 +314,7 @@ class URL:
     is_indexed: Optional[bool] = None # From GSC or similar
     last_crawled: datetime = field(default_factory=datetime.now)
     html_content_hash: Optional[str] = None # MD5 hash of the HTML content
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -235,6 +325,8 @@ class URL:
             data['content_type'] = ContentType(data['content_type'])
         if 'last_crawled' in data and isinstance(data['last_crawled'], str):
             data['last_crawled'] = datetime.fromisoformat(data['last_crawled'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -259,6 +351,7 @@ class Backlink:
     spam_level: Optional[SpamLevel] = None # Added spam_level
     http_status: Optional[int] = None # Added http_status
     crawl_timestamp: Optional[datetime] = None # Added crawl_timestamp
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def __post_init__(self):
         # Automatically set source_domain and target_domain
@@ -282,6 +375,8 @@ class Backlink:
             data['spam_level'] = SpamLevel(data['spam_level'])
         if 'crawl_timestamp' in data and isinstance(data['crawl_timestamp'], str):
             data['crawl_timestamp'] = datetime.fromisoformat(data['crawl_timestamp'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -298,6 +393,8 @@ class CrawlResult:
     timestamp: datetime = field(default_factory=datetime.now)
     metadata: Dict[str, Any] = field(default_factory=dict) # For any extra data
     seo_metrics: Optional[SEOMetrics] = None # Added seo_metrics
+    anomaly_flags: List[str] = field(default_factory=list) # New: List of detected anomalies for this crawl result
+    validation_issues: List[str] = field(default_factory=list) # New: Issues from content validator
 
     def to_dict(self) -> Dict[str, Any]:
         data = {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -334,6 +431,7 @@ class LinkProfile:
     top_referring_domains: Dict[str, int] = field(default_factory=dict) # domain: count
     backlinks: List[Backlink] = field(default_factory=list)
     last_updated: datetime = field(default_factory=datetime.now)
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
     
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -344,6 +442,8 @@ class LinkProfile:
             data['backlinks'] = [Backlink.from_dict(b) for b in data['backlinks']]
         if 'last_updated' in data and isinstance(data['last_updated'], str):
             data['last_updated'] = datetime.fromisoformat(data['last_updated'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 def create_link_profile_from_backlinks(target_url: str, backlinks: List[Backlink]) -> LinkProfile:
@@ -430,6 +530,7 @@ class CrawlJob:
     priority: int = 5 # Added priority
     scheduled_at: Optional[datetime] = None # Added scheduled_at
     cron_schedule: Optional[str] = None # Added cron_schedule
+    anomalies_detected: List[str] = field(default_factory=list) # New: List of detected anomalies for the job
 
     def add_error(self, url: str, error_type: str, message: str, details: Optional[str] = None, severity: AlertSeverity = AlertSeverity.WARNING) -> None:
         error = CrawlError(url=url, error_type=error_type, message=message, details=details, severity=severity)
@@ -465,6 +566,7 @@ class SERPResult:
     domain: str
     position_type: Optional[str] = None # e.g., "organic", "featured_snippet", "ad"
     timestamp: datetime = field(default_factory=datetime.now)
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
     
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -473,6 +575,8 @@ class SERPResult:
     def from_dict(cls, data: Dict) -> 'SERPResult':
         if 'timestamp' in data and isinstance(data['timestamp'], str):
             data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -485,12 +589,16 @@ class KeywordSuggestion:
     difficulty: Optional[int] = None # 0-100 range
     relevance: Optional[float] = None # 0-1 range
     source: Optional[str] = None # e.g., "Google Ads", "Ahrefs", "SEMrush"
+    keyword_trend: Optional[List[float]] = None # New: Trend data from Google Trends
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'KeywordSuggestion':
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -500,6 +608,7 @@ class LinkIntersectResult:
     competitor_domains: List[str]
     common_linking_domains: List[str] = field(default_factory=list)
     analysis_date: datetime = field(default_factory=datetime.now)
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -508,6 +617,8 @@ class LinkIntersectResult:
     def from_dict(cls, data: Dict) -> 'LinkIntersectResult':
         if 'analysis_date' in data and isinstance(data['analysis_date'], str):
             data['analysis_date'] = datetime.fromisoformat(data['analysis_date'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -519,6 +630,7 @@ class CompetitiveKeywordAnalysisResult:
     keyword_gaps: Dict[str, List[str]] = field(default_factory=dict) # Competitor -> keywords they rank for that primary doesn't
     primary_unique_keywords: List[str] = field(default_factory=list) # Keywords primary ranks for that competitors don't
     analysis_date: datetime = field(default_factory=datetime.now)
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -527,6 +639,8 @@ class CompetitiveKeywordAnalysisResult:
     def from_dict(cls, data: Dict) -> 'CompetitiveKeywordAnalysisResult':
         if 'analysis_date' in data and isinstance(data['analysis_date'], str):
             data['analysis_date'] = datetime.fromisoformat(data['analysis_date'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -536,13 +650,23 @@ class AlertRule:
 
     name: str
     description: Optional[str] = None
-    condition: str # e.g., "job.status == 'failed'", "domain.authority_score < 20"
+    # Changed 'condition' to more structured fields for clarity and DB mapping
+    trigger_type: str = Field(..., description="Type of event that triggers the alert (e.g., 'job_status_change', 'metric_threshold', 'anomaly_detected').")
+    job_type_filter: Optional[str] = Field(None, description="Optional: Apply rule only to specific job types (e.g., 'backlink_discovery').")
+    target_url_pattern: Optional[str] = Field(None, description="Optional: Regex pattern for target URLs to apply the rule to.")
+    
+    metric_name: Optional[str] = Field(None, description="Optional: Name of the metric to monitor (for 'metric_threshold' trigger_type, e.g., 'seo_score', 'broken_links_count', 'crawl_errors_rate').")
+    threshold_value: Optional[Union[int, float]] = Field(None, description="Optional: Threshold value for the metric.")
+    comparison_operator: Optional[str] = Field(None, description="Optional: Comparison operator for the metric threshold (e.g., '>', '<', '>=', '<=', '==').")
+    
+    anomaly_type_filter: Optional[str] = Field(None, description="Optional: Filter for specific anomaly types (for 'anomaly_detected' trigger_type, e.g., 'captcha_spike').")
+    
     severity: AlertSeverity = AlertSeverity.WARNING
     channels: List[AlertChannel] = field(default_factory=list)
     is_active: bool = True
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
-    last_triggered_at: Optional[datetime] = None # Added last_triggered_at
+    last_triggered_at: Optional[datetime] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -572,6 +696,7 @@ class User:
     is_admin: bool = False
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         # Exclude hashed_password for security when converting to dict for API responses
@@ -583,6 +708,8 @@ class User:
             data['created_at'] = datetime.fromisoformat(data['created_at'])
         if 'updated_at' in data and isinstance(data['updated_at'], str):
             data['updated_at'] = datetime.fromisoformat(data['updated_at'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -621,6 +748,7 @@ class DomainHistory:
     total_backlinks: Optional[int] = None
     referring_domains: Optional[int] = None
     # Add other key metrics that should be tracked historically
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -629,6 +757,8 @@ class DomainHistory:
     def from_dict(cls, data: Dict) -> 'DomainHistory':
         if 'snapshot_date' in data and isinstance(data['snapshot_date'], str):
             data['snapshot_date'] = datetime.fromisoformat(data['snapshot_date'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -647,6 +777,7 @@ class LinkProspect:
     link_acquired_date: Optional[datetime] = None
     # Associated SEO metrics of the prospect domain
     prospect_seo_metrics: SEOMetrics = field(default_factory=SEOMetrics)
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         data = {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -664,6 +795,8 @@ class LinkProspect:
             data['link_acquired_date'] = datetime.fromisoformat(data['link_acquired_date'])
         if 'prospect_seo_metrics' in data and isinstance(data['prospect_seo_metrics'], dict):
             data['prospect_seo_metrics'] = SEOMetrics.from_dict(data['prospect_seo_metrics'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -682,6 +815,7 @@ class OutreachCampaign:
     contacts_made: int = 0
     replies_received: int = 0
     links_acquired: int = 0
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -694,6 +828,8 @@ class OutreachCampaign:
             data['start_date'] = datetime.fromisoformat(data['start_date'])
         if 'end_date' in data and isinstance(data['end_date'], str):
             data['end_date'] = datetime.fromisoformat(data['end_date'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -706,6 +842,7 @@ class OutreachEvent:
     timestamp: datetime = field(default_factory=datetime.now)
     notes: Optional[str] = None
     success: Optional[bool] = None # Whether the event achieved its immediate goal
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -714,6 +851,8 @@ class OutreachEvent:
     def from_dict(cls, data: Dict) -> 'OutreachEvent':
         if 'timestamp' in data and isinstance(data['timestamp'], str):
             data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -726,6 +865,7 @@ class ContentGapAnalysisResult:
     content_format_gaps: List[str] = field(default_factory=list)
     actionable_insights: List[str] = field(default_factory=list)
     analysis_date: datetime = field(default_factory=datetime.now)
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -734,6 +874,8 @@ class ContentGapAnalysisResult:
     def from_dict(cls, data: Dict) -> 'ContentGapAnalysisResult':
         if 'analysis_date' in data and isinstance(data['analysis_date'], str):
             data['analysis_date'] = datetime.fromisoformat(data['analysis_date'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -751,6 +893,7 @@ class ReportJob:
     config: Dict[str, Any] = field(default_factory=dict) # Added config
     scheduled_at: Optional[datetime] = None # Added scheduled_at
     cron_schedule: Optional[str] = None # Added cron_schedule
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -765,6 +908,8 @@ class ReportJob:
             data['completed_at'] = datetime.fromisoformat(data['completed_at'])
         if 'scheduled_at' in data and isinstance(data['scheduled_at'], str):
             data['scheduled_at'] = datetime.fromisoformat(data['scheduled_at'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -782,6 +927,7 @@ class DomainIntelligence:
     top_social_platforms: List[str] = field(default_factory=list)
     estimated_traffic_trend: List[float] = field(default_factory=list)
     data_sources: List[str] = field(default_factory=list)
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         data = {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -795,6 +941,8 @@ class DomainIntelligence:
             data['last_updated'] = datetime.fromisoformat(data['last_updated'])
         if 'seo_metrics' in data and isinstance(data['seo_metrics'], dict):
             data['seo_metrics'] = SEOMetrics.from_dict(data['seo_metrics'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
@@ -810,6 +958,7 @@ class SocialMention:
     sentiment: Optional[str] = None
     engagement_score: Optional[float] = None
     raw_data: Dict[str, Any] = field(default_factory=dict)
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -818,4 +967,6 @@ class SocialMention:
     def from_dict(cls, data: Dict) -> 'SocialMention':
         if 'published_date' in data and isinstance(data['published_date'], str):
             data['published_date'] = datetime.fromisoformat(data['published_date'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)

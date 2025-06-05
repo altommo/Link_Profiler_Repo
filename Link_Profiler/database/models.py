@@ -44,6 +44,7 @@ class CrawlStatusEnum(enum.Enum):
     TIMEOUT = "timeout"
     BLOCKED = "blocked"
     CANCELLED = "cancelled"
+    QUEUED = "queued" # New status for jobs in Redis queue
 
 # Enum for SpamLevel
 class SpamLevelEnum(enum.Enum):
@@ -80,6 +81,7 @@ class DomainORM(Base):
     referring_domains = Column(Integer, default=0)
     first_seen = Column(DateTime, nullable=True)
     last_crawled = Column(DateTime, nullable=True)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     # Relationships
     urls = relationship("URLORM", back_populates="domain_rel", cascade="all, delete-orphan")
@@ -109,6 +111,7 @@ class URLORM(Base):
     crawl_status = Column(String, default=CrawlStatusEnum.PENDING.value) # Store enum value as string
     crawl_date = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     # Relationships
     domain_rel = relationship("DomainORM", back_populates="urls")
@@ -141,6 +144,7 @@ class BacklinkORM(Base):
     http_status = Column(Integer, nullable=True) # HTTP response code when fetching source_url
     crawl_timestamp = Column(DateTime, nullable=True) # UTC timestamp when the page was crawled
     source_domain_metrics = Column(JSONB, default={}) # domain-level data such as estimated domain authority or PageRank
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     # Relationships
     source_domain_rel = relationship("DomainORM", foreign_keys=[source_domain_name], back_populates="backlinks_as_source")
@@ -166,6 +170,7 @@ class LinkProfileORM(Base):
     anchor_text_distribution = Column(JSONB, default={})
     referring_domains = Column(ARRAY(String), default=[]) # Store as array of strings
     analysis_date = Column(DateTime, default=datetime.now)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     # Relationships
     target_domain_rel = relationship("DomainORM", back_populates="link_profiles")
@@ -200,6 +205,7 @@ class CrawlJobORM(Base):
     
     # Calculated field
     duration_seconds = Column(Float, nullable=True) # Duration of the job in seconds
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     def __repr__(self):
         return f"<CrawlJob(id='{self.id}', target_url='{self.target_url}', status='{self.status}')>"
@@ -228,7 +234,7 @@ class SEOMetricsORM(Base):
     # Performance & Best Practices
     performance_score = Column(Float, nullable=True) # 0–100
     mobile_friendly = Column(Boolean, nullable=True) # Boolean or score
-    accessibility_score = Column(Float, nullable=True) # 0–100
+    accessibility_score = Column(Float, nullable=True) # 0-100
     audit_timestamp = Column(DateTime, nullable=True) # UTC timestamp of audit execution
     # Existing fields
     seo_score = Column(Float, default=0.0)
@@ -244,6 +250,7 @@ class SEOMetricsORM(Base):
     nlp_entities = Column(ARRAY(String), default=[]) # New: Entities extracted via NLP
     nlp_sentiment = Column(String, nullable=True) # New: Sentiment extracted via NLP (positive, neutral, negative)
     nlp_topics = Column(ARRAY(String), default=[]) # New: Main topics extracted via NLP
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     # Relationships
     url_rel = relationship("URLORM", back_populates="seo_metrics")
@@ -263,6 +270,7 @@ class SERPResultORM(Base):
     rich_features = Column(ARRAY(String), default=[]) # Flags or details for featured snippets, local packs, etc.
     page_load_time = Column(Float, nullable=True) # Time to fully render the SERP page
     crawl_timestamp = Column(DateTime, default=datetime.now) # UTC timestamp of when the search was performed
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     __table_args__ = (UniqueConstraint('keyword', 'result_url', name='_keyword_result_uc'),)
 
@@ -280,6 +288,7 @@ class KeywordSuggestionORM(Base):
     keyword_trend = Column(ARRAY(Float), default=[]) # JSON array of monthly interest values
     competition_level = Column(String, nullable=True) # Low/Medium/High
     data_timestamp = Column(DateTime, default=datetime.now) # UTC when this data was gathered
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     __table_args__ = (UniqueConstraint('seed_keyword', 'suggested_keyword', name='_seed_suggested_uc'),)
 
@@ -311,6 +320,7 @@ class AlertRuleORM(Base):
     
     created_at = Column(DateTime, default=datetime.now)
     last_triggered_at = Column(DateTime, nullable=True)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     def __repr__(self):
         return f"<AlertRule(name='{self.name}', trigger_type='{self.trigger_type}', severity='{self.severity}')>"
@@ -325,6 +335,7 @@ class UserORM(Base):
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.now)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     def __repr__(self):
         return f"<User(username='{self.username}', email='{self.email}')>"
@@ -340,6 +351,7 @@ class ContentGapAnalysisResultORM(Base):
     content_format_gaps = Column(ARRAY(String), default=[])
     actionable_insights = Column(ARRAY(String), default=[])
     analysis_date = Column(DateTime, default=datetime.now)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     def __repr__(self):
         return f"<ContentGapAnalysisResult(target_url='{self.target_url}', analysis_date='{self.analysis_date}')>"
@@ -355,6 +367,7 @@ class DomainHistoryORM(Base):
     spam_score = Column(Float, default=0.0)
     total_backlinks = Column(Integer, default=0)
     referring_domains = Column(Integer, default=0)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     domain_rel = relationship("DomainORM", back_populates="domain_history")
 
@@ -374,6 +387,7 @@ class LinkProspectORM(Base):
     last_outreach_date = Column(DateTime, nullable=True)
     status = Column(String, default="identified")
     discovered_date = Column(DateTime, default=datetime.now)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     def __repr__(self):
         return f"<LinkProspect(url='{self.url}', status='{self.status}', score={self.score})>"
@@ -390,6 +404,7 @@ class OutreachCampaignORM(Base):
     end_date = Column(DateTime, nullable=True)
     description = Column(Text, nullable=True)
     metrics = Column(JSONB, default={})
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     events = relationship("OutreachEventORM", back_populates="campaign_rel", cascade="all, delete-orphan")
 
@@ -406,6 +421,7 @@ class OutreachEventORM(Base):
     event_date = Column(DateTime, default=datetime.now)
     notes = Column(Text, nullable=True)
     success = Column(Boolean, nullable=True)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     campaign_rel = relationship("OutreachCampaignORM", back_populates="events")
 
@@ -429,6 +445,7 @@ class ReportJobORM(Base):
     
     scheduled_at = Column(DateTime, nullable=True)
     cron_schedule = Column(String, nullable=True)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     def __repr__(self):
         return f"<ReportJob(id='{self.id}', type='{self.report_type}', status='{self.status}')>"
@@ -451,6 +468,7 @@ class DomainIntelligenceORM(Base):
     social_data_summary = Column(JSONB, default={})
     content_data_summary = Column(JSONB, default={})
     technical_data_summary = Column(JSONB, default={})
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     domain_rel = relationship("DomainORM", back_populates="domain_intelligence")
 
@@ -470,6 +488,7 @@ class SocialMentionORM(Base):
     sentiment = Column(String, nullable=True)
     engagement_score = Column(Float, nullable=True)
     raw_data = Column(JSONB, default={})
+    last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
     def __repr__(self):
         return f"<SocialMention(query='{self.query}', platform='{self.platform}', url='{self.mention_url}')>"

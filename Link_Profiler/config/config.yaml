@@ -45,7 +45,7 @@ api:
   # Example: "https://monitor.yspanel.com:8000"
   external_url: "https://api.yspanel.com" 
   # Internal URL for the main API, used for backend-to-backend communication (e.g., dashboard to main API).
-  # This should be the address accessible within your internal network (e.g., Docker service name, localhost).
+  # This should be the address accessible within your internal network (e.g., Docker service service_name, localhost).
   internal_url: "http://localhost:8000" # Default for local development, change for Docker/Kubernetes
 
 # Database settings (PostgreSQL)
@@ -130,6 +130,10 @@ domain_api:
     enabled: false
     cloudflare_url: "https://cloudflare-dns.com/dns-query"
     google_url: "https://dns.google/resolve"
+  # Live/Cache settings for Domain Service
+  domain_service:
+    allow_live: true
+    staleness_threshold_hours: 24 # Data considered stale after 24 hours
 
 backlink_api:
   gsc_api:
@@ -143,6 +147,10 @@ backlink_api:
     enabled: false
     api_key: "${LP_BACKLINK_REAL_API_KEY}" # Your API key for a real backlink provider (e.g., Ahrefs, Moz, SEMrush)
     base_url: "https://api.ahrefs.com/v3" # Ahrefs API base URL
+  # Live/Cache settings for Backlink Service
+  backlink_service:
+    allow_live: true
+    staleness_threshold_hours: 24 # Data considered stale after 24 hours
 
 serp_api:
   real_api:
@@ -153,6 +161,10 @@ serp_api:
     enabled: false
     api_key: "${LP_PAGESPEED_API_KEY}" # Your Google Cloud API Key
     base_url: "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+  # Live/Cache settings for SERP Service
+  serp_service:
+    allow_live: true
+    staleness_threshold_hours: 12 # Data considered stale after 12 hours
 
 serp_crawler:
   playwright:
@@ -173,6 +185,10 @@ keyword_api:
     enabled: false
     # pytrends is unofficial, no API key needed, but uses Google's infrastructure
     # hl and tz can be configured in client if needed
+  # Live/Cache settings for Keyword Service
+  keyword_service:
+    allow_live: true
+    staleness_threshold_hours: 24 # Data considered stale after 24 hours
 
 # AI Service Integration (e.g., OpenRouter, OpenAI, Anthropic)
 ai:
@@ -190,6 +206,10 @@ ai:
     content_nlp_analysis: "anthropic/claude-3-haiku"
     topic_clustering: "mistralai/mistral-7b-instruct"
     content_quality_assessment: "anthropic/claude-3-haiku" # Added for content quality assessment
+  # Live/Cache settings for AI Service
+  ai_service:
+    allow_live: true
+    staleness_threshold_hours: 24 # Data considered stale after 24 hours
 
 # Technical Auditor (Lighthouse CLI)
 technical_auditor:
@@ -201,6 +221,10 @@ technical_auditor:
     enabled: false
     api_key: "${LP_SECURITY_TRAILS_API_KEY}" # Your SecurityTrails API Key
     base_url: "https://api.securitytrails.com/v1"
+  # Live/Cache settings for Technical Auditor
+  technical_auditor_service:
+    allow_live: true
+    staleness_threshold_hours: 72 # Data considered stale after 72 hours (3 days)
 
 # Social Media Integration
 social_media_crawler:
@@ -226,6 +250,10 @@ social_media_crawler:
     enabled: false
     api_key: "${LP_NEWS_API_KEY}" # Your NewsAPI.org API Key
     base_url: "https://newsapi.org/v2"
+  # Live/Cache settings for Social Media Service
+  social_media_service:
+    allow_live: true
+    staleness_threshold_hours: 24 # Data considered stale after 24 hours
 
 # Web3 Integration
 web3_crawler:
@@ -235,6 +263,10 @@ web3_crawler:
   etherscan_api_key: "${LP_ETHERSCAN_API_KEY}" # Your Etherscan API Key (for blockchain data)
   opensea_api_key: "${LP_OPENSEA_API_KEY}" # Your OpenSea API Key (for NFT data)
   # Add other Web3 API keys as needed (e.g., for Polygonscan, Covalent, etc.)
+  # Live/Cache settings for Web3 Service
+  web3_service:
+    allow_live: true
+    staleness_threshold_hours: 24 # Data considered stale after 24 hours
 
 # Historical Data Integration
 historical_data:
@@ -244,6 +276,10 @@ historical_data:
   common_crawl_api: # New: Common Crawl API
     enabled: false
     base_url: "https://index.commoncrawl.org"
+  # Live/Cache settings for Wayback Machine Client
+  wayback_machine_client:
+    allow_live: true
+    staleness_threshold_hours: 168 # Data considered stale after 168 hours (7 days)
 
 # Local SEO Integration
 local_seo:
@@ -338,10 +374,6 @@ satellite:
       handlers:
         console:
           class: logging.StreamHandler
-          formatter: standard
-          level: INFO
-        file:
-          class: logging.handlers.RotatingFileHandler
           formatter: standard
           filename: "satellite_crawler.log"
           maxBytes: 10485760
