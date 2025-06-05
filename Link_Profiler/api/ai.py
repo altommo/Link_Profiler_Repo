@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Dict, List, Any
+from typing import Annotated, Dict, List, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -203,8 +203,8 @@ async def classify_content_endpoint(
 async def analyze_technical_seo_endpoint(
     url: str,
     html_content: str,
-    lighthouse_report: Optional[Dict[str, Any]] = None,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)], # Moved to be a non-default argument
+    lighthouse_report: Optional[Dict[str, Any]] = None
 ):
     """
     Analyzes technical SEO aspects of a page using AI.
