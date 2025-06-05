@@ -46,3 +46,5 @@ python-dotenv>=0.19.0
 setuptools<81
 pytesseract
 Pillow
+alembic
+opencv-python
