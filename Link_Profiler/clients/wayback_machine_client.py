@@ -6,7 +6,6 @@ Based on Internet Archive CDX API documentation
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional
-import aiohttp
 from datetime import datetime
 from urllib.parse import quote_plus
 import time # Import time for time.monotonic()

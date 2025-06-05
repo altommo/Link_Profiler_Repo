@@ -105,6 +105,7 @@ class RedditClient:
         try:
             # PRAW search is synchronous, run in a separate thread
             # Note: PRAW's search limit is capped at 100. For more, Pushshift or 'after' token logic is needed.
+            # For now, we'll just document the 100-result cap.
             submissions = await self.resilience_manager.execute_with_resilience(
                 lambda: self.reddit.subreddit('all').search(query, limit=limit),
                 url="https://oauth.reddit.com/r/all/search" # Representative URL for CB
