@@ -21,6 +21,7 @@ jinja2
 numpy
 redis
 aiosmtplib
+dnspython
 
 # Authentication Dependencies
 passlib[bcrypt]
