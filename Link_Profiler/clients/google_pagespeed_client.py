@@ -8,6 +8,8 @@ import logging
 from typing import Dict, Any, Optional
 import aiohttp
 import json
+import time # Import time for time.monotonic()
+from datetime import datetime # For last_fetched_at
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
@@ -39,6 +41,7 @@ class PageSpeedClient:
             self.resilience_manager = global_resilience_manager
             logger.warning("No DistributedResilienceManager provided to PageSpeedClient. Falling back to global instance.")
 
+        self._last_call_time: float = 0.0 # For explicit throttling
 
         if not self.enabled:
             self.logger.info("PageSpeed Insights API is disabled by configuration.")
@@ -62,6 +65,15 @@ class PageSpeedClient:
             self.logger.info("Exiting PageSpeedClient context. Closing aiohttp session.")
             await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
+    async def _throttle(self):
+        """Ensures at least 60 second delay between calls to PageSpeed Insights."""
+        elapsed = time.monotonic() - self._last_call_time
+        if elapsed < 60.0:
+            wait_time = 60.0 - elapsed
+            self.logger.debug(f"Throttling PageSpeed Insights API. Waiting for {wait_time:.2f} seconds.")
+            await asyncio.sleep(wait_time)
+        self._last_call_time = time.monotonic()
+
     @api_rate_limited(service="pagespeed_insights_api", api_client_type="pagespeed_client", endpoint="analyze_url")
     async def analyze_url(self, url: str, strategy: str = 'mobile') -> Optional[Dict[str, Any]]:
         """
@@ -82,6 +94,8 @@ class PageSpeedClient:
             self.logger.error("PageSpeedClient API key or base URL is not configured.")
             return None
 
+        await self._throttle() # Apply explicit throttling
+
         params = {
             "url": url,
             "key": self.api_key,
@@ -98,8 +112,17 @@ class PageSpeedClient:
             response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
             data = await response.json()
             self.logger.info(f"Successfully fetched PageSpeed Insights for {url}.")
+            data['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
             return data
+        except aiohttp.ClientResponseError as e:
+            if e.status == 429:
+                self.logger.warning(f"PageSpeed Insights API rate limit exceeded for {url}. Retrying after 60 seconds.")
+                await asyncio.sleep(60)
+                return await self.analyze_url(url, strategy) # Retry the call
+            else:
+                self.logger.error(f"Network/API error fetching PageSpeed Insights for {url} (Status: {e.status}): {e}. Returning None.", exc_info=True)
+                return None
         except Exception as e:
-            self.logger.error(f"Error fetching PageSpeed Insights for {url}: {e}. Returning None.", exc_info=True)
+            self.logger.error(f"Unexpected error fetching PageSpeed Insights for {url}: {e}. Returning None.", exc_info=True)
             return None
 

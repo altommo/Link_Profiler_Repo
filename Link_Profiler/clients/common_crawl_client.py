@@ -10,9 +10,12 @@ import aiohttp
 import json # For parsing JSON response
 from datetime import datetime # For timestamp conversion
 import random # Import random for simulation
+import time # Import time for time.monotonic()
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
+from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -20,32 +23,83 @@ class CommonCrawlClient:
     """
     Client for searching the Common Crawl Index.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
         self.logger = logging.getLogger(__name__ + ".CommonCrawlClient")
         self.base_url = config_loader.get("historical_data.common_crawl_api.base_url")
         self.enabled = config_loader.get("historical_data.common_crawl_api.enabled", False)
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager
+        if self.session_manager is None:
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager
+            self.session_manager = global_session_manager
+            logger.warning("No SessionManager provided to CommonCrawlClient. Falling back to global SessionManager.")
+        
+        self.resilience_manager = resilience_manager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to CommonCrawlClient. Falling back to global instance.")
+
+        self._last_call_time: float = 0.0 # For explicit throttling
+        self._current_index_url: Optional[str] = None # To store the resolved latest index URL
 
         if not self.enabled:
             self.logger.info("Common Crawl API is disabled by configuration.")
 
     async def __aenter__(self):
-        """Initialise aiohttp session."""
+        """Initialise aiohttp session and resolve latest Common Crawl index."""
         if self.enabled:
             self.logger.info("Entering CommonCrawlClient context.")
-            if self._session is None or self._session.closed:
-                self._session = aiohttp.ClientSession()
+            await self.session_manager.__aenter__()
+            await self._resolve_latest_index()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close aiohttp session."""
-        if self.enabled and self._session and not self._session.closed:
-            self.logger.info("Exiting CommonCrawlClient context. Closing aiohttp session.")
-            await self._session.close()
-            self._session = None
+        if self.enabled:
+            self.logger.info("Exiting CommonCrawlClient context.")
+            await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
+
+    async def _throttle(self):
+        """Ensures at least 1 second delay between calls to Common Crawl."""
+        elapsed = time.monotonic() - self._last_call_time
+        if elapsed < 1.0:
+            wait_time = 1.0 - elapsed
+            self.logger.debug(f"Throttling Common Crawl API. Waiting for {wait_time:.2f} seconds.")
+            await asyncio.sleep(wait_time)
+        self._last_call_time = time.monotonic()
+
+    async def _resolve_latest_index(self):
+        """Fetches the latest Common Crawl index URL."""
+        if not self.base_url or not self.base_url.startswith("https://index.commoncrawl.org"):
+            self.logger.warning(f"Common Crawl base URL '{self.base_url}' is not a valid index endpoint. Assuming it's a full CDX URL or disabling.")
+            if not self.base_url.endswith("/cdx"): # If it's not a full CDX URL, disable
+                self.enabled = False
+            self._current_index_url = self.base_url # Use as is if it's a full CDX URL
+            return
+
+        collinfo_url = f"{self.base_url}/collinfo.json"
+        try:
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(collinfo_url, timeout=10),
+                url=collinfo_url
+            )
+            response.raise_for_status()
+            collections_info = await response.json()
+            if collections_info:
+                latest_collection = collections_info[-1]['id'] # Get the latest collection ID
+                self._current_index_url = f"{self.base_url}/{latest_collection}/cdx"
+                self.logger.info(f"Resolved latest Common Crawl index to: {self._current_index_url}")
+            else:
+                self.logger.error("Failed to retrieve Common Crawl collection info. Disabling Common Crawl client.")
+                self.enabled = False
+        except Exception as e:
+            self.logger.error(f"Error resolving latest Common Crawl index from {collinfo_url}: {e}. Disabling Common Crawl client.", exc_info=True)
+            self.enabled = False
 
     @api_rate_limited(service="common_crawl_api", api_client_type="common_crawl_client", endpoint="search_domain")
-    async def search_domain(self, domain: str, match_type: str = 'domain', limit: int = 100) -> List[Dict[str, Any]]:
+    async def search_domain(self, domain: str, match_type: str = 'domain', limit: int = 100,
+                            from_date: Optional[str] = None, to_date: Optional[str] = None,
+                            fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
         Searches the Common Crawl Index for records related to a domain.
         
@@ -53,77 +107,63 @@ class CommonCrawlClient:
             domain (str): The domain to search for (e.g., "example.com").
             match_type (str): How to match the domain ('domain', 'host', 'prefix', 'exact').
             limit (int): Maximum number of records to retrieve.
+            from_date (str): Start date for records (YYYYMMDD or YYYY-MM-DD).
+            to_date (str): End date for records (YYYYMMDD or YYYY-MM-DD).
+            fields (List[str]): List of fields to return (e.g., ['url', 'timestamp', 'status']).
             
         Returns:
             List[Dict[str, Any]]: A list of dictionaries, each representing a Common Crawl record.
         """
-        if not self.enabled:
-            self.logger.warning(f"Common Crawl API is disabled. Simulating search for {domain}.")
+        if not self.enabled or not self._current_index_url:
+            self.logger.warning(f"Common Crawl API is disabled or index not resolved. Simulating search for {domain}.")
             return self._simulate_search_results(domain, match_type, limit)
 
-        # Common Crawl index URL pattern: https://index.commoncrawl.org/CC-MAIN-2023-40-index
-        # We need to find the latest index. For simplicity, we'll use a generic endpoint or assume latest.
-        # A more robust solution would fetch available indexes first.
-        # For now, I'll use a hardcoded latest index for simulation, or assume base_url is the full index URL.
-        # Let's assume `base_url` from config is `https://index.commoncrawl.org`
-        # and we need to find the latest index.
-        
-        # A more robust way to get the latest index:
-        # async with self._session.get("https://index.commoncrawl.org/collinfo.json") as response:
-        #     collections_info = await response.json()
-        #     latest_collection = collections_info[-1]['id'] # Get the latest collection ID
-        #     index_url = f"https://index.commoncrawl.org/{latest_collection}/cdx"
-
-        # For simplicity and to match the provided snippet's spirit, I'll use a generic index pattern.
-        # The snippet's URL `https://index.commoncrawl.org/CC-MAIN-*-index` is incorrect for querying.
-        # The actual query endpoint is usually `/cdx` or `/cdx-api` on a specific index.
-        # Let's use a common pattern for the CDX API.
-        
-        # Assuming base_url is "https://index.commoncrawl.org"
-        # We need to pick an index. For a real app, you'd fetch the latest.
-        # For this, I'll use a placeholder for the index.
-        # Let's assume the config `base_url` is `https://index.commoncrawl.org/CC-MAIN-2023-40/cdx` for example.
-        # Or, if `base_url` is just `https://index.commoncrawl.org`, we need to append `/CC-MAIN-LATEST/cdx`
-        # For now, I'll use a simplified endpoint that might not be perfectly accurate but demonstrates the call.
-        
-        # The provided snippet for CommonCrawlClient is very basic and doesn't reflect the actual CDX API usage.
-        # The `url` in the snippet is for listing indexes, not querying.
-        # It should be something like `https://index.commoncrawl.org/CC-MAIN-2023-40/cdx`
-        # I will use a generic index endpoint for the base_url in config, e.g., `https://index.commoncrawl.org/CC-MAIN-2023-40/cdx`
-        # And then the `search_domain` method will append `?url=...`
-        
-        endpoint = self.base_url # This should be the full CDX API URL for a specific index
-        if not endpoint:
-            self.logger.error("Common Crawl base URL not configured. Simulating search results.")
-            return self._simulate_search_results(domain, match_type, limit)
+        await self._throttle() # Apply explicit throttling
 
         # Common Crawl CDX API parameters
         params = {
             'url': f"*.{domain}/*" if match_type == 'domain' else domain, # Adjust URL pattern based on match_type
             'output': 'json',
-            'limit': limit
+            'limit': limit,
+            'showNumPages': 'true' # Request total pages for potential future pagination
         }
-        # Add other parameters like 'from', 'to', 'filter', 'fl' (fields) as needed
+
+        if from_date:
+            params['from'] = from_date.replace('-', '') # Ensure YYYYMMDD format
+        if to_date:
+            params['to'] = to_date.replace('-', '') # Ensure YYYYMMDD format
+        if fields:
+            params['fl'] = ','.join(fields) # Filter fields
 
         self.logger.info(f"Calling Common Crawl API for domain: {domain} (match_type: {match_type}, limit: {limit})...")
         results = []
         try:
-            async with self._session.get(endpoint, params=params, timeout=30) as response:
-                response.raise_for_status()
-                # Common Crawl returns newline-delimited JSON, not a single JSON array
-                content = await response.text()
-                for line in content.strip().split('\n'):
-                    if line:
-                        try:
-                            results.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            self.logger.warning(f"Failed to decode JSON line from Common Crawl: {line[:100]}...")
-                            continue
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(self._current_index_url, params=params, timeout=30),
+                url=self._current_index_url # Pass the URL for circuit breaker naming
+            )
+            response.raise_for_status()
+            # Common Crawl returns newline-delimited JSON, not a single JSON array
+            content = await response.text()
+            for line in content.strip().split('\n'):
+                if line:
+                    try:
+                        record = json.loads(line)
+                        record['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
+                        results.append(record)
+                    except json.JSONDecodeError:
+                        self.logger.warning(f"Failed to decode JSON line from Common Crawl: {line[:100]}...")
+                        continue
             self.logger.info(f"Found {len(results)} Common Crawl records for {domain}.")
             return results
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/API error searching Common Crawl for {domain}: {e}", exc_info=True)
-            return self._simulate_search_results(domain, match_type, limit) # Fallback to simulation on error
+        except aiohttp.ClientResponseError as e:
+            if e.status == 429:
+                self.logger.warning(f"Common Crawl API rate limit exceeded for {domain}. Retrying after 60 seconds.")
+                await asyncio.sleep(60)
+                return await self.search_domain(domain, match_type, limit, from_date, to_date, fields) # Retry the call
+            else:
+                self.logger.error(f"Network/API error searching Common Crawl for {domain}: {e}", exc_info=True)
+                return self._simulate_search_results(domain, match_type, limit) # Fallback to simulation on error
         except Exception as e:
             self.logger.error(f"Unexpected error searching Common Crawl for {domain}: {e}", exc_info=True)
             return self._simulate_search_results(domain, match_type, limit) # Fallback to simulation on error
@@ -145,6 +185,8 @@ class CommonCrawlClient:
                 "digest": f"simulated_digest_{random.randint(1000, 9999)}",
                 "length": str(random.randint(5000, 20000)),
                 "offset": str(random.randint(100000, 999999)),
-                "filename": f"CC-MAIN-{timestamp.year}-{random.randint(1,52)}-warc.gz"
+                "filename": f"CC-MAIN-{timestamp.year}-{random.randint(1,52)}-warc.gz",
+                'last_fetched_at': datetime.utcnow().isoformat()
             })
         return simulated_results
+

@@ -117,7 +117,7 @@ class NewsAPIClient:
                         'source': article.get('source', {}).get('name'),
                         'published_at': article.get('publishedAt'),
                         'content': article.get('content'),
-                        'last_fetched_at': datetime.utcnow() # Set last_fetched_at for live data
+                        'last_fetched_at': datetime.utcnow().isoformat() # Set last_fetched_at for live data
                     })
                 
                 # NewsAPI free tier limits total results, so we might not get all pages
@@ -156,7 +156,7 @@ class NewsAPIClient:
                 'source': f"Simulated News Outlet {random.randint(1, 10)}",
                 'published_at': (datetime.now() - timedelta(hours=random.randint(1, 24*7))).isoformat(),
                 'content': f"Full content of the simulated news article about {query}...",
-                'last_fetched_at': datetime.utcnow()
+                'last_fetched_at': datetime.utcnow().isoformat()
             })
         return simulated_results
 

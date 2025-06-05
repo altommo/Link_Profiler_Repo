@@ -13,6 +13,8 @@ import time # Import time for time.monotonic()
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
+from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +23,23 @@ class SecurityTrailsClient:
     Client for fetching data from SecurityTrails API.
     Requires an API key.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
         self.logger = logging.getLogger(__name__ + ".SecurityTrailsClient")
         self.api_key = config_loader.get("technical_auditor.security_trails_api.api_key")
         self.base_url = config_loader.get("technical_auditor.security_trails_api.base_url")
         self.enabled = config_loader.get("technical_auditor.security_trails_api.enabled", False)
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager
+        if self.session_manager is None:
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager
+            self.session_manager = global_session_manager
+            logger.warning("No SessionManager provided to SecurityTrailsClient. Falling back to global SessionManager.")
+        
+        self.resilience_manager = resilience_manager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to SecurityTrailsClient. Falling back to global instance.")
+
         self._last_call_time: float = 0.0 # For explicit throttling
 
         if not self.enabled:
@@ -39,17 +52,17 @@ class SecurityTrailsClient:
         """Initialise aiohttp session."""
         if self.enabled:
             self.logger.info("Entering SecurityTrailsClient context.")
-            if self._session is None or self._session.closed:
-                headers = {'APIKEY': self.api_key}
-                self._session = aiohttp.ClientSession(headers=headers)
+            await self.session_manager.__aenter__()
+            # Set API key in headers for the session manager's client session
+            if self.session_manager._session:
+                self.session_manager._session.headers.update({'APIKEY': self.api_key})
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close aiohttp session."""
-        if self.enabled and self._session and not self._session.closed:
-            self.logger.info("Exiting SecurityTrailsClient context. Closing aiohttp session.")
-            await self._session.close()
-            self._session = None
+        if self.enabled:
+            self.logger.info("Exiting SecurityTrailsClient context.")
+            await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _throttle(self):
         """Ensures at least 1 second delay between calls to SecurityTrails."""
@@ -82,17 +95,25 @@ class SecurityTrailsClient:
         self.logger.info(f"Calling SecurityTrails API for subdomains of {domain}...")
         subdomains = []
         try:
-            async with self._session.get(endpoint, timeout=10) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                for subdomain_prefix in data.get('subdomains', []):
-                    subdomains.append(f"{subdomain_prefix}.{domain}")
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(endpoint, timeout=10),
+                url=endpoint # Pass the endpoint for circuit breaker naming
+            )
+            response.raise_for_status()
+            data = await response.json()
+            
+            for subdomain_prefix in data.get('subdomains', []):
+                subdomains.append(f"{subdomain_prefix}.{domain}")
             self.logger.info(f"Found {len(subdomains)} subdomains for {domain}.")
             return subdomains
         except aiohttp.ClientResponseError as e:
-            self.logger.error(f"Network/API error fetching subdomains for {domain} (Status: {e.status}): {e}", exc_info=True)
-            return self._simulate_subdomains(domain) # Fallback to simulation on error
+            if e.status == 429:
+                self.logger.warning(f"SecurityTrails API rate limit exceeded for {domain}. Retrying after 60 seconds.")
+                await asyncio.sleep(60)
+                return await self.get_subdomains(domain) # Retry the call
+            else:
+                self.logger.error(f"Network/API error fetching subdomains for {domain} (Status: {e.status}): {e}", exc_info=True)
+                return self._simulate_subdomains(domain) # Fallback to simulation on error
         except Exception as e:
             self.logger.error(f"Unexpected error fetching subdomains for {domain}: {e}", exc_info=True)
             return self._simulate_subdomains(domain) # Fallback to simulation on error
@@ -123,21 +144,29 @@ class SecurityTrailsClient:
         while True:
             params = {"page": page}
             try:
-                async with self._session.get(endpoint, params=params, timeout=10) as response:
-                    response.raise_for_status()
-                    data = await response.json()
+                response = await self.resilience_manager.execute_with_resilience(
+                    lambda: self.session_manager.get(endpoint, params=params, timeout=10),
+                    url=endpoint # Pass the endpoint for circuit breaker naming
+                )
+                response.raise_for_status()
+                data = await response.json()
                     
-                    records_on_page = data.get("records", [])
-                    all_records.extend(records_on_page)
-                    
-                    if not data.get("has_next_page") or not records_on_page:
-                        break # No more pages or no records on current page
-                    
-                    page += 1
-                    await asyncio.sleep(1) # Delay between pages
+                records_on_page = data.get("records", [])
+                all_records.extend(records_on_page)
+                
+                if not data.get("has_next_page") or not records_on_page:
+                    break # No more pages or no records on current page
+                
+                page += 1
+                await asyncio.sleep(1) # Delay between pages
             except aiohttp.ClientResponseError as e:
-                self.logger.error(f"Network/API error fetching DNS history for {domain} ({record_type}, page {page}) (Status: {e.status}): {e}", exc_info=True)
-                return self._simulate_dns_history(domain, record_type) # Fallback to simulation on error
+                if e.status == 429:
+                    self.logger.warning(f"SecurityTrails API rate limit exceeded for {domain} ({record_type}, page {page}). Retrying after 60 seconds.")
+                    await asyncio.sleep(60)
+                    continue # Retry the current page
+                else:
+                    self.logger.error(f"Network/API error fetching DNS history for {domain} ({record_type}, page {page}) (Status: {e.status}): {e}", exc_info=True)
+                    return self._simulate_dns_history(domain, record_type) # Fallback to simulation on error
             except Exception as e:
                 self.logger.error(f"Unexpected error fetching DNS history for {domain} ({record_type}, page {page}): {e}", exc_info=True)
                 return self._simulate_dns_history(domain, record_type) # Fallback to simulation on error

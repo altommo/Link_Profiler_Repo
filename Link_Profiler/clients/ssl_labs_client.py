@@ -13,6 +13,8 @@ import time # Import time for time.monotonic()
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
+from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +22,22 @@ class SSLLabsClient:
     """
     Client for fetching SSL/TLS analysis from SSL Labs API.
     """
-    def __init__(self):
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
         self.logger = logging.getLogger(__name__ + ".SSLLabsClient")
         self.base_url = config_loader.get("technical_auditor.ssl_labs_api.base_url")
         self.enabled = config_loader.get("technical_auditor.ssl_labs_api.enabled", False)
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager
+        if self.session_manager is None:
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager
+            self.session_manager = global_session_manager
+            logger.warning("No SessionManager provided to SSLLabsClient. Falling back to global SessionManager.")
+        
+        self.resilience_manager = resilience_manager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to SSLLabsClient. Falling back to global instance.")
+
         self._last_call_time: float = 0.0 # For explicit throttling
 
         if not self.enabled:
@@ -34,16 +47,14 @@ class SSLLabsClient:
         """Initialise aiohttp session."""
         if self.enabled:
             self.logger.info("Entering SSLLabsClient context.")
-            if self._session is None or self._session.closed:
-                self._session = aiohttp.ClientSession()
+            await self.session_manager.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close aiohttp session."""
-        if self.enabled and self._session and not self._session.closed:
-            self.logger.info("Exiting SSLLabsClient context. Closing aiohttp session.")
-            await self._session.close()
-            self._session = None
+        if self.enabled:
+            self.logger.info("Exiting SSLLabsClient context.")
+            await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     async def _throttle(self):
         """Ensures at least 1 second delay between calls to SSL Labs."""
@@ -86,32 +97,40 @@ class SSLLabsClient:
         
         for attempt in range(3): # Retry up to 3 times for 429/5xx errors
             try:
-                async with self._session.get(endpoint, params=params, timeout=60) as response: # Increased timeout for SSL analysis
-                    response.raise_for_status()
-                    data = await response.json()
+                response = await self.resilience_manager.execute_with_resilience(
+                    lambda: self.session_manager.get(endpoint, params=params, timeout=60),
+                    url=endpoint # Pass the endpoint for circuit breaker naming
+                )
+                response.raise_for_status()
+                data = await response.json()
+                
+                # Implement polling logic
+                while data.get('status') in ('IN_PROGRESS', 'DNS'):
+                    self.logger.info(f"SSL Labs analysis for {host} is {data.get('status')}. Polling in 10 seconds...")
+                    await asyncio.sleep(10)
+                    await self._throttle() # Throttle before polling
                     
-                    # Implement polling logic
-                    while data.get('status') in ('IN_PROGRESS', 'DNS'):
-                        self.logger.info(f"SSL Labs analysis for {host} is {data.get('status')}. Polling in 10 seconds...")
-                        await asyncio.sleep(10)
-                        await self._throttle() # Throttle before polling
-                        async with self._session.get(endpoint, params=params, timeout=60) as poll_response:
-                            poll_response.raise_for_status()
-                            data = await poll_response.json()
-                    
-                    if data.get('status') == 'READY':
-                        self.logger.info(f"SSL analysis for {host} completed with grade: {data.get('endpoints', [{}])[0].get('grade')}.")
-                        return data
-                    elif data.get('status') == 'ERROR':
-                        self.logger.error(f"SSL Labs analysis for {host} returned an error status: {data.get('statusMessage')}")
-                        return None # Analysis failed
-                    else:
-                        self.logger.warning(f"SSL Labs analysis for {host} returned unexpected status: {data.get('status')}. Data: {data}")
-                        return None # Unexpected status
+                    poll_response = await self.resilience_manager.execute_with_resilience(
+                        lambda: self.session_manager.get(endpoint, params=params, timeout=60),
+                        url=endpoint # Pass the endpoint for circuit breaker naming
+                    )
+                    poll_response.raise_for_status()
+                    data = await poll_response.json()
+                
+                if data.get('status') == 'READY':
+                    self.logger.info(f"SSL analysis for {host} completed with grade: {data.get('endpoints', [{}])[0].get('grade')}.")
+                    data['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
+                    return data
+                elif data.get('status') == 'ERROR':
+                    self.logger.error(f"SSL Labs analysis for {host} returned an error status: {data.get('statusMessage')}")
+                    return None # Analysis failed
+                else:
+                    self.logger.warning(f"SSL Labs analysis for {host} returned unexpected status: {data.get('status')}. Data: {data}")
+                    return None # Unexpected status
             except aiohttp.ClientResponseError as e:
                 if e.status in (429, 500, 502, 503, 504) and attempt < 2: # Retry on 429 or 5xx
-                    self.logger.warning(f"SSL Labs API returned {e.status} for {host}. Retrying in {2 ** attempt} seconds...")
-                    await asyncio.sleep(2 ** attempt)
+                    self.logger.warning(f"SSL Labs API returned {e.status} for {host}. Retrying in {2 ** (attempt + 1)} seconds...") # Exponential backoff
+                    await asyncio.sleep(2 ** (attempt + 1))
                     await self._throttle() # Throttle before retry
                     continue
                 else:
@@ -145,7 +164,7 @@ class SSLLabsClient:
                     "grade": grade,
                     "details": {
                         "protocols": [
-                            {"id": "TLS 1.3", "name": "TLS", "version": "1.3"},
+                            {"id": "TLS 1.3", "name": "TLS", "version": "1.3"} if random.random() > 0.5 else {"id": "TLS 1.2", "name": "TLS", "version": "1.2"},
                             {"id": "TLS 1.2", "name": "TLS", "version": "1.2"}
                         ],
                         "cert": {
@@ -182,6 +201,7 @@ class SSLLabsClient:
                     "notAfter": int((datetime.now() + timedelta(days=365)).timestamp() * 1000),
                     "altNames": [host, f"www.{host}"]
                 }
-            ]
+            ],
+            'last_fetched_at': datetime.utcnow().isoformat()
         }
 

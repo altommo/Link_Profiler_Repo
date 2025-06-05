@@ -10,6 +10,7 @@ from datetime import datetime, timedelta # Import datetime and timedelta
 import random # Import random
 
 import praw # Requires pip install praw
+from prawcore.exceptions import RequestException, ResponseException # Import specific PRAW exceptions
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
@@ -103,6 +104,7 @@ class RedditClient:
         results = []
         try:
             # PRAW search is synchronous, run in a separate thread
+            # Note: PRAW's search limit is capped at 100. For more, Pushshift or 'after' token logic is needed.
             submissions = await self.resilience_manager.execute_with_resilience(
                 lambda: self.reddit.subreddit('all').search(query, limit=limit),
                 url="https://oauth.reddit.com/r/all/search" # Representative URL for CB
@@ -119,12 +121,21 @@ class RedditClient:
                     'published_date': datetime.fromtimestamp(s.created_utc).isoformat(),
                     'sentiment': 'neutral', # PRAW doesn't provide sentiment directly
                     'engagement_score': s.score, # Using score as a proxy for engagement
-                    'last_fetched_at': datetime.utcnow() # Set last_fetched_at for live data
+                    'last_fetched_at': datetime.utcnow().isoformat() # Set last_fetched_at for live data
                 })
             self.logger.info(f"Found {len(results)} Reddit mentions for '{query}'.")
+            await asyncio.sleep(1) # Throttle: Reddit API limits ~60 requests/minute (1 request/second)
             return results
+        except (RequestException, ResponseException) as e:
+            if e.response and e.response.status == 429:
+                self.logger.warning(f"Reddit API rate limit exceeded for '{query}'. Retrying after 30 seconds.")
+                await asyncio.sleep(30)
+                return await self.search_mentions(query, limit) # Retry the call
+            else:
+                self.logger.error(f"Reddit API error searching for '{query}': {e}", exc_info=True)
+                return self._simulate_mentions(query, limit) # Fallback to simulation on error
         except Exception as e:
-            self.logger.error(f"Error searching Reddit for '{query}': {e}", exc_info=True)
+            self.logger.error(f"Unexpected error searching Reddit for '{query}': {e}", exc_info=True)
             return self._simulate_mentions(query, limit) # Fallback to simulation on error
 
     def _simulate_mentions(self, query: str, limit: int) -> List[Dict[str, Any]]:
@@ -142,7 +153,7 @@ class RedditClient:
                 'published_date': (datetime.now() - timedelta(days=random.randint(1, 365))).isoformat(),
                 'sentiment': random.choice(['positive', 'negative', 'neutral']),
                 'engagement_score': random.randint(1, 1000),
-                'last_fetched_at': datetime.utcnow()
+                'last_fetched_at': datetime.utcnow().isoformat()
             })
         return simulated_results
 

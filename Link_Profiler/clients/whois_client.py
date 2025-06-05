@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import aiohttp
 import json
 import random
+import time # Import time for time.monotonic()
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
@@ -41,6 +42,7 @@ class WHOISClient:
             self.resilience_manager = global_resilience_manager
             logger.warning("No DistributedResilienceManager provided to WHOISClient. Falling back to global instance.")
 
+        self._last_call_time: float = 0.0 # For explicit throttling
 
         if not self.enabled:
             self.logger.info("WHOIS-JSON.com API is disabled by configuration.")
@@ -58,6 +60,15 @@ class WHOISClient:
             self.logger.info("Exiting WHOISClient context. Closing aiohttp session.")
             await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
+    async def _throttle(self):
+        """Ensures at least 1 second delay between calls to WHOIS-JSON.com."""
+        elapsed = time.monotonic() - self._last_call_time
+        if elapsed < 1.0:
+            wait_time = 1.0 - elapsed
+            self.logger.debug(f"Throttling WHOIS-JSON.com API. Waiting for {wait_time:.2f} seconds.")
+            await asyncio.sleep(wait_time)
+        self._last_call_time = time.monotonic()
+
     @api_rate_limited(service="whois_json_api", api_client_type="whois_client", endpoint="get_domain_info")
     async def get_domain_info(self, domain: str) -> Optional[Dict[str, Any]]:
         """
@@ -72,6 +83,8 @@ class WHOISClient:
         if not self.enabled:
             self.logger.warning(f"WHOIS-JSON.com API is disabled. Simulating WHOIS data for {domain}.")
             return self._simulate_whois_data(domain)
+
+        await self._throttle() # Apply explicit throttling
 
         endpoint = self.base_url
         params = {'domain': domain}
@@ -88,8 +101,29 @@ class WHOISClient:
             response.raise_for_status() # Raise an exception for HTTP errors
             data = await response.json()
             self.logger.info(f"WHOIS data for {domain} fetched successfully.")
-            data['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
-            return data
+            
+            # Normalize the output
+            normalized_data = {
+                "domain_name": data.get("domain_name"),
+                "registrar": data.get("registrar", {}).get("name"),
+                "creation_date": data.get("creation_date"),
+                "expiration_date": data.get("expiration_date"),
+                "name_servers": data.get("name_servers", []),
+                "status": data.get("status"),
+                "country": data.get("registrant", {}).get("country"),
+                "emails": data.get("emails", []),
+                "organization": data.get("registrant", {}).get("organization"),
+                'last_fetched_at': datetime.utcnow().isoformat()
+            }
+            return normalized_data
+        except aiohttp.ClientResponseError as e:
+            if e.status == 429:
+                self.logger.warning(f"WHOIS-JSON.com API rate limit exceeded for {domain}. Retrying after 60 seconds.")
+                await asyncio.sleep(60)
+                return await self.get_domain_info(domain) # Retry the call
+            else:
+                self.logger.error(f"Network/API error fetching WHOIS data for {domain} (Status: {e.status}): {e}", exc_info=True)
+                return self._simulate_whois_data(domain) # Fallback to simulation on error
         except Exception as e:
             self.logger.error(f"Error fetching WHOIS data for {domain}: {e}", exc_info=True)
             return self._simulate_whois_data(domain) # Fallback to simulation on error

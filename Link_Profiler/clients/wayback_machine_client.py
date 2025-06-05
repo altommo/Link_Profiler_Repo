@@ -85,6 +85,7 @@ class WaybackClient(BaseAPIClient):
     def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
         super().__init__(session_manager)
         self.logger = logging.getLogger(__name__ + ".WaybackClient")
+        # The base_url should point to the CDX API endpoint, e.g., "http://web.archive.org/cdx/search/cdx"
         self.base_url = config_loader.get("historical_data.wayback_machine_api.base_url", 
                                          "http://web.archive.org/cdx/search/cdx")
         self.enabled = config_loader.get("historical_data.wayback_machine_api.enabled", False)
@@ -197,8 +198,13 @@ class WaybackClient(BaseAPIClient):
             return snapshots
                 
         except aiohttp.ClientResponseError as e:
-            self.logger.error(f"Network error fetching Wayback snapshots for {url} (Status: {e.status}): {e}")
-            return []
+            if e.status == 429:
+                self.logger.warning(f"Wayback Machine API rate limit exceeded for {url}. Retrying after 60 seconds.")
+                await asyncio.sleep(60)
+                return await self.get_snapshots(url, limit, from_date, to_date, collapse) # Retry the call
+            else:
+                self.logger.error(f"Network error fetching Wayback snapshots for {url} (Status: {e.status}): {e}")
+                return []
         except Exception as e:
             self.logger.error(f"Unexpected error fetching Wayback snapshots for {url}: {e}")
             return []
@@ -242,8 +248,13 @@ class WaybackClient(BaseAPIClient):
             return None
                 
         except aiohttp.ClientResponseError as e:
-            self.logger.error(f"Network error checking Wayback availability for {url} (Status: {e.status}): {e}")
-            return None
+            if e.status == 429:
+                self.logger.warning(f"Wayback Machine API rate limit exceeded for availability check for {url}. Retrying after 60 seconds.")
+                await asyncio.sleep(60)
+                return await self.check_availability(url, timestamp) # Retry the call
+            else:
+                self.logger.error(f"Network error checking Wayback availability for {url} (Status: {e.status}): {e}")
+                return None
         except Exception as e:
             self.logger.error(f"Unexpected error checking Wayback availability for {url}: {e}")
             return None
