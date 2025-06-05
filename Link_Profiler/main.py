@@ -113,6 +113,7 @@ import psutil
 import psycopg2
 
 from playwright.async_api import async_playwright, Browser
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # Added missing imports
 
 from Link_Profiler.services.crawl_service import CrawlService
 from Link_Profiler.services.domain_service import DomainService # Removed specific APIClient imports
@@ -165,6 +166,18 @@ from Link_Profiler.clients.news_api_client import NewsAPIClient
 # from Link_Profiler.clients.nominatim_client import NominatimClient
 # from Link_Profiler.clients.security_trails_client import SecurityTrailsClient
 # from Link_Profiler.clients.ssl_labs_client import SSLLabsClient
+
+# Import api_cache singleton
+from Link_Profiler.utils.api_cache import api_cache
+
+# Import schemas
+from Link_Profiler.api.schemas import (
+    UserCreate, UserResponse, Token, CrawlJobResponse, LinkProfileResponse, DomainResponse, 
+    ReportJobResponse, QueueStatsResponse, SERPResultResponse, KeywordSuggestionResponse, 
+    LinkIntersectResponse, CompetitiveKeywordAnalysisResponse, AlertRuleResponse, 
+    ContentGapAnalysisResultResponse, LinkProspectResponse, OutreachCampaignResponse, 
+    OutreachEventResponse, SEOMetricsResponse # Import all necessary schemas
+)
 
 
 # Initialize ClickHouse Loader conditionally
@@ -340,7 +353,7 @@ distributed_resilience_manager = DistributedResilienceManager(redis_client=redis
 # Load crawler-specific configuration
 crawler_config_data = config_loader.get("crawler", {})
 # Ensure ml_rate_optimization is set based on rate_limiting config
-crawler_config_data['ml_rate_optimization'] = config_loader.get("rate_limiting.ml_enhanced", False)
+crawler_config_data['ml_rate_limiter_enabled'] = config_loader.get("rate_limiting.ml_enhanced", False) # Corrected key
 # Pass relevant anti_detection settings to CrawlConfig
 crawler_config_data['user_agent_rotation'] = config_loader.get("anti_detection.user_agent_rotation", False)
 crawler_config_data['request_header_randomization'] = config_loader.get("anti_detection.request_header_randomization", False)
