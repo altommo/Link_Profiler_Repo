@@ -11,6 +11,9 @@ from datetime import datetime, timedelta
 import json
 import logging
 
+from prometheus_client import generate_latest # Import generate_latest
+from Link_Profiler.config.config_loader import config_loader # Import config_loader
+
 logger = logging.getLogger(__name__)
 
 @dataclass
