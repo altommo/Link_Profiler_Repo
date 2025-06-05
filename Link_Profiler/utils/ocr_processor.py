@@ -1,57 +1,75 @@
-"""
-OCR Processor - Extracts text from images.
-File: Link_Profiler/utils/ocr_processor.py
+"""Utility for performing OCR on images using Tesseract.
+
+This module provides an asynchronous interface that wraps the
+``pytesseract`` library, allowing image bytes or file paths to be
+processed without blocking the event loop.
 """
 
 import logging
-from typing import Optional, Union, List
-import asyncio # For async simulation
-import random # For random delays
+from typing import Optional, Union
+import asyncio
+from io import BytesIO
+
+from PIL import Image
+import pytesseract
 
 logger = logging.getLogger(__name__)
 
 class OCRProcessor:
-    """
-    A placeholder for Optical Character Recognition (OCR) functionality.
-    In a real application, this would integrate with an OCR library (e.g., Tesseract)
-    or a cloud-based OCR API (e.g., Google Cloud Vision, AWS Textract).
-    """
-    def __init__(self):
+    """Simple OCR processor based on the ``pytesseract`` library."""
+
+    def __init__(self, tesseract_cmd: Optional[str] = None) -> None:
+        """Initialise the processor.
+
+        Parameters
+        ----------
+        tesseract_cmd:
+            Optional path to the ``tesseract`` executable. This can be provided
+            when the binary is not available on the system ``PATH``.
+        """
+
         self.logger = logging.getLogger(__name__ + ".OCRProcessor")
-        self.logger.info("OCRProcessor initialized (simulated functionality).")
+        if tesseract_cmd:
+            pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+        self.logger.info("OCRProcessor initialized using pytesseract.")
+
+    async def _image_to_text(self, img: Image.Image) -> str:
+        """Run OCR in a thread to avoid blocking the event loop."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, pytesseract.image_to_string, img)
 
     async def process_image(self, image_data: Union[bytes, str], image_url: Optional[str] = None) -> Optional[str]:
+        """Extract text from image bytes or a file path.
+
+        Parameters
+        ----------
+        image_data:
+            Raw bytes of the image or a path to an image file.
+        image_url:
+            Optional identifier for logging.
+
+        Returns
+        -------
+        Optional[str]
+            Extracted text, or ``None`` if OCR fails.
         """
-        Simulates processing an image to extract text using OCR.
-        
-        Args:
-            image_data: The raw bytes of the image or a path/URL to the image.
-                        For this simulation, it can be any string/bytes.
-            image_url: The URL of the image, for logging purposes.
-            
-        Returns:
-            A simulated string of extracted text, or None if processing fails.
-        """
+
         if not image_data:
             self.logger.warning(f"No image data provided for OCR for {image_url or 'unknown'}.")
             return None
 
-        # Simulate asynchronous processing time
-        await asyncio.sleep(random.uniform(0.1, 0.5))
+        try:
+            if isinstance(image_data, bytes):
+                img = Image.open(BytesIO(image_data))
+            else:
+                img = Image.open(image_data)
 
-        # Simulate OCR results based on some simple logic
-        simulated_text = ""
-        if isinstance(image_data, bytes):
-            simulated_text = f"Simulated OCR text from image bytes (size: {len(image_data)}). "
-        elif isinstance(image_data, str):
-            simulated_text = f"Simulated OCR text from image content '{image_data[:20]}...'. "
-        
-        # Add some random keywords to make it more "realistic"
-        keywords = ["logo", "text", "button", "advertisement", "caption", "product"]
-        simulated_text += f"Keywords: {', '.join(random.sample(keywords, random.randint(1, 3)))}."
-
-        self.logger.debug(f"Simulated OCR for {image_url or 'image'}: {simulated_text[:50]}...")
-        return simulated_text
+            text = await self._image_to_text(img)
+            self.logger.debug(f"OCR extracted for {image_url or 'image'}: {text[:50]}...")
+            return text.strip() if text else ""
+        except Exception as exc:
+            self.logger.error(f"OCR processing failed for {image_url or 'image'}: {exc}")
+            return None
 
 # Create a singleton instance
 ocr_processor = OCRProcessor()
