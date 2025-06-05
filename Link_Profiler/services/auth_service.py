@@ -13,7 +13,7 @@ from passlib.context import CryptContext # For password hashing
 from jose import JWTError, jwt # For JWT token handling
 from fastapi import HTTPException, status # New: Import HTTPException and status
 
-from Link_Profiler.database.database import Database
+from Link_Profiler.database.database import Database, db
 from Link_Profiler.core.models import User, Token, TokenData
 from Link_Profiler.config.config_loader import config_loader
 
@@ -135,6 +135,7 @@ class AuthService:
         self.logger.info(f"User '{username}' authenticated successfully.")
         return user
 
+
     async def get_current_user(self, token: str) -> User:
         """Retrieves the current authenticated user from a JWT token."""
         self._check_secret_key()
@@ -148,3 +149,7 @@ class AuthService:
         if not user.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user", headers={"WWW-Authenticate": "Bearer"})
         return user
+
+
+# Create a singleton instance for use across the application
+auth_service_instance = AuthService(db)
