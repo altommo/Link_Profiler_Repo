@@ -115,8 +115,7 @@ class AlertManager:
                     "pretext": f"Link Profiler Alert: {alert.level.value.upper()}",
                     "title": alert.message,
                     "fields": [
-                        {"title": "Metric", "value": alert.metric, "short": True},
-                        {"title": "Value", "value": str(alert.value), "short": True},
+                        {"title": "Metric", "value": str(alert.value), "short": True},
                         {"title": "Timestamp", "value": datetime.fromtimestamp(alert.timestamp).strftime("%Y-%m-%d %H:%M:%S UTC"), "short": True}
                     ],
                     "footer": "Link Profiler Monitoring",
@@ -144,10 +143,34 @@ class AlertManager:
         Requires SMTP server configuration.
         """
         self.logger.info(f"Simulating email alert for: {alert.message}")
-        # In a real implementation, use a library like aiosmtplib
+        # TODO: Implement actual email sending logic using aiosmtplib or similar library.
+        # Example:
         # from aiosmtplib import SMTP
+        # from email.message import EmailMessage
+        #
         # smtp_server = config_loader.get("notifications.email.smtp_server")
-        # ... etc.
+        # smtp_port = config_loader.get("notifications.email.smtp_port")
+        # smtp_username = config_loader.get("notifications.email.smtp_username")
+        # smtp_password = config_loader.get("notifications.email.smtp_password")
+        # sender_email = config_loader.get("notifications.email.sender_email")
+        #
+        # if not all([smtp_server, smtp_port, smtp_username, smtp_password, sender_email, alert.recipients]):
+        #     self.logger.error("Email configuration or recipients missing for alert.")
+        #     return
+        #
+        # msg = EmailMessage()
+        # msg['Subject'] = f"Link Profiler Alert: {alert.level.value.upper()} - {alert.message}"
+        # msg['From'] = sender_email
+        # msg['To'] = ", ".join(alert.recipients) # Assuming recipients are email addresses
+        # msg.set_content(f"Metric: {alert.metric}\nValue: {alert.value}\nTimestamp: {datetime.fromtimestamp(alert.timestamp).isoformat()}\nDomain: {alert.domain or 'N/A'}")
+        #
+        # try:
+        #     async with SMTP(hostname=smtp_server, port=smtp_port, use_tls=True) as client:
+        #         await client.login(smtp_username, smtp_password)
+        #         await client.send_message(msg)
+        #     self.logger.info(f"Email alert sent for {alert.metric}.")
+        # except Exception as e:
+        #     self.logger.error(f"Failed to send email alert for {alert.metric}: {e}", exc_info=True)
         await asyncio.sleep(0.1) # Simulate network delay
         self.logger.debug(f"Email alert simulated for {alert.metric}.")
 
