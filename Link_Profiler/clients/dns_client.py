@@ -101,8 +101,8 @@ class DNSClient:
                         return answer["data"]
                     if answer["type"] == 28 and record_type == "AAAA": # AAAA record
                         return answer["data"]
-            self.logger.info(f"No {record_type} record found for {domain}.")
-            return None
+                self.logger.info(f"No {record_type} record found for {domain}.")
+                return None
 
         except Exception as e:
             self.logger.error(f"Error resolving DNS for {domain}: {e}. Returning None.", exc_info=True)
@@ -138,8 +138,8 @@ class DNSClient:
             
             if data and data.get("Answer"):
                 return data["Answer"]
-            self.logger.info(f"No DNS records found for {domain}.")
-            return []
+                self.logger.info(f"No DNS records found for {domain}.")
+                return []
 
         except Exception as e:
             self.logger.error(f"Error fetching all DNS records for {domain}: {e}. Returning empty list.", exc_info=True)
