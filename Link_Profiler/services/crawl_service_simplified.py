@@ -16,9 +16,9 @@ from Link_Profiler.database.database import Database
 from Link_Profiler.services.domain_service import DomainService
 
 
-class CrawlService:
+class LegacyCrawlService:
     """
-    Simplified crawl service compatible with the existing Link Profiler system
+    Legacy simplified crawl service for backward compatibility.
     """
     def __init__(self, database: Database, backlink_service=None, domain_service=None):
         self.db = database

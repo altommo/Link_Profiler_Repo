@@ -39,7 +39,6 @@ class OpenRouterClient:
         # This is a workaround as openai.AsyncClient expects httpx.AsyncClient, not aiohttp.ClientSession directly.
         # For simplicity and to avoid deep dependency injection issues with httpx,
         # we'll let openai.AsyncClient manage its own httpx client, but ensure it's within our context.
-        # If direct aiohttp integration is needed, a custom httpx.AsyncClient subclass would be required.
         # For now, we'll use the default httpx client managed by openai.AsyncClient.
         self.http_client = openai.AsyncClient(
             base_url=self.base_url,
@@ -138,7 +137,7 @@ class AIService:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close Redis connection and ensure session manager and OpenRouter client are exited."""
         if self.redis_client:
-            await self.redis.close() # Corrected: Use self.redis_client.close()
+            await self.redis_client.close() # Corrected: Use self.redis_client.close()
         if self.openrouter_client:
             await self.openrouter_client.__aexit__(exc_type, exc_val, exc_tb)
         await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)

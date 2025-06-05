@@ -54,7 +54,7 @@ database:
 
 # Redis settings (for queues and caching)
 redis:
-  url: "redis://:redis_secure_pass_456@127.0.0.1:6379/0" # Redis URL for job queue and cache
+  url: "${REDIS_URL:-redis://localhost:6379/0}" # Use environment variable with default
   cache_ttl: 3600 # Default cache TTL in seconds (1 hour)
 
 # Queue system settings
@@ -359,7 +359,7 @@ satellite:
 
 # Authentication settings
 auth:
-  secret_key: "xKroXcaIePQydhdhS4GMhdMfTsjhKzthaoL5OmU5MBA" # REQUIRED: This is your generated key
+  secret_key: "${SECRET_KEY}" # REQUIRED: This is your generated key
   algorithm: "HS256"
   access_token_expire_minutes: 30 # Token expiry time in minutes
 
