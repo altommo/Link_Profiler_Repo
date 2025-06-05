@@ -13,6 +13,7 @@ import random
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ class YouTubeClient:
     Client for fetching data from the YouTube Data API v3.
     Requires a Google Cloud API Key.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None): # New: Accept SessionManager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
         self.logger = logging.getLogger(__name__ + ".YouTubeClient")
         self.api_key = config_loader.get("social_media_crawler.youtube_api.api_key")
         self.base_url = config_loader.get("social_media_crawler.youtube_api.base_url")
@@ -32,6 +33,13 @@ class YouTubeClient:
             from Link_Profiler.utils.session_manager import session_manager as global_session_manager # Avoid name collision
             self.session_manager = global_session_manager
             logger.warning("No SessionManager provided to YouTubeClient. Falling back to global SessionManager.")
+        
+        self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to YouTubeClient. Falling back to global instance.")
+
 
         if not self.enabled:
             self.logger.info("YouTube Data API is disabled by configuration.")
@@ -80,32 +88,30 @@ class YouTubeClient:
         self.logger.info(f"Calling YouTube Data API for video search: '{query}' (limit: {limit})...")
         results = []
         try:
-            async with await self.session_manager.get(endpoint, params=params, timeout=15) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                for item in data.get('items', []):
-                    video_id = item['id']['videoId']
-                    snippet = item['snippet']
-                    results.append({
-                        'platform': 'youtube',
-                        'video_id': video_id,
-                        'title': snippet.get('title'),
-                        'description': snippet.get('description'),
-                        'published_at': snippet.get('publishedAt'),
-                        'channel_title': snippet.get('channelTitle'),
-                        'url': f"https://www.youtube.com/watch?v={video_id}"
-                    })
+            # Use resilience manager for the actual HTTP request
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(endpoint, params=params, timeout=15),
+                url=endpoint # Pass the endpoint for circuit breaker naming
+            )
+            response.raise_for_status()
+            data = await response.json()
+            
+            for item in data.get('items', []):
+                video_id = item['id']['videoId']
+                snippet = item['snippet']
+                results.append({
+                    'platform': 'youtube',
+                    'video_id': video_id,
+                    'title': snippet.get('title'),
+                    'description': snippet.get('description'),
+                    'published_at': snippet.get('publishedAt'),
+                    'channel_title': snippet.get('channelTitle'),
+                    'url': f"https://www.youtube.com/watch?v={video_id}"
+                })
             self.logger.info(f"Found {len(results)} YouTube videos for '{query}'.")
             return results
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/API error searching YouTube for '{query}': {e}", exc_info=True)
-            return self._simulate_videos(query, limit) # Fallback to simulation on error
-        except asyncio.TimeoutError:
-            self.logger.error(f"YouTube video search for {query} timed out.")
-            return self._simulate_videos(query, limit) # Fallback to simulation on error
         except Exception as e:
-            self.logger.error(f"Unexpected error searching YouTube for '{query}': {e}", exc_info=True)
+            self.logger.error(f"Error searching YouTube for '{query}': {e}", exc_info=True)
             return self._simulate_videos(query, limit) # Fallback to simulation on error
 
     @api_rate_limited(service="youtube_api", api_client_type="youtube_client", endpoint="get_video_stats")
@@ -132,39 +138,37 @@ class YouTubeClient:
 
         self.logger.info(f"Calling YouTube Data API for video stats: {video_id}...")
         try:
-            async with await self.session_manager.get(endpoint, params=params, timeout=10) as response:
-                response.raise_for_status()
-                data = await response.json()
-                
-                items = data.get('items', [])
-                if not items:
-                    self.logger.warning(f"No video found for ID: {video_id}.")
-                    return None
-                
-                video_data = items[0]
-                stats = video_data.get('statistics', {})
-                snippet = video_data.get('snippet', {})
+            # Use resilience manager for the actual HTTP request
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.get(endpoint, params=params, timeout=10),
+                url=endpoint # Pass the endpoint for circuit breaker naming
+            )
+            response.raise_for_status()
+            data = await response.json()
+            
+            items = data.get('items', [])
+            if not items:
+                self.logger.warning(f"No video found for ID: {video_id}.")
+                return None
+            
+            video_data = items[0]
+            stats = video_data.get('statistics', {})
+            snippet = video_data.get('snippet', {})
 
-                result = {
-                    'video_id': video_id,
-                    'title': snippet.get('title'),
-                    'description': snippet.get('description'),
-                    'published_at': snippet.get('publishedAt'),
-                    'view_count': int(stats.get('viewCount', 0)),
-                    'like_count': int(stats.get('likeCount', 0)),
-                    'comment_count': int(stats.get('commentCount', 0)),
-                    'url': f"https://www.youtube.com/watch?v={video_id}"
-                }
-                self.logger.info(f"Fetched stats for YouTube video {video_id}.")
-                return result
-        except aiohttp.ClientError as e:
-            self.logger.error(f"Network/API error fetching YouTube video stats for {video_id}: {e}", exc_info=True)
-            return self._simulate_video_stats(video_id) # Fallback to simulation on error
-        except asyncio.TimeoutError:
-            self.logger.error(f"YouTube video stats for {video_id} timed out.")
-            return self._simulate_video_stats(video_id) # Fallback to simulation on error
+            result = {
+                'video_id': video_id,
+                'title': snippet.get('title'),
+                'description': snippet.get('description'),
+                'published_at': snippet.get('publishedAt'),
+                'view_count': int(stats.get('viewCount', 0)),
+                'like_count': int(stats.get('likeCount', 0)),
+                'comment_count': int(stats.get('commentCount', 0)),
+                'url': f"https://www.youtube.com/watch?v={video_id}"
+            }
+            self.logger.info(f"Fetched stats for YouTube video {video_id}.")
+            return result
         except Exception as e:
-            self.logger.error(f"Unexpected error fetching YouTube video stats for {video_id}: {e}", exc_info=True)
+            self.logger.error(f"Error fetching YouTube video stats for {video_id}: {e}", exc_info=True)
             return self._simulate_video_stats(video_id) # Fallback to simulation on error
 
     def _simulate_videos(self, query: str, limit: int) -> List[Dict[str, Any]]:
