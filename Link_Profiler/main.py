@@ -29,6 +29,7 @@ from Link_Profiler.database.database import Database, db # Import both class and
 from Link_Profiler.services.auth_service import AuthService, auth_service_instance # Import both class and singleton
 from Link_Profiler.utils.logging_config import LoggingConfig # Import LoggingConfig class
 from Link_Profiler.utils.connection_manager import ConnectionManager, connection_manager
+from Link_Profiler.config.env_config import EnvironmentConfig
 
 # Setup logging using the loaded configuration
 # Use LoggingConfig.setup_logging directly
@@ -65,7 +66,11 @@ def validate_critical_config():
              logger.warning(f"WARNING: {env_var} is not set. Using default/fallback for {config_path}.")
 
 # Call validation after config loading
+# Validate environment variables and critical config
 validate_critical_config()
+missing_vars = EnvironmentConfig.validate_required_vars()
+if missing_vars:
+    logger.warning(f"Missing required environment variables: {missing_vars}")
 # --- End Startup Configuration Diagnostics ---
 
 
@@ -189,6 +194,7 @@ from Link_Profiler.api.public_jobs import public_jobs_router
 from Link_Profiler.api.reports import reports_router
 from Link_Profiler.api.users import users_router
 from Link_Profiler.api.websocket import websocket_router
+from Link_Profiler.api.monitoring_debug import monitoring_debug_router as monitoring_router
 
 
 # Initialize ClickHouse Loader conditionally
@@ -666,6 +672,7 @@ app.include_router(public_jobs_router)
 app.include_router(reports_router)
 app.include_router(users_router)
 app.include_router(websocket_router)
+app.include_router(monitoring_router)
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():

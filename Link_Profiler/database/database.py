@@ -7,7 +7,7 @@ import logging
 import os
 from typing import List, Optional, Any, Dict, Set, Callable
 from datetime import datetime
-from sqlalchemy import create_engine, text, inspect
+from sqlalchemy import create_engine, text, inspect, func
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
 from alembic import command
@@ -533,6 +533,43 @@ class Database:
 
         orm_obj = self._execute_operation('select', 'domain_intelligence', _get)
         return self._from_orm(orm_obj) if orm_obj else None
+
+    def get_backlink_counts_over_time(self, target_domain: str, time_unit: str, num_units: int) -> Dict[str, int]:
+        """Returns backlink counts grouped by time for a domain."""
+        valid_units = {'day', 'week', 'month', 'quarter', 'year'}
+        if time_unit not in valid_units:
+            raise ValueError(f"Invalid time_unit '{time_unit}'. Must be one of {valid_units}")
+
+        def _get(session):
+            period = func.date_trunc(time_unit, BacklinkORM.discovered_date).label('period')
+            rows = (
+                session.query(period, func.count(BacklinkORM.id))
+                .filter(BacklinkORM.target_domain_name == target_domain)
+                .group_by(period)
+                .order_by(period.desc())
+                .limit(num_units)
+                .all()
+            )
+            return rows
+
+        rows = self._execute_operation('select', 'backlinks', _get)
+        counts = {row[0].strftime('%Y-%m-%d'): row[1] for row in rows}
+        # Return in chronological order
+        return dict(sorted(counts.items()))
+
+    def get_serp_position_history(self, target_url: str, keyword: str, num_snapshots: int) -> List[SERPResult]:
+        """Retrieves historical SERP positions for a URL and keyword."""
+        def _get(session):
+            return (
+                session.query(SERPResultORM)
+                .filter_by(result_url=target_url, keyword=keyword)
+                .order_by(SERPResultORM.crawl_timestamp.desc())
+                .limit(num_snapshots)
+                .all()
+            )
+
+        orm_results = self._execute_operation('select', 'serp_results', _get)
+        return [self._from_orm(r) for r in orm_results]
 
     def get_source_domains_for_target_domains(self, target_domains: List[str]) -> Dict[str, Set[str]]:
         """Returns mapping of target domains to unique source domains that link to them."""
