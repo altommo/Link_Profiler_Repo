@@ -3,6 +3,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from urllib.parse import urlencode
+import time # Import time for performance measurement
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
@@ -17,7 +18,7 @@ class HunterIOClient(BaseAPIClient):
     """
     Client for the Hunter.io API.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedCircuitBreakerManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
         super().__init__(session_manager, resilience_manager, api_quota_manager) # Pass api_quota_manager to BaseAPIClient
         self.logger = logging.getLogger(__name__ + ".HunterIOClient")
         self.base_url = config_loader.get("external_apis.hunter_io.base_url", "https://api.hunter.io/v2/")
