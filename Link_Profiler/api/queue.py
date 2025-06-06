@@ -1,25 +1,39 @@
 import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 from typing import Annotated, Dict, Any, Optional, List
 
+logger = logging.getLogger(__name__)
+
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+
+logger = logging.getLogger(__name__)
 
 # Import global instances and utility functions
 logger = logging.getLogger(__name__) # Get logger directly
 
 from Link_Profiler.services.job_submission_service import get_coordinator, submit_crawl_to_queue
 
+logger = logging.getLogger(__name__)
+
 
 # Import shared Pydantic models and dependencies
 from Link_Profiler.api.schemas import (
+
+logger = logging.getLogger(__name__)
     JobStatusResponse, QueueStatsResponse, CrawlerHealthResponse,
     StartCrawlRequest
 )
 
 from Link_Profiler.api.dependencies import get_current_user
 
+logger = logging.getLogger(__name__)
+
 # Import core models
 from Link_Profiler.core.models import User, CrawlStatus
+
+logger = logging.getLogger(__name__)
 
 
 queue_router = APIRouter(prefix="/api/queue", tags=["Queue Management"])
