@@ -1,6 +1,7 @@
 import Layout from './components/Layout';
 import useRealTimeData from './hooks/useRealTimeData';
 import useMissionControlStore from './stores/missionControlStore';
+import Dashboard from './pages/Dashboard'; // Import the new Dashboard page
 
 function App() {
   const { isConnected } = useRealTimeData();
@@ -9,28 +10,18 @@ function App() {
   return (
     <div className="min-h-screen flex flex-col">
       <Layout>
-        <h1 className="text-4xl font-bold text-nasa-cyan mb-8">Mission Control Dashboard</h1>
-        <p className="text-lg text-nasa-light-gray mb-4">
-          Status: <span className={isConnected ? 'text-green-500' : 'text-red-500'}>
+        {/* Display connection status at the top of the layout */}
+        <div className="text-right text-sm text-nasa-light-gray mb-4">
+          Connection Status: <span className={isConnected ? 'text-green-500' : 'text-red-500'}>
             {isConnected ? 'ONLINE' : 'OFFLINE'}
           </span>
-        </p>
-        {lastUpdated && (
-          <p className="text-sm text-nasa-light-gray mb-4">
-            Last Updated: {new Date(lastUpdated).toLocaleTimeString()}
-          </p>
-        )}
+          {lastUpdated && (
+            <span className="ml-4">Last Data Received: {new Date(lastUpdated).toLocaleTimeString()}</span>
+          )}
+        </div>
         
-        {data ? (
-          <div className="bg-nasa-gray p-6 rounded-lg shadow-lg">
-            <h2 className="text-2xl font-bold text-nasa-cyan mb-4">Real-time Data</h2>
-            <pre className="text-nasa-cyan text-sm overflow-auto max-h-[600px]">
-              {JSON.stringify(data, null, 2)}
-            </pre>
-          </div>
-        ) : (
-          <p className="text-lg text-nasa-light-gray">Awaiting data streams...</p>
-        )}
+        {/* Render the main Dashboard page */}
+        <Dashboard />
       </Layout>
     </div>
   );
