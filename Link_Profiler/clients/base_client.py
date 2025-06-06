@@ -59,7 +59,9 @@ class BaseAPIClient:
             # Add last_fetched_at to the response object if it's a dict/json
             try:
                 json_data = await response.json()
-                json_data['last_fetched_at'] = datetime.utcnow().isoformat()
+                # Ensure json_data is a dictionary before adding a key
+                if isinstance(json_data, dict):
+                    json_data['last_fetched_at'] = datetime.utcnow().isoformat()
                 return json_data
             except Exception:
                 # If response is not JSON, return the response object itself

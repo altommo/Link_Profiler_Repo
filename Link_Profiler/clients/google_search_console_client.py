@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
-from googleapicl.discovery import build
+from googleapiclient.discovery import build
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.clients.base_client import BaseAPIClient
@@ -318,4 +318,3 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
         except Exception as e: # Catch generic exception for GSC API errors
             self.logger.error(f"Error fetching backlinks from GSC for {site_url}: {e}", exc_info=True)
             return []
-
