@@ -3,9 +3,12 @@ import useMissionControlStore from '../stores/missionControlStore';
 import CrawlerMissionStatus from '../components/modules/CrawlerMissionStatus';
 import BacklinkDiscovery from '../components/modules/BacklinkDiscovery';
 import ApiQuotaStatus from '../components/modules/ApiQuotaStatus';
+import DomainIntelligence from '../components/modules/DomainIntelligence'; // New import
+import PerformanceOptimization from '../components/modules/PerformanceOptimization'; // New import
+import AlertsDisplay from '../components/modules/AlertsDisplay'; // New import
 
 const Dashboard: React.FC = () => {
-  const { data, lastUpdated } = useMissionControlStore();
+  const { data } = useMissionControlStore();
 
   if (!data) {
     return (
@@ -32,7 +35,15 @@ const Dashboard: React.FC = () => {
         <ApiQuotaStatus
           statuses={data.api_quota_statuses}
         />
-        {/* More modules will go here */}
+        <DomainIntelligence // New module
+          metrics={data.domain_intelligence_metrics}
+        />
+        <PerformanceOptimization // New module
+          metrics={data.performance_optimization_metrics}
+        />
+        <AlertsDisplay // New module
+          alerts={data.alerts}
+        />
       </div>
     </div>
   );
