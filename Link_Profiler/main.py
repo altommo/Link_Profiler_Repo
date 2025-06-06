@@ -21,7 +21,7 @@ load_dotenv()
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if project_root and project_root not in sys.path:
-    sys.path.insert(0, project_root)
+    sys.sys.path.insert(0, project_root)
     print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
 else:
     print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
@@ -105,7 +105,6 @@ from Link_Profiler.utils.session_manager import session_manager # Use the single
 
 # Now import other FastAPI and application modules
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -293,8 +292,8 @@ social_media_service_instance = SocialMediaService(
     social_media_crawler=social_media_crawler_instance,
     reddit_client=reddit_client_instance, # New: Pass RedditClient
     youtube_client=youtube_client_instance, # New: Pass YouTubeClient
-    news_api_client=news_api_client_instance # New: Pass NewsAPIClient
-    # Removed session_manager as per the error
+    news_api_client=news_api_client_instance, # New: Pass NewsAPIClient
+    session_manager=session_manager # Re-add session_manager
 )
 
 # New: Initialize Web3 Service
