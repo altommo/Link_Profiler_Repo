@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import time # Import time for monotonic clock
 import asyncio # Import asyncio
 import random # For simulating ML model output
+from collections import deque # For tracking recent performance
 
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager, CircuitBreakerState # Import CircuitBreakerState
 
@@ -92,6 +93,7 @@ class APIQuotaManager:
 
         self.ml_predictor = SimpleMLPredictor() # Initialize the ML predictor
         self.ml_enabled_for_routing = config.get("api_routing.ml_enabled", False) # New config flag
+        self.recent_calls_window_size = config.get("api_routing.recent_calls_window_size", 50) # Number of recent calls to track for dynamic weighting
 
         self.logger.info("APIQuotaManager initialized.")
 
@@ -117,7 +119,8 @@ class APIQuotaManager:
                     'total_response_time_ms': 0.0,
                     'average_response_time_ms': 0.0,
                     'success_rate': 1.0, # Start with 100% success
-                    'usage_history': [] # To store (timestamp, usage_delta) for burn rate calculation
+                    'usage_history': [], # To store (timestamp, usage_delta) for burn rate calculation
+                    'recent_calls': deque(maxlen=self.recent_calls_window_size) # Store (success, response_time_ms)
                 }
                 self.logger.info(f"Loaded API quota for {api_name}: Limit={self.quotas[api_name]['limit']}, Reset Day={self.quotas[api_name]['reset_day_of_month']}, Quality={self.quotas[api_name]['quality_score']}")
 
@@ -191,6 +194,10 @@ class APIQuotaManager:
 
         perf['average_response_time_ms'] = perf['total_response_time_ms'] / perf['total_calls'] if perf['total_calls'] > 0 else 0.0
         perf['success_rate'] = perf['successful_calls'] / perf['total_calls'] if perf['total_calls'] > 0 else 0.0
+        
+        # Store recent call for dynamic weighting
+        perf['recent_calls'].append((success, response_time_ms))
+
         self.logger.debug(f"API {api_name} performance: Success Rate={perf['success_rate']:.2f}, Avg Response Time={perf['average_response_time_ms']:.2f}ms")
 
         # Collect data point for ML model training
@@ -236,7 +243,8 @@ class APIQuotaManager:
                     'total_response_time_ms': 0.0,
                     'average_response_time_ms': 0.0,
                     'success_rate': 1.0,
-                    'usage_history': []
+                    'usage_history': [],
+                    'recent_calls': deque(maxlen=self.recent_calls_window_size)
                 }
 
     def _calculate_burn_rate(self, api_name: str) -> float:
@@ -329,7 +337,23 @@ class APIQuotaManager:
         elif cb_status['state'] == CircuitBreakerState.OPEN:
             cb_penalty = -float('inf') # Should be filtered out by get_available_apis, but defensive
 
-        # Performance Penalty
+        # Dynamic Performance Adjustment (Advanced Decision Tree / Real-time Performance Monitoring)
+        recent_calls = perf_data.get('recent_calls', deque())
+        dynamic_performance_adjustment = 0
+        if len(recent_calls) >= 5: # Need at least 5 recent calls to make a judgment
+            recent_successes = sum(1 for s, _ in recent_calls if s)
+            recent_failures = len(recent_calls) - recent_successes
+            recent_avg_response_time = sum(rt for _, rt in recent_calls) / len(recent_calls)
+
+            # If recent success rate is significantly lower than overall, penalize
+            if recent_successes / len(recent_calls) < success_rate * 0.9: # 10% drop
+                dynamic_performance_adjustment += (recent_successes / len(recent_calls) - success_rate) * self.weights['success_rate'] * 0.5 # Half the normal weight
+
+            # If recent response time is significantly higher than overall, penalize
+            if recent_avg_response_time > avg_response_time * 1.1: # 10% increase
+                dynamic_performance_adjustment += (recent_avg_response_time - avg_response_time) * self.weights['response_time'] * 0.5 # Half the normal weight
+        
+        # Performance Penalty (based on overall performance)
         performance_penalty = 0
         if success_rate < self.performance_thresholds['low_success_rate']:
             performance_penalty += (success_rate - self.performance_thresholds['low_success_rate']) * self.weights['success_rate'] # Negative penalty
@@ -369,7 +393,7 @@ class APIQuotaManager:
                      success_rate * self.weights['success_rate'] + 
                      remaining_val * self.weights['remaining_quota'] + 
                      avg_response_time * self.weights['response_time'] + 
-                     performance_penalty + cb_penalty)
+                     performance_penalty + cb_penalty + dynamic_performance_adjustment)
         elif strategy == 'quota_optimized':
             if ml_enabled:
                 # When ML is enabled for quota optimization, its prediction heavily influences the score
@@ -379,14 +403,14 @@ class APIQuotaManager:
                          cost_per_unit * self.weights['cost_per_unit'] + 
                          success_rate * self.weights['success_rate'] + 
                          avg_response_time * self.weights['response_time'] + 
-                         exhaustion_penalty + performance_penalty + cb_penalty)
+                         exhaustion_penalty + performance_penalty + cb_penalty + dynamic_performance_adjustment)
         else: # Default or custom strategy
             score = (quality * self.weights['quality'] + 
                      remaining_val * self.weights['remaining_quota'] - 
                      cost_per_unit * self.weights['cost_per_unit'] + 
                      success_rate * self.weights['success_rate'] + 
                      avg_response_time * self.weights['response_time'] + 
-                     exhaustion_penalty + performance_penalty + cb_penalty)
+                     exhaustion_penalty + performance_penalty + cb_penalty + dynamic_performance_adjustment)
         
         return score
 
