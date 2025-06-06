@@ -119,6 +119,7 @@ import psycopg2
 
 from playwright.async_api import async_playwright, Browser
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # Added missing imports
+from fastapi.middleware.cors import CORSMiddleware # Import CORSMiddleware
 
 from Link_Profiler.services.crawl_service import CrawlService
 from Link_Profiler.services.domain_service import DomainService # Removed specific APIClient imports
