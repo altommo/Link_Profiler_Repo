@@ -4,14 +4,14 @@ from typing import List, Dict, Any, Optional, Set, Tuple
 from urllib.parse import urlparse, urljoin
 from datetime import datetime, timedelta
 import random
-import aiohttp
+import aiohttp # Import aiohttp
 import json
 import re
 import uuid # Import uuid for Backlink ID
 
 from playwright.async_api import async_playwright, Browser, Page, TimeoutError as PlaywrightTimeoutError
 
-from Link_Profiler.core.models import URL, Backlink, CrawlConfig, CrawlResult, SEOMetrics, CrawlError, ContentType, SpamLevel
+from Link_Profiler.core.models import URL, Backlink, CrawlConfig, CrawlResult, SEOMetrics, CrawlError, ContentType, SpamLevel, LinkType # Import LinkType
 from Link_Profiler.database.database import Database
 from Link_Profiler.utils.user_agent_manager import user_agent_manager
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited

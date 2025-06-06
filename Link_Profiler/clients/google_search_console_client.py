@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
+from googleapicl.discovery import build
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.clients.base_client import BaseAPIClient
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # time.
 TOKEN_FILE = 'token.json'
 CREDENTIALS_FILE = 'credentials.json'
+SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly'] # Define SCOPES here
 
 class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
     """

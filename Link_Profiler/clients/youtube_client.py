@@ -3,6 +3,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import random
+import aiohttp # Import aiohttp
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.clients.base_client import BaseAPIClient
