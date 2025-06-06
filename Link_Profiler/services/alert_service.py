@@ -24,6 +24,7 @@ class AlertService:
     Manages alert rules, evaluates conditions, and dispatches notifications.
     """
     def __init__(self, db: Database, connection_manager: ConnectionManager, alert_manager: Optional[AlertManager] = None): # New: Accept AlertManager
+        self.logger = logging.getLogger(__name__) # Initialize logger here
         self.db = db
         self.connection_manager = connection_manager
         self.alert_manager = alert_manager # Use the injected alert manager
@@ -31,7 +32,7 @@ class AlertService:
             # Fallback to a local alert manager if none is provided (e.g., for testing)
             from Link_Profiler.monitoring.alert_manager import AlertManager as LocalAlertManager # Avoid name collision
             self.alert_manager = LocalAlertManager()
-            logger.warning("No AlertManager provided to AlertService. Falling back to local AlertManager.")
+            self.logger.warning("No AlertManager provided to AlertService. Falling back to local AlertManager.")
 
         self.active_rules: List[AlertRule] = []
         self.last_evaluation_times: Dict[str, datetime] = {} # Track last time a rule was evaluated
