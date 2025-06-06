@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from urllib.parse import urlparse # Import urlparse
 
 # Import from core.models for shared data structures and serialization
-from Link_Profiler.core.models import User, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, Token, TokenData, LinkIntersectResult, CompetitiveKeywordAnalysisResult # Added Token, TokenData, LinkIntersectResult, CompetitiveKeywordAnalysisResult
+from Link_Profiler.core.models import User, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, Token, TokenData, LinkIntersectResult, CompetitiveKeywordAnalysisResult # Added Token, TokenData, LinkIntersectResult, CompetitiveAnalysisResult
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -366,7 +366,7 @@ class KeywordSuggestionResponse(BaseModel):
         return cls(**suggestion_dict)
 
 class LinkIntersectRequest(BaseModel):
-    primary_domain: str = Field(..., description="The primary domain for analysis (e.g., 'example.com').")
+    primary_domain: str = Field(..., description="The primary domain for analysis (e.g., 'https://example.com').")
     competitor_domains: List[str] = Field(..., description="A list of competitor domains to compare against (e.g., ['competitor1.com', 'competitor2.com']).")
 
 class LinkIntersectResponse(BaseModel):
@@ -750,6 +750,12 @@ class BacklinkDiscoveryMetrics(BaseModel):
     top_target_urls: List[str]
     potential_spam_links_24h: int
 
+class ApiPerformanceMetrics(BaseModel):
+    total_calls: int
+    successful_calls: int
+    average_response_time_ms: float
+    success_rate: float
+
 class ApiQuotaStatus(BaseModel):
     api_name: str
     limit: int
@@ -760,6 +766,7 @@ class ApiQuotaStatus(BaseModel):
     status: str # e.g., "OK", "Warning", "Critical"
     predicted_exhaustion_date: Optional[str] = None # ISO format string or null
     recommended_action: Optional[str] = None
+    performance: ApiPerformanceMetrics # New: Nested performance metrics
 
 class DomainIntelligenceMetrics(BaseModel):
     total_domains_analyzed: int
