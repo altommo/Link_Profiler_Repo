@@ -90,6 +90,7 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
         # Generate some dummy backlinks
         num_backlinks = random.randint(5, 15)
         backlinks = []
+        now = datetime.utcnow()
         for i in range(num_backlinks):
             source_domain = f"source{i}.com"
             source_url = f"http://{source_domain}/page{random.randint(1, 5)}"
@@ -106,8 +107,8 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
                     context_text=f"Context around link {i}",
                     is_image_link=random.choice([True, False]),
                     alt_text=f"Alt text {i}" if random.choice([True, False]) else None,
-                    discovered_date=datetime.now() - timedelta(days=random.randint(1, 365)),
-                    last_seen_date=datetime.now(),
+                    discovered_date=now - timedelta(days=random.randint(1, 365)),
+                    last_seen_date=now, # Set last_seen_date to now
                     authority_passed=random.uniform(0.1, 1.0),
                     spam_level=spam_level
                 )
@@ -123,6 +124,8 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
                     anchor_text="Great Quotes Site",
                     link_type=LinkType.DOFOLLOW,
                     context_text="Check out this great quotes site.",
+                    discovered_date=now - timedelta(days=50),
+                    last_seen_date=now,
                     spam_level=SpamLevel.CLEAN
                 ),
                 Backlink(
@@ -132,6 +135,8 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
                     anchor_text="Login to Quotes",
                     link_type=LinkType.NOFOLLOW,
                     context_text="You can login here.",
+                    discovered_date=now - timedelta(days=100),
+                    last_seen_date=now,
                     spam_level=SpamLevel.CLEAN
                 )
             ])
@@ -199,7 +204,7 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
             data = await response.json()
             
             backlinks = []
-            
+            now = datetime.utcnow()
             # Parse Ahrefs API response
             if "backlinks" in data:
                 for item in data["backlinks"]:
@@ -230,8 +235,8 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
                             spam_level = SpamLevel.LIKELY_SPAM
                         
                         # Parse dates
-                        discovered_date = datetime.now()
-                        last_seen_date = datetime.now()
+                        discovered_date = now
+                        last_seen_date = now
                         
                         if item.get("first_seen"):
                             try:
@@ -340,6 +345,7 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
             data = await response.json()
             
             backlinks = []
+            now = datetime.utcnow()
             # OpenLinkProfiler's JSON structure might vary, this is a common assumption
             # Based on their documentation, backlinks are under 'links' key
             for item in data.get("links", []): # Adjust key based on actual API response
@@ -379,7 +385,8 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
                             anchor_text=anchor_text,
                             link_type=link_type,
                             context_text="", # OpenLinkProfiler API might not provide context text
-                            discovered_date=datetime.now(), # Use current date if API doesn't provide
+                            discovered_date=now, # Use current date if API doesn't provide
+                            last_seen_date=now, # Set last_seen_date to now
                             spam_level=spam_level
                         )
                     )
@@ -506,6 +513,7 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
             result = await asyncio.to_thread(gsc_response.execute)
             
             backlinks = []
+            now = datetime.utcnow()
             # Parse the GSC response into Backlink objects
             # GSC 'links' data is aggregated, so source_url will be the linking domain,
             # and target_url will be the property_url. Anchor text is not provided.
@@ -521,7 +529,8 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
                             anchor_text="", # GSC API doesn't provide anchor text for this report
                             link_type=LinkType.DOFOLLOW, # GSC doesn't specify nofollow for this report
                             context_text="From GSC Top Linking Site",
-                            discovered_date=datetime.now(), # GSC doesn't provide discovery date for this report
+                            discovered_date=now, # GSC doesn't provide discovery date for this report
+                            last_seen_date=now, # Set last_seen_date to now
                             spam_level=SpamLevel.CLEAN
                         )
                     )
@@ -649,5 +658,6 @@ class BacklinkService:
         return LinkIntersectResult(
             primary_domain=primary_domain,
             competitor_domains=competitor_domains,
-            common_linking_domains=sorted(list(common_linking_domains)) # Return sorted list for consistency
+            common_linking_domains=sorted(list(common_linking_domains)), # Return sorted list for consistency
+            analysis_date=datetime.utcnow() # Add analysis_date
         )

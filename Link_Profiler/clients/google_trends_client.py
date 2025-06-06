@@ -40,7 +40,7 @@ class GoogleTrendsClient(BaseAPIClient):
             self.pytrends = TrendReq(hl='en-US', tz=360, retries=5, backoff_factor=0.5)
             self.logger.info("pytrends client initialized for Google Trends.")
         except ImportError:
-            self.logger.error("pytrends library not found. Google Trends functionality will be disabled. Install with 'pip install pytrends'.")
+            self.logger.error("Pytrends library not found. Google Trends functionality will be disabled. Install with 'pip install pytrends'.")
             self.enabled = False
         except Exception as e:
             self.logger.error(f"Error initializing pytrends: {e}. Google Trends functionality will be disabled.", exc_info=True)
@@ -62,7 +62,7 @@ class GoogleTrendsClient(BaseAPIClient):
             await super().__aexit__(exc_type, exc_val, exc_tb)
 
     @api_rate_limited(service="google_trends_api", api_client_type="google_trends_client", endpoint="get_interest_over_time")
-    async def get_interest_over_time(self, keywords: List[str], timeframe: str = 'today 12-m') -> Optional[Dict[str, Dict[str, int]]]:
+    async def get_interest_over_time(self, keywords: List[str], timeframe: str = 'today 12-m') -> Optional[Dict[str, Any]]:
         """
         Fetches interest over time for a list of keywords.
         
@@ -71,8 +71,8 @@ class GoogleTrendsClient(BaseAPIClient):
             timeframe (str): Timeframe for the data (e.g., 'today 12-m', '2019-01-01 2019-12-31').
             
         Returns:
-            Optional[Dict[str, Dict[str, int]]]: A dictionary where keys are keywords and values are lists
-                                              of interest scores over time, or None on failure.
+            Optional[Dict[str, Any]]: A dictionary where keys are keywords and values are lists
+                                              of interest scores over time, plus a 'last_fetched_at' timestamp.
         """
         if not self.enabled or not self.pytrends:
             self.logger.warning(f"Google Trends API is disabled. Skipping interest over time for {keywords}.")
@@ -83,7 +83,7 @@ class GoogleTrendsClient(BaseAPIClient):
 
         self.logger.info(f"Fetching Google Trends interest over time for keywords: {keywords} (Timeframe: {timeframe})...")
         
-        all_trends_data: Dict[str, Dict[str, int]] = {kw: {} for kw in keywords}
+        all_trends_data: Dict[str, List[int]] = {kw: [] for kw in keywords}
         
         # Pytrends has a limit on the number of keywords per request (usually 5)
         chunk_size = 4 # Pytrends allows up to 5, but 4 is safer for related queries
@@ -109,26 +109,22 @@ class GoogleTrendsClient(BaseAPIClient):
                 if not interest_over_time_df.empty:
                     for kw in chunk:
                         if kw in interest_over_time_df.columns:
-                            trends_for_kw: Dict[str, int] = {}
-                            for date_index, row in interest_over_time_df.iterrows():
-                                date_str = date_index.strftime("%Y-%m-%d")
-                                # Check for 'isPartial' column if it exists and is True
-                                if "isPartial" in row and row["isPartial"]:
-                                    continue # Skip partial data
-                                trends_for_kw[date_str] = int(row[kw])
-                            all_trends_data[kw] = trends_for_kw
+                            all_trends_data[kw] = interest_over_time_df[kw].tolist()
                         else:
-                            all_trends_data[kw] = {} # Keyword not found in trends data
+                            all_trends_data[kw] = [] # Keyword not found in trends data
                 else:
                     for kw in chunk:
-                        all_trends_data[kw] = {} # No data for this chunk
+                        all_trends_data[kw] = [] # No data for this chunk
 
             except Exception as e: # Catch generic exception for pytrends errors
                 self.logger.error(f"Error fetching trends for keywords {chunk}: {e}", exc_info=True)
                 for kw in chunk:
-                    all_trends_data[kw] = {}
+                    all_trends_data[kw] = []
             
-        return all_trends_data
+        return {
+            "trends_data": all_trends_data,
+            "last_fetched_at": datetime.utcnow().isoformat()
+        }
 
     @api_rate_limited(service="google_trends_api", api_client_type="google_trends_client", endpoint="get_related_queries")
     async def get_related_queries(self, keyword: str) -> Optional[Dict[str, Any]]:
@@ -158,6 +154,7 @@ class GoogleTrendsClient(BaseAPIClient):
                 if not df.empty:
                     result[query_type] = df.to_dict(orient='records')
             
+            result['last_fetched_at'] = datetime.utcnow().isoformat()
             self.logger.info(f"Google Trends related queries for {keyword} fetched successfully.")
             return result
 

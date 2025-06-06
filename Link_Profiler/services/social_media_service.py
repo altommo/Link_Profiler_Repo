@@ -218,6 +218,7 @@ class SocialMediaService:
                                 "url": post.get("url"),
                                 "relevance": post.get("text"),
                                 "contact_hint": "Connect on LinkedIn",
+                                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
                             }
                         )
                 except Exception as e:
@@ -242,6 +243,7 @@ class SocialMediaService:
                                 "url": thread.get("url"),
                                 "relevance": thread.get("mention_text"),
                                 "contact_hint": "Participate in discussion",
+                                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
                             }
                         )
                 except Exception as e:

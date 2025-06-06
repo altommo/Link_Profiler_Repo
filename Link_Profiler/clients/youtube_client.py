@@ -64,6 +64,7 @@ class YouTubeClient(BaseAPIClient):
             # _make_request now handles resilience
             response_data = await self._make_request("GET", endpoint, params=params)
             
+            now_iso = datetime.utcnow().isoformat()
             for item in response_data.get("items", []):
                 video_id = item["id"]["videoId"]
                 results.append({
@@ -74,7 +75,8 @@ class YouTubeClient(BaseAPIClient):
                     "text": item["snippet"]["description"],
                     "author": item["snippet"]["channelTitle"],
                     "published_at": item["snippet"]["publishedAt"],
-                    "raw_data": item
+                    "raw_data": item,
+                    "last_fetched_at": now_iso # Add last_fetched_at
                 })
             self.logger.info(f"Found {len(results)} YouTube videos for '{query}'.")
             return results
@@ -84,4 +86,3 @@ class YouTubeClient(BaseAPIClient):
         except Exception as e:
             self.logger.error(f"Error searching YouTube for '{query}': {e}", exc_info=True)
             return []
-
