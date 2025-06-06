@@ -9,6 +9,11 @@ import time
 import logging # Import logging early
 from typing import List, Optional, Dict, Any, Union, Annotated # Import Optional here
 
+# --- Load environment variables from .env file ---
+from dotenv import load_dotenv
+load_dotenv()
+# --- End .env loading ---
+
 # --- Robust Project Root Discovery ---
 # Assuming this file is at Link_Profiler/Link_Profiler/main.py
 # The project root (containing setup.py) is one level up from the 'Link_Profiler' package directory.
@@ -288,8 +293,8 @@ social_media_service_instance = SocialMediaService(
     social_media_crawler=social_media_crawler_instance,
     reddit_client=reddit_client_instance, # New: Pass RedditClient
     youtube_client=youtube_client_instance, # New: Pass YouTubeClient
-    news_api_client=news_api_client_instance, # New: Pass NewsAPIClient
-    session_manager=session_manager # Pass session manager
+    news_api_client=news_api_client_instance # New: Pass NewsAPIClient
+    # Removed session_manager as per the error
 )
 
 # New: Initialize Web3 Service
