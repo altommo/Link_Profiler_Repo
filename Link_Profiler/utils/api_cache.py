@@ -36,20 +36,38 @@ class APICache:
         self.logger = logging.getLogger(__name__ + ".APICache")
         self.enabled = config_loader.get("api_cache.enabled", False)
         self.cache_ttl = config_loader.get("api_cache.ttl", 3600) # Default 1 hour
-        self.redis_client: Optional[redis.Redis] = None
+        self.redis_client: Optional[redis.Redis] = None # Initialize as None, connect in __aenter__
 
-        if self.enabled:
+        if not self.enabled:
+            self.logger.info("API Cache is disabled by configuration.")
+
+    async def __aenter__(self):
+        """
+        Initializes the Redis client connection when entering the async context.
+        """
+        if self.enabled and self.redis_client is None:
             try:
                 redis_url = config_loader.get("redis.url")
                 if not redis_url:
                     raise ValueError("Redis URL not configured for API Cache.")
                 self.redis_client = redis.Redis(connection_pool=redis.ConnectionPool.from_url(redis_url))
-                self.logger.info(f"API Cache initialized and enabled with TTL: {self.cache_ttl}s.")
+                # Test connection
+                await self.redis_client.ping()
+                self.logger.info(f"API Cache Redis client connected with TTL: {self.cache_ttl}s.")
             except Exception as e:
-                self.logger.error(f"Failed to initialize API Cache due to Redis connection error: {e}. Disabling cache.", exc_info=True)
-                self.enabled = False
-        else:
-            self.logger.info("API Cache is disabled by configuration.")
+                self.logger.error(f"Failed to connect API Cache to Redis: {e}. Disabling cache.", exc_info=True)
+                self.enabled = False # Disable if connection fails
+                self.redis_client = None # Ensure client is None if connection failed
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """
+        Closes the Redis client connection when exiting the async context.
+        """
+        if self.redis_client:
+            await self.redis_client.close()
+            self.logger.info("API Cache Redis client closed.")
+            self.redis_client = None # Clear client after closing
 
     async def get(self, key: str, service: str, endpoint: str) -> Optional[Any]:
         """
@@ -84,14 +102,6 @@ class APICache:
         except Exception as e:
             self.logger.error(f"Error setting data in cache for key '{key}': {e}", exc_info=True)
             API_CACHE_ERRORS_TOTAL.labels(service=service, endpoint=endpoint, error_type="set_error").inc()
-
-    async def close(self):
-        """
-        Closes the Redis client connection.
-        """
-        if self.redis_client:
-            await self.redis_client.close()
-            self.logger.info("API Cache Redis client closed.")
 
 # Create a singleton instance
 api_cache = APICache()
