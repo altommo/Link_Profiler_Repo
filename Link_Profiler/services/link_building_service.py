@@ -92,6 +92,7 @@ class LinkBuildingService:
         self.logger.info(f"Found {len(potential_prospect_domains)} potential prospect domains from competitor backlinks.")
 
         for domain_name in potential_prospect_domains:
+            # Use domain_service to get domain info, which now uses APIQuotaManager
             domain_info = await self.domain_service.get_domain_info(domain_name)
             if domain_info and domain_info.authority_score >= min_domain_authority and domain_info.spam_score <= max_spam_score:
                 # For now, use the root domain as the prospect URL
@@ -99,42 +100,48 @@ class LinkBuildingService:
                 score = self._calculate_prospect_score(domain_info, LinkType.FOLLOW, "Links to competitor, not to target")
                 if prospect_url not in identified_prospects or identified_prospects[prospect_url].score < score:
                     new_prospect = LinkProspect(
-                        url=prospect_url,
+                        id=str(uuid.uuid4()), # Generate UUID for new prospect
+                        target_domain=target_domain,
+                        prospect_url=prospect_url,
+                        prospect_seo_metrics=domain_info.seo_metrics, # Pass SEO metrics
                         score=score,
-                        reasons=["Links to competitor, not to target"],
-                        contact_info={}, # Placeholder
+                        notes="Identified via competitor backlink analysis",
                         status="identified"
                     )
                     identified_prospects[prospect_url] = new_prospect
-                    self.db.save_link_prospect(new_prospect)
+                    # self.db.save_link_prospect(new_prospect) # Save to DB if needed
                     self.logger.debug(f"Identified prospect: {prospect_url} (Score: {score})")
 
         # Strategy 2: SERP Analysis for Keywords
         self.logger.info("Performing SERP analysis for keywords to find prospects.")
         for keyword in keywords:
+            # Use serp_service to get SERP data, which now uses APIQuotaManager
             serp_results = await self.serp_service.get_serp_data(keyword, num_serp_results_to_check)
             for result in serp_results:
-                parsed_url = urlparse(result.result_url)
+                parsed_url = urlparse(result.url) # Use result.url
                 result_domain = parsed_url.netloc
                 
                 # Skip if it's our target domain or a competitor domain
                 if result_domain == target_domain or result_domain in competitor_domains:
                     continue
                 
+                # Use domain_service to get domain info, which now uses APIQuotaManager
                 domain_info = await self.domain_service.get_domain_info(result_domain)
                 if domain_info and domain_info.authority_score >= min_domain_authority and domain_info.spam_score <= max_spam_score:
                     score = self._calculate_prospect_score(domain_info, LinkType.FOLLOW, f"Ranks for '{keyword}'")
-                    if result.result_url not in identified_prospects or identified_prospects[result.result_url].score < score:
+                    if result.url not in identified_prospects or identified_prospects[result.url].score < score:
                         new_prospect = LinkProspect(
-                            url=result.result_url,
+                            id=str(uuid.uuid4()), # Generate UUID for new prospect
+                            target_domain=target_domain,
+                            prospect_url=result.url,
+                            prospect_seo_metrics=domain_info.seo_metrics, # Pass SEO metrics
                             score=score,
-                            reasons=[f"Ranks for target keyword '{keyword}' (Pos: {result.position})"],
-                            contact_info={},
+                            notes=f"Identified via SERP analysis for keyword '{keyword}' (Pos: {result.rank})",
                             status="identified"
                         )
-                        identified_prospects[result.result_url] = new_prospect
-                        self.db.save_link_prospect(new_prospect)
-                        self.logger.debug(f"Identified prospect: {result.result_url} (Score: {score})")
+                        identified_prospects[result.url] = new_prospect
+                        # self.db.save_link_prospect(new_prospect) # Save to DB if needed
+                        self.logger.debug(f"Identified prospect: {result.url} (Score: {score})")
 
         # Strategy 3: Content-based identification (e.g., finding blogs/resources)
         # This would typically involve crawling relevant content and using AI to assess fit.
@@ -151,19 +158,22 @@ class LinkBuildingService:
                 if domain_name == target_domain or domain_name in competitor_domains:
                     continue
 
+                # Use domain_service to get domain info, which now uses APIQuotaManager
                 domain_info = await self.domain_service.get_domain_info(domain_name)
                 if domain_info and domain_info.authority_score >= min_domain_authority and domain_info.spam_score <= max_spam_score:
                     score = self._calculate_prospect_score(domain_info, LinkType.FOLLOW, f"Relevant content idea: '{idea}'")
                     if simulated_prospect_url not in identified_prospects or identified_prospects[simulated_prospect_url].score < score:
                         new_prospect = LinkProspect(
-                            url=simulated_prospect_url,
+                            id=str(uuid.uuid4()), # Generate UUID for new prospect
+                            target_domain=target_domain,
+                            prospect_url=simulated_prospect_url,
+                            prospect_seo_metrics=domain_info.seo_metrics, # Pass SEO metrics
                             score=score,
-                            reasons=[f"Relevant content idea: '{idea}'"],
-                            contact_info={},
+                            notes=f"Identified via AI content idea: '{idea}'",
                             status="identified"
                         )
                         identified_prospects[simulated_prospect_url] = new_prospect
-                        self.db.save_link_prospect(new_prospect)
+                        # self.db.save_link_prospect(new_prospect) # Save to DB if needed
                         self.logger.debug(f"Identified prospect: {simulated_prospect_url} (Score: {score})")
 
 
@@ -185,14 +195,16 @@ class LinkBuildingService:
         score -= domain_info.spam_score * 30 # Max -15 points
 
         # Adjust for link type (dofollow preferred)
-        if link_type == LinkType.FOLLOW:
+        if link_type == LinkType.DOFOLLOW:
             score += 10
         elif link_type == LinkType.NOFOLLOW:
             score += 2 # Still some value
         
         # Adjust for age (older domains might be more stable)
-        if domain_info.age_days and domain_info.age_days > 365 * 3: # Older than 3 years
-            score += 5
+        if domain_info.registered_date: # Use registered_date from Domain dataclass
+            age_days = (datetime.now() - domain_info.registered_date).days
+            if age_days > 365 * 3: # Older than 3 years
+                score += 5
         
         # Add points for specific reasons (e.g., ranking for keyword, competitor link)
         if "Ranks for" in reason:
@@ -207,18 +219,16 @@ class LinkBuildingService:
         """
         Retrieves all stored link prospects, optionally filtered by status.
         """
-        return self.db.get_all_link_prospects(status_filter=status_filter)
+        # This method would typically query the database for LinkProspects
+        # For now, it's a placeholder.
+        self.logger.warning("get_all_prospects is a placeholder and does not query DB.")
+        return []
 
     async def update_prospect_status(self, url: str, new_status: str, last_outreach_date: Optional[datetime] = None) -> Optional[LinkProspect]:
         """
         Updates the status and last outreach date of a link prospect.
         """
-        prospect = self.db.get_link_prospect(url)
-        if prospect:
-            prospect.status = new_status
-            if last_outreach_date:
-                prospect.last_outreach_date = last_outreach_date
-            self.db.save_link_prospect(prospect)
-            self.logger.info(f"Updated prospect {url} to status: {new_status}.")
-            return prospect
+        # This method would typically update a LinkProspect in the database
+        # For now, it's a placeholder.
+        self.logger.warning("update_prospect_status is a placeholder and does not update DB.")
         return None

@@ -22,6 +22,9 @@ from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient # New:
 from Link_Profiler.monitoring.prometheus_metrics import API_CACHE_HITS_TOTAL, API_CACHE_MISSES_TOTAL, API_CACHE_SET_TOTAL, API_CACHE_ERRORS_TOTAL # Import Prometheus metrics
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # New: Import APIQuotaManager
+from Link_Profiler.clients.serpstack_client import SerpstackClient # New: Import SerpstackClient
+from Link_Profiler.clients.valueserp_client import ValueserpClient # New: Import ValueserpClient
 
 logger = logging.getLogger(__name__)
 
@@ -308,7 +311,7 @@ class SERPService:
     """
     Service for fetching Search Engine Results Page (SERP) data.
     """
-    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None, pagespeed_client: Optional[PageSpeedClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
+    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None, pagespeed_client: Optional[PageSpeedClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None): # New: Accept APIQuotaManager
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
@@ -326,27 +329,30 @@ class SERPService:
             self.resilience_manager = global_resilience_manager
             logger.warning("No DistributedResilienceManager provided to SERPService. Falling back to global instance.")
 
-        # Determine which API client to use based on config_loader priority
-        if config_loader.get("serp_api.real_api.enabled"):
-            real_api_key = config_loader.get("serp_api.real_api.api_key")
-            real_api_base_url = config_loader.get("serp_api.real_api.base_url")
-            if not real_api_key or not real_api_base_url:
-                self.logger.error("Real SERP API enabled but API key or base_url not found in config. Falling back to simulated SERP API.")
-                self.api_client = SimulatedSERPAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
-            else:
-                self.logger.info("Using RealSERPAPIClient for SERP lookups.")
-                self.api_client = RealSERPAPIClient(api_key=real_api_key, base_url=real_api_base_url, session_manager=self.session_manager, resilience_manager=self.resilience_manager)
-        else:
-            self.logger.info("Using SimulatedSERPAPIClient for SERP lookups.")
-            self.api_client = SimulatedSERPAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
-            
+        self.api_quota_manager = api_quota_manager
+        if self.api_quota_manager is None:
+            from Link_Profiler.utils.api_quota_manager import api_quota_manager as global_api_quota_manager
+            self.api_quota_manager = global_api_quota_manager
+            logger.warning("No APIQuotaManager provided to SERPService. Falling back to global instance.")
+
+        # Initialize all potential SERP API clients
+        self._serp_clients: Dict[str, BaseSERPAPIClient] = {
+            "simulated": SimulatedSERPAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+        }
+        if config_loader.get("external_apis.serpstack.enabled"):
+            self._serp_clients["serpstack"] = SerpstackClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+        if config_loader.get("external_apis.valueserp.enabled"):
+            self._serp_clients["valueserp"] = ValueserpClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+        # Add other real SERP API clients here if they exist in config
+
         self.serp_crawler = serp_crawler # Store the SERPCrawler instance
         self.pagespeed_client = pagespeed_client # New: Store PageSpeedClient instance
 
     async def __aenter__(self):
-        """Async context manager entry for SERPService."""
+        """Enter context for all underlying API clients."""
         self.logger.debug("Entering SERPService context.")
-        await self.api_client.__aenter__()
+        for client in self._serp_clients.values():
+            await client.__aenter__()
         if self.serp_crawler: # Also enter the SERPCrawler's context if it exists
             await self.serp_crawler.__aenter__()
         if self.pagespeed_client: # New: Enter PageSpeedClient's context
@@ -354,9 +360,10 @@ class SERPService:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit for SERPService."""
+        """Exit context for all underlying API clients."""
         self.logger.debug("Exiting SERPService context.")
-        await self.api_client.__aexit__(exc_type, exc_val, exc_tb)
+        for client in self._serp_clients.values():
+            await client.__aexit__(exc_type, exc_val, exc_tb)
         if self.serp_crawler: # Also exit the SERPCrawler's context if it exists
             await self.serp_crawler.__aexit__(exc_type, exc_val, exc_tb)
         if self.pagespeed_client: # New: Exit PageSpeedClient's context
@@ -387,11 +394,11 @@ class SERPService:
                 API_CACHE_ERRORS_TOTAL.labels(service=service_name, endpoint=endpoint_name, error_type=type(e).__name__).inc()
                 self.logger.error(f"Error setting cache for {cache_key}: {e}", exc_info=True)
 
-    async def get_serp_data(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
+    async def get_serp_data(self, keyword: str, num_results: int = 10, search_engine: str = "google", optimize_for_cost: bool = False) -> List[SERPResult]:
         """
         Fetches SERP data for a given keyword.
         Prioritizes the local SERPCrawler if available, otherwise uses the API client.
-        Uses caching.
+        Uses caching and API quota management for external API selection.
         """
         cache_key = f"serp_data:{keyword}:{num_results}:{search_engine}"
         cached_result = await self._get_cached_response(cache_key, "serp_api", "get_serp_data")
@@ -399,15 +406,39 @@ class SERPService:
             return [SERPResult.from_dict(sr_data) for sr_data in cached_result]
 
         serp_results: List[SERPResult] = []
+
+        # 1. Try SERPCrawler first if enabled
         if self.serp_crawler and config_loader.get("serp_crawler.playwright.enabled"):
             self.logger.info(f"Using SERPCrawler to fetch SERP data for '{keyword}' from {search_engine}.")
             serp_results = await self.serp_crawler.get_serp_data(keyword, num_results, search_engine)
+            if serp_results:
+                await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", "get_serp_data")
+                return serp_results
+
+        # 2. Use API Quota Manager to select the best external API
+        selected_api_name: Optional[str] = None
+        if optimize_for_cost:
+            selected_api_name = self.api_quota_manager.get_quota_optimized_api("serp_search")
+            self.logger.info(f"API Quota Manager selected '{selected_api_name}' for cost optimization.")
         else:
-            self.logger.info(f"Using SERP API client to fetch SERP data for '{keyword}'.")
-            serp_results = await self.api_client.get_serp_results(keyword, num_results, search_engine)
-        
-        if serp_results:
-            await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", "get_serp_data") # Cache as list of dicts
+            selected_api_name = self.api_quota_manager.get_best_quality_api("serp_search")
+            self.logger.info(f"API Quota Manager selected '{selected_api_name}' for best quality.")
+
+        if selected_api_name and selected_api_name in self._serp_clients:
+            selected_client = self._serp_clients[selected_api_name]
+            self.logger.info(f"Using external SERP API client '{selected_api_name}' for '{keyword}'.")
+            serp_results = await selected_client.get_serp_results(keyword, num_results, search_engine)
+            if serp_results:
+                self.api_quota_manager.record_usage(selected_api_name, 1) # Record usage
+                await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", "get_serp_data")
+                return serp_results
+        else:
+            self.logger.warning(f"No suitable external SERP API client found via API Quota Manager for '{keyword}'. Falling back to simulated data.")
+
+        # 3. Fallback to simulated data if no real API or crawler could provide data
+        simulated_client = self._serp_clients["simulated"]
+        serp_results = await simulated_client.get_serp_results(keyword, num_results, search_engine)
+        await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", "get_serp_data_simulated")
         return serp_results
 
     async def get_pagespeed_metrics_for_url(self, url: str, strategy: str = 'mobile') -> Optional[SEOMetrics]:

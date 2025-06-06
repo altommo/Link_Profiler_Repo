@@ -16,7 +16,7 @@ from typing import List, Optional, Dict, Any, Union, Annotated # Import Optional
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if project_root and project_root not in sys.path:
-    sys.path.insert(0, project_root)
+    sys.sys.path.insert(0, project_root)
     print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
 else:
     print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
@@ -225,12 +225,9 @@ dns_client_instance = DNSClient(session_manager=session_manager)
 # The DomainService constructor now handles the internal assignment of api_client
 # based on the config, so we just pass the necessary dependencies.
 domain_service_instance = DomainService(
-    # redis_client=redis_client, # DomainService does not directly use redis_client
-    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
-    # database=db, # DomainService does not directly use db
-    # whois_client=whois_client_instance, # DomainService instantiates its own clients
-    # dns_client=dns_client_instance, # DomainService instantiates its own clients
-    session_manager=session_manager # Pass session manager
+    session_manager=session_manager, # Pass session manager
+    resilience_manager=distributed_resilience_manager, # Pass resilience manager
+    api_quota_manager=api_quota_manager # Pass API quota manager
 )
 
 # New: Initialize GSCClient
@@ -257,12 +254,13 @@ if config_loader.get("serp_crawler.playwright.enabled"):
         browser_type=config_loader.get("serp_crawler.playwright.browser_type")
     )
 serp_service_instance = SERPService(
-    # api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key"), base_url=config_loader.get("serp_api.real_api.base_url"), session_manager=session_manager) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(session_manager=session_manager),
     serp_crawler=serp_crawler_instance,
     pagespeed_client=pagespeed_client_instance, # New: Pass pagespeed_client_instance
-    # redis_client=redis_client, # Pass redis_client for caching
-    # cache_ttl=API_CACHE_TTL, # Pass cache_ttl
-    session_manager=session_manager # Pass session manager
+    redis_client=redis_client, # Pass redis_client for caching
+    cache_ttl=API_CACHE_TTL, # Pass cache_ttl
+    session_manager=session_manager, # Pass session manager
+    resilience_manager=distributed_resilience_manager, # Pass resilience manager
+    api_quota_manager=api_quota_manager # Pass API quota manager
 )
 
 # New: Initialize GoogleTrendsClient

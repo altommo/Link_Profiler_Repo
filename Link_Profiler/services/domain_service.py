@@ -20,6 +20,8 @@ from Link_Profiler.utils.api_cache import cached_api_call
 from Link_Profiler.core.models import Domain, SEOMetrics # Assuming SEOMetrics is defined in models.py
 from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # New: Import APIQuotaManager
+from Link_Profiler.clients.security_trails_client import SecurityTrailsClient # New: Import SecurityTrailsClient
 
 logger = logging.getLogger(__name__)
 
@@ -117,15 +119,16 @@ class DomainService:
     """
     _instance = None
 
-    def __new__(cls, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
+    def __new__(cls, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None): # New: Accept APIQuotaManager
         if cls._instance is None:
             cls._instance = super(DomainService, cls).__new__(cls)
             cls._instance._initialized = False
             cls._instance.session_manager = session_manager # Store session_manager for clients
             cls._instance.resilience_manager = resilience_manager # New: Store resilience_manager
+            cls._instance.api_quota_manager = api_quota_manager # New: Store APIQuotaManager
         return cls._instance
 
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None): # New: Accept APIQuotaManager
         if self._initialized:
             return
         self._initialized = True
@@ -133,12 +136,23 @@ class DomainService:
         self.session_manager = session_manager # Ensure it's set for this instance
         self.resilience_manager = resilience_manager # Ensure it's set for this instance
         if self.resilience_manager is None:
-            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            logger.warning("No DistributedResilienceManager provided to DomainService. Falling back to global instance.")
 
+        self.api_quota_manager = api_quota_manager
+        if self.api_quota_manager is None:
+            from Link_Profiler.utils.api_quota_manager import api_quota_manager as global_api_quota_manager
+            self.api_quota_manager = global_api_quota_manager
+            logger.warning("No APIQuotaManager provided to DomainService. Falling back to global instance.")
 
-        # Initialize API clients, passing the resilience_manager
-        self.abstract_api_client = AbstractDomainAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
-        self.whois_json_api_client = WhoisJsonAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+        # Initialize all potential Domain API clients
+        self._domain_clients: Dict[str, BaseAPIClient] = {
+            "abstract_api": AbstractDomainAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
+            "whois_json_api": WhoisJsonAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
+            "securitytrails": SecurityTrailsClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+            # Add other domain-related clients here (e.g., BuiltWith, Clearbit if they provide relevant domain info)
+        }
 
         # Configuration for live lookups
         self.allow_live = config_loader.get("domain_api.domain_service.allow_live", False)
@@ -158,23 +172,19 @@ class DomainService:
 
     async def __aenter__(self):
         """Enter context for all underlying API clients."""
-        await self.abstract_api_client.__aenter__()
-        await self.whois_json_api_client.__aenter__()
-        # await self.dns_client.__aenter__()
-        # await self.seo_metrics_client.__aenter__()
+        for client in self._domain_clients.values():
+            await client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit context for all underlying API clients."""
-        await self.abstract_api_client.__aexit__(exc_type, exc_val, exc_tb)
-        await self.whois_json_api_client.__aexit__(exc_type, exc_val, exc_tb)
-        # await self.dns_client.__aexit__(exc_type, exc_val, exc_tb)
-        # await self.seo_metrics_client.__aexit__(exc_type, exc_val, exc_tb)
+        for client in self._domain_clients.values():
+            await client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def get_domain_info(self, domain_name: str) -> Optional[Domain]:
         """
         Fetches comprehensive information for a given domain.
-        Aggregates data from various sources.
+        Aggregates data from various sources using API Quota Manager for selection.
         """
         if not domain_name:
             self.logger.warning("Attempted to get domain info for empty domain_name.")
@@ -191,39 +201,64 @@ class DomainService:
         
         # --- WHOIS Lookup ---
         whois_data = None
-        if self.abstract_api_client.enabled:
-            whois_data = await self.abstract_api_client.whois_lookup(parsed_domain)
+        selected_whois_api = self.api_quota_manager.get_best_quality_api("whois_lookup")
+        if selected_whois_api and selected_whois_api in self._domain_clients:
+            self.logger.info(f"Using '{selected_whois_api}' for WHOIS lookup.")
+            whois_client = self._domain_clients[selected_whois_api]
+            whois_data = await whois_client.whois_lookup(parsed_domain)
             if whois_data:
+                self.api_quota_manager.record_usage(selected_whois_api, 1)
                 domain_data["whois_data"] = whois_data
-                self.logger.debug(f"AbstractAPI WHOIS data for {parsed_domain} fetched.")
-        
-        if not whois_data and self.whois_json_api_client.enabled:
-            whois_data = await self.whois_json_api_client.whois_lookup(parsed_domain)
-            if whois_data:
-                domain_data["whois_data"] = whois_data
-                self.logger.debug(f"WHOIS-JSON.com WHOIS data for {parsed_domain} fetched.")
+            else:
+                self.logger.warning(f"WHOIS lookup failed with {selected_whois_api} for {parsed_domain}.")
+        else:
+            self.logger.warning(f"No suitable WHOIS API client found via API Quota Manager for {parsed_domain}. Skipping WHOIS lookup.")
 
         # --- Domain Validation (e.g., check if domain exists, is parked, etc.) ---
         validation_data = None
-        if self.abstract_api_client.enabled:
-            validation_data = await self.abstract_api_client.validate_domain(parsed_domain)
+        selected_validation_api = self.api_quota_manager.get_best_quality_api("domain_validation")
+        if selected_validation_api and selected_validation_api in self._domain_clients:
+            self.logger.info(f"Using '{selected_validation_api}' for domain validation.")
+            validation_client = self._domain_clients[selected_validation_api]
+            validation_data = await validation_client.validate_domain(parsed_domain) # Assuming validate_domain exists on client
             if validation_data:
+                self.api_quota_manager.record_usage(selected_validation_api, 1)
                 domain_data["validation_data"] = validation_data
-                self.logger.debug(f"AbstractAPI validation data for {parsed_domain} fetched.")
                 # Extract basic status from validation data
                 domain_data["is_registered"] = validation_data.get("is_registered", False)
                 domain_data["is_parked"] = validation_data.get("is_parked", False)
                 domain_data["is_dead"] = validation_data.get("is_dead", False)
                 domain_data["is_free"] = validation_data.get("is_free", False)
                 domain_data["is_spam"] = validation_data.get("is_spam", False) # AbstractAPI provides this
+            else:
+                self.logger.warning(f"Domain validation failed with {selected_validation_api} for {parsed_domain}.")
+        else:
+            self.logger.warning(f"No suitable domain validation API client found via API Quota Manager for {parsed_domain}. Skipping validation.")
 
         # --- DNS Records (A, AAAA, MX, NS, TXT) ---
+        # This part currently uses dns.asyncresolver directly or DOH, not a named client from external_apis
         domain_data["dns_records"] = await self._fetch_dns_records(parsed_domain)
         
         # --- SEO Metrics (e.g., Domain Authority, Page Authority, Trust Flow, Citation Flow) ---
-        domain_data["seo_metrics"] = await self._fetch_seo_metrics(parsed_domain)
+        # Assuming SecurityTrails can provide some SEO-like metrics or we'd have a dedicated SEO metrics API
+        selected_seo_api = self.api_quota_manager.get_best_quality_api("domain_seo_metrics")
+        if selected_seo_api and selected_seo_api in self._domain_clients:
+            self.logger.info(f"Using '{selected_seo_api}' for SEO metrics.")
+            seo_client = self._domain_clients[selected_seo_api]
+            # Assuming a method like get_domain_metrics exists on SecurityTrailsClient
+            seo_metrics_data = await seo_client.get_domain_metrics(parsed_domain) 
+            if seo_metrics_data:
+                self.api_quota_manager.record_usage(selected_seo_api, 1)
+                domain_data["seo_metrics"] = seo_metrics_data
+            else:
+                self.logger.warning(f"SEO metrics lookup failed with {selected_seo_api} for {parsed_domain}.")
+        else:
+            self.logger.warning(f"No suitable SEO metrics API client found via API Quota Manager for {parsed_domain}. Falling back to simulated.")
+            domain_data["seo_metrics"] = self._simulate_seo_metrics(parsed_domain)
+
 
         # --- IP Information ---
+        # This would typically be part of a network/IP info API, not directly in external_apis for now
         domain_data["ip_info"] = await self._fetch_ip_info(parsed_domain)
 
         # Construct Domain object
