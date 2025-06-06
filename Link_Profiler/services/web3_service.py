@@ -15,6 +15,7 @@ import uuid # Import uuid for SocialMention ID
 from Link_Profiler.config.config_loader import config_loader
 import redis.asyncio as redis
 from Link_Profiler.database.database import Database # Import Database for DB operations
+from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,10 @@ class Web3Service:
     This class demonstrates where actual integrations with IPFS gateways,
     blockchain nodes (e.g., Ethereum, Polygon), or Web3 APIs would go.
     """
-    def __init__(self, database: Database, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
+    def __init__(self, database: Database, session_manager: SessionManager, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
         self.logger = logging.getLogger(__name__)
         self.db = database # Store database instance
+        self.session_manager = session_manager # Store session manager instance
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
         self.enabled = config_loader.get("web3_crawler.enabled", False)
@@ -43,7 +45,7 @@ class Web3Service:
         if isinstance(self.opensea_api_key, str) and self.opensea_api_key.startswith("${"):
             self.opensea_api_key = None
 
-        self._session: Optional[aiohttp.ClientSession] = None # New: aiohttp client session
+        # Removed self._session as it will use the injected session_manager
 
         self.allow_live = config_loader.get("web3_service.allow_live", False)
         self.staleness_threshold = timedelta(hours=config_loader.get("web3_service.staleness_threshold_hours", 24))
@@ -55,17 +57,15 @@ class Web3Service:
         """Initialise aiohttp session."""
         if self.enabled:
             self.logger.info("Entering Web3Service context.")
-            if self._session is None or self._session.closed:
-                self._session = aiohttp.ClientSession()
+            # The session_manager is already entered by the caller (main.py lifespan)
+            # No need to manage a separate session here.
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close Redis and aiohttp connections if active."""
         if self.redis_client:
             await self.redis_client.close()
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        # The session_manager is exited by the caller (main.py lifespan)
         self.logger.info("Exiting Web3Service context.")
 
     async def _get_cached_response(self, cache_key: str) -> Optional[Any]:
@@ -101,7 +101,7 @@ class Web3Service:
             if identifier.startswith("Qm") or identifier.startswith("bafy"): # Likely an IPFS hash
                 self.logger.info(f"Fetching IPFS content from gateway for {identifier}.")
                 ipfs_url = f"{self.ipfs_gateway_url}{identifier}"
-                async with self._session.get(ipfs_url, timeout=10) as response:
+                async with self.session_manager.get(ipfs_url, timeout=10) as response: # Use session_manager
                     response.raise_for_status()
                     content = await response.text() # Or response.read() for binary
                     extracted_data = {
@@ -134,7 +134,7 @@ class Web3Service:
                             "tag": "latest",
                             "apikey": self.etherscan_api_key,
                         }
-                        async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                        async with self.session_manager.get(etherscan_api_url, params=params, timeout=10) as response: # Use session_manager
                             response.raise_for_status()
                             data = await response.json()
                             balance_wei = int(data.get("result", 0))
@@ -149,7 +149,7 @@ class Web3Service:
                             "sort": "asc",
                             "apikey": self.etherscan_api_key,
                         }
-                        async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                        async with self.session_manager.get(etherscan_api_url, params=params, timeout=10) as response: # Use session_manager
                             response.raise_for_status()
                             data = await response.json()
                             transaction_count = len(data.get("result", []))
@@ -170,13 +170,13 @@ class Web3Service:
                         "id": 2,
                     }
                     try:
-                        async with self._session.post(self.blockchain_node_url, json=rpc_payload_balance, timeout=10) as resp:
+                        async with self.session_manager.post(self.blockchain_node_url, json=rpc_payload_balance, timeout=10) as resp: # Use session_manager
                             resp.raise_for_status()
                             data = await resp.json()
                             balance_wei = int(data.get("result", "0x0"), 16)
                             balance_eth = balance_wei / (10 ** 18)
 
-                        async with self._session.post(self.blockchain_node_url, json=rpc_payload_tx, timeout=10) as resp:
+                        async with self.session_manager.post(self.blockchain_node_url, json=rpc_payload_tx, timeout=10) as resp: # Use session_manager
                             resp.raise_for_status()
                             data = await resp.json()
                             transaction_count = int(data.get("result", "0x0"), 16)
@@ -310,7 +310,7 @@ class Web3Service:
                 headers = {"X-API-KEY": self.opensea_api_key}
 
                 try:
-                    async with self._session.get(f"{opensea_api_url}{contract_address}", headers=headers, timeout=10) as response:
+                    async with self.session_manager.get(f"{opensea_api_url}{contract_address}", headers=headers, timeout=10) as response: # Use session_manager
                         response.raise_for_status()
                         data = await response.json()
 
@@ -338,7 +338,7 @@ class Web3Service:
                     "apikey": self.etherscan_api_key,
                 }
                 try:
-                    async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                    async with self.session_manager.get(etherscan_api_url, params=params, timeout=10) as response: # Use session_manager
                         response.raise_for_status()
                         data = await response.json()
                         info = data.get("result", [{}])[0]
@@ -349,7 +349,7 @@ class Web3Service:
                         "contractaddress": contract_address,
                         "apikey": self.etherscan_api_key,
                     }
-                    async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+                    async with self.session_manager.get(etherscan_api_url, params=params, timeout=10) as response: # Use session_manager
                         response.raise_for_status()
                         supply_data = await response.json()
 
@@ -437,7 +437,7 @@ class Web3Service:
                 "address": protocol_address,
                 "apikey": self.etherscan_api_key
             }
-            async with self._session.get(etherscan_api_url, params=params, timeout=10) as response:
+            async with self.session_manager.get(etherscan_api_url, params=params, timeout=10) as response: # Use session_manager
                 response.raise_for_status()
                 data = await response.json()
                 abi_status = data.get("status")

@@ -11,9 +11,10 @@ from urllib.parse import urlparse
 import random # New: Import random for human-like delays
 
 from Link_Profiler.database.database import Database
-from Link_Profiler.core.models import SEOMetrics, Backlink, CrawlConfig, CrawlError
+from Link_Profiler.core.models import SEOMetrics, Backlink, CrawlConfig
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,10 @@ class LinkHealthService:
     from a given set of source URLs. It checks for broken links (4xx/5xx status codes)
     and updates the SEOMetrics for the source pages.
     """
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, session_manager: SessionManager):
         self.db = database
         self.logger = logging.getLogger(__name__)
-        self._session: Optional[aiohttp.ClientSession] = None
+        self.session_manager = session_manager # Store session manager instance
         # Use a default crawl config for link checking, or allow it to be passed
         self.default_crawl_config = CrawlConfig(
             max_depth=0, # Only check the given URLs, no further crawling
@@ -43,48 +44,28 @@ class LinkHealthService:
     async def __aenter__(self):
         """Async context manager entry for aiohttp session."""
         self.logger.debug("Entering LinkHealthService context.")
-        if self._session is None or self._session.closed:
-            # Use a connector with a higher limit for concurrent checks
-            connector = aiohttp.TCPConnector(limit=50, limit_per_host=10, ttl_dns_cache=300, use_dns_cache=True)
-            timeout = aiohttp.ClientTimeout(total=self.default_crawl_config.timeout_seconds)
-            
-            headers = {}
-            if config_loader.get("anti_detection.request_header_randomization", False):
-                headers.update(user_agent_manager.get_random_headers())
-            elif config_loader.get("crawler.user_agent_rotation", False):
-                headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-            else:
-                headers['User-Agent'] = self.default_crawl_config.user_agent
-
-            self._session = aiohttp.ClientSession(
-                connector=connector,
-                timeout=timeout,
-                headers=headers
-            )
+        # The session_manager is already entered by the caller (main.py lifespan)
+        # No need to manage a separate session here.
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit for aiohttp session."""
         self.logger.debug("Exiting LinkHealthService context.")
-        if self._session and not self._session.closed:
-            await self._session.close()
-            self._session = None
+        # The session_manager is exited by the caller (main.py lifespan)
+        pass
 
     async def _check_link_status(self, url: str) -> Tuple[int, Optional[str]]:
         """
         Performs a HEAD request to check the HTTP status of a link.
         Returns (status_code, error_message).
         """
-        if self._session is None:
-            raise RuntimeError("aiohttp session not initialized. Use LinkHealthService within an async context.")
-
         # Add human-like delays if configured
         if config_loader.get("anti_detection.human_like_delays", False):
             await asyncio.sleep(random.uniform(0.1, 0.5))
 
         try:
             # Use HEAD request for efficiency, fall back to GET if HEAD is not allowed
-            async with self._session.head(url, allow_redirects=self.default_crawl_config.follow_redirects) as response:
+            async with self.session_manager.head(url, allow_redirects=self.default_crawl_config.follow_redirects) as response: # Use session_manager
                 return response.status, None
         except aiohttp.ClientError as e:
             # Catch network errors, DNS issues, etc.
@@ -98,7 +79,7 @@ class LinkHealthService:
     async def audit_links_for_source_urls(self, source_urls: List[str]) -> Dict[str, List[str]]:
         """
         Audits all outgoing links from a list of source URLs for brokenness.
-        Updates the 'broken_links' field in the SEOMetrics for each source URL.
+        Updates the 'broken_links' field in the SEOMetrics for the source pages.
 
         Args:
             source_urls: A list of URLs (pages) whose outgoing links should be audited.

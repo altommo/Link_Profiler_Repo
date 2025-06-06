@@ -40,7 +40,7 @@ except ImportError:
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import LinkProfile, Backlink, serialize_model
-from Link_Profiler.utils.data_exporter import export_to_excel, EXCEL_AVAILABLE # New: Import export_to_excel and EXCEL_AVAILABLE
+# Removed: from Link_Profiler.utils.data_exporter import export_to_excel, EXCEL_AVAILABLE # New: Import export_to_excel and EXCEL_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
