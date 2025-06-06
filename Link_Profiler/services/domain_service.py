@@ -11,6 +11,7 @@ from datetime import datetime
 import json  # Import json for serializing/deserializing WHOIS data
 import random  # Import random for simulation functions
 import dns.asyncresolver  # For real DNS lookups
+import aiohttp # Import aiohttp for ClientError
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.clients.base_client import BaseAPIClient
@@ -18,18 +19,23 @@ from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.api_cache import cached_api_call
 from Link_Profiler.core.models import Domain, SEOMetrics # Assuming SEOMetrics is defined in models.py
 from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
 class AbstractDomainAPIClient(BaseAPIClient):
     """Client for AbstractAPI Domain Validation and WHOIS."""
-    def __init__(self, session_manager: Optional[SessionManager] = None):
-        super().__init__(session_manager)
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
+        super().__init__(session_manager, resilience_manager) # Pass resilience_manager to BaseAPIClient
         self.enabled = config_loader.get("domain_api.abstract_api.enabled", False)
         self.api_key = config_loader.get("domain_api.abstract_api.api_key")
         self.base_url = config_loader.get("domain_api.abstract_api.base_url", "https://domain-validation.abstractapi.com/v1/")
         self.whois_base_url = config_loader.get("domain_api.abstract_api.whois_base_url", "https://whois.abstractapi.com/v1/")
         
+        # Resilience manager check is now handled in BaseAPIClient's __init__
+        # if self.enabled and self.resilience_manager is None:
+        #     raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+
         if not self.enabled:
             self.logger.info("AbstractAPI Domain Validation is disabled.")
         elif not self.api_key:
@@ -45,8 +51,9 @@ class AbstractDomainAPIClient(BaseAPIClient):
         
         params = {"api_key": self.api_key, "domain": domain_name}
         try:
-            response = await self._make_request("GET", self.base_url, params=params)
-            return await response.json()
+            # _make_request now handles resilience
+            response_data = await self._make_request("GET", self.base_url, params=params)
+            return response_data
         except Exception as e:
             self.logger.error(f"Error validating domain {domain_name} with AbstractAPI: {e}")
             return None
@@ -60,20 +67,25 @@ class AbstractDomainAPIClient(BaseAPIClient):
         
         params = {"api_key": self.api_key, "domain": domain_name}
         try:
-            response = await self._make_request("GET", self.whois_base_url, params=params)
-            return await response.json()
+            # _make_request now handles resilience
+            response_data = await self._make_request("GET", self.whois_base_url, params=params)
+            return response_data
         except Exception as e:
             self.logger.error(f"Error performing WHOIS lookup for {domain_name} with AbstractAPI: {e}")
             return None
 
 class WhoisJsonAPIClient(BaseAPIClient):
     """Client for WHOIS-JSON.com API."""
-    def __init__(self, session_manager: Optional[SessionManager] = None):
-        super().__init__(session_manager)
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
+        super().__init__(session_manager, resilience_manager) # Pass resilience_manager to BaseAPIClient
         self.enabled = config_loader.get("domain_api.whois_json_api.enabled", False)
         self.api_key = config_loader.get("domain_api.whois_json_api.api_key") # Optional for this API
         self.base_url = config_loader.get("domain_api.whois_json_api.base_url", "https://www.whois-json.com/api/v1/whois")
         
+        # Resilience manager check is now handled in BaseAPIClient's __init__
+        # if self.enabled and self.resilience_manager is None:
+        #     raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+
         if not self.enabled:
             self.logger.info("WHOIS-JSON.com API is disabled.")
 
@@ -91,8 +103,9 @@ class WhoisJsonAPIClient(BaseAPIClient):
         try:
             # WHOIS-JSON.com uses path parameter for domain
             url = f"{self.base_url}/{domain_name}"
-            response = await self._make_request("GET", url, headers=headers)
-            return await response.json()
+            # _make_request now handles resilience
+            response_data = await self._make_request("GET", url, headers=headers)
+            return response_data
         except Exception as e:
             self.logger.error(f"Error performing WHOIS lookup for {domain_name} with WHOIS-JSON.com: {e}")
             return None
@@ -104,23 +117,28 @@ class DomainService:
     """
     _instance = None
 
-    def __new__(cls, session_manager: Optional[SessionManager] = None):
+    def __new__(cls, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
         if cls._instance is None:
             cls._instance = super(DomainService, cls).__new__(cls)
             cls._instance._initialized = False
             cls._instance.session_manager = session_manager # Store session_manager for clients
+            cls._instance.resilience_manager = resilience_manager # New: Store resilience_manager
         return cls._instance
 
-    def __init__(self, session_manager: Optional[SessionManager] = None):
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
         if self._initialized:
             return
         self._initialized = True
         self.logger = logging.getLogger(__name__ + ".DomainService")
         self.session_manager = session_manager # Ensure it's set for this instance
+        self.resilience_manager = resilience_manager # Ensure it's set for this instance
+        if self.resilience_manager is None:
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
-        # Initialize API clients
-        self.abstract_api_client = AbstractDomainAPIClient(session_manager=self.session_manager)
-        self.whois_json_api_client = WhoisJsonAPIClient(session_manager=self.session_manager)
+
+        # Initialize API clients, passing the resilience_manager
+        self.abstract_api_client = AbstractDomainAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+        self.whois_json_api_client = WhoisJsonAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
 
         # Configuration for live lookups
         self.allow_live = config_loader.get("domain_api.domain_service.allow_live", False)
@@ -256,13 +274,16 @@ class DomainService:
             records: Dict[str, List[str]] = {}
             for rtype in ["A", "AAAA", "MX", "NS", "TXT"]:
                 try:
-                    params = {"name": domain_name, "type": rtype}
-                    headers = {"Accept": "application/dns-json"}
-                    resp = await self.session_manager.get(doh_url, params=params, headers=headers)
+                    resp = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                        lambda: self.session_manager.get(doh_url, params={"name": domain_name, "type": rtype}, headers={"Accept": "application/dns-json"}),
+                        url=doh_url # Use doh_url for circuit breaker naming
+                    )
                     data = await resp.json()
                     answers = data.get("Answer") or data.get("answer") or []
                     if answers:
                         records[rtype] = [a.get("data") for a in answers if a.get("data")]
+                except aiohttp.ClientError as e:
+                    self.logger.error(f"DNS over HTTPS client error for {domain_name} {rtype}: {e}")
                 except Exception as e:
                     self.logger.error(f"DNS over HTTPS error for {domain_name} {rtype}: {e}")
             if records:
@@ -274,6 +295,7 @@ class DomainService:
             records: Dict[str, List[str]] = {}
             for rtype in ["A", "AAAA", "MX", "NS", "TXT"]:
                 try:
+                    # dns.asyncresolver.resolve is already async, no need for execute_with_resilience
                     answers = await resolver.resolve(domain_name, rtype)
                     records[rtype] = [r.to_text() for r in answers]
                 except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
@@ -304,7 +326,10 @@ class DomainService:
 
         try:
             params = {"domains[]": domain_name}
-            resp = await self.session_manager.get(self.seo_metrics_base_url, params=params, headers=headers)
+            resp = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                lambda: self.session_manager.get(self.seo_metrics_base_url, params=params, headers=headers),
+                url=self.seo_metrics_base_url # Use base_url for circuit breaker naming
+            )
             data = await resp.json()
             result = None
             if isinstance(data, dict):
@@ -319,6 +344,8 @@ class DomainService:
                     "referring_domains": result.get("rank"),
                     "last_fetched_at": datetime.utcnow().isoformat()
                 }
+        except aiohttp.ClientError as e:
+            self.logger.error(f"SEO metrics client error for {domain_name}: {e}")
         except Exception as e:
             self.logger.error(f"SEO metrics lookup failed for {domain_name}: {e}")
 
@@ -341,7 +368,10 @@ class DomainService:
 
         try:
             url = f"{self.ip_info_base_url.rstrip('/')}/{domain_name}"
-            resp = await self.session_manager.get(url, params=params)
+            resp = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                lambda: self.session_manager.get(url, params=params),
+                url=url # Use specific URL for circuit breaker naming
+            )
             data = await resp.json()
             if data.get("status", "success") == "success":
                 return {
@@ -351,6 +381,8 @@ class DomainService:
                     "isp": data.get("isp"),
                     "last_fetched_at": datetime.utcnow().isoformat()
                 }
+        except aiohttp.ClientError as e:
+            self.logger.error(f"IP info client error for {domain_name}: {e}")
         except Exception as e:
             self.logger.error(f"IP info lookup failed for {domain_name}: {e}")
 
@@ -393,4 +425,5 @@ class DomainService:
         }
 
 # Create a singleton instance
-domain_service_instance = DomainService()
+# This will be initialized in main.py's lifespan with proper dependencies
+# domain_service_instance = DomainService()

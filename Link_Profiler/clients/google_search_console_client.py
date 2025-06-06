@@ -1,31 +1,30 @@
-import json
-import os
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError # Import HttpError for specific error handling
-from google_auth_oauthlib.flow import InstalledAppFlow # Import InstalledAppFlow
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
 import logging
-import asyncio # Added for asyncio.to_thread
+import asyncio
+import os
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+from urllib.parse import urlparse
+
+# Google API imports for GSC
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapicl.discovery import build
 
 from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.clients.base_client import BaseAPIClient
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
-from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
-from Link_Profiler.clients.base_client import BaseAPIClient # Assuming this exists
-from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
+from Link_Profiler.utils.session_manager import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
-
-# If modifying these scopes, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
 
 # The file token.json stores the user's access and refresh tokens, and is
 # created automatically when the authorization flow completes for the first
 # time.
 TOKEN_FILE = 'token.json'
 CREDENTIALS_FILE = 'credentials.json'
+SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly'] # Define SCOPES here
 
 class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
     """
@@ -36,7 +35,7 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
     """
     
     def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # Accept session_manager and resilience_manager
-        super().__init__(session_manager) # Call BaseAPIClient's init
+        super().__init__(session_manager, resilience_manager) # Call BaseAPIClient's init
         self.logger = logging.getLogger(__name__ + ".GoogleSearchConsoleClient")
         self.service = None
         self._creds = None
@@ -44,11 +43,8 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
         self.credentials_file_path = config_loader.get("backlink_api.gsc_api.credentials_file", CREDENTIALS_FILE)
         self.token_file_path = config_loader.get("backlink_api.gsc_api.token_file", TOKEN_FILE)
         
-        self.resilience_manager = resilience_manager # New: Store ResilienceManager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to GoogleSearchConsoleClient. Falling back to global instance.")
+        if self.enabled and self.resilience_manager is None:
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
         if not self.enabled:
             self.logger.info("Google Search Console API is disabled by configuration.")
@@ -177,17 +173,9 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
                 start_row += len(rows)
                 await asyncio.sleep(1) # Delay between pages to avoid 429s
                 
-            except HttpError as e:
-                if e.resp.status == 429:
-                    self.logger.warning(f"GSC API rate limit exceeded for {site_url}. Retrying in 60 seconds.")
-                    await asyncio.sleep(60)
-                    continue # Retry the current page
-                else:
-                    self.logger.error(f"Network/API error fetching search analytics for {site_url} (startRow: {start_row}): {e}")
-                    break # Break on other errors
-            except Exception as e:
-                self.logger.error(f"Unexpected error fetching search analytics for {site_url} (startRow: {start_row}): {e}")
-                break # Break on error
+            except Exception as e: # Catch generic exception for GSC API errors
+                self.logger.error(f"Error fetching search analytics for {site_url} (startRow: {start_row}): {e}")
+                break # Break on other errors
         
         # Add last_fetched_at to each row
         now = datetime.utcnow().isoformat()
@@ -197,6 +185,7 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
         self.logger.info(f"Retrieved {len(all_rows)} search analytics rows for {site_url}")
         return all_rows
     
+    @api_rate_limited(service="gsc_api", api_client_type="gsc_client", endpoint="get_sites")
     async def get_sites(self) -> List[Dict[str, Any]]:
         """Get list of sites in Search Console account."""
         if not self.enabled or not self.service:
@@ -218,18 +207,11 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             self.logger.info(f"Found {len(sites)} sites in GSC account")
             return sites
             
-        except HttpError as e:
-            if e.resp.status == 429:
-                self.logger.warning(f"GSC API rate limit exceeded for get_sites. Retrying in 60 seconds.")
-                await asyncio.sleep(60)
-                return await self.get_sites() # Retry the call
-            else:
-                self.logger.error(f"Network/API error fetching GSC sites: {e}")
-                return []
-        except Exception as e:
+        except Exception as e: # Catch generic exception for GSC API errors
             self.logger.error(f"Error fetching GSC sites: {e}")
             return []
     
+    @api_rate_limited(service="gsc_api", api_client_type="gsc_client", endpoint="get_sitemaps")
     async def get_sitemaps(self, site_url: str) -> List[Dict[str, Any]]:
         """Get sitemaps for a site."""
         if not self.enabled or not self.service:
@@ -251,18 +233,11 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             self.logger.info(f"Found {len(sitemaps)} sitemaps for {site_url}")
             return sitemaps
             
-        except HttpError as e:
-            if e.resp.status == 429:
-                self.logger.warning(f"GSC API rate limit exceeded for sitemaps for {site_url}. Retrying in 60 seconds.")
-                await asyncio.sleep(60)
-                return await self.get_sitemaps(site_url) # Retry the call
-            else:
-                self.logger.error(f"Network/API error fetching sitemaps for {site_url}: {e}")
-                return []
-        except Exception as e:
+        except Exception as e: # Catch generic exception for GSC API errors
             self.logger.error(f"Error fetching sitemaps for {site_url}: {e}")
             return []
     
+    @api_rate_limited(service="gsc_api", api_client_type="gsc_client", endpoint="inspect_url")
     async def inspect_url(self, site_url: str, inspection_url: str) -> Optional[Dict[str, Any]]:
         """
         Inspect a URL (equivalent to URL Inspection tool in GSC).
@@ -293,15 +268,7 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             self.logger.info(f"URL inspection completed for {inspection_url}")
             return response
             
-        except HttpError as e:
-            if e.resp.status == 429:
-                self.logger.warning(f"GSC API rate limit exceeded for URL inspection for {inspection_url}. Retrying in 60 seconds.")
-                await asyncio.sleep(60)
-                return await self.inspect_url(site_url, inspection_url) # Retry the call
-            else:
-                self.logger.error(f"Network/API error inspecting URL {inspection_url}: {e}")
-                return None
-        except Exception as e:
+        except Exception as e: # Catch generic exception for GSC API errors
             self.logger.error(f"Error inspecting URL {inspection_url}: {e}")
             return None
     
@@ -348,15 +315,7 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             self.logger.info(f"Retrieved {len(normalized_backlinks)} linking sites from GSC for {site_url}.")
             return normalized_backlinks
 
-        except HttpError as e:
-            if e.resp.status == 429:
-                self.logger.warning(f"GSC API rate limit exceeded for backlinks for {site_url}. Retrying in 60 seconds.")
-                await asyncio.sleep(60)
-                return await self.fetch_backlinks(site_url) # Retry the call
-            else:
-                self.logger.error(f"Network/API error fetching backlinks from GSC for {site_url}: {e}", exc_info=True)
-                return []
-        except Exception as e:
+        except Exception as e: # Catch generic exception for GSC API errors
             self.logger.error(f"Error fetching backlinks from GSC for {site_url}: {e}", exc_info=True)
             return []
 
