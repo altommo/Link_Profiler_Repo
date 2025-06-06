@@ -351,7 +351,7 @@ class APIQuotaManager:
 
             # If recent response time is significantly higher than overall, penalize
             if recent_avg_response_time > avg_response_time * 1.1: # 10% increase
-                dynamic_performance_adjustment += (recent_avg_response_time - avg_response_time) * self.weights['response_time'] * 0.5 # Half the normal weight
+                dynamic_performance_adjustment += (recent_avg_response_time / self.performance_thresholds['high_response_time_ms']) * self.weights['response_time'] * 0.5 # Half the normal weight
         
         # Performance Penalty (based on overall performance)
         performance_penalty = 0

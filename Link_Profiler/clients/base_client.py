@@ -4,6 +4,7 @@ from Link_Profiler.utils.session_manager import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # Import DistributedResilienceManager
 from datetime import datetime # Import datetime
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
+import asyncio # Import asyncio for sleep
 
 class BaseAPIClient:
     """
@@ -47,6 +48,7 @@ class BaseAPIClient:
         """
         Internal helper to make requests using the shared session manager.
         Handles common errors and logging.
+        Implements multi-tiered fallback using APIQuotaManager.
         """
         if not self.session_manager:
             self.logger.error("SessionManager is not initialized for this client.")
@@ -54,6 +56,10 @@ class BaseAPIClient:
         if not self.resilience_manager:
             self.logger.error("ResilienceManager is not initialized for this client.")
             raise RuntimeError("ResilienceManager is not initialized.")
+
+        # Determine the API name for this client instance (e.g., "serpstack", "builtwith")
+        # This assumes a naming convention or a way to derive it from the class name
+        api_name = self.__class__.__name__.replace("Client", "").lower() # e.g., SerpstackClient -> serpstack
 
         try:
             # Wrap the actual request with the resilience manager
