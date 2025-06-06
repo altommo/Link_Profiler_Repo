@@ -44,6 +44,7 @@ from Link_Profiler.monitoring.prometheus_metrics import (
     JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL,
     CRAWLED_URLS_TOTAL, BACKLINKS_FOUND_TOTAL, JOB_ERRORS_TOTAL
 )
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 
 class CrawlService:
@@ -68,7 +69,8 @@ class CrawlService:
         web3_service: Web3Service, # New: Add Web3Service
         link_building_service: LinkBuildingService, # New: Add LinkBuildingService
         report_service: ReportService, # New: Add ReportService
-        playwright_browser: Optional[Browser] = None
+        playwright_browser: Optional[Browser] = None,
+        resilience_manager: Optional[DistributedResilienceManager] = None # New: Add resilience_manager
     ):
         self.db = database
         self.logger = logging.getLogger(__name__)
@@ -91,6 +93,7 @@ class CrawlService:
         self.deduplication_set_key = "processed_backlinks_dedup"
         self.dead_letter_queue_name = os.getenv("DEAD_LETTER_QUEUE_NAME", "dead_letter_queue")
         self.playwright_browser = playwright_browser
+        self.resilience_manager = resilience_manager # New: Store resilience_manager
 
     async def _is_duplicate_backlink(self, source_url: str, target_url: str) -> bool:
         """
@@ -210,7 +213,7 @@ class CrawlService:
         )
         self.db.add_crawl_job(job)
         self.logger.info(f"Created {job_type} job {job_id} for {job.target_url}")
-        JOBS_PENDING.labels(job_type=job_type).inc()
+        JOBS_PENDING.labels(job_type=job.job_type).inc()
 
         if job_type == 'backlink_discovery':
             if not initial_seed_urls or not target_url:
@@ -444,8 +447,15 @@ class CrawlService:
         """
         self.logger.info(f"Starting backlink crawl logic for job {job.id} for {job.target_url}")
 
-        # Pass playwright_browser to WebCrawler
-        crawler = EnhancedWebCrawler(config, self.db, job.id, self.ai_service, playwright_browser=self.playwright_browser) # Changed to EnhancedWebCrawler
+        # Pass playwright_browser and resilience_manager to WebCrawler
+        crawler = EnhancedWebCrawler(
+            config, 
+            self.db, 
+            job.id, 
+            self.ai_service, 
+            playwright_browser=self.playwright_browser,
+            resilience_manager=self.resilience_manager # Pass resilience_manager here
+        )
         self.active_crawlers[job.id] = crawler
 
         discovered_backlinks: List[Backlink] = []
@@ -456,7 +466,7 @@ class CrawlService:
 
         self.logger.info(f"Attempting to fetch backlinks for {job.target_url} from API.")
         async with self.backlink_service as bs:
-            api_backlinks = await bs.get_backlinks_for_url(job.target_url)
+            api_backlinks = await bs.get_backlinks_from_api(job.target_url) # Changed to get_backlinks_from_api
                 
             if api_backlinks:
                 self.logger.info(f"Found {len(api_backlinks)} backlinks from API for {job.target_url}.")
