@@ -3,10 +3,53 @@ from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime, timedelta
 import time # Import time for monotonic clock
 import asyncio # Import asyncio
+import random # For simulating ML model output
 
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager, CircuitBreakerState # Import CircuitBreakerState
 
 logger = logging.getLogger(__name__)
+
+class SimpleMLPredictor:
+    """
+    A placeholder for a simple Machine Learning model that predicts API call value/cost.
+    In a real scenario, this would be a trained model (e.g., scikit-learn, TensorFlow).
+    For now, it provides a simulated prediction based on input features.
+    """
+    def __init__(self):
+        self.logger = logging.getLogger(__name__ + ".SimpleMLPredictor")
+        self.logger.info("SimpleMLPredictor initialized (placeholder for actual ML model).")
+
+    def predict_value(self, features: Dict[str, Any]) -> float:
+        """
+        Simulates a prediction of the value/cost-effectiveness of an API call.
+        Features might include: quality_score, success_rate, avg_response_time,
+        remaining_quota, cost_per_unit, predicted_exhaustion_date.
+        
+        Returns a score where higher is better (more cost-effective/valuable).
+        """
+        # This is a very simplistic, rule-based "prediction" for demonstration.
+        # A real ML model would learn these relationships from data.
+        
+        score = 0.0
+        
+        # Prioritize quality and success
+        score += features.get('quality_score', 0) * 0.5
+        score += features.get('success_rate', 0.0) * 10
+        
+        # Penalize high response time
+        if features.get('avg_response_time', 0) > 500:
+            score -= (features['avg_response_time'] / 500) * 0.1
+            
+        # Reward remaining quota, penalize cost
+        if features.get('remaining_quota') is not None:
+            score += min(features['remaining_quota'] / 100, 10) # Cap reward
+        score -= features.get('cost_per_unit', 0) * 5
+        
+        # Add some randomness to simulate model variability
+        score += random.uniform(-0.5, 0.5)
+        
+        self.logger.debug(f"ML Predictor input: {features}, Predicted Score: {score:.2f}")
+        return score
 
 class APIQuotaManager:
     """
@@ -46,6 +89,8 @@ class APIQuotaManager:
             'high_response_time_ms': 1000 # Threshold above which response time is penalized
         }
         self.exhaustion_warning_days = 7 # Days until exhaustion to start applying heavy penalty
+
+        self.ml_predictor = SimpleMLPredictor() # Initialize the ML predictor
 
         self.logger.info("APIQuotaManager initialized.")
 
@@ -235,7 +280,7 @@ class APIQuotaManager:
                     available.append(api_name)
         return available
 
-    async def _calculate_api_score(self, api_name: str, strategy: str = 'best_quality') -> float:
+    async def _calculate_api_score(self, api_name: str, strategy: str = 'best_quality', ml_enabled: bool = False) -> float:
         """
         Calculates a composite score for an API based on the chosen strategy and current metrics.
         This acts as the "decision tree" or "ML-like algorithm".
@@ -281,6 +326,21 @@ class APIQuotaManager:
             elif time_to_exhaustion < timedelta(days=self.exhaustion_warning_days).total_seconds(): # Within warning days
                 exhaustion_penalty = self.weights['exhaustion_penalty_factor'] * (1 - (time_to_exhaustion / timedelta(days=self.exhaustion_warning_days).total_seconds())) # Scale penalty
 
+        # ML Model Integration
+        ml_score = 0.0
+        if ml_enabled:
+            features = {
+                'quality_score': quality,
+                'success_rate': success_rate,
+                'avg_response_time': avg_response_time,
+                'remaining_quota': remaining_val,
+                'cost_per_unit': cost_per_unit,
+                'time_to_exhaustion_seconds': time_to_exhaustion if predicted_exhaustion else float('inf'),
+                'circuit_breaker_state': cb_status['state'].value
+            }
+            ml_score = self.ml_predictor.predict_value(features)
+            self.logger.debug(f"API {api_name} ML Score: {ml_score:.2f}")
+
         # Combine factors based on strategy
         score = 0.0
         if strategy == 'best_quality':
@@ -290,11 +350,15 @@ class APIQuotaManager:
                      avg_response_time * self.weights['response_time'] + 
                      performance_penalty + cb_penalty)
         elif strategy == 'quota_optimized':
-            score = (remaining_val * self.weights['remaining_quota'] + 
-                     cost_per_unit * self.weights['cost_per_unit'] + 
-                     success_rate * self.weights['success_rate'] + 
-                     avg_response_time * self.weights['response_time'] + 
-                     exhaustion_penalty + performance_penalty + cb_penalty)
+            if ml_enabled:
+                # When ML is enabled for quota optimization, its prediction heavily influences the score
+                score = ml_score * 1000000 # Scale ML score to be dominant
+            else:
+                score = (remaining_val * self.weights['remaining_quota'] + 
+                         cost_per_unit * self.weights['cost_per_unit'] + 
+                         success_rate * self.weights['success_rate'] + 
+                         avg_response_time * self.weights['response_time'] + 
+                         exhaustion_penalty + performance_penalty + cb_penalty)
         else: # Default or custom strategy
             score = (quality * self.weights['quality'] + 
                      remaining_val * self.weights['remaining_quota'] - 
@@ -305,7 +369,7 @@ class APIQuotaManager:
         
         return score
 
-    async def get_best_quality_api(self, query_type: Optional[str] = None) -> Optional[str]:
+    async def get_best_quality_api(self, query_type: Optional[str] = None, ml_enabled: bool = False) -> Optional[str]:
         """
         Returns the highest quality API with available quota for a given query type.
         Prioritizes quality, then success rate, then remaining quota, then response time.
@@ -316,12 +380,12 @@ class APIQuotaManager:
             return None
         
         # Sort asynchronously using the _calculate_api_score with 'best_quality' strategy
-        scored_apis = await asyncio.gather(*[self._calculate_api_score(api_name, 'best_quality') for api_name in available_apis])
+        scored_apis = await asyncio.gather(*[self._calculate_api_score(api_name, 'best_quality', ml_enabled) for api_name in available_apis])
         sorted_apis_with_scores = sorted(zip(available_apis, scored_apis), key=lambda x: x[1], reverse=True)
 
         return sorted_apis_with_scores[0][0] if sorted_apis_with_scores else None
 
-    async def get_quota_optimized_api(self, query_type: Optional[str] = None) -> Optional[str]:
+    async def get_quota_optimized_api(self, query_type: Optional[str] = None, ml_enabled: bool = False) -> Optional[str]:
         """
         Returns an API that optimizes for remaining free tier quota,
         prioritizing those with more remaining quota or lower cost, also considering performance and predicted exhaustion.
@@ -332,7 +396,7 @@ class APIQuotaManager:
             return None
 
         # Sort asynchronously using the _calculate_api_score with 'quota_optimized' strategy
-        scored_apis = await asyncio.gather(*[self._calculate_api_score(api_name, 'quota_optimized') for api_name in available_apis])
+        scored_apis = await asyncio.gather(*[self._calculate_api_score(api_name, 'quota_optimized', ml_enabled) for api_name in available_apis])
         sorted_apis_with_scores = sorted(zip(available_apis, scored_apis), key=lambda x: x[1], reverse=True)
 
         return sorted_apis_with_scores[0][0] if sorted_apis_with_scores else None
