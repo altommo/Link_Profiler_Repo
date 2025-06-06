@@ -411,7 +411,8 @@ class DomainService:
             "citation_flow": random.randint(5, 50),
             "organic_keywords": random.randint(100, 10000),
             "organic_traffic": random.randint(1000, 100000),
-            "referring_domains": random.randint(50, 5000)
+            "referring_domains": random.randint(50, 5000),
+            "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
         }
 
     def _simulate_ip_info(self, domain_name: str) -> Dict[str, Any]:
@@ -421,7 +422,8 @@ class DomainService:
             "ip_address": f"192.0.2.{random.randint(1, 254)}",
             "country": random.choice(["US", "CA", "GB", "DE", "AU"]),
             "city": random.choice(["New York", "Toronto", "London", "Berlin", "Sydney"]),
-            "isp": f"ISP-{random.randint(1, 100)}"
+            "isp": f"ISP-{random.randint(1, 100)}",
+            "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
         }
 
 # Create a singleton instance

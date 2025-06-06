@@ -68,15 +68,17 @@ class OpenRouterClient:
     async def __aenter__(self):
         """Ensure session manager is entered."""
         await self.session_manager.__aenter__()
-        # No explicit __aenter__ for openai.AsyncClient as it manages its own httpx client
+        if self.openrouter_client:
+            await self.openrouter_client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Ensure session manager is exited."""
+        """Close Redis connection and ensure session manager and OpenRouter client are exited."""
+        if self.redis_client:
+            await self.redis_client.close() # Corrected: Use self.redis_client.close()
+        if self.openrouter_client:
+            await self.openrouter_client.__aexit__(exc_type, exc_val, exc_tb)
         await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
-        # No explicit __aexit__ for openai.AsyncClient as it manages its own httpx client
-        # It's generally recommended to close httpx clients explicitly if created manually,
-        # but openai.AsyncClient handles this internally.
 
     async def complete(self, model: str, prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> Optional[str]:
         """
@@ -226,7 +228,8 @@ class AIService:
                 "keyword_density_score": 50,
                 "readability_score": 50,
                 "semantic_keywords": [],
-                "improvement_suggestions": ["AI analysis unavailable."]
+                "improvement_suggestions": ["AI analysis unavailable."],
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
             }
 
         prompt = f"""
@@ -252,8 +255,10 @@ class AIService:
                 "keyword_density_score": 50,
                 "readability_score": 50,
                 "semantic_keywords": [],
-                "improvement_suggestions": ["AI analysis unavailable."]
+                "improvement_suggestions": ["AI analysis unavailable."],
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
             }
+        result['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
         return result
 
     async def classify_content(self, content: str, target_keyword: str, source: str = "cache") -> Optional[str]:
@@ -288,6 +293,7 @@ class AIService:
             classification = result["classification"].lower()
             if classification in ["high_quality", "low_quality", "spam", "irrelevant"]:
                 self.logger.info(f"Content classified as: {classification}")
+                result['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
                 return classification
             else:
                 self.logger.warning(f"AI returned unexpected classification: {classification}. Defaulting to 'unknown'.")
@@ -385,11 +391,19 @@ class AIService:
 
         if not self.allow_live and source == "live":
             self.logger.warning("Live AI topic clustering not allowed by configuration. Returning simulated clusters.")
-            return {"Simulated Topic 1": texts[:min(len(texts), 2)], "Simulated Topic 2": texts[min(len(texts), 2):]}
+            return {
+                "Simulated Topic 1": texts[:min(len(texts), 2)], 
+                "Simulated Topic 2": texts[min(len(texts), 2):],
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
+            }
 
         if not self.enabled or not self.openrouter_client:
             self.logger.warning("AI service is disabled. Cannot perform topic clustering. Returning simulated clusters.")
-            return {"Simulated Topic 1": texts[:min(len(texts), 2)], "Simulated Topic 2": texts[min(len(texts), 2):]}
+            return {
+                "Simulated Topic 1": texts[:min(len(texts), 2)], 
+                "Simulated Topic 2": texts[min(len(texts), 2):],
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
+            }
 
         prompt = f"""
         Perform topic clustering on the following list of texts.
@@ -407,7 +421,8 @@ class AIService:
             # Fallback to a very basic simulation if AI call fails
             return {
                 "General Topic A": texts[:len(texts)//2],
-                "General Topic B": texts[len(texts)//2:]
+                "General Topic B": texts[len(texts)//2:],
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
             }
         
         # Validate and return the result
@@ -416,6 +431,7 @@ class AIService:
         for key, value in result.items():
             if isinstance(key, str) and isinstance(value, list):
                 cleaned_result[key] = [str(item) for item in value if isinstance(item, str)]
+        cleaned_result['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
         return cleaned_result
 
 
@@ -443,6 +459,7 @@ class AIService:
         if result is None:
             self.logger.warning(f"AI semantic keyword suggestion failed for '{primary_keyword}'.")
             return []
+        result['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
         return result.get("keywords", [])
 
     async def analyze_technical_seo(self, url: str, html_content: str, lighthouse_report: Optional[Dict[str, Any]], source: str = "cache") -> Dict[str, Any]:
@@ -457,7 +474,12 @@ class AIService:
 
         if not self.allow_live and source == "live":
             self.logger.warning("Live AI technical SEO analysis not allowed by configuration. Returning default.")
-            return {"technical_issues": [], "technical_suggestions": [], "overall_technical_score": 50}
+            return {
+                "technical_issues": [], 
+                "technical_suggestions": [], 
+                "overall_technical_score": 50,
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
+            }
 
         prompt = f"""
         Analyze the technical SEO of the following page.
@@ -474,7 +496,13 @@ class AIService:
         
         if result is None:
             self.logger.warning(f"AI technical SEO analysis failed for {url}.")
-            return {"technical_issues": [], "technical_suggestions": [], "overall_technical_score": 50}
+            return {
+                "technical_issues": [], 
+                "technical_suggestions": [], 
+                "overall_technical_score": 50,
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
+            }
+        result['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
         return result
 
     async def analyze_competitors(self, primary_domain: str, competitor_domains: List[str], source: str = "cache") -> Dict[str, Any]:
@@ -489,7 +517,12 @@ class AIService:
 
         if not self.allow_live and source == "live":
             self.logger.warning("Live AI competitor analysis not allowed by configuration. Returning default.")
-            return {"competitor_strengths": {}, "competitor_weaknesses": {}, "strategic_recommendations": ["AI analysis unavailable."]}
+            return {
+                "competitor_strengths": {}, 
+                "competitor_weaknesses": {}, 
+                "strategic_recommendations": ["AI analysis unavailable."],
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
+            }
 
         prompt = f"""
         Analyze the competitive landscape for '{primary_domain}' against these competitors: {', '.join(competitor_domains)}.
@@ -502,7 +535,13 @@ class AIService:
         
         if result is None:
             self.logger.warning(f"AI competitor analysis failed for {primary_domain}.")
-            return {"competitor_strengths": {}, "competitor_weaknesses": {}, "strategic_recommendations": ["AI analysis unavailable."]}
+            return {
+                "competitor_strengths": {}, 
+                "competitor_weaknesses": {}, 
+                "strategic_recommendations": ["AI analysis unavailable."],
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
+            }
+        result['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
         return result
 
     async def generate_content_ideas(self, topic: str, num_ideas: int = 5, source: str = "cache") -> List[str]:
@@ -529,6 +568,7 @@ class AIService:
         if result is None:
             self.logger.warning(f"AI content idea generation failed for '{topic}'.")
             return []
+        result['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
         return result.get("ideas", [])
 
     async def analyze_domain_value(self, domain_name: str, domain_info: Optional[Domain], link_profile_summary: Optional[LinkProfile], source: str = "cache") -> Dict[str, Any]:
@@ -550,7 +590,7 @@ class AIService:
                     return live_result
                 else:
                     self.logger.warning(f"Live fetch failed for {domain_name}. Returning cached data if available.")
-                    return cached_domain_intelligence.to_dict() if cached_domain_intelligence else {"value_adjustment": 0, "reasons": ["No cached AI analysis available."], "details": {}}
+                    return cached_domain_intelligence.to_dict() if cached_domain_intelligence else {"value_adjustment": 0, "reasons": ["No cached AI analysis available."], "details": {}, "last_fetched_at": datetime.utcnow().isoformat()}
             else:
                 self.logger.info(f"Live fetch requested for {domain_name}, but cache is fresh. Fetching live anyway.")
                 live_result = await self._fetch_live_domain_value_analysis(domain_name, domain_info, link_profile_summary)
@@ -558,14 +598,14 @@ class AIService:
                     return live_result
                 else:
                     self.logger.warning(f"Live fetch failed for {domain_name}. Returning cached data.")
-                    return cached_domain_intelligence.to_dict() if cached_domain_intelligence else {"value_adjustment": 0, "reasons": ["No cached AI analysis available."], "details": {}}
+                    return cached_domain_intelligence.to_dict() if cached_domain_intelligence else {"value_adjustment": 0, "reasons": ["No cached AI analysis available."], "details": {}, "last_fetched_at": datetime.utcnow().isoformat()}
         else:
             self.logger.info(f"Returning cached AI domain value analysis for {domain_name}.")
             if cached_domain_intelligence:
                 return cached_domain_intelligence.to_dict()
             else:
                 self.logger.warning(f"No cached AI domain value analysis found for {domain_name}. Returning default.")
-                return {"value_adjustment": 0, "reasons": ["No cached AI analysis available."], "details": {}}
+                return {"value_adjustment": 0, "reasons": ["No cached AI analysis available."], "details": {}, "last_fetched_at": datetime.utcnow().isoformat()}
 
     async def _fetch_live_domain_value_analysis(self, domain_name: str, domain_info: Optional[Domain], link_profile_summary: Optional[LinkProfile]) -> Dict[str, Any]:
         """
@@ -591,8 +631,8 @@ class AIService:
 
         if result is None:
             self.logger.warning(f"AI domain value analysis failed for '{domain_name}'. Returning default adjustment.")
-            return {"value_adjustment": 0, "reasons": ["AI analysis unavailable."], "details": {}}
-        result['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
+            return {"value_adjustment": 0, "reasons": ["AI analysis unavailable."], "details": {}, "last_fetched_at": datetime.utcnow().isoformat()}
+        result['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
         return result
 
     async def analyze_content_nlp(self, content: str, source: str = "cache") -> Dict[str, Any]:
@@ -611,7 +651,8 @@ class AIService:
             return {
                 "entities": [],
                 "sentiment": "neutral",
-                "topics": []
+                "topics": [],
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
             }
 
         prompt = f"""
@@ -636,7 +677,8 @@ class AIService:
             return {
                 "entities": [],
                 "sentiment": "neutral",
-                "topics": []
+                "topics": [],
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
             }
         
         # Validate and clean up the response
@@ -646,7 +688,7 @@ class AIService:
         if sentiment not in ["positive", "neutral", "negative"]:
             sentiment = "neutral"
         result["sentiment"] = sentiment
-        result['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
+        result['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
         return result
 
     async def analyze_video_content(self, video_url: str, video_data: Optional[bytes] = None, 
@@ -673,7 +715,8 @@ class AIService:
                 "transcription": "",
                 "topics": [],
                 "timeline": [],
-                "summary": "AI video analysis disabled"
+                "summary": "AI video analysis disabled",
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
             }
 
         if not self.enabled or not self.openrouter_client:
@@ -682,7 +725,8 @@ class AIService:
                 "transcription": "",
                 "topics": [],
                 "timeline": [],
-                "summary": "AI service disabled"
+                "summary": "AI service disabled",
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
             }
         
         # Download video if only URL provided
@@ -804,7 +848,9 @@ class AIService:
             
             content = response.choices[0].message.content
             import json
-            return json.loads(content)
+            parsed_content = json.loads(content)
+            parsed_content['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
+            return parsed_content
             
         except Exception as e:
             self.logger.error(f"Error analyzing video frame {frame_index}: {e}")
@@ -818,7 +864,8 @@ class AIService:
                 "transcription": "",
                 "topics": [],
                 "timeline": [],
-                "summary": "No analysis data available"
+                "summary": "No analysis data available",
+                "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
             }
         
         # Combine all text content found in frames
@@ -868,7 +915,8 @@ class AIService:
             "timeline": timeline,
             "summary": summary.get('summary', 'Video analysis completed') if summary else "Analysis completed",
             "objects_detected": list(set(all_objects)),
-            "actions_detected": list(set(all_actions))
+            "actions_detected": list(set(all_actions)),
+            "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
         }
 
     async def assess_content_quality(self, content: str, url: str, source: str = "cache") -> Tuple[Optional[float], Optional[str]]:
@@ -915,6 +963,7 @@ class AIService:
                 if classification not in ["excellent", "good", "average", "low_quality", "spam"]:
                     classification = "average" # Default to average if AI gives unexpected classification
                 self.logger.info(f"Content quality for {url}: Score={score}, Classification={classification}")
+                result['last_fetched_at'] = datetime.utcnow().isoformat() # Add last_fetched_at
                 return float(score), classification
             else:
                 self.logger.warning(f"AI returned invalid format for content quality assessment for {url}: {result}")

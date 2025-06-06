@@ -267,13 +267,14 @@ class Web3Service:
                 "balance_eth": round(random.uniform(0.01, 100.0), 4),
                 "transaction_count": random.randint(10, 1000),
                 "is_contract": random.choice([True, False]),
-                "first_seen_block": random.randint(1000000, 18000000)
+                "first_seen_block": random.randint(1000000, 18000000),
+                "last_fetched_at": datetime.utcnow() # Add last_fetched_at
             },
             "links_found_web3": [
                 f"https://simulated-explorer.io/address/{identifier}",
                 f"https://simulated-nft-marketplace.io/assets/{identifier}/{random.randint(1, 100)}"
             ],
-            "last_fetched_at": datetime.utcnow()
+            "last_fetched_at": datetime.utcnow() # Add last_fetched_at
         }
 
     async def analyze_nft_project(self, contract_address: str, source: str = "cache") -> Dict[str, Any]:
@@ -396,7 +397,7 @@ class Web3Service:
                 f"https://twitter.com/simulated_nft_{random.randint(1,10)}",
                 f"https://discord.gg/simulated_nft_{random.randint(1,10)}"
             ],
-            "last_fetched_at": datetime.utcnow()
+            "last_fetched_at": datetime.utcnow() # Add last_fetched_at
         }
 
     async def analyze_defi_protocol(self, protocol_address: str, source: str = "cache") -> Dict[str, Any]:
@@ -479,5 +480,5 @@ class Web3Service:
             "website": f"https://simulated-defi-protocol-{random.randint(1,50)}.xyz",
             "token_address": f"0x{random.randint(10**39, 10**40-1)}",
             "docs_link": f"https://docs.simulated-defi-protocol-{random.randint(1,50)}.xyz",
-            "last_fetched_at": datetime.utcnow()
+            "last_fetched_at": datetime.utcnow() # Add last_fetched_at
         }
