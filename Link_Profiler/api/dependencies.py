@@ -1,7 +1,7 @@
 import logging
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from typing import Annotated
+from typing import Annotated, Optional
 
 # Import required modules directly instead of from main.py to avoid circular import
 from Link_Profiler.services.auth_service import AuthService
@@ -13,11 +13,19 @@ from Link_Profiler.core.models import User
 logger = logging.getLogger(__name__)
 
 # OAuth2PasswordBearer for token extraction
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# Initialize auth service locally to avoid circular imports
-# These are already singletons initialized in main.py, so just reference them
-auth_service_instance = AuthService(db) # Pass the db singleton
+# Global variable to hold the initialized AuthService instance
+_auth_service_instance: Optional[AuthService] = None
+
+def set_auth_service_instance(instance: AuthService):
+    """
+    Sets the global AuthService instance for use in dependencies.
+    This function should be called once during application startup (e.g., in main.py's lifespan).
+    """
+    global _auth_service_instance
+    _auth_service_instance = instance
+    logger.info("AuthService instance set in dependencies.")
 
 # --- Dependency for current user authentication ---
 async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> User:
@@ -25,14 +33,14 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> Use
     Retrieves the current authenticated user based on the provided token.
     """
     try:
-        # Ensure auth_service_instance is not None before calling its method
-        if auth_service_instance is None:
-            logger.error("AuthService instance is None in dependencies.py. It might not have been initialized in main.py.")
+        # Ensure _auth_service_instance is not None before calling its method
+        if _auth_service_instance is None:
+            logger.error("AuthService instance is None in dependencies.py. It might not have been initialized or set in main.py.")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Authentication service not available."
             )
-        user = await auth_service_instance.get_current_user(token)
+        user = await _auth_service_instance.get_current_user(token)
         return user
     except HTTPException: # Re-raise HTTPException from auth_service
         raise

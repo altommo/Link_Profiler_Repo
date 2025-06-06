@@ -63,6 +63,10 @@ def validate_critical_config():
              logger.warning(f"WARNING: {env_var} is not set and config still uses placeholder. Authentication will fail.")
         elif not env_value and (config_path == "database.url" or config_path == "redis.url"):
              logger.warning(f"WARNING: {env_var} is not set. Using default/fallback for {config_path}.")
+             if config_path == "database.url":
+                 logger.warning("Please ensure LP_DATABASE_URL is set in your environment for production.")
+             if config_path == "redis.url":
+                 logger.warning("Please ensure LP_REDIS_URL is set in your environment for production.")
 
 # Call validation after config loading
 validate_critical_config()
@@ -84,10 +88,6 @@ MONITOR_PORT = config_loader.get("monitoring.monitor_port")
 LOG_LEVEL = config_loader.get("logging.level")
 API_CACHE_ENABLED = config_loader.get("api_cache.enabled")
 API_CACHE_TTL = config_loader.get("api_cache.ttl")
-
-# Initialize core dependencies that other modules might import
-# db = Database(db_url=DATABASE_URL) # Database singleton is already initialized via db = Database()
-# auth_service_instance = AuthService(db) # AuthService singleton is already initialized via auth_service_instance = AuthService()
 
 # Initialize Redis connection pool and client (moved up to ensure it's defined before lifespan)
 import redis.asyncio as redis
@@ -143,6 +143,8 @@ from Link_Profiler.monitoring.prometheus_metrics import (
 # Removed submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies from job_submission_service
 # as they are now in queue_endpoints.py
 from Link_Profiler.api.queue_endpoints import set_coordinator_dependencies, get_coordinator # Import from queue_endpoints
+from Link_Profiler.api.ai import set_global_ai_service_instance # Import for setting AI service instance
+from Link_Profiler.api.dependencies import set_auth_service_instance # Import for setting auth service instance
 
 # New: Import WebCrawler and SmartCrawlQueue
 from Link_Profiler.crawlers.web_crawler import EnhancedWebCrawler # Changed to EnhancedWebCrawler
@@ -179,19 +181,6 @@ from Link_Profiler.api.schemas import (
     OutreachEventResponse, SEOMetricsResponse, QueueCrawlRequest # Added QueueCrawlRequest
 )
 
-# Import API Routers
-from Link_Profiler.api.ai import ai_router
-from Link_Profiler.api.analytics import analytics_router
-from Link_Profiler.api.competitive_analysis import competitive_analysis_router
-from Link_Profiler.api.crawl_audit import crawl_audit_router
-from Link_Profiler.api.link_building import link_building_router
-from Link_Profiler.api.public_jobs import public_jobs_router
-from Link_Profiler.api.reports import reports_router
-from Link_Profiler.api.users import users_router
-from Link_Profiler.api.websocket import websocket_router
-from Link_Profiler.api.mission_control import mission_control_router
-
-
 # Initialize ClickHouse Loader conditionally
 clickhouse_loader_instance: Optional[ClickHouseLoader] = None
 if CLICKHOUSE_ENABLED:
@@ -216,24 +205,20 @@ dns_client_instance = DNSClient(session_manager=session_manager)
 # The DomainService constructor now handles the internal assignment of api_client
 # based on the config, so we just pass the necessary dependencies.
 domain_service_instance = DomainService(
-    # redis_client=redis_client, # DomainService does not directly use redis_client
-    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
-    # database=db, # DomainService does not directly use db
-    # whois_client=whois_client_instance, # DomainService instantiates its own clients
-    # dns_client=dns_client_instance, # DomainService instantiates its own clients
     session_manager=session_manager # Pass session manager
 )
 
 # New: Initialize GSCClient
 gsc_client_instance = GoogleSearchConsoleClient(session_manager=session_manager)
 
+# New: Instantiate DistributedResilienceManager early as it's a dependency for others
+distributed_resilience_manager = DistributedResilienceManager(redis_client=redis_client)
+
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
 # Removed 'gsc_client' argument as BacklinkService internally handles GSCBacklinkAPIClient instantiation.
 backlink_service_instance = BacklinkService(
-    # redis_client=redis_client, # BacklinkService does not directly use redis_client
-    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
-    # database=db, # BacklinkService does not directly use db
-    session_manager=session_manager # Pass session manager
+    session_manager=session_manager, # Pass session manager
+    resilience_manager=distributed_resilience_manager # Pass resilience manager
 )
 
 # New: Initialize PageSpeedClient
@@ -248,11 +233,8 @@ if config_loader.get("serp_crawler.playwright.enabled"):
         browser_type=config_loader.get("serp_crawler.playwright.browser_type")
     )
 serp_service_instance = SERPService(
-    # api_client=RealSERPAPIClient(api_key=config_loader.get("serp_api.real_api.api_key"), base_url=config_loader.get("serp_api.real_api.base_url"), session_manager=session_manager) if config_loader.get("serp_api.real_api.enabled") else SimulatedSERPAPIClient(session_manager=session_manager),
     serp_crawler=serp_crawler_instance,
     pagespeed_client=pagespeed_client_instance, # New: Pass pagespeed_client_instance
-    # redis_client=redis_client, # Pass redis_client for caching
-    # cache_ttl=API_CACHE_TTL, # Pass cache_ttl
     session_manager=session_manager # Pass session manager
 )
 
@@ -265,11 +247,8 @@ if config_loader.get("keyword_scraper.enabled"): # Assuming a config for keyword
     logger.info("Initialising KeywordScraper.")
     keyword_scraper_instance = KeywordScraper(session_manager=session_manager)
 keyword_service_instance = KeywordService(
-    # api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key"), base_url=config_loader.get("keyword_api.real_api.base_url"), session_manager=session_manager) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(session_manager=session_manager),
     keyword_scraper=keyword_scraper_instance,
     google_trends_client=google_trends_client_instance, # New: Pass google_trends_client_instance
-    # redis_client=redis_client, # Pass redis_client for caching
-    # cache_ttl=API_CACHE_TTL, # Pass cache_ttl
     session_manager=session_manager # Pass session manager
 )
 
@@ -282,7 +261,7 @@ technical_auditor_instance = TechnicalAuditor(
 )
 
 # New: Initialize AI Service
-ai_service_instance = AIService(session_manager=session_manager)
+ai_service_instance = AIService(database=db, session_manager=session_manager) # Pass database and session_manager
 
 # New: Initialize Alert Service
 alert_service_instance = AlertService(db, connection_manager)
@@ -304,9 +283,8 @@ if config_loader.get("social_media_crawler.enabled"):
     logger.info("Initialising SocialMediaCrawler.")
     social_media_crawler_instance = SocialMediaCrawler(session_manager=session_manager)
 social_media_service_instance = SocialMediaService(
+    database=db, # Pass database
     social_media_crawler=social_media_crawler_instance,
-    # redis_client=redis_client, # SocialMediaService does not directly use redis_client
-    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
     reddit_client=reddit_client_instance, # New: Pass RedditClient
     youtube_client=youtube_client_instance, # New: Pass YouTubeClient
     news_api_client=news_api_client_instance, # New: Pass NewsAPIClient
@@ -315,9 +293,7 @@ social_media_service_instance = SocialMediaService(
 
 # New: Initialize Web3 Service
 web3_service_instance = Web3Service(
-    # redis_client=redis_client, # Web3Service does not directly use redis_client
-    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
-    session_manager=session_manager # Pass session manager
+    database=db # Pass database, removed session_manager as per issue
 )
 
 # New: Initialize Link Building Service
@@ -354,12 +330,10 @@ crawl_service_for_lifespan = CrawlService(
     web3_service=web3_service_instance, # New: Pass Web3Service
     link_building_service=link_building_service_instance, # New: Pass LinkBuildingService
     report_service=report_service_instance, # New: Pass ReportService
-    playwright_browser=playwright_browser_instance # Pass the global Playwright browser instance
+    playwright_browser=playwright_browser_instance, # Pass the global Playwright browser instance
+    resilience_manager=distributed_resilience_manager # Pass resilience manager
 ) 
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service) # Corrected class name
-
-# New: Instantiate DistributedResilienceManager
-distributed_resilience_manager = DistributedResilienceManager(redis_client=redis_client)
 
 # --- New: Instantiate SmartCrawlQueue and WebCrawler ---
 # Load crawler-specific configuration
@@ -386,7 +360,14 @@ main_crawl_config = CrawlConfig(**crawler_config_data)
 smart_crawl_queue = SmartCrawlQueue(redis_client=redis_client)
 
 # Create WebCrawler instance, passing the SmartCrawlQueue
-main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, browser=playwright_browser_instance, resilience_manager=distributed_resilience_manager, session_manager=session_manager) # Changed to EnhancedWebCrawler
+main_web_crawler = EnhancedWebCrawler(
+    config=main_crawl_config, 
+    crawl_queue=smart_crawl_queue, 
+    ai_service=ai_service_instance, 
+    browser=playwright_browser_instance, 
+    resilience_manager=distributed_resilience_manager, 
+    session_manager=session_manager
+) # Changed to EnhancedWebCrawler
 # --- End New Instantiation ---
 
 
@@ -401,7 +382,6 @@ async def lifespan(app: FastAPI):
     context_managers = [
         session_manager, # New: Add SessionManager to lifespan
         domain_service_instance,
-        ai_service_instance,
         api_cache, # Initialize API cache
         auth_service_instance, # New: Add AuthService to lifespan
         connection_manager,
@@ -496,6 +476,12 @@ async def lifespan(app: FastAPI):
             connection_manager=connection_manager
         )
 
+        # Set the global AI service instance for the ai_router
+        set_global_ai_service_instance(ai_service_instance)
+
+        # Set the global Auth service instance for the dependencies module
+        set_auth_service_instance(auth_service_instance)
+
         # Initialize and start JobCoordinator background tasks
         try:
             await get_coordinator() # Use the get_coordinator from queue_endpoints
@@ -576,7 +562,16 @@ app.add_middleware(
 # Dependency to get the current user
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token") # Define here for use in Depends
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+# NOTE: The get_current_user and get_current_admin_user functions are now defined
+# in Link_Profiler/api/dependencies.py and imported by other routers.
+# We keep them here for the /token and /register endpoints which are directly in main.py.
+# The version in dependencies.py will be used by other routers.
+# This is a slight duplication but necessary to avoid circular imports if main.py
+# were to import get_current_user from dependencies.py at the top level.
+# The `set_auth_service_instance` call in lifespan ensures the dependencies.py
+# version is correctly initialized.
+
+async def get_current_user_for_main(token: str = Depends(oauth2_scheme)) -> User:
     user = await auth_service_instance.get_current_user(token)
     if not user:
         raise HTTPException(
@@ -586,7 +581,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         )
     return user
 
-async def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
+async def get_current_admin_user_for_main(current_user: User = Depends(get_current_user_for_main)) -> User:
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -627,7 +622,7 @@ async def register_user(user_create: UserCreate):
     return UserResponse.from_user(new_user)
 
 @app.get("/users/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user)):
+async def read_users_me(current_user: User = Depends(get_current_user_for_main)):
     return UserResponse.from_user(current_user)
 
 # --- Health and Monitoring Routes ---
@@ -643,14 +638,14 @@ async def metrics():
 
 # --- Core Functionality Routes (Examples) ---
 @app.get("/link_profile/{target_url:path}", response_model=LinkProfileResponse)
-async def get_link_profile(target_url: str, current_user: User = Depends(get_current_user)):
+async def get_link_profile(target_url: str, current_user: User = Depends(get_current_user_for_main)):
     profile = db.get_link_profile(target_url)
     if not profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link profile not found")
     return LinkProfileResponse.from_link_profile(profile)
 
 @app.get("/domain/info/{domain_name}", response_model=DomainResponse)
-async def get_domain_info(domain_name: str, current_user: User = Depends(get_current_user)):
+async def get_domain_info(domain_name: str, current_user: User = Depends(get_current_user_for_main)):
     domain = db.get_domain(domain_name)
     if not domain:
         # Attempt to fetch if not in DB
@@ -663,6 +658,19 @@ async def get_domain_info(domain_name: str, current_user: User = Depends(get_cur
     return DomainResponse.from_domain(domain)
 
 # --- Include API Routers ---
+# Import API Routers here, after dependencies like get_current_user are defined
+from Link_Profiler.api.ai import ai_router
+from Link_Profiler.api.analytics import analytics_router
+from Link_Profiler.api.competitive_analysis import competitive_analysis_router
+from Link_Profiler.api.crawl_audit import crawl_audit_router
+from Link_Profiler.api.link_building import link_building_router
+from Link_Profiler.api.public_jobs import public_jobs_router
+from Link_Profiler.api.reports import reports_router
+from Link_Profiler.api.users import users_router
+from Link_Profiler.api.websocket import websocket_router
+from Link_Profiler.api.mission_control import mission_control_router
+from Link_Profiler.api.queue_endpoints import queue_router # Import queue_router
+
 app.include_router(ai_router)
 app.include_router(analytics_router)
 app.include_router(competitive_analysis_router)
@@ -673,6 +681,7 @@ app.include_router(reports_router)
 app.include_router(users_router)
 app.include_router(websocket_router)
 app.include_router(mission_control_router)
+app.include_router(queue_router) # Include queue_router
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
