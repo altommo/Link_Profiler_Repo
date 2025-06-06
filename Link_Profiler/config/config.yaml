@@ -110,7 +110,7 @@ browser_crawler:
 # External API Integrations
 api_cache:
   enabled: true
-  ttl: 3600 # Default cache TTL for API responses in seconds
+  ttl: 3600 # Default cache TTL in seconds
 
 domain_api:
   abstract_api:
@@ -406,7 +406,9 @@ system:
 # Mission Control Dashboard Settings (New Section)
 mission_control:
   enabled: true # Enable/disable the mission control dashboard features
+  websocket_enabled: true # Enable/disable WebSocket for dashboard updates
   dashboard_refresh_rate: 1000 # Refresh rate for WebSocket data in milliseconds
+  max_websocket_connections: 100 # Maximum number of concurrent WebSocket connections
   cache_ttl: 60 # TTL for cached dashboard data in seconds
   history_retention_days: 30 # How many days of historical data to retain for dashboard charts
 
