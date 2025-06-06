@@ -38,6 +38,8 @@ class DashboardAlertService:
         self.queue_overflow_threshold = config_loader.get("queue_system.max_queue_size", 100000) * 0.8 # 80% of max queue size
         self.api_quota_warning_threshold = 75 # % usage
         self.api_quota_critical_threshold = 90 # % usage
+        self.api_performance_success_rate_threshold = 0.85 # Below this, trigger warning
+        self.api_performance_response_time_threshold_ms = 2000 # Above this, trigger warning
 
         self._active_alerts: Dict[str, DashboardAlert] = {} # Key: alert_type:id, Value: DashboardAlert
 
@@ -58,6 +60,10 @@ class DashboardAlertService:
         # 3. API quota exhaustion warning
         api_quota_alerts = await self._check_api_quotas()
         new_alerts.extend(api_quota_alerts)
+
+        # 4. API performance degradation
+        api_performance_alerts = self._check_api_performance_degradation()
+        new_alerts.extend(api_performance_alerts)
 
         # Update active alerts and Prometheus metrics
         self._update_active_alerts(new_alerts)
@@ -146,11 +152,10 @@ class DashboardAlertService:
     async def _check_api_quotas(self) -> List[DashboardAlert]:
         """Checks API quotas and generates warnings/critical alerts."""
         alerts: List[DashboardAlert] = []
-        # Correct method call: get_api_status returns a dict, not a list
         api_statuses_dict = self.api_quota_manager.get_api_status() 
 
         for api_name, api_status_data in api_statuses_dict.items():
-            percentage_used = api_status_data["percentage_used"] # Assuming percentage_used is calculated in APIQuotaManager.get_api_status()
+            percentage_used = api_status_data["percentage_used"]
             
             alert_id_warning = f"api_quota_warning:{api_name}"
             alert_id_critical = f"api_quota_critical:{api_name}"
@@ -161,8 +166,8 @@ class DashboardAlertService:
                         type="api_quota_exhaustion",
                         severity=AlertSeverity.CRITICAL,
                         message=f"API '{api_name}' quota is CRITICAL ({percentage_used:.2f}% used).",
-                        recommended_action="Investigate usage or upgrade plan.", # Default action
-                        details=api_status_data # Pass the full status data as details
+                        recommended_action="Investigate usage or upgrade plan.",
+                        details=api_status_data
                     )
                     alerts.append(alert)
                     DASHBOARD_ALERTS_TOTAL.labels(alert_type="api_quota_exhaustion", severity=AlertSeverity.CRITICAL.value).inc()
@@ -177,8 +182,8 @@ class DashboardAlertService:
                         type="api_quota_exhaustion",
                         severity=AlertSeverity.WARNING,
                         message=f"API '{api_name}' quota is WARNING ({percentage_used:.2f}% used).",
-                        recommended_action="Monitor usage closely.", # Default action
-                        details=api_status_data # Pass the full status data as details
+                        recommended_action="Monitor usage closely.",
+                        details=api_status_data
                     )
                     alerts.append(alert)
                     DASHBOARD_ALERTS_TOTAL.labels(alert_type="api_quota_exhaustion", severity=AlertSeverity.WARNING.value).inc()
@@ -194,6 +199,62 @@ class DashboardAlertService:
         
         return alerts
 
+    def _check_api_performance_degradation(self) -> List[DashboardAlert]:
+        """Checks API performance metrics and generates alerts for degradation."""
+        alerts: List[DashboardAlert] = []
+        api_statuses_dict = self.api_quota_manager.get_api_status()
+
+        for api_name, api_status_data in api_statuses_dict.items():
+            performance = api_status_data.get("performance", {})
+            success_rate = performance.get("success_rate", 1.0)
+            avg_response_time_ms = performance.get("average_response_time_ms", 0.0)
+            total_calls = performance.get("total_calls", 0)
+
+            # Only alert if there's enough data to make a judgment
+            if total_calls < 10: # Require at least 10 calls to assess performance
+                continue
+
+            alert_id_low_success = f"api_performance_low_success:{api_name}"
+            alert_id_high_response_time = f"api_performance_high_response_time:{api_name}"
+
+            # Check for low success rate
+            if success_rate < self.api_performance_success_rate_threshold:
+                if alert_id_low_success not in self._active_alerts:
+                    alert = DashboardAlert(
+                        type="api_performance_degradation",
+                        severity=AlertSeverity.WARNING,
+                        message=f"API '{api_name}' success rate is low ({success_rate:.2f}).",
+                        recommended_action="Investigate API stability or switch to alternative.",
+                        details=api_status_data
+                    )
+                    alerts.append(alert)
+                    DASHBOARD_ALERTS_TOTAL.labels(alert_type="api_performance_degradation", severity=AlertSeverity.WARNING.value).inc()
+                    self.logger.warning(f"WARNING ALERT: {alert.message}")
+            else:
+                if alert_id_low_success in self._active_alerts:
+                    self.logger.info(f"API '{api_name}' success rate recovered. Clearing alert.")
+                    self._active_alerts.pop(alert_id_low_success)
+
+            # Check for high response time
+            if avg_response_time_ms > self.api_performance_response_time_threshold_ms:
+                if alert_id_high_response_time not in self._active_alerts:
+                    alert = DashboardAlert(
+                        type="api_performance_degradation",
+                        severity=AlertSeverity.WARNING,
+                        message=f"API '{api_name}' average response time is high ({avg_response_time_ms:.0f}ms).",
+                        recommended_action="Investigate API latency or switch to alternative.",
+                        details=api_status_data
+                    )
+                    alerts.append(alert)
+                    DASHBOARD_ALERTS_TOTAL.labels(alert_type="api_performance_degradation", severity=AlertSeverity.WARNING.value).inc()
+                    self.logger.warning(f"WARNING ALERT: {alert.message}")
+            else:
+                if alert_id_high_response_time in self._active_alerts:
+                    self.logger.info(f"API '{api_name}' response time recovered. Clearing alert.")
+                    self._active_alerts.pop(alert_id_high_response_time)
+        
+        return alerts
+
     def _update_active_alerts(self, new_alerts: List[DashboardAlert]):
         """Updates the internal dictionary of active alerts."""
         # Add new alerts
@@ -204,12 +265,14 @@ class DashboardAlertService:
                 alert_key_parts.append(alert.details["satellite_id"])
             elif alert.type == "api_quota_exhaustion" and alert.details and "api_name" in alert.details:
                 alert_key_parts.append(alert.details["api_name"])
+            elif alert.type == "api_performance_degradation" and alert.details and "api_name" in alert.details:
+                alert_key_parts.append(alert.details["api_name"])
             
             alert_key = ":".join(alert_key_parts)
             self._active_alerts[alert_key] = alert
 
         # Remove alerts that are no longer active (not in new_alerts)
-        current_alert_keys = {":".join([a.type] + ([a.details["satellite_id"]] if a.type == "satellite_failure" and a.details and "satellite_id" in a.details else []) + ([a.details["api_name"]] if a.type == "api_quota_exhaustion" and a.details and "api_name" in a.details else [])) for a in new_alerts}
+        current_alert_keys = {":".join([a.type] + ([a.details["satellite_id"]] if a.type == "satellite_failure" and a.details and "satellite_id" in a.details else []) + ([a.details["api_name"]] if a.type == "api_quota_exhaustion" and a.details and "api_name" in a.details else []) + ([a.details["api_name"]] if a.type == "api_performance_degradation" and a.details and "api_name" in a.details else [])) for a in new_alerts}
         keys_to_remove = [key for key in self._active_alerts if key not in current_alert_keys]
         for key in keys_to_remove:
             self.logger.info(f"Clearing alert: {self._active_alerts[key].message}")

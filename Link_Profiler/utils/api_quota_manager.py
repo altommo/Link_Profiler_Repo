@@ -224,8 +224,18 @@ class APIQuotaManager:
             remaining = self.get_remaining_quota(api_name)
             remaining_val = float('inf') if remaining is None else remaining # Higher is better
 
+            # Penalize low success rate and high response time
+            # A success rate below 90% gets a significant penalty
+            # Response times above 1000ms get a penalty
+            performance_penalty = 0
+            if success_rate < 0.9:
+                performance_penalty -= (0.9 - success_rate) * 100000 # Large penalty for low success
+            if avg_response_time > 1000:
+                performance_penalty -= (avg_response_time / 1000) * 1000 # Penalty for slow response
+
             # Sort order: higher quality, higher success rate, higher remaining quota, lower response time
-            return (quality, success_rate, remaining_val, -avg_response_time)
+            # Incorporate performance_penalty into the overall score
+            return (quality * 1000000 + success_rate * 100000 + remaining_val - avg_response_time + performance_penalty)
 
         sorted_apis = sorted(available_apis, key=sort_key, reverse=True)
         return sorted_apis[0] if sorted_apis else None
@@ -251,13 +261,31 @@ class APIQuotaManager:
             
             # Predictive exhaustion: prioritize APIs that are NOT predicted to run out soon
             predicted_exhaustion = self.predict_exhaustion_date(api_name)
-            # Assign a penalty if predicted to exhaust within, say, 7 days
+            
+            # Dynamic exhaustion penalty: more severe as exhaustion date gets closer
             exhaustion_penalty = 0
-            if predicted_exhaustion and predicted_exhaustion < datetime.now() + timedelta(days=7):
-                exhaustion_penalty = -1000000 # Large penalty to deprioritize
+            if predicted_exhaustion:
+                time_to_exhaustion = (predicted_exhaustion - datetime.now()).total_seconds()
+                if time_to_exhaustion < 0: # Already exhausted
+                    exhaustion_penalty = -float('inf')
+                elif time_to_exhaustion < timedelta(days=1).total_seconds(): # Less than 1 day
+                    exhaustion_penalty = -1000000
+                elif time_to_exhaustion < timedelta(days=7).total_seconds(): # Less than 7 days
+                    exhaustion_penalty = -100000
+                elif time_to_exhaustion < timedelta(days=30).total_seconds(): # Less than 30 days
+                    exhaustion_penalty = -10000
+
+            # Penalize low success rate and high response time
+            performance_penalty = 0
+            if success_rate < 0.9:
+                performance_penalty -= (0.9 - success_rate) * 50000 # Penalty for low success
+            if avg_response_time > 1000:
+                performance_penalty -= (avg_response_time / 1000) * 500 # Penalty for slow response
 
             # Sort order: higher remaining quota, lower cost, higher success rate, lower response time, avoid early exhaustion
-            return (remaining_val + exhaustion_penalty, -cost_per_unit, success_rate, -avg_response_time)
+            # Combine all factors into a single score
+            score = remaining_val - (cost_per_unit * 1000) + (success_rate * 1000) - (avg_response_time / 10) + exhaustion_penalty + performance_penalty
+            return score
 
         sorted_apis = sorted(available_apis, key=sort_key, reverse=True)
         return sorted_apis[0] if sorted_apis else None
