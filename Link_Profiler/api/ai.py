@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 # Import globally initialized instances from main.py
 try:
-    from Link_Profiler.main import logger, ai_service_instance
+    import logging
+logger = logging.getLogger(__name__)
 except ImportError:
     logger = logging.getLogger(__name__)
     logging.basicConfig(level=logging.INFO)

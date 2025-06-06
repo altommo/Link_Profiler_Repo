@@ -728,3 +728,13 @@ class SEOMetricsResponse(BaseModel): # New Pydantic model for SEOMetrics
         metrics_dict = metrics.to_dict() # Use to_dict() method
         # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**metrics_dict)
+
+class QueueCrawlRequest(BaseModel):
+    """Request model for queue-based crawl jobs"""
+    target_url: str
+    crawl_type: str = "backlink_discovery"
+    max_depth: int = 3
+    max_pages: int = 1000
+    priority: str = "normal"
+    config: Optional[Dict[str, Any]] = None
+    initial_seed_urls: Optional[List[str]] = None

@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends
 from typing import Annotated
 
 # Import the globally initialized logger from main.py
-from Link_Profiler.main import logger
+import logging
+logger = logging.getLogger(__name__)
 
 # Import Pydantic models from the shared schemas file
 from Link_Profiler.api.schemas import UserResponse
