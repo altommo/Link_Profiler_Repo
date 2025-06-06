@@ -1,6 +1,7 @@
 import logging
 from typing import Dict, Any, Optional, Callable, Awaitable
 import asyncio
+import time # Import time
 
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager
 from Link_Profiler.clients.base_client import BaseAPIClient # Assuming BaseAPIClient is the base for all specific API clients
