@@ -200,7 +200,7 @@ class SEOMetrics:
             'has_robots_meta': 0.05,
             'has_schema_markup': 0.05,
             'broken_links': -0.1, # Penalty
-            'ai_content_score': 0.1 # AI content score contribution
+            'ai_content_score': 0.1
         }
         
         score = 0.0
@@ -527,6 +527,7 @@ class CrawlJob:
     scheduled_at: Optional[datetime] = None # Added scheduled_at
     cron_schedule: Optional[str] = None # Added cron_schedule
     anomalies_detected: List[str] = field(default_factory=list) # New: List of detected anomalies for the job
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def add_error(self, url: str, error_type: str, message: str, details: Optional[str] = None, severity: AlertSeverity = AlertSeverity.WARNING) -> None:
         error = CrawlError(url=url, error_type=error_type, message=message, details=details, severity=severity)
@@ -549,6 +550,8 @@ class CrawlJob:
             data['errors'] = [CrawlError.from_dict(e) for e in data['errors']]
         if 'scheduled_at' in data and isinstance(data['scheduled_at'], str):
             data['scheduled_at'] = datetime.fromisoformat(data['scheduled_at'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass 
