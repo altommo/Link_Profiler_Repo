@@ -266,7 +266,8 @@ class Database:
             DB_OPERATIONS_TOTAL.labels(operation_type=operation_type, table_name=table_name, status='unexpected_error').inc()
             raise
         finally:
-            session.remove()
+            # Corrected: Call remove() on the scoped_session factory, not the session instance
+            self.Session.remove()
             duration = (datetime.now() - start_time).total_seconds()
             DB_QUERY_DURATION_SECONDS.labels(query_type=operation_type, table_name=table_name).observe(duration)
 
