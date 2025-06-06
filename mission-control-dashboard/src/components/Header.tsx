@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom'; // Import Link from react-router-dom
 
 const Header: React.FC = () => {
   return (
@@ -8,12 +9,11 @@ const Header: React.FC = () => {
         <h1 className="text-2xl font-bold ml-3">Link Profiler Mission Control</h1>
       </div>
       <nav>
-        {/* Navigation links can go here */}
         <ul className="flex space-x-4">
-          <li><a href="#" className="hover:text-nasa-amber transition-colors">Overview</a></li>
-          <li><a href="#" className="hover:text-nasa-amber transition-colors">Jobs</a></li>
-          <li><a href="#" className="hover:text-nasa-amber transition-colors">Alerts</a></li>
-          <li><a href="#" className="hover:text-nasa-amber transition-colors">Settings</a></li>
+          <li><Link to="/overview" className="hover:text-nasa-amber transition-colors">Overview</Link></li>
+          <li><Link to="/jobs" className="hover:text-nasa-amber transition-colors">Jobs</Link></li>
+          <li><Link to="/alerts" className="hover:text-nasa-amber transition-colors">Alerts</Link></li>
+          <li><Link to="/settings" className="hover:text-nasa-amber transition-colors">Settings</Link></li>
         </ul>
       </nav>
     </header>
