@@ -85,6 +85,7 @@ LOG_LEVEL = config_loader.get("logging.level")
 API_CACHE_ENABLED = config_loader.get("api_cache.enabled")
 API_CACHE_TTL = config_loader.get("api_cache.ttl")
 
+
 # Initialize core dependencies that other modules might import
 # db = Database(db_url=DATABASE_URL) # Database singleton is already initialized via db = Database()
 # auth_service_instance = AuthService(db) # AuthService singleton is already initialized via auth_service_instance = AuthService()
@@ -124,7 +125,7 @@ from Link_Profiler.services.serp_service import SERPService # Removed specific A
 from Link_Profiler.services.keyword_service import KeywordService # Removed specific APIClient imports
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.ai_service import AIService
-from Link_Profiler.services.alert_service import AlertService
+from Link_Profiler.services.alert_service import AlertService, alert_service_instance # Import AlertService and its singleton
 from Link_Profiler.services.report_service import ReportService
 from Link_Profiler.services.competitive_analysis_service import CompetitiveAnalysisService
 from Link_Profiler.services.social_media_service import SocialMediaService
@@ -135,7 +136,7 @@ from Link_Profiler.crawlers.serp_crawler import SERPCrawler
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper
 from Link_Profiler.crawlers.technical_auditor import TechnicalAuditor
 from Link_Profiler.crawlers.social_media_crawler import SocialMediaCrawler
-from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob
+from Link_Profiler.core.models import CrawlConfig, CrawlJob, LinkProfile, Backlink, serialize_model, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, LinkIntersectResult, CompetitiveKeywordAnalysisResult, AlertRule, AlertSeverity, AlertChannel, User, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, SatellitePerformanceLog # New: Import SatellitePerformanceLog
 from Link_Profiler.monitoring.prometheus_metrics import (
     API_REQUESTS_TOTAL, API_REQUEST_DURATION_SECONDS, get_metrics_text, # Re-added for middleware
     JOBS_CREATED_TOTAL, JOBS_IN_PROGRESS, JOBS_PENDING, JOBS_COMPLETED_SUCCESS_TOTAL, JOBS_FAILED_TOTAL
@@ -151,6 +152,14 @@ from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue, Prio
 # New: Import DistributedResilienceManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
 
+# New: Import API Quota Manager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager, api_quota_manager # Import both class and singleton
+
+# New: Import Dashboard Alert Service
+from Link_Profiler.services.dashboard_alert_service import DashboardAlertService, dashboard_alert_service # Import both class and singleton
+
+# New: Import Mission Control Service
+from Link_Profiler.services.mission_control_service import MissionControlService, mission_control_service # Import both class and singleton
 
 # New: Import API Clients
 from Link_Profiler.clients.google_search_console_client import GoogleSearchConsoleClient # Renamed GSCClient to GoogleSearchConsoleClient
@@ -284,9 +293,6 @@ technical_auditor_instance = TechnicalAuditor(
 # New: Initialize AI Service
 ai_service_instance = AIService(session_manager=session_manager)
 
-# New: Initialize Alert Service
-alert_service_instance = AlertService(db, connection_manager)
-
 # New: Initialize Report Service
 report_service_instance = ReportService(db)
 
@@ -385,6 +391,23 @@ main_crawl_config = CrawlConfig(**crawler_config_data)
 # Create SmartCrawlQueue instance
 smart_crawl_queue = SmartCrawlQueue(redis_client=redis_client)
 
+# Initialize APIQuotaManager
+api_quota_manager = APIQuotaManager(config_loader._config_data) # Pass the raw config data for initialization
+
+# Initialize DashboardAlertService
+dashboard_alert_service = DashboardAlertService(
+    db=db,
+    redis_client=redis_client, # Pass the redis_client singleton
+    api_quota_manager=api_quota_manager # Pass the api_quota_manager singleton
+)
+
+# Initialize MissionControlService
+mission_control_service = MissionControlService(
+    smart_crawl_queue=smart_crawl_queue,
+    api_quota_manager=api_quota_manager,
+    dashboard_alert_service=dashboard_alert_service
+)
+
 # Create WebCrawler instance, passing the SmartCrawlQueue
 main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, browser=playwright_browser_instance, resilience_manager=distributed_resilience_manager, session_manager=session_manager) # Changed to EnhancedWebCrawler
 # --- End New Instantiation ---
@@ -396,54 +419,48 @@ async def lifespan(app: FastAPI):
     Context manager for managing the lifespan of the FastAPI application.
     Ensures resources like aiohttp sessions are properly opened and closed.
     """
-    # Use the shared ConnectionManager instance for WebSocket communication
-
     context_managers = [
-        session_manager, # New: Add SessionManager to lifespan
+        session_manager,
         domain_service_instance,
         ai_service_instance,
-        api_cache, # Initialize API cache
-        auth_service_instance, # New: Add AuthService to lifespan
+        api_cache,
+        auth_service_instance,
         connection_manager,
-        # The following services are initialized with dependencies that might not be ready yet
-        # or are managed by their own internal lifecycles.
-        # They should be initialized within the lifespan if they need async setup/teardown.
-        # For now, we'll assume their __aenter__/__aexit__ are robust enough.
+        api_quota_manager,
+        dashboard_alert_service, # Add DashboardAlertService to lifespan
+        mission_control_service, # Add MissionControlService to lifespan
         backlink_service_instance,
         serp_service_instance,
         keyword_service_instance,
         link_health_service_instance,
         technical_auditor_instance,
-        alert_service_instance, # New: Add AlertService to lifespan
-        report_service_instance, # New: Add ReportService to lifespan
-        competitive_analysis_service_instance, # New: Add CompetitiveAnalysisService to lifespan
-        social_media_service_instance, # New: Add SocialMediaService
-        web3_service_instance, # New: Add Web3Service
-        link_building_service_instance, # New: Add LinkBuildingService
-        gsc_client_instance, # New: Add GSCClient to lifespan
-        pagespeed_client_instance, # New: Add PageSpeedClient to lifespan
-        google_trends_client_instance, # New: Add GoogleTrendsClient to lifespan
-        whois_client_instance, # New: Add WHOISClient to lifespan
-        dns_client_instance, # New: Add DNSClient to lifespan
-        reddit_client_instance, # New: Add RedditClient
-        youtube_client_instance, # New: Add YouTubeClient
-        news_api_client_instance, # New: Add NewsAPIClient
-        main_web_crawler, # Add the main_web_crawler to the lifespan context
-        distributed_resilience_manager # New: Add DistributedResilienceManager to lifespan
+        alert_service_instance,
+        report_service_instance,
+        competitive_analysis_service_instance,
+        social_media_service_instance,
+        web3_service_instance,
+        link_building_service_instance,
+        gsc_client_instance,
+        pagespeed_client_instance,
+        google_trends_client_instance,
+        whois_client_instance,
+        dns_client_instance,
+        reddit_client_instance,
+        youtube_client_instance,
+        news_api_client_instance,
+        main_web_crawler,
+        distributed_resilience_manager
     ]
 
-    # Conditionally add ClickHouseLoader to context managers
     if clickhouse_loader_instance:
         context_managers.append(clickhouse_loader_instance)
-    # Add Playwright and KeywordScraper contexts if they are enabled
     if serp_crawler_instance:
         context_managers.append(serp_crawler_instance)
     if keyword_scraper_instance:
         context_managers.append(keyword_scraper_instance)
-    if social_media_crawler_instance: # New: Add SocialMediaCrawler
+    if social_media_crawler_instance:
         context_managers.append(social_media_crawler_instance)
 
-    # New: Conditionally launch global Playwright browser for WebCrawler
     global playwright_browser_instance
     if config_loader.get("browser_crawler.enabled", False):
         browser_type = config_loader.get("browser_crawler.browser_type", "chromium")
@@ -459,7 +476,6 @@ async def lifespan(app: FastAPI):
         else:
             raise ValueError(f"Unsupported browser type for global browser crawler: {browser_type}")
         
-        # Pass this instance to crawl_service_for_lifespan
         crawl_service_for_lifespan.playwright_browser = playwright_browser_instance
         logger.info("Global Playwright browser launched and assigned to CrawlService.")
     else:
@@ -470,24 +486,18 @@ async def lifespan(app: FastAPI):
     try:
         for cm in context_managers:
             logger.info(f"Application startup: Entering {cm.__class__.__name__} context.")
-            # Call __aenter__ and store the result (which is usually 'self' for context managers)
             entered_contexts.append(await cm.__aenter__())
         
         logger.info("Application startup: Pinging Redis.")
-        # The global redis_client is already defined at the top level.
-        if redis_client: # Only try to ping if client was initialized
+        if redis_client:
             try:
                 await redis_client.ping()
                 logger.info("Redis connection successful.")
             except Exception as e:
                 logger.error(f"Failed to connect to Redis: {e}")
-                # Do not set redis_client to None here, as it's a global variable
-                # and might be used by other services. Let the service handle its own
-                # connection status.
         else:
             logger.warning("Redis client not initialized. Skipping Redis ping.")
         
-        # Set dependencies for queue_endpoints before getting coordinator
         set_coordinator_dependencies(
             redis_client=redis_client,
             config_loader=config_loader,
@@ -496,37 +506,28 @@ async def lifespan(app: FastAPI):
             connection_manager=connection_manager
         )
 
-        # Initialize and start JobCoordinator background tasks
         try:
-            await get_coordinator() # Use the get_coordinator from queue_endpoints
+            await get_coordinator()
             logger.info("JobCoordinator successfully initialized and background tasks started via get_coordinator.")
         except Exception as e:
             logger.error(f"Failed to initialize JobCoordinator during lifespan startup: {e}", exc_info=True)
-            # Depending on criticality, you might want to raise an exception here
-            # to prevent the app from starting if the queue system is essential.
-            # For now, we'll just log and continue.
 
-        # Start alert rule refreshing in background
         asyncio.create_task(alert_service_instance.refresh_rules())
 
-        yield # This is the single yield point for the lifespan
+        yield
 
     finally:
-        # Exit contexts in reverse order of entry
         for cm in reversed(entered_contexts):
             logger.info(f"Application shutdown: Exiting {cm.__class__.__name__} context.")
-            # Pass None, None, None for exc_type, exc_val, exc_tb as we're handling exceptions outside
             await cm.__aexit__(None, None, None)
         
-        # New: Close global Playwright browser if it was launched
         if playwright_browser_instance:
             logger.info("Application shutdown: Closing global Playwright browser.")
             await playwright_browser_instance.close()
-            # Also stop the playwright_instance itself
             if 'playwright_instance' in locals() and playwright_instance:
                 await playwright_instance.stop()
 
-        if redis_pool: # Only try to disconnect if pool was created
+        if redis_pool:
             logger.info("Application shutdown: Closing Redis connection pool.")
             await redis_pool.disconnect()
 
@@ -535,34 +536,26 @@ app = FastAPI(
     title="Link Profiler API",
     description="API for comprehensive link profiling, SEO analysis, and domain intelligence.",
     version=config_loader.get("system.current_code_version", "0.1.0"),
-    lifespan=lifespan # Register the lifespan context manager
+    lifespan=lifespan
 )
 
-# Initialize Jinja2Templates (moved up to ensure it's defined before routes use it)
-# Dashboard templates moved to project root under 'admin-management-console'
 templates = Jinja2Templates(directory=os.path.join(project_root, "admin-management-console"))
 
-# --- Static Files ---
-# Mount the 'static' directory to serve CSS and JS files
 app.mount(
     "/static",
     StaticFiles(directory=os.path.join(project_root, "admin-management-console", "static")),
     name="static",
 )
 
-# --- CORS Middleware ---
-# New: Add CORSMiddleware to allow cross-origin requests from the monitoring dashboard
-# Configure allowed origins based on your deployment.
-# For production, replace "*" with your actual dashboard domain (e.g., "https://monitor.yspanel.com")
 origins = [
-    "https://monitor.yspanel.com",  # Your monitoring dashboard domain
-    "https://api.yspanel.com",     # Your main API domain
-    "https://linkprofiler.yspanel.com",  # Alternative domain
-    "https://yspanel.com",         # Main domain
-    "https://www.yspanel.com",     # WWW domain
-    "http://localhost:8001",       # For local testing
-    "http://localhost:8000",       # For local testing
-    "null"                         # For file:// protocol testing
+    "https://monitor.yspanel.com",
+    "https://api.yspanel.com",
+    "https://linkprofiler.yspanel.com",
+    "https://yspanel.com",
+    "https://www.yspanel.com",
+    "http://localhost:8001",
+    "http://localhost:8000",
+    "null"
 ]
 
 app.add_middleware(
@@ -573,8 +566,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
 
-# Dependency to get the current user
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token") # Define here for use in Depends
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     user = await auth_service_instance.get_current_user(token)
@@ -594,7 +586,6 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
         )
     return current_user
 
-# --- Authentication Routes ---
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     user = await auth_service_instance.authenticate_user(form_data.username, form_data.password)
@@ -630,18 +621,15 @@ async def register_user(user_create: UserCreate):
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return UserResponse.from_user(current_user)
 
-# --- Health and Monitoring Routes ---
 @app.get("/health")
 async def health_check():
     db_status = db.ping()
-    # Add other service health checks here
     return {"status": "ok", "database_connected": db_status}
 
 @app.get("/metrics")
 async def metrics():
     return HTMLResponse(content=get_metrics_text(), media_type="text/plain")
 
-# --- Core Functionality Routes (Examples) ---
 @app.get("/link_profile/{target_url:path}", response_model=LinkProfileResponse)
 async def get_link_profile(target_url: str, current_user: User = Depends(get_current_user)):
     profile = db.get_link_profile(target_url)
@@ -653,16 +641,14 @@ async def get_link_profile(target_url: str, current_user: User = Depends(get_cur
 async def get_domain_info(domain_name: str, current_user: User = Depends(get_current_user)):
     domain = db.get_domain(domain_name)
     if not domain:
-        # Attempt to fetch if not in DB
         async with domain_service_instance as ds:
             domain = await ds.get_domain_info(domain_name)
             if domain:
-                db.save_domain(domain) # Save newly fetched domain
+                db.save_domain(domain)
             else:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Domain info not found")
     return DomainResponse.from_domain(domain)
 
-# --- Include API Routers ---
 app.include_router(ai_router)
 app.include_router(analytics_router)
 app.include_router(competitive_analysis_router)

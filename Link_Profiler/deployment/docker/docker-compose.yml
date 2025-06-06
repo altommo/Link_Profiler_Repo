@@ -43,29 +43,47 @@ services:
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/link_profiler_db
       - DEAD_LETTER_QUEUE_NAME=dead_letter_queue # Pass dead letter queue name
+      # Mission Control Dashboard Settings
+      - LP_MISSION_CONTROL_ENABLED=true
+      - LP_WEBSOCKET_ENABLED=true
+      - LP_DASHBOARD_REFRESH_RATE=1000 # milliseconds
+      - LP_MAX_WEBSOCKET_CONNECTIONS=100
+      - LP_MISSION_CONTROL_CACHE_TTL=60 # seconds
+      - LP_DASHBOARD_HISTORY_RETENTION=30 # days
       # LP_AUTH_SECRET_KEY is loaded from config.yaml by default, but can be overridden by env var
       # - LP_AUTH_SECRET_KEY=your_generated_auth_secret_key_here 
       # Optional API Keys (uncomment and set as needed)
-      # - ABSTRACT_API_KEY=your_abstract_api_key_here
-      # - USE_ABSTRACT_API=false
-      # - USE_OPENLINKPROFILER_API=false
-      # - USE_GSC_API=false
-      # - REAL_BACKLINK_API_KEY=your_real_backlink_api_key
-      # - USE_REAL_BACKLINK_API=false
-      # - REAL_SERP_API_KEY=your_real_serp_api_key
-      # - USE_REAL_SERP_API=false
-      # - USE_PLAYWRIGHT_SERP_CRAWLER=false
-      # - PLAYWRIGHT_HEADLESS=true
-      # - PLAYWRIGHT_BROWSER_TYPE=chromium
-      # - REAL_KEYWORD_API_KEY=your_real_keyword_api_key
-      # - USE_REAL_KEYWORD_API=false
-      # - USE_KEYWORD_SCRAPER=false
-      # - LIGHTHOUSE_PATH=lighthouse # Default path, change if Lighthouse is installed elsewhere
-      # - USE_CLICKHOUSE=false
-      # - CLICKHOUSE_HOST=clickhouse
-      # - CLICKHOUSE_PORT=9000
-      # - CLICKHOUSE_USER=default
-      # - CLICKHOUSE_PASSWORD=
+      # - LP_ABSTRACT_API_KEY=your_abstract_api_key_here
+      # - LP_USE_ABSTRACT_API=false
+      # - LP_USE_OPENLINKPROFILER_API=false
+      # - LP_USE_GSC_API=false
+      # - LP_REAL_BACKLINK_API_KEY=your_real_backlink_api_key
+      # - LP_USE_REAL_BACKLINK_API=false
+      # - LP_REAL_SERP_API_KEY=your_real_serp_api_key
+      # - LP_USE_REAL_SERP_API=false
+      # - LP_USE_PLAYWRIGHT_SERP_CRAWLER=false
+      # - LP_PLAYWRIGHT_HEADLESS=true
+      # - LP_PLAYWRIGHT_BROWSER_TYPE=chromium
+      # - LP_REAL_KEYWORD_API_KEY=your_real_keyword_api_key
+      # - LP_USE_REAL_KEYWORD_API=false
+      # - LP_USE_KEYWORD_SCRAPER=false
+      # - LP_LIGHTHOUSE_PATH=lighthouse # Default path, change if Lighthouse is installed elsewhere
+      # - LP_USE_CLICKHOUSE=false
+      # - LP_CLICKHOUSE_HOST=clickhouse
+      # - LP_CLICKHOUSE_PORT=9000
+      # - LP_CLICKHOUSE_USER=default
+      # - LP_CLICKHOUSE_PASSWORD=
+      # New API Keys for Free Tier APIs (for APIQuotaManager)
+      # - LP_SERPSTACK_API_KEY=your_serpstack_key
+      # - LP_VALUESERP_API_KEY=your_valueserp_key
+      # - LP_WEBSCRAPING_AI_API_KEY=your_webscraping_ai_key
+      # - LP_HUNTER_IO_API_KEY=your_hunter_io_key
+      # - LP_BUILTWITH_API_KEY=your_builtwith_key
+      # - LP_CLEARBIT_API_KEY=your_clearbit_key
+      # - LP_SECURITYTRAILS_API_KEY=your_securitytrails_key
+      # Alerting
+      # - LP_ALERT_SLACK_WEBHOOK=https://hooks.slack.com/your-webhook
+      # - LP_ALERT_EMAIL_RECIPIENTS=admin@yourcompany.com
     depends_on:
       redis:
         condition: service_healthy
@@ -92,34 +110,13 @@ services:
   # Satellite crawler instances
   satellite-1:
     build:
-      context: ../.. # Build from project root
+      context: ../..
       dockerfile: Link_Profiler/deployment/docker/Dockerfile.satellite
     environment:
       - REDIS_URL=redis://redis:6379
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/link_profiler_db # Satellites also need DB access
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/link_profiler_db
       - CRAWLER_ID=satellite-us-east-1
       - REGION=us-east-1
-      # Pass through API keys needed by CrawlService within satellites
-      # - ABSTRACT_API_KEY=your_abstract_api_key_here
-      # - USE_ABSTRACT_API=false
-      # - USE_OPENLINKPROFILER_API=false
-      # - USE_GSC_API=false
-      # - REAL_BACKLINK_API_KEY=your_real_backlink_api_key
-      # - USE_REAL_BACKLINK_API=false
-      # - REAL_SERP_API_KEY=your_real_serp_api_key
-      # - USE_REAL_SERP_API=false
-      # - USE_PLAYWRIGHT_SERP_CRAWLER=false
-      # - PLAYWRIGHT_HEADLESS=true
-      # - PLAYWRIGHT_BROWSER_TYPE=chromium
-      # - REAL_KEYWORD_API_KEY=your_real_keyword_api_key
-      # - USE_REAL_KEYWORD_API=false
-      # - USE_KEYWORD_SCRAPER=false
-      # - LIGHTHOUSE_PATH=lighthouse
-      # - USE_CLICKHOUSE=false
-      # - CLICKHOUSE_HOST=clickhouse
-      # - CLICKHOUSE_PORT=9000
-      # - CLICKHOUSE_USER=default
-      # - CLICKHOUSE_PASSWORD=
     depends_on:
       - redis
       - postgres
@@ -151,6 +148,39 @@ services:
     depends_on:
       - redis
       - postgres
+    restart: unless-stopped
+
+  # New: Mission Control Dashboard Frontend
+  mission-control:
+    build:
+      context: ./mission-control-dashboard # Build from the mission-control-dashboard directory
+    ports:
+      - "3000:3000" # React dev server port
+    environment:
+      # VITE_REACT_APP_API_URL should point to the Nginx service's external URL
+      # VITE_REACT_APP_WS_URL should point to the Nginx service's external WS URL
+      # In Docker Compose, this means pointing to the Nginx service name
+      - VITE_REACT_APP_API_URL=http://nginx # Points to Nginx service
+      - VITE_REACT_APP_WS_URL=ws://nginx/ws # Points to Nginx service for WebSockets
+    depends_on:
+      - coordinator # Depends on the FastAPI backend
+      - nginx # Depends on Nginx for proxying
+    volumes:
+      - ./mission-control-dashboard:/app # Mount the dashboard source
+      - /app/node_modules # Exclude node_modules from host mount to prevent issues
+    command: npm run dev # Start the React development server
+
+  # New: Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443" # If you plan to use HTTPS
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro # Mount the Nginx config
+      # - ./ssl:/etc/nginx/ssl:ro # Uncomment for SSL certificates
+    depends_on:
+      - coordinator # Nginx needs the coordinator to be up
     restart: unless-stopped
 
 volumes:

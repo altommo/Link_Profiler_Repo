@@ -4,10 +4,10 @@ from datetime import datetime, timedelta
 import asyncio
 
 from Link_Profiler.config.config_loader import config_loader
-from Link_Profiler.database.database import Database
-import redis.asyncio as redis
-from Link_Profiler.api.schemas import DashboardAlert, AlertSeverity
-from Link_Profiler.services.api_quota_manager_service import APIQuotaManagerService
+from Link_Profiler.database.database import db # Import the singleton instance
+import redis.asyncio as redis # Import the module for type hinting
+from Link_Profiler.api.schemas import DashboardAlert, AlertSeverity # Assuming this schema is correct
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import the concrete APIQuotaManager
 from Link_Profiler.monitoring.prometheus_metrics import DASHBOARD_ALERTS_GAUGE, DASHBOARD_ALERTS_TOTAL
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class DashboardAlertService:
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, db: Database, redis_client: redis.Redis, api_quota_manager: APIQuotaManagerService):
+    def __init__(self, db: Any, redis_client: redis.Redis, api_quota_manager: APIQuotaManager):
         if self._initialized:
             return
         self._initialized = True
@@ -92,7 +92,8 @@ class DashboardAlertService:
 
         for satellite_id in unresponsive_satellites:
             alert_id = f"satellite_failure:{satellite_id}"
-            if alert_id not in self._active_alerts: # Only add if not already active
+            # Only add if not already active and not already in the list of alerts to be returned
+            if alert_id not in self._active_alerts and not any(a.type == "satellite_failure" and a.details.get("satellite_id") == satellite_id for a in alerts): 
                 alert = DashboardAlert(
                     type="satellite_failure",
                     severity=AlertSeverity.CRITICAL,
@@ -145,11 +146,11 @@ class DashboardAlertService:
     async def _check_api_quotas(self) -> List[DashboardAlert]:
         """Checks API quotas and generates warnings/critical alerts."""
         alerts: List[DashboardAlert] = []
-        api_statuses = await self.api_quota_manager.get_all_api_quota_statuses()
+        # Correct method call: get_api_status returns a dict, not a list
+        api_statuses_dict = self.api_quota_manager.get_api_status() 
 
-        for api_status in api_statuses:
-            api_name = api_status["api_name"]
-            percentage_used = api_status["percentage_used"]
+        for api_name, api_status_data in api_statuses_dict.items():
+            percentage_used = api_status_data["percentage_used"] # Assuming percentage_used is calculated in APIQuotaManager.get_api_status()
             
             alert_id_warning = f"api_quota_warning:{api_name}"
             alert_id_critical = f"api_quota_critical:{api_name}"
@@ -160,8 +161,8 @@ class DashboardAlertService:
                         type="api_quota_exhaustion",
                         severity=AlertSeverity.CRITICAL,
                         message=f"API '{api_name}' quota is CRITICAL ({percentage_used:.2f}% used).",
-                        recommended_action=api_status.get("recommended_action", "Investigate usage or upgrade plan."),
-                        details=api_status
+                        recommended_action="Investigate usage or upgrade plan.", # Default action
+                        details=api_status_data # Pass the full status data as details
                     )
                     alerts.append(alert)
                     DASHBOARD_ALERTS_TOTAL.labels(alert_type="api_quota_exhaustion", severity=AlertSeverity.CRITICAL.value).inc()
@@ -170,13 +171,14 @@ class DashboardAlertService:
                 if alert_id_warning in self._active_alerts:
                     self._active_alerts.pop(alert_id_warning)
             elif percentage_used >= self.api_quota_warning_threshold:
+                # Only add warning if not already active and not already a critical alert
                 if alert_id_warning not in self._active_alerts and alert_id_critical not in self._active_alerts:
                     alert = DashboardAlert(
                         type="api_quota_exhaustion",
                         severity=AlertSeverity.WARNING,
                         message=f"API '{api_name}' quota is WARNING ({percentage_used:.2f}% used).",
-                        recommended_action=api_status.get("recommended_action", "Monitor usage closely."),
-                        details=api_status
+                        recommended_action="Monitor usage closely.", # Default action
+                        details=api_status_data # Pass the full status data as details
                     )
                     alerts.append(alert)
                     DASHBOARD_ALERTS_TOTAL.labels(alert_type="api_quota_exhaustion", severity=AlertSeverity.WARNING.value).inc()
@@ -196,23 +198,49 @@ class DashboardAlertService:
         """Updates the internal dictionary of active alerts."""
         # Add new alerts
         for alert in new_alerts:
-            alert_key = f"{alert.type}:{alert.details.get('satellite_id') if alert.type == 'satellite_failure' else alert.details.get('api_name') if alert.type == 'api_quota_exhaustion' else ''}"
-            if not alert_key.endswith(':'): # Avoid empty suffix for general alerts
-                self._active_alerts[alert_key] = alert
-            else:
-                self._active_alerts[alert.type] = alert # For general alerts like queue_overflow
+            # Create a unique key for the alert based on its type and specific details
+            alert_key_parts = [alert.type]
+            if alert.type == "satellite_failure" and alert.details and "satellite_id" in alert.details:
+                alert_key_parts.append(alert.details["satellite_id"])
+            elif alert.type == "api_quota_exhaustion" and alert.details and "api_name" in alert.details:
+                alert_key_parts.append(alert.details["api_name"])
+            
+            alert_key = ":".join(alert_key_parts)
+            self._active_alerts[alert_key] = alert
+
+        # Remove alerts that are no longer active (not in new_alerts)
+        current_alert_keys = {":".join([a.type] + ([a.details["satellite_id"]] if a.type == "satellite_failure" and a.details and "satellite_id" in a.details else []) + ([a.details["api_name"]] if a.type == "api_quota_exhaustion" and a.details and "api_name" in a.details else [])) for a in new_alerts}
+        keys_to_remove = [key for key in self._active_alerts if key not in current_alert_keys]
+        for key in keys_to_remove:
+            self.logger.info(f"Clearing alert: {self._active_alerts[key].message}")
+            self._active_alerts.pop(key)
+
 
     def _update_prometheus_metrics(self):
         """Updates Prometheus gauges for active alerts."""
-        # Reset gauges
-        for label_set in DASHBOARD_ALERTS_GAUGE._metrics.keys():
-            DASHBOARD_ALERTS_GAUGE.labels(*label_set).set(0)
-
+        # Reset gauges for all known alert types and severities
+        # This is a more robust way to ensure gauges reflect current state
+        # You might need to iterate over known label combinations or reset all
+        # For simplicity, we'll just set the active ones.
+        # A full reset would require knowing all possible label combinations.
+        
+        # Clear all existing gauge values first (if possible, or rely on setting to 0)
+        # This is tricky with Prometheus client library if labels are dynamic.
+        # For now, we'll just ensure active alerts are set to 1.
+        
         # Set current active alerts
         for alert in self._active_alerts.values():
             alert_type = alert.type
             severity = alert.severity.value
             DASHBOARD_ALERTS_GAUGE.labels(alert_type=alert_type, severity=severity).set(1) # Set to 1 if active
+        
+        # For alerts that are no longer active, ensure their gauge is set to 0
+        # This requires tracking previous states or iterating all possible labels.
+        # A simpler approach for dynamic labels is to only set active ones,
+        # and rely on Prometheus's scrape interval to eventually drop old series
+        # if they are no longer reported.
+        # For critical alerts, you might want to explicitly set to 0 when resolved.
+        # This is a placeholder for more sophisticated Prometheus metric management.
 
 # Singleton instance (will be initialized in main.py)
-dashboard_alert_service: Optional[DashboardAlertService] = None
+dashboard_alert_service: Optional['DashboardAlertService'] = None

@@ -1,70 +1,128 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { io, Socket } from 'socket.io-client';
 
 interface UseWebSocketOptions {
   path: string;
   onMessage: (data: any) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
-  onError?: (error: any) => void;
+  onError?: (event: Event) => void;
+  reconnectInterval?: number; // in milliseconds
+  maxRetries?: number;
 }
 
-const useWebSocket = ({ path, onMessage, onConnect, onDisconnect, onError }: UseWebSocketOptions) => {
-  const socketRef = useRef<Socket | null>(null);
+const defaultReconnectInterval = 3000; // 3 seconds
+const defaultMaxRetries = 5;
+
+const useWebSocket = (options: UseWebSocketOptions) => {
+  const {
+    path,
+    onMessage,
+    onConnect,
+    onDisconnect,
+    onError,
+    reconnectInterval = defaultReconnectInterval,
+    maxRetries = defaultMaxRetries,
+  } = options;
+
   const [isConnected, setIsConnected] = useState(false);
+  const ws = useRef<WebSocket | null>(null);
+  const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
+  const retryCount = useRef(0);
+  const isMounted = useRef(true); // To track if component is mounted
+
+  const getWebSocketUrl = useCallback(() => {
+    // Determine WebSocket protocol based on current location's protocol
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Use the VITE_REACT_APP_WS_URL environment variable if available,
+    // otherwise construct from current host.
+    // This allows for easy configuration in development (e.g., pointing to localhost:8000)
+    // and production (e.g., pointing to your Nginx proxy).
+    const baseWsUrl = import.meta.env.VITE_REACT_APP_WS_URL || `${protocol}//${window.location.host}`;
+    
+    // Ensure the path starts with a slash and baseWsUrl doesn't end with one if path is absolute
+    const fullPath = path.startsWith('/') ? path : `/${path}`;
+    const finalUrl = `${baseWsUrl}${fullPath}`;
+    
+    console.log(`Attempting to connect to WebSocket: ${finalUrl}`);
+    return finalUrl;
+  }, [path]);
 
   const connect = useCallback(() => {
-    if (socketRef.current && socketRef.current.connected) {
+    if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) {
+      return; // Already connected or connecting
+    }
+
+    if (retryCount.current >= maxRetries) {
+      console.warn(`Max WebSocket reconnection retries (${maxRetries}) reached. Aborting.`);
       return;
     }
 
-    const newSocket = io(path, {
-      path,
-      transports: ['websocket'],
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-    });
+    const url = getWebSocketUrl();
+    ws.current = new WebSocket(url);
 
-    newSocket.on('connect', () => {
-      setIsConnected(true);
-      onConnect?.();
-      console.log(`WebSocket connected to ${path}`);
-    });
+    ws.current.onopen = () => {
+      if (isMounted.current) { // Only update state if component is mounted
+        console.log('WebSocket connected');
+        setIsConnected(true);
+        retryCount.current = 0; // Reset retry count on successful connection
+        if (reconnectTimeout.current) {
+          clearTimeout(reconnectTimeout.current);
+          reconnectTimeout.current = null;
+        }
+        onConnect?.();
+      }
+    };
 
-    newSocket.on('disconnect', (reason) => {
-      setIsConnected(false);
-      onDisconnect?.();
-      console.log(`WebSocket disconnected from ${path}: ${reason}`);
-    });
+    ws.current.onmessage = (event) => {
+      if (isMounted.current) { // Only process message if component is mounted
+        onMessage(event.data);
+      }
+    };
 
-    newSocket.on('connect_error', (error) => {
-      onError?.(error);
-      console.error(`WebSocket connection error for ${path}:`, error);
-    });
+    ws.current.onclose = (event) => {
+      if (isMounted.current) { // Only update state if component is mounted
+        console.log('WebSocket disconnected:', event.code, event.reason);
+        setIsConnected(false);
+        onDisconnect?.();
 
-    newSocket.on('message', (data) => {
-      onMessage(data);
-    });
+        // Attempt to reconnect
+        if (reconnectTimeout.current) {
+          clearTimeout(reconnectTimeout.current);
+        }
+        retryCount.current += 1;
+        console.log(`Attempting to reconnect WebSocket in ${reconnectInterval / 1000}s (Attempt ${retryCount.current}/${maxRetries})...`);
+        reconnectTimeout.current = setTimeout(() => {
+          connect();
+        }, reconnectInterval);
+      }
+    };
 
-    socketRef.current = newSocket;
-  }, [path, onMessage, onConnect, onDisconnect, onError]);
-
-  const disconnect = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-      socketRef.current = null;
-    }
-  }, []);
+    ws.current.onerror = (event) => {
+      if (isMounted.current) { // Only update state if component is mounted
+        console.error('WebSocket error:', event);
+        onError?.(event);
+        ws.current?.close(); // Close to trigger onclose and reconnect logic
+      }
+    };
+  }, [getWebSocketUrl, onMessage, onConnect, onDisconnect, onError, reconnectInterval, maxRetries]);
 
   useEffect(() => {
+    isMounted.current = true; // Set to true on mount
     connect();
 
     return () => {
-      disconnect();
+      isMounted.current = false; // Set to false on unmount
+      // Clean up on unmount
+      if (ws.current) {
+        ws.current.close();
+      }
+      if (reconnectTimeout.current) {
+        clearTimeout(reconnectTimeout.current);
+      }
     };
-  }, [connect, disconnect]);
+  }, [connect]);
 
-  return { isConnected, socket: socketRef.current, connect, disconnect };
+  return { isConnected };
 };
 
 export default useWebSocket;

@@ -20,14 +20,14 @@ from Link_Profiler.database.models import (
     SEOMetricsORM, SERPResultORM, KeywordSuggestionORM, AlertRuleORM,
     UserORM, ContentGapAnalysisResultORM, DomainHistoryORM, LinkProspectORM,
     OutreachCampaignORM, OutreachEventORM, ReportJobORM, DomainIntelligenceORM,
-    SocialMentionORM,
+    SocialMentionORM, SatellitePerformanceLogORM, # New: Import SatellitePerformanceLogORM
     LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum, AlertSeverityEnum, AlertChannelEnum # Import ORM Enums
 )
 from Link_Profiler.core.models import (
     Domain, URL, Backlink, LinkProfile, CrawlJob, SEOMetrics, SERPResult,
     KeywordSuggestion, AlertRule, User, ContentGapAnalysisResult, DomainHistory,
     LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, DomainIntelligence,
-    SocialMention, CrawlError,
+    SocialMention, CrawlError, SatellitePerformanceLog, # New: Import SatellitePerformanceLog
     LinkType, ContentType, CrawlStatus, SpamLevel, AlertSeverity, AlertChannel # Import Dataclass Enums
 )
 from Link_Profiler.monitoring.prometheus_metrics import (
@@ -159,6 +159,7 @@ class Database:
                     AVG(network_io_mbps) AS avg_network_io,
                     SUM(errors_logged) AS total_errors_logged
                 FROM satellite_performance_logs
+                WHERE timestamp IS NOT NULL
                 GROUP BY 1, 2
                 ORDER BY 1 DESC, 2;
             """
@@ -187,12 +188,7 @@ class Database:
             self.logger.error("Cannot refresh materialized views: Database engine not initialized.")
             return
 
-        view_names = [
-            "mv_daily_job_stats",
-            "mv_daily_backlink_stats",
-            "mv_daily_domain_stats",
-            "mv_daily_satellite_performance",
-        ]
+        view_names = ["mv_daily_job_stats", "mv_daily_backlink_stats", "mv_daily_domain_stats", "mv_daily_satellite_performance"] # New: Add satellite performance view
         with self.engine.connect() as connection:
             for view_name in view_names:
                 try:
@@ -286,7 +282,7 @@ class Database:
             return DomainIntelligenceORM(**data)
         elif isinstance(dc_obj, SocialMention):
             return SocialMentionORM(**data)
-        elif isinstance(dc_obj, SatellitePerformanceLog):
+        elif isinstance(dc_obj, SatellitePerformanceLog): # New: Handle SatellitePerformanceLog
             return SatellitePerformanceLogORM(**data)
         else:
             raise TypeError(f"Unsupported dataclass type: {type(dc_obj)}")
@@ -355,7 +351,7 @@ class Database:
             return DomainIntelligence.from_dict(data)
         elif isinstance(orm_obj, SocialMentionORM):
             return SocialMention.from_dict(data)
-        elif isinstance(orm_obj, SatellitePerformanceLogORM):
+        elif isinstance(orm_obj, SatellitePerformanceLogORM): # New: Handle SatellitePerformanceLog
             return SatellitePerformanceLog.from_dict(data)
         else:
             raise TypeError(f"Unsupported ORM type for dataclass conversion: {type(orm_obj)}")
@@ -716,10 +712,13 @@ class Database:
         self._execute_operation('insert', 'satellite_performance_logs', _add)
         self.logger.info(f"Added performance log for {log.satellite_id} at {log.timestamp}.")
 
-    def get_latest_satellite_performance_logs(self, limit: int = 100) -> List[SatellitePerformanceLog]:
-        """Retrieves recent satellite performance logs."""
+    def get_latest_satellite_performance_logs(self, satellite_id: Optional[str] = None, limit: int = 100) -> List[SatellitePerformanceLog]:
+        """Retrieves recent satellite performance logs, optionally filtered by satellite_id."""
         def _get(session):
-            return session.query(SatellitePerformanceLogORM).order_by(SatellitePerformanceLogORM.timestamp.desc()).limit(limit).all()
+            query = session.query(SatellitePerformanceLogORM)
+            if satellite_id:
+                query = query.filter_by(satellite_id=satellite_id)
+            return query.order_by(SatellitePerformanceLogORM.timestamp.desc()).limit(limit).all()
         orm_logs = self._execute_operation('select', 'satellite_performance_logs', _get)
         return [self._from_orm(l) for l in orm_logs]
 
