@@ -313,7 +313,6 @@ class URL:
     load_time_ms: Optional[int] = None
     is_indexed: Optional[bool] = None # From GSC or similar
     last_crawled: datetime = field(default_factory=datetime.now)
-    html_content_hash: Optional[str] = None # MD5 hash of the HTML content
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
@@ -397,10 +396,7 @@ class CrawlResult:
     validation_issues: List[str] = field(default_factory=list) # New: Issues from content validator
 
     def to_dict(self) -> Dict[str, Any]:
-        data = {k: serialize_model(v) for k, v in self.__dict__.items()}
-        if isinstance(data.get('seo_metrics'), SEOMetrics):
-            data['seo_metrics'] = data['seo_metrics'].to_dict()
-        return data
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'CrawlResult':
@@ -667,6 +663,7 @@ class AlertRule:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     last_triggered_at: Optional[datetime] = None
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -683,6 +680,8 @@ class AlertRule:
             data['updated_at'] = datetime.fromisoformat(data['updated_at'])
         if 'last_triggered_at' in data and isinstance(data['last_triggered_at'], str):
             data['last_triggered_at'] = datetime.fromisoformat(data['last_triggered_at'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
 @dataclass
