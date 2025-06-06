@@ -18,6 +18,8 @@ from Link_Profiler.clients.youtube_client import YouTubeClient # New: Import You
 from Link_Profiler.clients.news_api_client import NewsAPIClient # New: Import NewsAPIClient
 from Link_Profiler.database.database import Database # Import Database for DB operations
 from Link_Profiler.core.models import SocialMention # Import SocialMention model
+from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +28,23 @@ class SocialMediaService:
     Service for interacting with social media platforms.
     This service orchestrates calls to various social media API clients.
     """
-    def __init__(self, database: Database, social_media_crawler: Optional[SocialMediaCrawler] = None,
-                 reddit_client: Optional[RedditClient] = None, youtube_client: Optional[YouTubeClient] = None, news_api_client: Optional[NewsAPIClient] = None): # New: Accept clients
+    def __init__(self, database: Database, session_manager: SessionManager, social_media_crawler: Optional[SocialMediaCrawler] = None,
+                 reddit_client: Optional[RedditClient] = None, youtube_client: Optional[YouTubeClient] = None, news_api_client: Optional[NewsAPIClient] = None,
+                 resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
         self.logger = logging.getLogger(__name__)
         self.db = database # Store database instance
+        self.session_manager = session_manager # Store session manager instance
+        self.resilience_manager = resilience_manager # Store resilience manager
+        if self.resilience_manager is None:
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+
+        # Pass resilience_manager to clients
+        # Note: SocialMediaCrawler, RedditClient, YouTubeClient, NewsAPIClient need to be updated
+        # to accept resilience_manager in their constructors.
         self.social_media_crawler = social_media_crawler
-        self.reddit_client = reddit_client # New
-        self.youtube_client = youtube_client # New
-        self.news_api_client = news_api_client # New
+        self.reddit_client = reddit_client
+        self.youtube_client = youtube_client
+        self.news_api_client = news_api_client
 
         self.enabled = config_loader.get("social_media_crawler.enabled", False)
         self.allow_live = config_loader.get("social_media_service.allow_live", False)
@@ -47,6 +58,7 @@ class SocialMediaService:
     async def __aenter__(self):
         """Async context manager entry for SocialMediaService."""
         self.logger.debug("Entering SocialMediaService context.")
+        await self.session_manager.__aenter__() # Enter session manager context
         if self.social_media_crawler:
             await self.social_media_crawler.__aenter__()
         if self.reddit_client:
@@ -68,6 +80,7 @@ class SocialMediaService:
             await self.youtube_client.__aexit__(exc_type, exc_val, exc_tb)
         if self.news_api_client:
             await self.news_api_client.__aexit__(exc_type, exc_val, exc_tb)
+        await self.session_manager.__aexit__(exc_type, exc_val, exc_tb) # Exit session manager context
 
     async def _fetch_live_social_media_data(self, query: str, platforms: Optional[List[str]] = None) -> List[SocialMention]:
         """

@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 from Link_Profiler.utils.session_manager import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # Import DistributedResilienceManager
 from datetime import datetime # Import datetime
 
 class BaseAPIClient:
@@ -8,7 +9,7 @@ class BaseAPIClient:
     Base class for all API clients to provide common functionality
     like session management and logging.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None):
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.session_manager = session_manager
         if self.session_manager is None:
@@ -16,6 +17,13 @@ class BaseAPIClient:
             from Link_Profiler.utils.session_manager import session_manager as global_session_manager
             self.session_manager = global_session_manager
             self.logger.warning(f"No SessionManager provided for {self.__class__.__name__}. Using global singleton.")
+
+        self.resilience_manager = resilience_manager
+        if self.resilience_manager is None:
+            # This client is enabled but no DistributedResilienceManager was provided.
+            # This indicates a configuration error or missing dependency injection.
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+
 
     async def __aenter__(self):
         """Ensure the session manager is entered when using the client as an async context manager."""
@@ -36,9 +44,16 @@ class BaseAPIClient:
         if not self.session_manager:
             self.logger.error("SessionManager is not initialized for this client.")
             raise RuntimeError("SessionManager is not initialized.")
+        if not self.resilience_manager:
+            self.logger.error("ResilienceManager is not initialized for this client.")
+            raise RuntimeError("ResilienceManager is not initialized.")
 
         try:
-            response = await self.session_manager.request(method, url, **kwargs)
+            # Wrap the actual request with the resilience manager
+            response = await self.resilience_manager.execute_with_resilience(
+                lambda: self.session_manager.request(method, url, **kwargs),
+                url=url # Use the request URL for circuit breaker naming
+            )
             response.raise_for_status()  # Raise an exception for bad status codes
             
             # Add last_fetched_at to the response object if it's a dict/json
