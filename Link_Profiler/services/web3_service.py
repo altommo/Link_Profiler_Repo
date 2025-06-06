@@ -16,6 +16,7 @@ from Link_Profiler.config.config_loader import config_loader
 import redis.asyncio as redis
 from Link_Profiler.database.database import Database # Import Database for DB operations
 from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +26,18 @@ class Web3Service:
     This class demonstrates where actual integrations with IPFS gateways,
     blockchain nodes (e.g., Ethereum, Polygon), or Web3 APIs would go.
     """
-    def __init__(self, database: Database, session_manager: SessionManager, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600):
+    def __init__(self, database: Database, session_manager: SessionManager, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
         self.logger = logging.getLogger(__name__)
         self.db = database # Store database instance
         self.session_manager = session_manager # Store session manager instance
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
+        self.resilience_manager = resilience_manager # New: Store resilience_manager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            self.logger.warning("No DistributedResilienceManager provided to Web3Service. Falling back to global instance.")
+
         self.enabled = config_loader.get("web3_crawler.enabled", False)
         self.ipfs_gateway_url = config_loader.get("web3_crawler.ipfs_gateway_url", "https://ipfs.io/ipfs/")
         self.blockchain_node_url = config_loader.get(
@@ -101,22 +108,25 @@ class Web3Service:
             if identifier.startswith("Qm") or identifier.startswith("bafy"): # Likely an IPFS hash
                 self.logger.info(f"Fetching IPFS content from gateway for {identifier}.")
                 ipfs_url = f"{self.ipfs_gateway_url}{identifier}"
-                async with self.session_manager.get(ipfs_url, timeout=10) as response: # Use session_manager
-                    response.raise_for_status()
-                    content = await response.text() # Or response.read() for binary
-                    extracted_data = {
-                        "type": "IPFS_Content",
-                        "hash": identifier,
-                        "gateway_url": ipfs_url,
-                        "content_preview": content[:500] + "..." if len(content) > 500 else content,
-                        "size_bytes": len(content.encode('utf-8')) # Approximate size
-                    }
-                    # Simple regex or NLP could extract links like ipfs:// or ethereum:
-                    # For now, simulate finding some links
-                    if random.random() > 0.5:
-                        links_found_web3.append(f"ipfs://Qm{random.randint(1000, 9999)}")
-                    if random.random() > 0.3:
-                        links_found_web3.append(f"ethereum:0x{random.randint(10**39, 10**40-1)}")
+                response = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                    lambda: self.session_manager.get(ipfs_url, timeout=10),
+                    url=ipfs_url # Use ipfs_url for circuit breaker naming
+                )
+                response.raise_for_status()
+                content = await response.text() # Or response.read() for binary
+                extracted_data = {
+                    "type": "IPFS_Content",
+                    "hash": identifier,
+                    "gateway_url": ipfs_url,
+                    "content_preview": content[:500] + "..." if len(content) > 500 else content,
+                    "size_bytes": len(content.encode('utf-8')) # Approximate size
+                }
+                # Simple regex or NLP could extract links like ipfs:// or ethereum:
+                # For now, simulate finding some links
+                if random.random() > 0.5:
+                    links_found_web3.append(f"ipfs://Qm{random.randint(1000, 9999)}")
+                if random.random() > 0.3:
+                    links_found_web3.append(f"ethereum:0x{random.randint(10**39, 10**40-1)}")
 
             elif identifier.startswith("0x") and len(identifier) == 42:  # Likely an Ethereum address
                 self.logger.info(f"Fetching blockchain data for Ethereum address: {identifier}.")
@@ -134,11 +144,14 @@ class Web3Service:
                             "tag": "latest",
                             "apikey": self.etherscan_api_key,
                         }
-                        async with self.session_manager.get(etherscan_api_url, params=params, timeout=10) as response: # Use session_manager
-                            response.raise_for_status()
-                            data = await response.json()
-                            balance_wei = int(data.get("result", 0))
-                            balance_eth = balance_wei / (10 ** 18)
+                        response = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                            lambda: self.session_manager.get(etherscan_api_url, params=params, timeout=10),
+                            url=etherscan_api_url # Use etherscan_api_url for circuit breaker naming
+                        )
+                        response.raise_for_status()
+                        data = await response.json()
+                        balance_wei = int(data.get("result", 0))
+                        balance_eth = balance_wei / (10 ** 18)
 
                         params = {
                             "module": "account",
@@ -149,10 +162,13 @@ class Web3Service:
                             "sort": "asc",
                             "apikey": self.etherscan_api_key,
                         }
-                        async with self.session_manager.get(etherscan_api_url, params=params, timeout=10) as response: # Use session_manager
-                            response.raise_for_status()
-                            data = await response.json()
-                            transaction_count = len(data.get("result", []))
+                        response = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                            lambda: self.session_manager.get(etherscan_api_url, params=params, timeout=10),
+                            url=etherscan_api_url # Use etherscan_api_url for circuit breaker naming
+                        )
+                        response.raise_for_status()
+                        data = await response.json()
+                        transaction_count = len(data.get("result", []))
                     except aiohttp.ClientError as e:
                         self.logger.error(f"Etherscan API error for {identifier}: {e}", exc_info=True)
 
@@ -170,16 +186,22 @@ class Web3Service:
                         "id": 2,
                     }
                     try:
-                        async with self.session_manager.post(self.blockchain_node_url, json=rpc_payload_balance, timeout=10) as resp: # Use session_manager
-                            resp.raise_for_status()
-                            data = await resp.json()
-                            balance_wei = int(data.get("result", "0x0"), 16)
-                            balance_eth = balance_wei / (10 ** 18)
+                        resp = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                            lambda: self.session_manager.post(self.blockchain_node_url, json=rpc_payload_balance, timeout=10),
+                            url=self.blockchain_node_url # Use blockchain_node_url for circuit breaker naming
+                        )
+                        resp.raise_for_status()
+                        data = await resp.json()
+                        balance_wei = int(data.get("result", "0x0"), 16)
+                        balance_eth = balance_wei / (10 ** 18)
 
-                        async with self.session_manager.post(self.blockchain_node_url, json=rpc_payload_tx, timeout=10) as resp: # Use session_manager
-                            resp.raise_for_status()
-                            data = await resp.json()
-                            transaction_count = int(data.get("result", "0x0"), 16)
+                        resp = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                            lambda: self.session_manager.post(self.blockchain_node_url, json=rpc_payload_tx, timeout=10),
+                            url=self.blockchain_node_url # Use blockchain_node_url for circuit breaker naming
+                        )
+                        resp.raise_for_status()
+                        data = await resp.json()
+                        transaction_count = int(data.get("result", "0x0"), 16)
                     except aiohttp.ClientError as e:
                         self.logger.error(f"Blockchain node RPC error for {identifier}: {e}", exc_info=True)
 
@@ -310,22 +332,25 @@ class Web3Service:
                 headers = {"X-API-KEY": self.opensea_api_key}
 
                 try:
-                    async with self.session_manager.get(f"{opensea_api_url}{contract_address}", headers=headers, timeout=10) as response: # Use session_manager
-                        response.raise_for_status()
-                        data = await response.json()
+                    response = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                        lambda: self.session_manager.get(f"{opensea_api_url}{contract_address}", headers=headers, timeout=10),
+                        url=opensea_api_url # Use opensea_api_url for circuit breaker naming
+                    )
+                    response.raise_for_status()
+                    data = await response.json()
 
-                        result = {
-                            "contract_address": contract_address,
-                            "project_name": data.get("name"),
-                            "total_supply": data.get("total_supply"),
-                            "floor_price_eth": data.get("stats", {}).get("floor_price"),
-                            "owners_count": data.get("stats", {}).get("num_owners"),
-                            "marketplace_links": [data.get("opensea_url")] if data.get("opensea_url") else [],
-                            "community_links": [data.get("external_link")] if data.get("external_link") else [],
-                            "last_fetched_at": datetime.utcnow(),
-                        }
-                        await self._set_cached_response(cache_key, result)
-                        return result
+                    result = {
+                        "contract_address": contract_address,
+                        "project_name": data.get("name"),
+                        "total_supply": data.get("total_supply"),
+                        "floor_price_eth": data.get("stats", {}).get("floor_price"),
+                        "owners_count": data.get("stats", {}).get("num_owners"),
+                        "marketplace_links": [data.get("opensea_url")] if data.get("opensea_url") else [],
+                        "community_links": [data.get("external_link")] if data.get("external_link") else [],
+                        "last_fetched_at": datetime.utcnow(),
+                    }
+                    await self._set_cached_response(cache_key, result)
+                    return result
                 except aiohttp.ClientError as e:
                     self.logger.error(f"OpenSea API error for {contract_address}: {e}", exc_info=True)
 
@@ -338,10 +363,13 @@ class Web3Service:
                     "apikey": self.etherscan_api_key,
                 }
                 try:
-                    async with self.session_manager.get(etherscan_api_url, params=params, timeout=10) as response: # Use session_manager
-                        response.raise_for_status()
-                        data = await response.json()
-                        info = data.get("result", [{}])[0]
+                    response = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                        lambda: self.session_manager.get(etherscan_api_url, params=params, timeout=10),
+                        url=etherscan_api_url # Use etherscan_api_url for circuit breaker naming
+                    )
+                    response.raise_for_status()
+                    data = await response.json()
+                    info = data.get("result", [{}])[0]
 
                     params = {
                         "module": "stats",
@@ -349,9 +377,12 @@ class Web3Service:
                         "contractaddress": contract_address,
                         "apikey": self.etherscan_api_key,
                     }
-                    async with self.session_manager.get(etherscan_api_url, params=params, timeout=10) as response: # Use session_manager
-                        response.raise_for_status()
-                        supply_data = await response.json()
+                    response = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                        lambda: self.session_manager.get(etherscan_api_url, params=params, timeout=10),
+                        url=etherscan_api_url # Use etherscan_api_url for circuit breaker naming
+                    )
+                    response.raise_for_status()
+                    supply_data = await response.json()
 
                     result = {
                         "contract_address": contract_address,
@@ -437,26 +468,29 @@ class Web3Service:
                 "address": protocol_address,
                 "apikey": self.etherscan_api_key
             }
-            async with self.session_manager.get(etherscan_api_url, params=params, timeout=10) as response: # Use session_manager
-                response.raise_for_status()
-                data = await response.json()
-                abi_status = data.get("status")
-                
-                # In a real scenario, you'd parse the ABI, interact with the contract
-                # using web3.py, or query a dedicated DeFi API for TVL, audits, etc.
-                
-                result = {
-                    "contract_address": protocol_address,
-                    "protocol_name": f"Real DeFi Protocol (ABI Status: {abi_status})",
-                    "tvl_usd": round(random.uniform(1000000, 1000000000), 2), # Still simulated TVL
-                    "audits": ["CertiK", "PeckShield"] if random.random() > 0.5 else [],
-                    "website": f"https://real-defi-protocol-{random.randint(1,50)}.xyz",
-                    "token_address": f"0x{random.randint(10**39, 10**40-1)}",
-                    "docs_link": f"https://docs.real-defi-protocol-{random.randint(1,50)}.xyz",
-                    "last_fetched_at": datetime.utcnow()
-                }
-                await self._set_cached_response(cache_key, result)
-                return result
+            response = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                lambda: self.session_manager.get(etherscan_api_url, params=params, timeout=10),
+                url=etherscan_api_url # Use etherscan_api_url for circuit breaker naming
+            )
+            response.raise_for_status()
+            data = await response.json()
+            abi_status = data.get("status")
+            
+            # In a real scenario, you'd parse the ABI, interact with the contract
+            # using web3.py, or query a dedicated DeFi API for TVL, audits, etc.
+            
+            result = {
+                "contract_address": protocol_address,
+                "protocol_name": f"Real DeFi Protocol (ABI Status: {abi_status})",
+                "tvl_usd": round(random.uniform(1000000, 1000000000), 2), # Still simulated TVL
+                "audits": ["CertiK", "PeckShield"] if random.random() > 0.5 else [],
+                "website": f"https://real-defi-protocol-{random.randint(1,50)}.xyz",
+                "token_address": f"0x{random.randint(10**39, 10**40-1)}",
+                "docs_link": f"https://docs.real-defi-protocol-{random.randint(1,50)}.xyz",
+                "last_fetched_at": datetime.utcnow()
+            }
+            await self._set_cached_response(cache_key, result)
+            return result
         except aiohttp.ClientError as e:
             self.logger.error(f"Network/API error while analyzing DeFi protocol {protocol_address}: {e}", exc_info=True)
             simulated_data = self._simulate_defi_protocol_data(protocol_address)
