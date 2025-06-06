@@ -257,134 +257,78 @@ ORDER BY avg_speed DESC;
 ### **Phase 1: Backend WebSocket Integration**
 *Extend your existing FastAPI server*
 
-**New FastAPI Endpoints to Add:**
-```python
-# Add to your existing main.py
-from fastapi import WebSocket, WebSocketDisconnect
+- [x] Add WebSocket endpoints to your existing FastAPI server
+- [ ] Create optimized database views and indexes (Partial: `database.py` updated for data retrieval, but no materialized views yet)
+- [ ] Set up basic React dashboard structure (Moved to Phase 3)
+- [x] Implement real-time connection management
 
-@app.websocket("/ws/mission-control")
-async def mission_control_websocket(websocket: WebSocket):
-    """Real-time data stream for mission control dashboard"""
-    await websocket.accept()
-    connection_manager.connect(websocket, "mission_control")
-    
-    try:
-        while True:
-            # Stream real-time updates
-            updates = await get_realtime_updates()
-            await websocket.send_json(updates)
-            await asyncio.sleep(1)  # 1-second refresh rate
-    except WebSocketDisconnect:
-        connection_manager.disconnect(websocket, "mission_control")
+**Deliverables:**
+- [x] Working WebSocket connection between frontend and backend
+- [x] Basic mission control layout with live data feed (Frontend components are in place, data is flowing)
+- [ ] Database performance optimizations (Partial: Data retrieval is working, but specific materialized views are not yet implemented)
 
-async def get_realtime_updates():
-    """Aggregate real-time data from your existing systems"""
-    return {
-        'active_jobs': await get_active_crawl_jobs(),
-        'satellite_status': await get_satellite_fleet_status(),
-        'queue_depth': await redis_client.llen('job_queue'),
-        'recent_discoveries': await get_recent_backlink_discoveries(),
-        'api_quotas': await get_current_api_usage(),
-        'alerts': await get_critical_alerts()
-    }
-```
+### **Phase 2: Data Enrichment & Client Timestamp Consistency**
+*Ensure all relevant data structures include `last_fetched_at` timestamps*
 
-### **Phase 2: Database View Optimizations**
-*Add optimized views to your PostgreSQL database*
+- [x] Add `last_fetched_at` to all relevant dataclasses in `Link_Profiler/core/models.py`
+- [x] Add `last_fetched_at` to all corresponding ORM models in `Link_Profiler/database/models.py`
+- [x] Update all backend clients (`Link_Profiler/clients/*.py`) to include `last_fetched_at` in their responses.
+- [x] Update all backend services (`Link_Profiler/services/*.py`) to ensure `last_fetched_at` is propagated and handled.
 
-```sql
--- Add these materialized views for performance
-CREATE MATERIALIZED VIEW mission_control_summary AS
-SELECT 
-    COUNT(CASE WHEN status = 'running' THEN 1 END) as active_jobs,
-    COUNT(CASE WHEN status = 'queued' THEN 1 END) as queued_jobs,
-    COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_jobs,
-    AVG(progress_percentage) as avg_progress
-FROM crawl_jobs
-WHERE created_date >= NOW() - INTERVAL '24 hours';
+**Deliverables:**
+- [x] All core data models and API responses consistently include `last_fetched_at` timestamps.
 
-CREATE INDEX idx_mission_control_performance 
-ON crawl_jobs(status, created_date, progress_percentage);
+### **Phase 3: Frontend Dashboard Development**
+*Build the React-based user interface for the Mission Control Dashboard*
 
--- Refresh every minute
-SELECT cron.schedule('refresh-mission-control', '*/1 * * * *', 
-    'REFRESH MATERIALIZED VIEW mission_control_summary;');
-```
+- [x] Set up basic React dashboard structure (Vite, React, TS, TailwindCSS, Zustand, React Router)
+- [x] Implement real-time connection management (useWebSocket, useRealTimeData)
+- [x] Build crawler mission status module (Frontend component `CrawlerMissionStatus.tsx`)
+- [x] Implement backlink discovery visualization (Frontend component `BacklinkDiscovery.tsx`)
+- [x] Add API quota management system (Frontend component `ApiQuotaStatus.tsx`)
+- [x] Create alert notification system (Frontend component `AlertsDisplay.tsx`)
+- [x] Domain intelligence command center (Frontend component `DomainIntelligence.tsx`)
+- [x] Performance optimization analytics (Frontend component `PerformanceOptimization.tsx`)
+- [x] Implement Jobs page (`Jobs.tsx`)
+- [x] Implement Alerts page (`Alerts.tsx`)
+- [x] Implement Settings page (`Settings.tsx`)
+- [x] Introduce shared UI components (`DataCard.tsx`, `ProgressBar.tsx`, `ModuleContainer.tsx`, `MetricDisplay.tsx`, `ListDisplay.tsx`)
+- [x] Integrate charting library (`recharts`) and base chart components (`ChartContainer.tsx`, `LineChart.tsx`)
+- [ ] Mobile responsive design (Pending)
+- [ ] UI/UX refinements and NASA aesthetics (Ongoing, but more polish needed)
 
-### **Phase 3: Frontend Development Stack**
+**Deliverables:**
+- [x] Live crawler job monitoring (Frontend display)
+- [x] Real-time backlink discovery dashboard (Frontend display)
+- [x] API usage tracking and optimization (Frontend display)
+- [x] Basic alert system (Frontend display)
+- [x] Core dashboard modules implemented and displaying real-time data.
+- [x] Client-side routing for main sections (Overview, Jobs, Alerts, Settings).
+- [x] Basic charting integrated into modules.
 
-**Technology Stack:**
-- **Framework**: React 18 with TypeScript
-- **Real-time**: Socket.io client
-- **State Management**: Zustand (lightweight)
-- **Styling**: Tailwind CSS + Framer Motion
-- **Charts**: D3.js + Recharts
-- **Build Tool**: Vite
+### **Phase 4: Advanced Features & Optimizations**
+- [ ] Domain intelligence command center (Backend logic for advanced features)
+- [ ] Performance optimization analytics (Backend logic for advanced features)
+- [ ] Advanced alert rules and notifications (Backend logic for advanced features)
+- [ ] Mobile responsive design (Frontend implementation)
 
-**Project Structure:**
-```
-mission-control-dashboard/
-├── src/
-│   ├── components/
-│   │   ├── MissionControlBoard/
-│   │   ├── SatelliteFleetStatus/
-│   │   ├── BacklinkRadar/
-│   │   ├── APIQuotaManager/
-│   │   └── AlertCenter/
-│   ├── hooks/
-│   │   ├── useWebSocket.ts
-│   │   ├── useRealTimeData.ts
-│   │   └── useAPIQuotas.ts
-│   ├── stores/
-│   │   ├── missionControlStore.ts
-│   │   └── alertStore.ts
-│   ├── utils/
-│   │   ├── apiClient.ts
-│   │   └── dataFormatters.ts
-│   └── App.tsx
-├── package.json
-└── vite.config.ts
-```
+**Deliverables:**
+- Complete mission control dashboard
+- Performance monitoring and optimization
+- Comprehensive alert system
+- Multi-device compatibility
 
-### **Phase 4: Smart Alert System**
+### **Sprint 4 (Week 7-8): Polish & Optimization**
+- [ ] UI/UX refinements and NASA aesthetics
+- [ ] Performance testing and optimization
+- [ ] Documentation and deployment automation
+- [ ] User training materials
 
-**Alert Rule Engine:**
-```python
-# Add to your services/ directory
-class MissionControlAlerts:
-    def __init__(self, db_session, redis_client):
-        self.db = db_session
-        self.redis = redis_client
-        
-    async def check_critical_alerts(self):
-        alerts = []
-        
-        # Satellite failure detection
-        failed_satellites = await self.detect_failed_satellites()
-        if failed_satellites:
-            alerts.append({
-                'type': 'satellite_failure',
-                'severity': 'critical',
-                'message': f'{len(failed_satellites)} satellites unresponsive',
-                'affected_jobs': await self.get_affected_jobs(failed_satellites)
-            })
-            
-        # Queue overflow detection
-        queue_depth = await self.redis.llen('job_queue')
-        if queue_depth > 1000:
-            alerts.append({
-                'type': 'queue_overflow',
-                'severity': 'warning',
-                'message': f'Job queue at {queue_depth} items',
-                'recommended_action': 'Scale up satellite fleet'
-            })
-            
-        # API quota exhaustion warning
-        quota_alerts = await self.check_api_quotas()
-        alerts.extend(quota_alerts)
-        
-        return alerts
-```
+**Deliverables:**
+- Production-ready mission control dashboard
+- Complete documentation
+- Automated deployment scripts
+- User training materials
 
 ---
 
@@ -559,115 +503,3 @@ server {
     }
 }
 ```
-
----
-
-## 🚦 IMPLEMENTATION ROADMAP
-
-### **Sprint 1 (Week 1-2): Foundation**
-- [ ] Add WebSocket endpoints to your existing FastAPI server
-- [ ] Create optimized database views and indexes
-- [ ] Set up basic React dashboard structure
-- [ ] Implement real-time connection management
-
-**Deliverables:**
-- Working WebSocket connection between frontend and backend
-- Basic mission control layout with live data feed
-- Database performance optimizations
-
-### **Sprint 2 (Week 3-4): Core Features**
-- [ ] Build crawler mission status module
-- [ ] Implement backlink discovery visualization
-- [ ] Add API quota management system
-- [ ] Create alert notification system
-
-**Deliverables:**
-- Live crawler job monitoring
-- Real-time backlink discovery dashboard
-- API usage tracking and optimization
-- Basic alert system
-
-### **Sprint 3 (Week 5-6): Advanced Features**
-- [ ] Domain intelligence command center
-- [ ] Performance optimization analytics
-- [ ] Advanced alert rules and notifications
-- [ ] Mobile responsive design
-
-**Deliverables:**
-- Complete mission control dashboard
-- Performance monitoring and optimization
-- Comprehensive alert system
-- Multi-device compatibility
-
-### **Sprint 4 (Week 7-8): Polish & Optimization**
-- [ ] UI/UX refinements and NASA aesthetics
-- [ ] Performance testing and optimization
-- [ ] Documentation and deployment automation
-- [ ] User training materials
-
-**Deliverables:**
-- Production-ready mission control dashboard
-- Complete documentation
-- Automated deployment scripts
-- User training materials
-
----
-
-## 🎯 SUCCESS METRICS & KPIs
-
-### **Operational Efficiency Gains**
-- **Crawler Utilization**: Target 95% satellite utilization
-- **Job Completion Time**: Reduce average job time by 30%
-- **Error Detection Speed**: Detect and alert on issues within 60 seconds
-- **API Cost Optimization**: Maximize free tier usage efficiency by 90%
-
-### **User Experience Metrics**
-- **Dashboard Load Time**: <2 seconds initial load
-- **Real-time Update Latency**: <500ms data refresh
-- **Alert Response Time**: Critical alerts within 30 seconds
-- **Mobile Responsiveness**: Full functionality on all devices
-
-### **Business Impact Metrics**
-- **Operational Cost Reduction**: 40% reduction in manual monitoring time
-- **Competitive Intelligence Speed**: 50% faster competitor analysis
-- **Link Discovery Rate**: 25% increase in high-quality backlink identification
-- **System Uptime**: 99.9% system availability
-
----
-
-## 🔧 MAINTENANCE & SCALING
-
-### **Performance Monitoring**
-```python
-# Add to your monitoring/ directory
-class MissionControlMetrics:
-    def collect_dashboard_metrics(self):
-        return {
-            'websocket_connections': self.active_websocket_count(),
-            'dashboard_load_time': self.measure_load_time(),
-            'data_refresh_rate': self.calculate_refresh_rate(),
-            'alert_response_time': self.measure_alert_latency(),
-            'api_quota_efficiency': self.calculate_quota_utilization()
-        }
-```
-
-### **Scaling Considerations**
-- **Horizontal Scaling**: Load balance multiple dashboard instances
-- **Data Archival**: Archive historical data beyond 30 days to S3/cold storage
-- **Caching Strategy**: Redis caching for frequently accessed mission control data
-- **CDN Integration**: Serve static dashboard assets via CDN for global performance
-
----
-
-## 🎬 CONCLUSION
-
-This mission control dashboard transforms your existing Link Profiler system into a professional-grade SEO command center. By building on your solid FastAPI + PostgreSQL + Redis foundation, we create a NASA-inspired interface that provides:
-
-- **Real-time visibility** into all crawling operations
-- **Smart API management** to maximize free tier value
-- **Proactive alerting** for critical system events
-- **Performance optimization** insights for maximum efficiency
-
-The modular design ensures easy maintenance and future expansion while the responsive UI provides access from any device. Your AI dev team has everything needed to implement this system efficiently, leveraging your existing architecture investments.
-
-**Next Steps**: Review specifications, clarify any technical details, and begin Sprint 1 implementation with WebSocket integration and basic dashboard structure.
