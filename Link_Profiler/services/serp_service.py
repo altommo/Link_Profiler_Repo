@@ -81,7 +81,7 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
         """
         Simulates fetching SERP results for a given keyword.
         """
-        self.logger.info(f"Simulating API call for SERP results for keyword: '{keyword}' from {search_engine}")
+        self.logger.info(f"Simulating API call for SERP results for keyword: '{keyword}' from {search_engine}.")
         
         try:
             # Simulate an actual HTTP request, even if it's to a dummy URL
@@ -396,9 +396,9 @@ class SERPService:
 
     async def get_serp_data(self, keyword: str, num_results: int = 10, search_engine: str = "google", optimize_for_cost: bool = False) -> List[SERPResult]:
         """
-        Fetches SERP data for a given keyword.
-        Prioritizes the local SERPCrawler if available, otherwise uses the API client.
-        Uses caching and API quota management for external API selection.
+        Fetches SERP data for a given keyword, applying a multi-tiered fallback strategy.
+        Prioritizes the local SERPCrawler if available, then uses API Quota Manager for external API selection,
+        and finally falls back to simulated data.
         """
         cache_key = f"serp_data:{keyword}:{num_results}:{search_engine}"
         cached_result = await self._get_cached_response(cache_key, "serp_api", "get_serp_data")
@@ -407,35 +407,60 @@ class SERPService:
 
         serp_results: List[SERPResult] = []
 
-        # 1. Try SERPCrawler first if enabled
+        # Tier 1: Try SERPCrawler first if enabled
         if self.serp_crawler and config_loader.get("serp_crawler.playwright.enabled"):
-            self.logger.info(f"Using SERPCrawler to fetch SERP data for '{keyword}' from {search_engine}.")
-            serp_results = await self.serp_crawler.get_serp_data(keyword, num_results, search_engine)
-            if serp_results:
-                await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", "get_serp_data")
-                return serp_results
+            try:
+                self.logger.info(f"Attempting to fetch SERP data via SERPCrawler for '{keyword}'.")
+                serp_results = await self.serp_crawler.get_serp_data(keyword, num_results, search_engine)
+                if serp_results:
+                    self.logger.info(f"Successfully fetched SERP results via SERPCrawler for '{keyword}'.")
+                    await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", "get_serp_data_crawler")
+                    return serp_results
+            except Exception as e:
+                self.logger.warning(f"SERP Crawler failed for '{keyword}': {e}. Proceeding to external API fallback.")
 
-        # 2. Use API Quota Manager to select the best external API
+        # Tier 2: Use API Quota Manager to select and try external APIs
         selected_api_name: Optional[str] = None
+        selected_client = None
+
         if optimize_for_cost:
-            selected_api_name = self.api_quota_manager.get_quota_optimized_api("serp_search")
-            self.logger.info(f"API Quota Manager selected '{selected_api_name}' for cost optimization.")
+            selected_api_name = await self.api_quota_manager.get_quota_optimized_api("serp_search")
         else:
-            selected_api_name = self.api_quota_manager.get_best_quality_api("serp_search")
-            self.logger.info(f"API Quota Manager selected '{selected_api_name}' for best quality.")
+            selected_api_name = await self.api_quota_manager.get_best_quality_api("serp_search")
 
         if selected_api_name and selected_api_name in self._serp_clients:
             selected_client = self._serp_clients[selected_api_name]
-            self.logger.info(f"Using external SERP API client '{selected_api_name}' for '{keyword}'.")
-            serp_results = await selected_client.get_serp_results(keyword, num_results, search_engine)
-            if serp_results:
-                self.api_quota_manager.record_usage(selected_api_name, 1) # Record usage
-                await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", "get_serp_data")
-                return serp_results
-        else:
-            self.logger.warning(f"No suitable external SERP API client found via API Quota Manager for '{keyword}'. Falling back to simulated data.")
+            try:
+                self.logger.info(f"Attempting to fetch SERP data via selected API '{selected_api_name}' for '{keyword}'.")
+                serp_results = await selected_client.get_serp_results(keyword, num_results, search_engine)
+                if serp_results:
+                    self.api_quota_manager.record_usage(selected_api_name, 1) # Record usage
+                    self.logger.info(f"Successfully fetched SERP results via API '{selected_api_name}' for '{keyword}'.")
+                    await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", f"get_serp_data_{selected_api_name}")
+                    return serp_results
+            except Exception as e:
+                self.logger.warning(f"Selected API '{selected_api_name}' failed for '{keyword}': {e}. Attempting fallback API.")
 
-        # 3. Fallback to simulated data if no real API or crawler could provide data
+        # Tier 3: Fallback to any other available API (if the first selected one failed or was unavailable)
+        fallback_api_name = await self.api_quota_manager.get_any_available_api("serp_search")
+        # Ensure fallback API is different from the one just tried (if any) and is actually available
+        if fallback_api_name and fallback_api_name != selected_api_name and fallback_api_name in self._serp_clients:
+            fallback_client = self._serp_clients[fallback_api_name]
+            try:
+                self.logger.info(f"Attempting to fetch SERP data via fallback API '{fallback_api_name}' for '{keyword}'.")
+                serp_results = await fallback_client.get_serp_results(keyword, num_results, search_engine)
+                if serp_results:
+                    self.api_quota_manager.record_usage(fallback_api_name, 1) # Record usage
+                    self.logger.info(f"Successfully fetched SERP results via fallback API '{fallback_api_name}' for '{keyword}'.")
+                    await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", f"get_serp_data_{fallback_api_name}")
+                    return serp_results
+            except Exception as e:
+                self.logger.warning(f"Fallback API '{fallback_api_name}' also failed for '{keyword}': {e}. Falling back to simulated data.")
+        else:
+            self.logger.warning(f"No suitable fallback external SERP API client found via API Quota Manager for '{keyword}'.")
+
+        # Tier 4: Final Fallback to simulated data if all real APIs and crawler failed
+        self.logger.info(f"All real SERP data sources failed for '{keyword}'. Falling back to simulated data.")
         simulated_client = self._serp_clients["simulated"]
         serp_results = await simulated_client.get_serp_results(keyword, num_results, search_engine)
         await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", "get_serp_data_simulated")

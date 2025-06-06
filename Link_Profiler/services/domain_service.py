@@ -58,23 +58,7 @@ class AbstractDomainAPIClient(BaseAPIClient):
             return response_data
         except Exception as e:
             self.logger.error(f"Error validating domain {domain_name} with AbstractAPI: {e}")
-            return None
-
-    @api_rate_limited(service="domain_api", api_client_type="abstract_api", endpoint="whois_lookup")
-    @cached_api_call(service="domain_api", endpoint="whois_lookup", ttl=86400 * 7) # Cache WHOIS for 7 days
-    async def whois_lookup(self, domain_name: str) -> Optional[Dict[str, Any]]:
-        """Performs a WHOIS lookup using AbstractAPI."""
-        if not self.enabled:
-            return None
-        
-        params = {"api_key": self.api_key, "domain": domain_name}
-        try:
-            # _make_request now handles resilience
-            response_data = await self._make_request("GET", self.whois_base_url, params=params)
-            return response_data
-        except Exception as e:
-            self.logger.error(f"Error performing WHOIS lookup for {domain_name} with AbstractAPI: {e}")
-            return None
+            raise # Re-raise to trigger fallback in DomainService
 
 class WhoisJsonAPIClient(BaseAPIClient):
     """Client for WHOIS-JSON.com API."""
@@ -110,7 +94,7 @@ class WhoisJsonAPIClient(BaseAPIClient):
             return response_data
         except Exception as e:
             self.logger.error(f"Error performing WHOIS lookup for {domain_name} with WHOIS-JSON.com: {e}")
-            return None
+            raise # Re-raise to trigger fallback in DomainService
 
 class DomainService:
     """
@@ -185,6 +169,7 @@ class DomainService:
         """
         Fetches comprehensive information for a given domain.
         Aggregates data from various sources using API Quota Manager for selection.
+        Applies a multi-tiered fallback strategy for API calls.
         """
         if not domain_name:
             self.logger.warning("Attempted to get domain info for empty domain_name.")
@@ -199,66 +184,103 @@ class DomainService:
 
         domain_data: Dict[str, Any] = {"name": parsed_domain}
         
+        # Tier 1: Try best quality/quota-optimized APIs for each data type
         # --- WHOIS Lookup ---
         whois_data = None
-        selected_whois_api = self.api_quota_manager.get_best_quality_api("whois_lookup")
+        selected_whois_api = await self.api_quota_manager.get_best_quality_api("whois_lookup")
         if selected_whois_api and selected_whois_api in self._domain_clients:
-            self.logger.info(f"Using '{selected_whois_api}' for WHOIS lookup.")
             whois_client = self._domain_clients[selected_whois_api]
-            whois_data = await whois_client.whois_lookup(parsed_domain)
-            if whois_data:
-                self.api_quota_manager.record_usage(selected_whois_api, 1)
-                domain_data["whois_data"] = whois_data
-            else:
-                self.logger.warning(f"WHOIS lookup failed with {selected_whois_api} for {parsed_domain}.")
-        else:
-            self.logger.warning(f"No suitable WHOIS API client found via API Quota Manager for {parsed_domain}. Skipping WHOIS lookup.")
+            try:
+                self.logger.info(f"Attempting WHOIS lookup via selected API '{selected_whois_api}'.")
+                whois_data = await whois_client.whois_lookup(parsed_domain)
+                if whois_data:
+                    self.api_quota_manager.record_usage(selected_whois_api, 1)
+                    domain_data["whois_data"] = whois_data
+            except Exception as e:
+                self.logger.warning(f"Selected WHOIS API '{selected_whois_api}' failed for {parsed_domain}: {e}. Attempting fallback.")
 
-        # --- Domain Validation (e.g., check if domain exists, is parked, etc.) ---
+        # --- Domain Validation ---
         validation_data = None
-        selected_validation_api = self.api_quota_manager.get_best_quality_api("domain_validation")
+        selected_validation_api = await self.api_quota_manager.get_best_quality_api("domain_validation")
         if selected_validation_api and selected_validation_api in self._domain_clients:
-            self.logger.info(f"Using '{selected_validation_api}' for domain validation.")
             validation_client = self._domain_clients[selected_validation_api]
-            validation_data = await validation_client.validate_domain(parsed_domain) # Assuming validate_domain exists on client
-            if validation_data:
-                self.api_quota_manager.record_usage(selected_validation_api, 1)
-                domain_data["validation_data"] = validation_data
-                # Extract basic status from validation data
-                domain_data["is_registered"] = validation_data.get("is_registered", False)
-                domain_data["is_parked"] = validation_data.get("is_parked", False)
-                domain_data["is_dead"] = validation_data.get("is_dead", False)
-                domain_data["is_free"] = validation_data.get("is_free", False)
-                domain_data["is_spam"] = validation_data.get("is_spam", False) # AbstractAPI provides this
-            else:
-                self.logger.warning(f"Domain validation failed with {selected_validation_api} for {parsed_domain}.")
-        else:
-            self.logger.warning(f"No suitable domain validation API client found via API Quota Manager for {parsed_domain}. Skipping validation.")
+            try:
+                self.logger.info(f"Attempting domain validation via selected API '{selected_validation_api}'.")
+                validation_data = await validation_client.validate_domain(parsed_domain)
+                if validation_data:
+                    self.api_quota_manager.record_usage(selected_validation_api, 1)
+                    domain_data["validation_data"] = validation_data
+                    domain_data["is_registered"] = validation_data.get("is_registered", False)
+                    domain_data["is_parked"] = validation_data.get("is_parked", False)
+                    domain_data["is_dead"] = validation_data.get("is_dead", False)
+                    domain_data["is_free"] = validation_data.get("is_free", False)
+                    domain_data["is_spam"] = validation_data.get("is_spam", False)
+            except Exception as e:
+                self.logger.warning(f"Selected validation API '{selected_validation_api}' failed for {parsed_domain}: {e}. Attempting fallback.")
 
-        # --- DNS Records (A, AAAA, MX, NS, TXT) ---
-        # This part currently uses dns.asyncresolver directly or DOH, not a named client from external_apis
+        # --- SEO Metrics ---
+        seo_metrics_data = None
+        selected_seo_api = await self.api_quota_manager.get_best_quality_api("domain_seo_metrics")
+        if selected_seo_api and selected_seo_api in self._domain_clients:
+            seo_client = self._domain_clients[selected_seo_api]
+            try:
+                self.logger.info(f"Attempting SEO metrics via selected API '{selected_seo_api}'.")
+                seo_metrics_data = await seo_client.get_domain_metrics(parsed_domain) 
+                if seo_metrics_data:
+                    self.api_quota_manager.record_usage(selected_seo_api, 1)
+                    domain_data["seo_metrics"] = seo_metrics_data
+            except Exception as e:
+                self.logger.warning(f"Selected SEO metrics API '{selected_seo_api}' failed for {parsed_domain}: {e}. Attempting fallback.")
+
+        # Tier 2: Fallback to any other available API if Tier 1 failed
+        if not whois_data:
+            fallback_whois_api = await self.api_quota_manager.get_any_available_api("whois_lookup")
+            if fallback_whois_api and fallback_whois_api != selected_whois_api and fallback_whois_api in self._domain_clients:
+                fallback_whois_client = self._domain_clients[fallback_whois_api]
+                try:
+                    self.logger.info(f"Attempting WHOIS lookup via fallback API '{fallback_whois_api}'.")
+                    whois_data = await fallback_whois_client.whois_lookup(parsed_domain)
+                    if whois_data:
+                        self.api_quota_manager.record_usage(fallback_whois_api, 1)
+                        domain_data["whois_data"] = whois_data
+                except Exception as e:
+                    self.logger.warning(f"Fallback WHOIS API '{fallback_whois_api}' also failed for {parsed_domain}: {e}.")
+
+        if not validation_data:
+            fallback_validation_api = await self.api_quota_manager.get_any_available_api("domain_validation")
+            if fallback_validation_api and fallback_validation_api != selected_validation_api and fallback_validation_api in self._domain_clients:
+                fallback_validation_client = self._domain_clients[fallback_validation_api]
+                try:
+                    self.logger.info(f"Attempting domain validation via fallback API '{fallback_validation_api}'.")
+                    validation_data = await fallback_validation_client.validate_domain(parsed_domain)
+                    if validation_data:
+                        self.api_quota_manager.record_usage(fallback_validation_api, 1)
+                        domain_data["validation_data"] = validation_data
+                        domain_data["is_registered"] = validation_data.get("is_registered", False)
+                        domain_data["is_parked"] = validation_data.get("is_parked", False)
+                        domain_data["is_dead"] = validation_data.get("is_dead", False)
+                        domain_data["is_free"] = validation_data.get("is_free", False)
+                        domain_data["is_spam"] = validation_data.get("is_spam", False)
+                except Exception as e:
+                    self.logger.warning(f"Fallback validation API '{fallback_validation_api}' also failed for {parsed_domain}: {e}.")
+
+        if not seo_metrics_data:
+            fallback_seo_api = await self.api_quota_manager.get_any_available_api("domain_seo_metrics")
+            if fallback_seo_api and fallback_seo_api != selected_seo_api and fallback_seo_api in self._domain_clients:
+                fallback_seo_client = self._domain_clients[fallback_seo_api]
+                try:
+                    self.logger.info(f"Attempting SEO metrics via fallback API '{fallback_seo_api}'.")
+                    seo_metrics_data = await fallback_seo_client.get_domain_metrics(parsed_domain)
+                    if seo_metrics_data:
+                        self.api_quota_manager.record_usage(fallback_seo_api, 1)
+                        domain_data["seo_metrics"] = seo_metrics_data
+                except Exception as e:
+                    self.logger.warning(f"Fallback SEO metrics API '{fallback_seo_api}' also failed for {parsed_domain}: {e}.")
+
+        # Tier 3: DNS Records (A, AAAA, MX, NS, TXT) - uses internal logic or DOH
         domain_data["dns_records"] = await self._fetch_dns_records(parsed_domain)
         
-        # --- SEO Metrics (e.g., Domain Authority, Page Authority, Trust Flow, Citation Flow) ---
-        # Assuming SecurityTrails can provide some SEO-like metrics or we'd have a dedicated SEO metrics API
-        selected_seo_api = self.api_quota_manager.get_best_quality_api("domain_seo_metrics")
-        if selected_seo_api and selected_seo_api in self._domain_clients:
-            self.logger.info(f"Using '{selected_seo_api}' for SEO metrics.")
-            seo_client = self._domain_clients[selected_seo_api]
-            # Assuming a method like get_domain_metrics exists on SecurityTrailsClient
-            seo_metrics_data = await seo_client.get_domain_metrics(parsed_domain) 
-            if seo_metrics_data:
-                self.api_quota_manager.record_usage(selected_seo_api, 1)
-                domain_data["seo_metrics"] = seo_metrics_data
-            else:
-                self.logger.warning(f"SEO metrics lookup failed with {selected_seo_api} for {parsed_domain}.")
-        else:
-            self.logger.warning(f"No suitable SEO metrics API client found via API Quota Manager for {parsed_domain}. Falling back to simulated.")
-            domain_data["seo_metrics"] = self._simulate_seo_metrics(parsed_domain)
-
-
-        # --- IP Information ---
-        # This would typically be part of a network/IP info API, not directly in external_apis for now
+        # Tier 4: IP Information - uses internal logic
         domain_data["ip_info"] = await self._fetch_ip_info(parsed_domain)
 
         # Construct Domain object
