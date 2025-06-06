@@ -189,6 +189,7 @@ from Link_Profiler.api.public_jobs import public_jobs_router
 from Link_Profiler.api.reports import reports_router
 from Link_Profiler.api.users import users_router
 from Link_Profiler.api.websocket import websocket_router
+from Link_Profiler.api.mission_control import mission_control_router
 
 
 # Initialize ClickHouse Loader conditionally
@@ -671,6 +672,7 @@ app.include_router(public_jobs_router)
 app.include_router(reports_router)
 app.include_router(users_router)
 app.include_router(websocket_router)
+app.include_router(mission_control_router)
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
