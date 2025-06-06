@@ -11,7 +11,8 @@ import redis.asyncio as redis # Import the module for type hinting
 from Link_Profiler.api.schemas import (
     CrawlerMissionStatus, BacklinkDiscoveryMetrics, ApiQuotaStatus,
     DomainIntelligenceMetrics, PerformanceOptimizationMetrics, DashboardAlert,
-    DashboardRealtimeUpdates, SatelliteFleetStatus, CrawlStatus, CrawlError, SpamLevel
+    DashboardRealtimeUpdates, SatelliteFleetStatus, CrawlStatus, CrawlError, SpamLevel,
+    ApiPerformanceMetrics # Import ApiPerformanceMetrics
 )
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import the concrete APIQuotaManager
 from Link_Profiler.services.dashboard_alert_service import DashboardAlertService # Import the concrete DashboardAlertService
@@ -88,7 +89,7 @@ class MissionControlService:
         (
             crawler_mission_status_data,
             backlink_discovery_metrics_data,
-            api_quota_statuses_data,
+            api_quota_statuses_data_raw, # Renamed to avoid conflict with converted list
             domain_intelligence_metrics_data,
             performance_optimization_metrics_data,
             alerts_data,
@@ -105,7 +106,7 @@ class MissionControlService:
 
         # Convert raw API status dict to list of ApiQuotaStatus Pydantic models
         api_quota_statuses_converted: List[ApiQuotaStatus] = []
-        for api_name, status_data in api_quota_statuses_data.items():
+        for api_name, status_data in api_quota_statuses_data_raw.items():
             api_quota_statuses_converted.append(ApiQuotaStatus(
                 api_name=api_name,
                 limit=status_data['limit'],
@@ -114,8 +115,15 @@ class MissionControlService:
                 reset_date=status_data['last_reset_date'], # Already ISO format from manager
                 percentage_used=(status_data['used'] / status_data['limit'] * 100) if status_data['limit'] > 0 else 0,
                 status="OK" if status_data['remaining'] is None or status_data['remaining'] > status_data['limit'] * 0.2 else "Warning" if status_data['remaining'] > 0 else "Critical",
-                predicted_exhaustion_date=None, # Placeholder for prediction logic
-                recommended_action=None # Placeholder for recommendation logic
+                predicted_exhaustion_date=status_data['predicted_exhaustion_date'], # Now directly from manager
+                recommended_action=None, # Placeholder for recommendation logic
+                performance=ApiPerformanceMetrics( # Populate performance metrics
+                    total_calls=status_data['performance']['total_calls'],
+                    successful_calls=status_data['performance']['successful_calls'],
+                    average_response_time_ms=status_data['performance']['average_response_time_ms'],
+                    success_rate=status_data['performance']['success_rate'],
+                    circuit_breaker_state=status_data['performance']['circuit_breaker_state']
+                )
             ))
 
         updates = DashboardRealtimeUpdates(

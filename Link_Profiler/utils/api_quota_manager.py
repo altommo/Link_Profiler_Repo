@@ -3,6 +3,8 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 import time # Import time for monotonic clock
 
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager, CircuitBreakerState # Import CircuitBreakerState
+
 logger = logging.getLogger(__name__)
 
 class APIQuotaManager:
@@ -18,13 +20,14 @@ class APIQuotaManager:
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], resilience_manager: DistributedResilienceManager):
         if self._initialized:
             return
         self._initialized = True
         self.logger = logging.getLogger(__name__ + ".APIQuotaManager")
         self.quotas: Dict[str, Dict[str, Any]] = {}
         self._api_performance: Dict[str, Dict[str, Any]] = {} # Stores performance metrics
+        self.resilience_manager = resilience_manager # Store the resilience manager
         self._load_api_configs(config)
         self.logger.info("APIQuotaManager initialized.")
 
@@ -192,29 +195,39 @@ class APIQuotaManager:
         return datetime.now() + timedelta(hours=hours_to_exhaustion)
 
 
-    def get_available_apis(self, query_type: Optional[str] = None) -> List[str]:
+    async def get_available_apis(self, query_type: Optional[str] = None) -> List[str]:
         """
         Returns a list of APIs that are enabled, have an API key, and have remaining quota.
-        Optionally filters by supported query type.
+        Optionally filters by supported query type and excludes APIs with open circuit breakers.
         """
         available = []
         for api_name, data in self.quotas.items():
             remaining = self.get_remaining_quota(api_name)
+            
+            # Check circuit breaker state
+            cb = self.resilience_manager.get_circuit_breaker(api_name)
+            cb_status = await cb.get_status()
+            
+            if cb_status['state'] == CircuitBreakerState.OPEN:
+                self.logger.debug(f"API {api_name} circuit breaker is OPEN. Excluding from available APIs.")
+                continue # Exclude APIs with open circuit breakers
+
             if remaining is None or remaining > 0: # Unlimited or has quota left
                 if query_type is None or query_type in data.get('supported_query_types', []):
                     available.append(api_name)
         return available
 
-    def get_best_quality_api(self, query_type: Optional[str] = None) -> Optional[str]:
+    async def get_best_quality_api(self, query_type: Optional[str] = None) -> Optional[str]:
         """
         Returns the highest quality API with available quota for a given query type.
         Prioritizes quality, then success rate, then remaining quota, then response time.
+        Considers circuit breaker state.
         """
-        available_apis = self.get_available_apis(query_type)
+        available_apis = await self.get_available_apis(query_type) # Await this call
         if not available_apis:
             return None
         
-        def sort_key(api_name):
+        async def sort_key_async(api_name):
             quota_data = self.quotas[api_name]
             perf_data = self._api_performance.get(api_name, {})
             
@@ -224,32 +237,45 @@ class APIQuotaManager:
             remaining = self.get_remaining_quota(api_name)
             remaining_val = float('inf') if remaining is None else remaining # Higher is better
 
+            # Get circuit breaker state
+            cb = self.resilience_manager.get_circuit_breaker(api_name)
+            cb_status = await cb.get_status()
+            
+            # Penalize APIs based on circuit breaker state
+            cb_penalty = 0
+            if cb_status['state'] == CircuitBreakerState.HALF_OPEN:
+                cb_penalty = -100000 # Significant penalty for half-open (being tested)
+            elif cb_status['state'] == CircuitBreakerState.OPEN:
+                cb_penalty = -float('inf') # Should already be filtered by get_available_apis, but double-check
+
             # Penalize low success rate and high response time
-            # A success rate below 90% gets a significant penalty
-            # Response times above 1000ms get a penalty
             performance_penalty = 0
             if success_rate < 0.9:
                 performance_penalty -= (0.9 - success_rate) * 100000 # Large penalty for low success
             if avg_response_time > 1000:
                 performance_penalty -= (avg_response_time / 1000) * 1000 # Penalty for slow response
 
-            # Sort order: higher quality, higher success rate, higher remaining quota, lower response time
-            # Incorporate performance_penalty into the overall score
-            return (quality * 1000000 + success_rate * 100000 + remaining_val - avg_response_time + performance_penalty)
+            # Combine all factors into a single score
+            score = (quality * 1000000 + success_rate * 100000 + remaining_val - avg_response_time + performance_penalty + cb_penalty)
+            return score
 
-        sorted_apis = sorted(available_apis, key=sort_key, reverse=True)
-        return sorted_apis[0] if sorted_apis else None
+        # Sort asynchronously
+        scored_apis = await asyncio.gather(*[sort_key_async(api_name) for api_name in available_apis])
+        sorted_apis_with_scores = sorted(zip(available_apis, scored_apis), key=lambda x: x[1], reverse=True)
 
-    def get_quota_optimized_api(self, query_type: Optional[str] = None) -> Optional[str]:
+        return sorted_apis_with_scores[0][0] if sorted_apis_with_scores else None
+
+    async def get_quota_optimized_api(self, query_type: Optional[str] = None) -> Optional[str]:
         """
         Returns an API that optimizes for remaining free tier quota,
         prioritizing those with more remaining quota or lower cost, also considering performance and predicted exhaustion.
+        Considers circuit breaker state.
         """
-        available_apis = self.get_available_apis(query_type)
+        available_apis = await self.get_available_apis(query_type) # Await this call
         if not available_apis:
             return None
 
-        def sort_key(api_name):
+        async def sort_key_async(api_name):
             quota_data = self.quotas[api_name]
             perf_data = self._api_performance.get(api_name, {})
 
@@ -258,6 +284,17 @@ class APIQuotaManager:
             cost_per_unit = quota_data.get('cost_per_unit', float('inf')) # Lower is better
             success_rate = perf_data.get('success_rate', 0.0) # Higher is better
             avg_response_time = perf_data.get('average_response_time_ms', float('inf')) # Lower is better
+            
+            # Get circuit breaker state
+            cb = self.resilience_manager.get_circuit_breaker(api_name)
+            cb_status = await cb.get_status()
+
+            # Penalize APIs based on circuit breaker state
+            cb_penalty = 0
+            if cb_status['state'] == CircuitBreakerState.HALF_OPEN:
+                cb_penalty = -100000 # Significant penalty for half-open (being tested)
+            elif cb_status['state'] == CircuitBreakerState.OPEN:
+                cb_penalty = -float('inf') # Should already be filtered by get_available_apis, but double-check
             
             # Predictive exhaustion: prioritize APIs that are NOT predicted to run out soon
             predicted_exhaustion = self.predict_exhaustion_date(api_name)
@@ -282,15 +319,17 @@ class APIQuotaManager:
             if avg_response_time > 1000:
                 performance_penalty -= (avg_response_time / 1000) * 500 # Penalty for slow response
 
-            # Sort order: higher remaining quota, lower cost, higher success rate, lower response time, avoid early exhaustion
             # Combine all factors into a single score
-            score = remaining_val - (cost_per_unit * 1000) + (success_rate * 1000) - (avg_response_time / 10) + exhaustion_penalty + performance_penalty
+            score = remaining_val - (cost_per_unit * 1000) + (success_rate * 1000) - (avg_response_time / 10) + exhaustion_penalty + performance_penalty + cb_penalty
             return score
 
-        sorted_apis = sorted(available_apis, key=sort_key, reverse=True)
-        return sorted_apis[0] if sorted_apis else None
+        # Sort asynchronously
+        scored_apis = await asyncio.gather(*[sort_key_async(api_name) for api_name in available_apis])
+        sorted_apis_with_scores = sorted(zip(available_apis, scored_apis), key=lambda x: x[1], reverse=True)
 
-    def get_api_status(self) -> Dict[str, Any]:
+        return sorted_apis_with_scores[0][0] if sorted_apis_with_scores else None
+
+    async def get_api_status(self) -> Dict[str, Any]:
         """Returns a summary of all API statuses including performance metrics and predicted exhaustion."""
         status = {}
         for api_name, data in self.quotas.items():
@@ -301,6 +340,10 @@ class APIQuotaManager:
 
             perf_data = self._api_performance.get(api_name, {})
             predicted_exhaustion = self.predict_exhaustion_date(api_name)
+
+            # Get circuit breaker state
+            cb = self.resilience_manager.get_circuit_breaker(api_name)
+            cb_status = await cb.get_status()
 
             status[api_name] = {
                 'limit': limit,
@@ -316,7 +359,8 @@ class APIQuotaManager:
                     'total_calls': perf_data.get('total_calls', 0),
                     'successful_calls': perf_data.get('successful_calls', 0),
                     'average_response_time_ms': perf_data.get('average_response_time_ms', 0.0),
-                    'success_rate': perf_data.get('success_rate', 0.0)
+                    'success_rate': perf_data.get('success_rate', 0.0),
+                    'circuit_breaker_state': cb_status['state'].value # Add CB state here
                 },
                 'predicted_exhaustion_date': predicted_exhaustion.isoformat() if predicted_exhaustion else None
             }

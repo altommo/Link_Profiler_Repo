@@ -755,6 +755,7 @@ class ApiPerformanceMetrics(BaseModel):
     successful_calls: int
     average_response_time_ms: float
     success_rate: float
+    circuit_breaker_state: str = "CLOSED" # New: Add circuit breaker state
 
 class ApiQuotaStatus(BaseModel):
     api_name: str
