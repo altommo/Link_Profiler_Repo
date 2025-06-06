@@ -1,10 +1,11 @@
 import Layout from './components/Layout';
 import useRealTimeData from './hooks/useRealTimeData';
 import useMissionControlStore from './stores/missionControlStore';
-import { Routes, Route, Navigate } from 'react-router-dom'; // Import Routes and Route
+import { Routes, Route, Navigate } from 'react-router-dom';
 
-// New page component placeholder
+// Page components
 import Overview from './pages/Overview';
+import Jobs from './pages/Jobs'; // New import
 
 function App() {
   const { isConnected } = useRealTimeData();
@@ -25,9 +26,10 @@ function App() {
         
         {/* Define routes */}
         <Routes>
-          <Route path="/" element={<Navigate to="/overview" replace />} /> {/* Redirect root to overview */}
-          <Route path="/overview" element={<Overview />} /> {/* New Overview page */}
-          {/* Add more routes for Jobs, Alerts, Settings etc. in future turns */}
+          <Route path="/" element={<Navigate to="/overview" replace />} />
+          <Route path="/overview" element={<Overview />} />
+          <Route path="/jobs" element={<Jobs />} /> {/* New Jobs page route */}
+          {/* Add more routes for Alerts, Settings etc. in future turns */}
         </Routes>
       </Layout>
     </div>
