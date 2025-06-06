@@ -56,10 +56,9 @@ class SimulatedSERPAPIClient(BaseSERPAPIClient):
             logger.warning("No SessionManager provided to SimulatedSERPAPIClient. Falling back to local SessionManager.")
         
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        # Removed problematic fallback import
         if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to SimulatedSERPAPIClient. Falling back to global instance.")
+            raise ValueError(f"{self.__class__.__name__} requires a DistributedResilienceManager.")
 
 
     async def __aenter__(self):
@@ -132,10 +131,9 @@ class RealSERPAPIClient(BaseSERPAPIClient):
             logger.warning("No SessionManager provided to RealSERPAPIClient. Falling back to local SessionManager.")
         
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        # Removed problematic fallback import
         if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to RealSERPAPIClient. Falling back to global instance.")
+            raise ValueError(f"{self.__class__.__name__} requires a DistributedResilienceManager.")
 
 
     async def __aenter__(self):
@@ -321,10 +319,9 @@ class SERPService:
             logger.warning("No SessionManager provided to SERPService. Falling back to local SessionManager.")
         
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
+        # Removed problematic fallback import
         if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to SERPService. Falling back to global instance.")
+            raise ValueError(f"{self.__class__.__name__} requires a DistributedResilienceManager.")
 
         # Determine which API client to use based on config_loader priority
         if config_loader.get("serp_api.real_api.enabled"):

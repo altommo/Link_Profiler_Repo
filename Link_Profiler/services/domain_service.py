@@ -33,10 +33,9 @@ class AbstractDomainAPIClient(BaseAPIClient):
         self.whois_base_url = config_loader.get("domain_api.abstract_api.whois_base_url", "https://whois.abstractapi.com/v1/")
         
         self.resilience_manager = resilience_manager # New: Store resilience_manager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            self.logger.warning("No DistributedResilienceManager provided to AbstractDomainAPIClient. Falling back to global instance.")
+        # Removed problematic fallback import
+        if self.enabled and self.resilience_manager is None:
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
         if not self.enabled:
             self.logger.info("AbstractAPI Domain Validation is disabled.")
@@ -89,10 +88,9 @@ class WhoisJsonAPIClient(BaseAPIClient):
         self.base_url = config_loader.get("domain_api.whois_json_api.base_url", "https://www.whois-json.com/api/v1/whois")
         
         self.resilience_manager = resilience_manager # New: Store resilience_manager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            self.logger.warning("No DistributedResilienceManager provided to WhoisJsonAPIClient. Falling back to global instance.")
+        # Removed problematic fallback import
+        if self.enabled and self.resilience_manager is None:
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
         if not self.enabled:
             self.logger.info("WHOIS-JSON.com API is disabled.")
@@ -142,10 +140,9 @@ class DomainService:
         self.logger = logging.getLogger(__name__ + ".DomainService")
         self.session_manager = session_manager # Ensure it's set for this instance
         self.resilience_manager = resilience_manager # Ensure it's set for this instance
+        # Removed problematic fallback import
         if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            self.logger.warning("No DistributedResilienceManager provided to DomainService. Falling back to global instance.")
+            raise ValueError(f"{self.__class__.__name__} requires a DistributedResilienceManager.")
 
 
         # Initialize API clients, passing the resilience_manager

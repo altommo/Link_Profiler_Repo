@@ -30,10 +30,9 @@ class LinkHealthService:
         self.logger = logging.getLogger(__name__)
         self.session_manager = session_manager # Store session manager instance
         self.resilience_manager = resilience_manager # New: Store resilience_manager
+        # Removed problematic fallback import
         if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            self.logger.warning("No DistributedResilienceManager provided to LinkHealthService. Falling back to global instance.")
+            raise ValueError(f"{self.__class__.__name__} requires a DistributedResilienceManager.")
 
         # Use a default crawl config for link checking, or allow it to be passed
         self.default_crawl_config = CrawlConfig(

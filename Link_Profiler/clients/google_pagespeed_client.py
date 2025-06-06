@@ -36,10 +36,9 @@ class PageSpeedClient:
             logger.warning("No SessionManager provided to PageSpeedClient. Falling back to global SessionManager.")
         
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to PageSpeedClient. Falling back to global instance.")
+        # Removed problematic fallback import
+        if self.enabled and self.resilience_manager is None:
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
         self._last_call_time: float = 0.0 # For explicit throttling
 

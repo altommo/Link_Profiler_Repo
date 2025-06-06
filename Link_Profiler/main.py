@@ -205,8 +205,8 @@ else:
 
 
 # New: Initialize WHOISClient and DNSClient
-whois_client_instance = WHOISClient(session_manager=session_manager)
-dns_client_instance = DNSClient(session_manager=session_manager)
+whois_client_instance = WHOISClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager)
+dns_client_instance = DNSClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager)
 
 # Initialize DomainService globally, but manage its lifecycle with lifespan
 # Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > WHOIS-JSON > Simulated
@@ -218,7 +218,7 @@ domain_service_instance = DomainService(
 )
 
 # New: Initialize GSCClient
-gsc_client_instance = GoogleSearchConsoleClient(session_manager=session_manager)
+gsc_client_instance = GoogleSearchConsoleClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager)
 
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
@@ -229,7 +229,7 @@ backlink_service_instance = BacklinkService(
 )
 
 # New: Initialize PageSpeedClient
-pagespeed_client_instance = PageSpeedClient(session_manager=session_manager)
+pagespeed_client_instance = PageSpeedClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager)
 
 # New: Initialize SERPService and SERPCrawler
 serp_crawler_instance = None
@@ -247,13 +247,13 @@ serp_service_instance = SERPService(
 )
 
 # New: Initialize GoogleTrendsClient
-google_trends_client_instance = GoogleTrendsClient(session_manager=session_manager)
+google_trends_client_instance = GoogleTrendsClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager)
 
 # New: Initialize KeywordService and KeywordScraper
 keyword_scraper_instance = None
 if config_loader.get("keyword_scraper.enabled"): # Assuming a config for keyword_scraper.enabled
     logger.info("Initialising KeywordScraper.")
-    keyword_scraper_instance = KeywordScraper(session_manager=session_manager)
+    keyword_scraper_instance = KeywordScraper(session_manager=session_manager, resilience_manager=distributed_resilience_manager)
 keyword_service_instance = KeywordService(
     keyword_scraper=keyword_scraper_instance,
     google_trends_client=google_trends_client_instance, # New: Pass google_trends_client_instance
@@ -282,15 +282,15 @@ report_service_instance = ReportService(db)
 competitive_analysis_service_instance = CompetitiveAnalysisService(db, backlink_service_instance, serp_service_instance)
 
 # New: Initialize RedditClient, YouTubeClient, NewsAPIClient
-reddit_client_instance = RedditClient(session_manager=session_manager)
-youtube_client_instance = YouTubeClient(session_manager=session_manager)
-news_api_client_instance = NewsAPIClient(session_manager=session_manager)
+reddit_client_instance = RedditClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager)
+youtube_client_instance = YouTubeClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager)
+news_api_client_instance = NewsAPIClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager)
 
 # New: Initialize Social Media Service and Crawler
 social_media_crawler_instance = None
 if config_loader.get("social_media_crawler.enabled"):
     logger.info("Initialising SocialMediaCrawler.")
-    social_media_crawler_instance = SocialMediaCrawler(session_manager=session_manager)
+    social_media_crawler_instance = SocialMediaCrawler(session_manager=session_manager, resilience_manager=distributed_resilience_manager)
 social_media_service_instance = SocialMediaService(
     database=db, # Pass database
     social_media_crawler=social_media_crawler_instance,
