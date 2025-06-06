@@ -16,6 +16,7 @@ from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.clients.base_client import BaseAPIClient # Assuming this exists
 from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
 
 logger = logging.getLogger(__name__)
 
@@ -82,18 +83,14 @@ class WaybackClient(BaseAPIClient):
     Based on Internet Archive CDX Server documentation.
     """
     
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
-        super().__init__(session_manager)
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
+        super().__init__(session_manager, resilience_manager, api_quota_manager) # Pass api_quota_manager to BaseAPIClient
         self.logger = logging.getLogger(__name__ + ".WaybackClient")
         # The base_url should point to the CDX API endpoint, e.g., "http://web.archive.org/cdx/search/cdx"
         self.base_url = config_loader.get("historical_data.wayback_machine_api.base_url", 
                                          "http://web.archive.org/cdx/search/cdx")
         self.enabled = config_loader.get("historical_data.wayback_machine_api.enabled", False)
-        self.resilience_manager = resilience_manager # New: Store ResilienceManager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to WaybackClient. Falling back to global instance.")
+        # resilience_manager and api_quota_manager are now handled by BaseAPIClient's __init__
         
         self._last_call_time: float = 0.0 # For explicit throttling
 
@@ -171,14 +168,12 @@ class WaybackClient(BaseAPIClient):
 
         self.logger.info(f"Fetching Wayback snapshots for {url} (limit: {limit})")
         
+        start_time = time.monotonic()
+        success = False
         try:
             # Use resilience manager for the actual HTTP request
-            response = await self.resilience_manager.execute_with_resilience(
-                lambda: self.session_manager.get(self.base_url, params=params, timeout=30),
-                url=self.base_url # Pass the base URL for circuit breaker naming
-            )
-            response.raise_for_status()
-            data = await response.json()
+            data = await self._make_request("GET", self.base_url, params=params)
+            success = True
             
             if not data or len(data) < 2:  # First row is header
                 self.logger.info(f"No snapshots found for {url}")
@@ -208,6 +203,9 @@ class WaybackClient(BaseAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error fetching Wayback snapshots for {url}: {e}")
             return []
+        finally:
+            response_time_ms = (time.monotonic() - start_time) * 1000
+            self.api_quota_manager.record_api_performance("wayback_machine_api", success, response_time_ms)
 
     @api_rate_limited(service="wayback_machine_api", api_client_type="wayback_client", endpoint="check_availability")
     async def check_availability(self, url: str, timestamp: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -232,14 +230,12 @@ class WaybackClient(BaseAPIClient):
         if timestamp:
             params['timestamp'] = timestamp
             
+        start_time = time.monotonic()
+        success = False
         try:
             # Use resilience manager for the actual HTTP request
-            response = await self.resilience_manager.execute_with_resilience(
-                lambda: self.session_manager.get(availability_url, params=params, timeout=15),
-                url=availability_url # Pass the URL for circuit breaker naming
-            )
-            response.raise_for_status()
-            data = await response.json()
+            data = await self._make_request("GET", availability_url, params=params)
+            success = True
             
             if data.get('archived_snapshots', {}).get('closest', {}).get('available'):
                 data['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
@@ -258,6 +254,9 @@ class WaybackClient(BaseAPIClient):
         except Exception as e:
             self.logger.error(f"Unexpected error checking Wayback availability for {url}: {e}")
             return None
+        finally:
+            response_time_ms = (time.monotonic() - start_time) * 1000
+            self.api_quota_manager.record_api_performance("wayback_machine_api", success, response_time_ms)
 
     async def get_first_snapshot(self, url: str) -> Optional[WaybackSnapshot]:
         """Get the earliest snapshot of a URL."""

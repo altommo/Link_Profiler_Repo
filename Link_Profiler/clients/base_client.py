@@ -3,13 +3,14 @@ from typing import Optional
 from Link_Profiler.utils.session_manager import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # Import DistributedResilienceManager
 from datetime import datetime # Import datetime
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
 
 class BaseAPIClient:
     """
     Base class for all API clients to provide common functionality
     like session management and logging.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.session_manager = session_manager
         if self.session_manager is None:
@@ -23,6 +24,12 @@ class BaseAPIClient:
             # This client is enabled but no DistributedResilienceManager was provided.
             # This indicates a configuration error or missing dependency injection.
             raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+        
+        self.api_quota_manager = api_quota_manager
+        if self.api_quota_manager is None:
+            # This client is enabled but no APIQuotaManager was provided.
+            # This indicates a configuration error or missing dependency injection.
+            raise ValueError(f"{self.__class__.__name__} is enabled but no APIQuotaManager was provided.")
 
 
     async def __aenter__(self):

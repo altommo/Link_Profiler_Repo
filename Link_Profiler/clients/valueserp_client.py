@@ -9,6 +9,7 @@ from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.clients.base_client import BaseAPIClient
 from Link_Profiler.utils.session_manager import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
 
 logger = logging.getLogger(__name__)
 
@@ -16,17 +17,13 @@ class ValueserpClient(BaseAPIClient):
     """
     Client for the ValueSERP API.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
-        super().__init__(session_manager)
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
+        super().__init__(session_manager, resilience_manager, api_quota_manager) # Pass api_quota_manager to BaseAPIClient
         self.logger = logging.getLogger(__name__ + ".ValueserpClient")
         self.base_url = config_loader.get("external_apis.valueserp.base_url", "https://api.valueserp.com/search")
         self.api_key = config_loader.get("external_apis.valueserp.api_key")
         self.enabled = config_loader.get("external_apis.valueserp.enabled", False)
-        self.resilience_manager = resilience_manager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to ValueserpClient. Falling back to global instance.")
+        # resilience_manager and api_quota_manager are now handled by BaseAPIClient's __init__
 
         if not self.enabled or not self.api_key:
             self.logger.info("ValueSERP API is disabled or API key is missing.")
@@ -54,15 +51,16 @@ class ValueserpClient(BaseAPIClient):
             "country": country,
         }
 
+        start_time = time.monotonic()
+        success = False
         try:
-            response = await self.resilience_manager.execute_with_resilience(
-                lambda: self.session_manager.get(self.base_url, params=params, timeout=30),
-                url=self.base_url
-            )
-            response.raise_for_status()
-            data = await response.json()
+            data = await self._make_request("GET", self.base_url, params=params)
+            success = True
             self.logger.info(f"ValueSERP search for '{query}' successful.")
             return data
         except Exception as e:
             self.logger.error(f"Error during ValueSERP search for '{query}': {e}", exc_info=True)
             return {"error": str(e)}
+        finally:
+            response_time_ms = (time.monotonic() - start_time) * 1000
+            self.api_quota_manager.record_api_performance("valueserp", success, response_time_ms)
