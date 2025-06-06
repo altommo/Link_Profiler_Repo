@@ -12,6 +12,23 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# Custom YAML loader to expand environment variables
+class EnvSafeLoader(yaml.SafeLoader):
+    pass
+
+def construct_env_str(loader, node):
+    """
+    Constructor for YAML strings that expands environment variables.
+    Handles both $VAR and ${VAR:-default} syntax.
+    """
+    value = loader.construct_scalar(node)
+    return os.path.expandvars(value)
+
+# Register the constructor for plain strings (which is where env vars will be)
+# This will apply os.path.expandvars to all string values loaded from YAML.
+EnvSafeLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_SCALAR_TAG, construct_env_str)
+
+
 class ConfigLoader:
     """
     Loads configuration from JSON/YAML files and environment variables.
@@ -46,7 +63,7 @@ class ConfigLoader:
             "Link_Profiler/config/security.yaml",
             "Link_Profiler/config/monitoring.yaml",
             "Link_Profiler/config/features.yaml",
-            "Link_Profiler/config/config.yaml" # Legacy/fallback
+            "Link_Profiler/config/config.yaml" # Main config file
         ]
         
         loaded_files = []
@@ -54,7 +71,8 @@ class ConfigLoader:
             if os.path.exists(path):
                 try:
                     with open(path, 'r') as f:
-                        file_config = yaml.safe_load(f)
+                        # Use the custom EnvSafeLoader to expand environment variables
+                        file_config = yaml.load(f, Loader=EnvSafeLoader)
                         if file_config:
                             self._merge_config(self._config_data, file_config)
                             loaded_files.append(path)
@@ -68,7 +86,9 @@ class ConfigLoader:
         else:
             self.logger.info(f"Loaded configuration from: {', '.join(loaded_files)}")
 
-        self._load_env_variables()
+        # After loading from YAML (which now handles ${VAR:-default}),
+        # we still want direct environment variables to override.
+        self._apply_direct_env_variables()
         self.logger.info("Configuration loaded successfully.")
 
     def _merge_config(self, target: Dict, source: Dict):
@@ -82,42 +102,24 @@ class ConfigLoader:
             else:
                 target[key] = value
 
-    def _load_env_variables(self):
+    def _apply_direct_env_variables(self):
         """
-        Loads environment variables and applies them to the configuration,
-        overriding any values loaded from files.
-        Supports nested keys using '__' as a separator (e.g., 'DATABASE__URL').
+        Applies environment variables directly to the configuration,
+        overriding any values loaded from files or expanded from placeholders.
+        This handles cases where an environment variable should always take precedence.
         """
         for key, value in os.environ.items():
             # Only consider environment variables prefixed with 'LP_'
             if not key.startswith('LP_'):
                 continue
 
-            # Convert LP_DATABASE_URL to database.url
-            # LP_AI_OPENROUTER_API_KEY to ai.openrouter_api_key
-            # LP_MONITOR_PASSWORD to monitoring.monitor_auth.password
+            # Convert LP_DATABASE_URL to database.url, LP_AUTH_SECRET_KEY to auth.secret_key etc.
+            # This logic is still useful for direct overrides.
             config_key_path = key[3:].lower().replace('__', '.') # Remove prefix, lowercase, replace __ with .
 
-            # Handle special cases for password/secret keys that might be directly referenced
-            if config_key_path == 'auth.secret_key':
-                self._set_nested_value(self._config_data, 'auth.secret_key', value)
-                self.logger.debug(f"Applied environment variable LP_AUTH_SECRET_KEY to auth.secret_key")
-            elif config_key_path == 'monitor_password': # LP_MONITOR_PASSWORD
-                self._set_nested_value(self._config_data, 'monitoring.monitor_auth.password', value)
-                self.logger.debug(f"Applied environment variable LP_MONITOR_PASSWORD to monitoring.monitor_auth.password")
-            elif config_key_path == 'redis_url': # LP_REDIS_URL
-                self._set_nested_value(self._config_data, 'redis.url', value)
-                self.logger.debug(f"Applied environment variable LP_REDIS_URL to redis.url")
-            elif config_key_path == 'database_url': # LP_DATABASE_URL
-                self._set_nested_value(self._config_data, 'database.url', value)
-                self.logger.debug(f"Applied environment variable LP_DATABASE_URL to database.url")
-            elif config_key_path == 'ai_openrouter_api_key': # LP_AI_OPENROUTER_API_KEY
-                self._set_nested_value(self._config_data, 'ai.openrouter_api_key', value)
-                self.logger.debug(f"Applied environment variable LP_AI_OPENROUTER_API_KEY to ai.openrouter_api_key")
-            else:
-                # Generic handling for other LP_ variables
-                self._set_nested_value(self._config_data, config_key_path, value)
-                self.logger.debug(f"Applied environment variable {key} to {config_key_path}")
+            # Use a more generic approach for setting nested values
+            self._set_nested_value(self._config_data, config_key_path, value)
+            self.logger.debug(f"Applied environment variable {key} to {config_key_path}")
 
 
     def _set_nested_value(self, data: Dict, key_path: str, value: Any):
