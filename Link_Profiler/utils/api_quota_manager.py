@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime, timedelta
 import time # Import time for monotonic clock
 import asyncio # Import asyncio
@@ -235,6 +235,76 @@ class APIQuotaManager:
                     available.append(api_name)
         return available
 
+    async def _calculate_api_score(self, api_name: str, strategy: str = 'best_quality') -> float:
+        """
+        Calculates a composite score for an API based on the chosen strategy and current metrics.
+        This acts as the "decision tree" or "ML-like algorithm".
+        """
+        quota_data = self.quotas[api_name]
+        perf_data = self._api_performance.get(api_name, {})
+
+        quality = quota_data.get('quality_score', 0)
+        cost_per_unit = quota_data.get('cost_per_unit', float('inf'))
+        
+        success_rate = perf_data.get('success_rate', 0.0)
+        avg_response_time = perf_data.get('average_response_time_ms', float('inf'))
+        
+        remaining = self.get_remaining_quota(api_name)
+        remaining_val = float('inf') if remaining is None else remaining
+
+        predicted_exhaustion = self.predict_exhaustion_date(api_name)
+
+        # Circuit Breaker Penalty
+        cb = self.resilience_manager.get_circuit_breaker(api_name)
+        cb_status = await cb.get_status()
+        cb_penalty = 0
+        if cb_status['state'] == CircuitBreakerState.HALF_OPEN:
+            cb_penalty = self.weights['half_open_penalty']
+        elif cb_status['state'] == CircuitBreakerState.OPEN:
+            cb_penalty = -float('inf') # Should be filtered out by get_available_apis, but defensive
+
+        # Performance Penalty
+        performance_penalty = 0
+        if success_rate < self.performance_thresholds['low_success_rate']:
+            performance_penalty += (success_rate - self.performance_thresholds['low_success_rate']) * self.weights['success_rate'] # Negative penalty
+        if avg_response_time > self.performance_thresholds['high_response_time_ms']:
+            performance_penalty += (avg_response_time / self.performance_thresholds['high_response_time_ms']) * self.weights['response_time'] # Negative penalty
+
+        # Exhaustion Penalty
+        exhaustion_penalty = 0
+        if predicted_exhaustion:
+            time_to_exhaustion = (predicted_exhaustion - datetime.now()).total_seconds()
+            if time_to_exhaustion < 0: # Already exhausted
+                exhaustion_penalty = -float('inf')
+            elif time_to_exhaustion < timedelta(days=1).total_seconds(): # Less than 1 day
+                exhaustion_penalty = self.weights['exhaustion_penalty_factor'] * 100 # Very high penalty
+            elif time_to_exhaustion < timedelta(days=self.exhaustion_warning_days).total_seconds(): # Within warning days
+                exhaustion_penalty = self.weights['exhaustion_penalty_factor'] * (1 - (time_to_exhaustion / timedelta(days=self.exhaustion_warning_days).total_seconds())) # Scale penalty
+
+        # Combine factors based on strategy
+        score = 0.0
+        if strategy == 'best_quality':
+            score = (quality * self.weights['quality'] + 
+                     success_rate * self.weights['success_rate'] + 
+                     remaining_val * self.weights['remaining_quota'] + 
+                     avg_response_time * self.weights['response_time'] + 
+                     performance_penalty + cb_penalty)
+        elif strategy == 'quota_optimized':
+            score = (remaining_val * self.weights['remaining_quota'] + 
+                     cost_per_unit * self.weights['cost_per_unit'] + 
+                     success_rate * self.weights['success_rate'] + 
+                     avg_response_time * self.weights['response_time'] + 
+                     exhaustion_penalty + performance_penalty + cb_penalty)
+        else: # Default or custom strategy
+            score = (quality * self.weights['quality'] + 
+                     remaining_val * self.weights['remaining_quota'] - 
+                     cost_per_unit * self.weights['cost_per_unit'] + 
+                     success_rate * self.weights['success_rate'] + 
+                     avg_response_time * self.weights['response_time'] + 
+                     exhaustion_penalty + performance_penalty + cb_penalty)
+        
+        return score
+
     async def get_best_quality_api(self, query_type: Optional[str] = None) -> Optional[str]:
         """
         Returns the highest quality API with available quota for a given query type.
@@ -245,44 +315,8 @@ class APIQuotaManager:
         if not available_apis:
             return None
         
-        async def sort_key_async(api_name):
-            quota_data = self.quotas[api_name]
-            perf_data = self._api_performance.get(api_name, {})
-            
-            quality = quota_data.get('quality_score', 0)
-            success_rate = perf_data.get('success_rate', 0.0)
-            avg_response_time = perf_data.get('average_response_time_ms', float('inf')) # Lower is better
-            remaining = self.get_remaining_quota(api_name)
-            remaining_val = float('inf') if remaining is None else remaining # Higher is better
-
-            # Get circuit breaker state
-            cb = self.resilience_manager.get_circuit_breaker(api_name)
-            cb_status = await cb.get_status()
-            
-            # Penalize APIs based on circuit breaker state
-            cb_penalty = 0
-            if cb_status['state'] == CircuitBreakerState.HALF_OPEN:
-                cb_penalty = self.weights['half_open_penalty'] # Significant penalty for half-open (being tested)
-            elif cb_status['state'] == CircuitBreakerState.OPEN:
-                cb_penalty = -float('inf') # Should already be filtered by get_available_apis, but double-check
-
-            # Penalize low success rate and high response time
-            performance_penalty = 0
-            if success_rate < self.performance_thresholds['low_success_rate']:
-                performance_penalty += (success_rate - self.performance_thresholds['low_success_rate']) * self.weights['success_rate'] # Negative penalty
-            if avg_response_time > self.performance_thresholds['high_response_time_ms']:
-                performance_penalty += (avg_response_time / self.performance_thresholds['high_response_time_ms']) * self.weights['response_time'] # Negative penalty
-
-            # Combine all factors into a single score
-            score = (quality * self.weights['quality'] + 
-                     success_rate * self.weights['success_rate'] + 
-                     remaining_val * self.weights['remaining_quota'] + 
-                     avg_response_time * self.weights['response_time'] + 
-                     performance_penalty + cb_penalty)
-            return score
-
-        # Sort asynchronously
-        scored_apis = await asyncio.gather(*[sort_key_async(api_name) for api_name in available_apis])
+        # Sort asynchronously using the _calculate_api_score with 'best_quality' strategy
+        scored_apis = await asyncio.gather(*[self._calculate_api_score(api_name, 'best_quality') for api_name in available_apis])
         sorted_apis_with_scores = sorted(zip(available_apis, scored_apis), key=lambda x: x[1], reverse=True)
 
         return sorted_apis_with_scores[0][0] if sorted_apis_with_scores else None
@@ -297,58 +331,8 @@ class APIQuotaManager:
         if not available_apis:
             return None
 
-        async def sort_key_async(api_name):
-            quota_data = self.quotas[api_name]
-            perf_data = self._api_performance.get(api_name, {})
-
-            remaining = self.get_remaining_quota(api_name)
-            remaining_val = float('inf') if remaining is None else remaining # Higher is better
-            cost_per_unit = quota_data.get('cost_per_unit', float('inf')) # Lower is better
-            success_rate = perf_data.get('success_rate', 0.0) # Higher is better
-            avg_response_time = perf_data.get('average_response_time_ms', float('inf')) # Lower is better
-            
-            # Get circuit breaker state
-            cb = self.resilience_manager.get_circuit_breaker(api_name)
-            cb_status = await cb.get_status()
-
-            # Penalize APIs based on circuit breaker state
-            cb_penalty = 0
-            if cb_status['state'] == CircuitBreakerState.HALF_OPEN:
-                cb_penalty = self.weights['half_open_penalty'] # Significant penalty for half-open (being tested)
-            elif cb_status['state'] == CircuitBreakerState.OPEN:
-                cb_penalty = -float('inf') # Should already be filtered by get_available_apis, but double-check
-            
-            # Predictive exhaustion: prioritize APIs that are NOT predicted to run out soon
-            predicted_exhaustion = self.predict_exhaustion_date(api_name)
-            
-            # Dynamic exhaustion penalty: more severe as exhaustion date gets closer
-            exhaustion_penalty = 0
-            if predicted_exhaustion:
-                time_to_exhaustion = (predicted_exhaustion - datetime.now()).total_seconds()
-                if time_to_exhaustion < 0: # Already exhausted
-                    exhaustion_penalty = -float('inf')
-                elif time_to_exhaustion < timedelta(days=1).total_seconds(): # Less than 1 day
-                    exhaustion_penalty = self.weights['exhaustion_penalty_factor'] * 100 # Very high penalty
-                elif time_to_exhaustion < timedelta(days=self.exhaustion_warning_days).total_seconds(): # Within warning days
-                    exhaustion_penalty = self.weights['exhaustion_penalty_factor'] * (1 - (time_to_exhaustion / timedelta(days=self.exhaustion_warning_days).total_seconds())) # Scale penalty
-
-            # Penalize low success rate and high response time
-            performance_penalty = 0
-            if success_rate < self.performance_thresholds['low_success_rate']:
-                performance_penalty += (success_rate - self.performance_thresholds['low_success_rate']) * self.weights['success_rate'] # Negative penalty
-            if avg_response_time > self.performance_thresholds['high_response_time_ms']:
-                performance_penalty += (avg_response_time / self.performance_thresholds['high_response_time_ms']) * self.weights['response_time'] # Negative penalty
-
-            # Combine all factors into a single score
-            score = (remaining_val * self.weights['remaining_quota'] + 
-                     cost_per_unit * self.weights['cost_per_unit'] + 
-                     success_rate * self.weights['success_rate'] + 
-                     avg_response_time * self.weights['response_time'] + 
-                     exhaustion_penalty + performance_penalty + cb_penalty)
-            return score
-
-        # Sort asynchronously
-        scored_apis = await asyncio.gather(*[sort_key_async(api_name) for api_name in available_apis])
+        # Sort asynchronously using the _calculate_api_score with 'quota_optimized' strategy
+        scored_apis = await asyncio.gather(*[self._calculate_api_score(api_name, 'quota_optimized') for api_name in available_apis])
         sorted_apis_with_scores = sorted(zip(available_apis, scored_apis), key=lambda x: x[1], reverse=True)
 
         return sorted_apis_with_scores[0][0] if sorted_apis_with_scores else None
