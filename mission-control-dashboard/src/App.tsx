@@ -1,7 +1,10 @@
 import Layout from './components/Layout';
 import useRealTimeData from './hooks/useRealTimeData';
 import useMissionControlStore from './stores/missionControlStore';
-import Dashboard from './pages/Dashboard'; // Import the new Dashboard page
+import { Routes, Route, Navigate } from 'react-router-dom'; // Import Routes and Route
+
+// New page component placeholder
+import Overview from './pages/Overview';
 
 function App() {
   const { isConnected } = useRealTimeData();
@@ -20,8 +23,12 @@ function App() {
           )}
         </div>
         
-        {/* Render the main Dashboard page */}
-        <Dashboard />
+        {/* Define routes */}
+        <Routes>
+          <Route path="/" element={<Navigate to="/overview" replace />} /> {/* Redirect root to overview */}
+          <Route path="/overview" element={<Overview />} /> {/* New Overview page */}
+          {/* Add more routes for Jobs, Alerts, Settings etc. in future turns */}
+        </Routes>
       </Layout>
     </div>
   );
