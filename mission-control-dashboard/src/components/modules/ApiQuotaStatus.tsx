@@ -1,4 +1,8 @@
 import React from 'react';
+import ModuleContainer from '../shared/ModuleContainer';
+import ProgressBar from '../ui/ProgressBar'; // Assuming ProgressBar is in ui folder
+import ChartContainer from '../shared/ChartContainer'; // New import
+import LineChart from '../charts/LineChart'; // New import
 
 interface ApiQuotaStatusProps {
   statuses: {
@@ -31,9 +35,14 @@ const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ statuses }) => {
     return 'bg-green-500';
   };
 
+  // Dummy data for chart demonstration
+  const apiUsageHistory = statuses.map(api => ({
+    name: api.api_name,
+    usage: api.percentage_used,
+  }));
+
   return (
-    <div className="bg-nasa-gray p-6 rounded-lg shadow-lg border border-nasa-cyan">
-      <h2 className="text-2xl font-bold text-nasa-cyan mb-4">API Quota Management</h2>
+    <ModuleContainer title="API Quota Management">
       <div className="space-y-4">
         {statuses.length > 0 ? (
           statuses.map((api) => (
@@ -45,12 +54,7 @@ const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ statuses }) => {
               <div className="text-sm text-nasa-light-gray mb-1">
                 Used: {api.used} / {api.limit} ({api.percentage_used.toFixed(1)}%)
               </div>
-              <div className="w-full bg-gray-700 rounded-full h-2.5">
-                <div
-                  className={`h-2.5 rounded-full ${getProgressBarColor(api.percentage_used)}`}
-                  style={{ width: `${api.percentage_used}%` }}
-                ></div>
-              </div>
+              <ProgressBar percentage={api.percentage_used} colorClass={getProgressBarColor(api.percentage_used)} />
               {api.predicted_exhaustion_date && (
                 <p className="text-xs text-nasa-light-gray mt-1">
                   Exhaustion: {new Date(api.predicted_exhaustion_date).toLocaleDateString()}
@@ -70,7 +74,18 @@ const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ statuses }) => {
           <p className="text-nasa-light-gray text-sm">No API quota data available.</p>
         )}
       </div>
-    </div>
+
+      {statuses.length > 0 && (
+        <ChartContainer title="Current API Usage (%)">
+          <LineChart
+            data={apiUsageHistory}
+            dataKey="name"
+            lineKeys={[{ key: 'usage', stroke: '#00FFFF', name: 'Usage %' }]}
+            yAxisTickFormatter={(value) => `${value}%`}
+          />
+        </ChartContainer>
+      )}
+    </ModuleContainer>
   );
 };
 

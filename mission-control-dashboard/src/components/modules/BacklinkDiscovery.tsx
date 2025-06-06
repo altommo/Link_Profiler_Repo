@@ -1,4 +1,9 @@
 import React from 'react';
+import ModuleContainer from '../shared/ModuleContainer';
+import MetricDisplay from '../shared/MetricDisplay';
+import ListDisplay from '../shared/ListDisplay';
+import ChartContainer from '../shared/ChartContainer'; // New import
+import LineChart from '../charts/LineChart'; // New import
 
 interface BacklinkDiscoveryProps {
   metrics: {
@@ -13,54 +18,54 @@ interface BacklinkDiscoveryProps {
 }
 
 const BacklinkDiscovery: React.FC<BacklinkDiscoveryProps> = ({ metrics }) => {
+  // Dummy data for chart demonstration
+  const discoveryRateData = [
+    { name: 'Day 1', discovered: 50, spam: 5 },
+    { name: 'Day 2', discovered: 70, spam: 8 },
+    { name: 'Day 3', discovered: 60, spam: 6 },
+    { name: 'Day 4', discovered: 80, spam: 10 },
+    { name: 'Day 5', discovered: 75, spam: 7 },
+    { name: 'Day 6', discovered: 90, spam: 9 },
+    { name: 'Day 7', discovered: metrics.new_backlinks_24h, spam: metrics.potential_spam_links_24h },
+  ];
+
   return (
-    <div className="bg-nasa-gray p-6 rounded-lg shadow-lg border border-nasa-cyan">
-      <h2 className="text-2xl font-bold text-nasa-cyan mb-4">Backlink Discovery Operations</h2>
+    <ModuleContainer title="Backlink Discovery Operations">
       <div className="grid grid-cols-2 gap-4 text-lg">
-        <div>
-          <p className="text-nasa-light-gray">Total Backlinks:</p>
-          <p className="text-nasa-amber text-3xl">{metrics.total_backlinks_discovered}</p>
-        </div>
-        <div>
-          <p className="text-nasa-light-gray">Unique Domains:</p>
-          <p className="text-nasa-cyan text-3xl">{metrics.unique_domains_discovered}</p>
-        </div>
-        <div>
-          <p className="text-nasa-light-gray">New (24h):</p>
-          <p className="text-nasa-cyan text-3xl">{metrics.new_backlinks_24h}</p>
-        </div>
-        <div>
-          <p className="text-nasa-light-gray">Avg. Authority Score:</p>
-          <p className="text-nasa-amber text-3xl">{metrics.avg_authority_score.toFixed(1)}</p>
-        </div>
+        <MetricDisplay label="Total Backlinks" value={metrics.total_backlinks_discovered} valueColorClass="text-nasa-amber" />
+        <MetricDisplay label="Unique Domains" value={metrics.unique_domains_discovered} valueColorClass="text-nasa-cyan" />
+        <MetricDisplay label="New (24h)" value={metrics.new_backlinks_24h} valueColorClass="text-nasa-cyan" />
+        <MetricDisplay label="Avg. Authority Score" value={metrics.avg_authority_score.toFixed(1)} valueColorClass="text-nasa-amber" />
         <div className="col-span-2">
-          <p className="text-nasa-light-gray">Potential Spam (24h):</p>
-          <p className="text-red-500 text-3xl">{metrics.potential_spam_links_24h}</p>
+          <MetricDisplay label="Potential Spam (24h)" value={metrics.potential_spam_links_24h} valueColorClass="text-red-500" />
         </div>
       </div>
 
-      <h3 className="text-xl font-bold text-nasa-cyan mt-6 mb-3">Top Linking Domains</h3>
-      <div className="max-h-40 overflow-y-auto pr-2">
-        {metrics.top_linking_domains.length > 0 ? (
-          metrics.top_linking_domains.map((domain, index) => (
-            <p key={index} className="text-sm text-nasa-light-gray mb-1">{domain}</p>
-          ))
-        ) : (
-          <p className="text-nasa-light-gray text-sm">No top linking domains yet.</p>
-        )}
-      </div>
+      <ListDisplay
+        title="Top Linking Domains"
+        items={metrics.top_linking_domains}
+        emptyMessage="No top linking domains yet."
+        maxHeight="max-h-40"
+      />
 
-      <h3 className="text-xl font-bold text-nasa-cyan mt-6 mb-3">Top Target URLs</h3>
-      <div className="max-h-40 overflow-y-auto pr-2">
-        {metrics.top_target_urls.length > 0 ? (
-          metrics.top_target_urls.map((url, index) => (
-            <p key={index} className="text-sm text-nasa-light-gray mb-1 truncate">{url}</p>
-          ))
-        ) : (
-          <p className="text-nasa-light-gray text-sm">No top target URLs yet.</p>
-        )}
-      </div>
-    </div>
+      <ListDisplay
+        title="Top Target URLs"
+        items={metrics.top_target_urls}
+        emptyMessage="No top target URLs yet."
+        maxHeight="max-h-40"
+      />
+
+      <ChartContainer title="Discovery Rate (Last 7 Days)">
+        <LineChart
+          data={discoveryRateData}
+          dataKey="name"
+          lineKeys={[
+            { key: 'discovered', stroke: '#00FFFF', name: 'Discovered' },
+            { key: 'spam', stroke: '#ef4444', name: 'Spam' },
+          ]}
+        />
+      </ChartContainer>
+    </ModuleContainer>
   );
 };
 

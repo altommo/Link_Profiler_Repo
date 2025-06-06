@@ -1,4 +1,9 @@
 import React from 'react';
+import ModuleContainer from '../shared/ModuleContainer';
+import MetricDisplay from '../shared/MetricDisplay';
+import ListDisplay from '../shared/ListDisplay';
+import ChartContainer from '../shared/ChartContainer'; // New import
+import LineChart from '../charts/LineChart'; // New import
 
 interface CrawlerMissionStatusProps {
   status: {
@@ -28,77 +33,61 @@ interface CrawlerMissionStatusProps {
 }
 
 const CrawlerMissionStatus: React.FC<CrawlerMissionStatusProps> = ({ status, satelliteFleet }) => {
+  // Dummy data for chart demonstration
+  const jobCompletionData = [
+    { name: '00:00', completed: 10, failed: 2 },
+    { name: '04:00', completed: 15, failed: 3 },
+    { name: '08:00', completed: 20, failed: 5 },
+    { name: '12:00', completed: 25, failed: 6 },
+    { name: '16:00', completed: 30, failed: 7 },
+    { name: '20:00', completed: 35, failed: 8 },
+    { name: '24:00', completed: status.completed_jobs_24h_count, failed: status.failed_jobs_24h_count },
+  ];
+
   return (
-    <div className="bg-nasa-gray p-6 rounded-lg shadow-lg border border-nasa-cyan">
-      <h2 className="text-2xl font-bold text-nasa-cyan mb-4">Crawler Mission Status</h2>
+    <ModuleContainer title="Crawler Mission Status">
       <div className="grid grid-cols-2 gap-4 text-lg">
-        <div>
-          <p className="text-nasa-light-gray">Active Jobs:</p>
-          <p className="text-nasa-amber text-3xl">{status.active_jobs_count}</p>
-        </div>
-        <div>
-          <p className="text-nasa-light-gray">Queued Jobs:</p>
-          <p className="text-nasa-cyan text-3xl">{status.queued_jobs_count}</p>
-        </div>
-        <div>
-          <p className="text-nasa-light-gray">Queue Depth:</p>
-          <p className="text-nasa-cyan text-3xl">{status.queue_depth}</p>
-        </div>
-        <div>
-          <p className="text-nasa-light-gray">Active Satellites:</p>
-          <p className="text-nasa-amber text-3xl">{status.active_satellites_count}/{status.total_satellites_count}</p>
+        <MetricDisplay label="Active Jobs" value={status.active_jobs_count} valueColorClass="text-nasa-amber" />
+        <MetricDisplay label="Queued Jobs" value={status.queued_jobs_count} valueColorClass="text-nasa-cyan" />
+        <MetricDisplay label="Queue Depth" value={status.queue_depth} valueColorClass="text-nasa-cyan" />
+        <MetricDisplay label="Active Satellites" value={`${status.active_satellites_count}/${status.total_satellites_count}`} valueColorClass="text-nasa-amber" />
+        <div className="col-span-2">
+          <MetricDisplay label="Satellite Utilization" value={status.satellite_utilization_percentage.toFixed(1)} unit="%" valueColorClass="text-nasa-cyan" />
         </div>
         <div className="col-span-2">
-          <p className="text-nasa-light-gray">Satellite Utilization:</p>
-          <p className="text-nasa-cyan text-3xl">{status.satellite_utilization_percentage}%</p>
+          <MetricDisplay label="Completed (24h)" value={status.completed_jobs_24h_count} valueColorClass="text-green-500" />
         </div>
         <div className="col-span-2">
-          <p className="text-nasa-light-gray">Completed (24h):</p>
-          <p className="text-nasa-cyan text-3xl">{status.completed_jobs_24h_count}</p>
-        </div>
-        <div className="col-span-2">
-          <p className="text-nasa-light-gray">Failed (24h):</p>
-          <p className="text-red-500 text-3xl">{status.failed_jobs_24h_count}</p>
+          <MetricDisplay label="Failed (24h)" value={status.failed_jobs_24h_count} valueColorClass="text-red-500" />
         </div>
       </div>
 
-      <h3 className="text-xl font-bold text-nasa-cyan mt-6 mb-3">Satellite Fleet</h3>
-      <div className="max-h-40 overflow-y-auto pr-2">
-        {satelliteFleet.length > 0 ? (
-          satelliteFleet.map((sat) => (
-            <div key={sat.satellite_id} className="flex justify-between items-center text-sm mb-1">
-              <span className="text-nasa-light-gray">{sat.satellite_id}</span>
-              <span className={
-                sat.status === 'active' ? 'text-green-500' :
-                sat.status === 'idle' ? 'text-nasa-amber' :
-                'text-red-500'
-              }>
-                {sat.status.toUpperCase()}
-              </span>
-              <span className="text-nasa-light-gray text-xs">
-                {new Date(sat.last_heartbeat).toLocaleTimeString()}
-              </span>
-            </div>
-          ))
-        ) : (
-          <p className="text-nasa-light-gray text-sm">No satellite data available.</p>
-        )}
-      </div>
+      <ListDisplay
+        title="Satellite Fleet"
+        items={satelliteFleet.map(sat => `${sat.satellite_id} - ${sat.status.toUpperCase()} (${new Date(sat.last_heartbeat).toLocaleTimeString()})`)}
+        emptyMessage="No satellite data available."
+        maxHeight="max-h-40"
+      />
 
-      <h3 className="text-xl font-bold text-nasa-cyan mt-6 mb-3">Recent Job Errors</h3>
-      <div className="max-h-40 overflow-y-auto pr-2">
-        {status.recent_job_errors.length > 0 ? (
-          status.recent_job_errors.map((error, index) => (
-            <div key={index} className="text-sm text-red-400 mb-1">
-              <p><strong>{error.error_type}</strong>: {error.message}</p>
-              <p className="text-xs text-red-500 ml-2">URL: {error.url}</p>
-            </div>
-          ))
-        ) : (
-          <p className="text-nasa-light-gray text-sm">No recent job errors.</p>
-        )}
-      </div>
-    </div>
+      <ListDisplay
+        title="Recent Job Errors"
+        items={status.recent_job_errors.map(err => `${err.error_type}: ${err.message} (URL: ${err.url})`)}
+        emptyMessage="No recent job errors."
+        itemColorClass="text-red-400"
+        maxHeight="max-h-40"
+      />
+
+      <ChartContainer title="Job Completion (24h)">
+        <LineChart
+          data={jobCompletionData}
+          dataKey="name"
+          lineKeys={[
+            { key: 'completed', stroke: '#22c55e', name: 'Completed' },
+            { key: 'failed', stroke: '#ef4444', name: 'Failed' },
+          ]}
+        />
+      </ChartContainer>
+    </ModuleContainer>
   );
 };
 
