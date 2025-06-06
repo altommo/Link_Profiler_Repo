@@ -9,6 +9,7 @@ import logging
 import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime # Added import for datetime
+import re # Import re for regex operations
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.core.models import CrawlConfig, SEOMetrics # Import CrawlConfig and SEOMetrics
@@ -34,6 +35,16 @@ class TechnicalAuditor:
         if not self._check_lighthouse_installed():
             self.logger.error(f"Lighthouse CLI not found at '{self.lighthouse_path}'. Technical audits will be disabled.")
             self.enabled = False
+
+    async def __aenter__(self):
+        """Async context manager entry for TechnicalAuditor."""
+        self.logger.debug("Entering TechnicalAuditor context.")
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit for TechnicalAuditor."""
+        self.logger.debug("Exiting TechnicalAuditor context.")
+        pass
 
     def _check_lighthouse_installed(self) -> bool:
         """Checks if Lighthouse CLI is installed and accessible."""
