@@ -174,9 +174,10 @@ class APIQuotaManager:
         else:
             self.logger.warning(f"Attempted to record usage for unknown API: {api_name}")
 
-    def record_api_performance(self, api_name: str, success: bool, response_time_ms: float):
+    def record_api_performance(self, api_name: str, success: bool, response_time_ms: float, query_type: Optional[str] = None, strategy_used: Optional[str] = None):
         """
         Records performance metrics for an API call.
+        Also collects data for ML model training.
         """
         if api_name not in self._api_performance:
             self.logger.warning(f"Attempted to record performance for unknown API: {api_name}")
@@ -191,6 +192,25 @@ class APIQuotaManager:
         perf['average_response_time_ms'] = perf['total_response_time_ms'] / perf['total_calls'] if perf['total_calls'] > 0 else 0.0
         perf['success_rate'] = perf['successful_calls'] / perf['total_calls'] if perf['total_calls'] > 0 else 0.0
         self.logger.debug(f"API {api_name} performance: Success Rate={perf['success_rate']:.2f}, Avg Response Time={perf['average_response_time_ms']:.2f}ms")
+
+        # Collect data point for ML model training
+        # In a real system, this would be persisted to a database or data lake
+        data_point = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "api_name": api_name,
+            "query_type": query_type,
+            "strategy_used": strategy_used,
+            "success": success,
+            "response_time_ms": response_time_ms,
+            "quality_score": self.quotas[api_name]['quality_score'],
+            "cost_per_unit": self.quotas[api_name]['cost_per_unit'],
+            "remaining_quota": self.get_remaining_quota(api_name),
+            "predicted_exhaustion_date": self.predict_exhaustion_date(api_name).isoformat() if self.predict_exhaustion_date(api_name) else None,
+            "circuit_breaker_state": (asyncio.run(self.resilience_manager.get_circuit_breaker(api_name).get_status()))['state'].value # Sync call for logging
+        }
+        self.logger.debug(f"ML Data Point: {data_point}")
+        # Here you would typically save data_point to a persistent store (e.g., ClickHouse, S3, PostgreSQL)
+        # For this exercise, we'll just log it.
 
 
     def get_remaining_quota(self, api_name: str) -> Optional[int]:
