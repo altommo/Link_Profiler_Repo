@@ -370,6 +370,7 @@ class CrawlService:
                 raise ValueError(f"Unknown job type: {job.job_type}")
             
             job.status = CrawlStatus.COMPLETED
+            job.last_fetched_at = datetime.utcnow() # Set last_fetched_at on job completion
             self.logger.info(f"Job {job.id} completed successfully.")
             JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
             JOBS_COMPLETED_SUCCESS_TOTAL.labels(job_type=job.job_type).inc()
@@ -377,6 +378,7 @@ class CrawlService:
         except Exception as e:
             job.status = CrawlStatus.FAILED
             job.add_error(url="N/A", error_type=f"{job.job_type}Error", message=f"Job execution failed: {str(e)}", details=str(e))
+            job.last_fetched_at = datetime.utcnow() # Set last_fetched_at on job failure
             self.logger.error(f"Job {job.id} failed: {e}", exc_info=True)
             JOBS_IN_PROGRESS.labels(job_type=job.job_type).dec()
             JOBS_FAILED_TOTAL.labels(job_type=job.job_type).inc()
@@ -456,7 +458,7 @@ class CrawlService:
 
         self.logger.info(f"Attempting to fetch backlinks for {job.target_url} from API.")
         async with self.backlink_service as bs:
-            api_backlinks = await bs.get_backlinks_for_url(job.target_url)
+            api_backlinks = await bs.get_backlinks_from_api(job.target_url)
                 
             if api_backlinks:
                 self.logger.info(f"Found {len(api_backlinks)} backlinks from API for {job.target_url}.")
@@ -582,6 +584,9 @@ class CrawlService:
                                 if crawl_result.validation_issues:
                                     crawl_result.seo_metrics.validation_issues.extend(crawl_result.validation_issues)
                                     crawl_result.seo_metrics.calculate_seo_score()
+                                # Ensure last_fetched_at is set on the SEOMetrics object from the crawl result
+                                if not crawl_result.seo_metrics.last_fetched_at:
+                                    crawl_result.seo_metrics.last_fetched_at = crawl_result.timestamp
                                 try:
                                     self.db.save_seo_metrics(crawl_result.seo_metrics)
                                     if self.clickhouse_loader:
@@ -671,7 +676,7 @@ class CrawlService:
                             anchor_text_distribution.get(backlink.anchor_text, 0) + 1
 
                     if backlink.source_domain_metrics:
-                        if backlink.link_type == LinkType.FOLLOW:
+                        if backlink.link_type == LinkType.DOFOLLOW: # Changed from LinkType.FOLLOW
                             total_authority_score_sum += backlink.source_domain_metrics.get("authority_score", 0.0)
                             dofollow_count += 1
                         
@@ -690,16 +695,17 @@ class CrawlService:
                 link_profile = LinkProfile(
                     target_url=job.target_url,
                     total_backlinks=len(discovered_backlinks),
-                    unique_domains=len(unique_referring_domains_for_profile),
-                    dofollow_links=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.FOLLOW),
-                    nofollow_links=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.NOFOLLOW),
+                    unique_referring_domains=len(unique_referring_domains_for_profile),
+                    dofollow_backlinks=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.DOFOLLOW), # Changed from LinkType.FOLLOW
+                    nofollow_backlinks=sum(1 for bl in discovered_backlinks if bl.link_type == LinkType.NOFOLLOW),
                     authority_score=profile_authority_score,
                     trust_score=profile_trust_score,
                     spam_score=profile_spam_score,
-                    anchor_text_distribution=anchor_text_distribution,
-                    referring_domains=unique_referring_domains_for_profile,
+                    top_anchor_texts=anchor_text_distribution,
+                    top_referring_domains=unique_referring_domains_for_profile, # This should be a dict, not a set
                     backlinks=discovered_backlinks,
-                    analysis_date=datetime.now()
+                    last_updated=datetime.now(),
+                    last_fetched_at=datetime.utcnow() # Set last_fetched_at for the LinkProfile
                 )
                 
                 self.db.save_link_profile(link_profile)
@@ -861,6 +867,7 @@ class CrawlService:
                         existing_seo_metrics.ai_semantic_keywords = lighthouse_metrics.ai_semantic_keywords
                         existing_seo_metrics.ai_suggestions.extend(lighthouse_metrics.ai_suggestions)
                         existing_seo_metrics.calculate_seo_score()
+                        existing_seo_metrics.last_fetched_at = datetime.utcnow() # Ensure last_fetched_at is updated
                         self.db.save_seo_metrics(existing_seo_metrics)
                         processed_seo_metrics.append(existing_seo_metrics)
                         self.logger.info(f"Updated SEO metrics for {url} with Lighthouse and AI scores.")
@@ -1040,7 +1047,7 @@ class CrawlService:
         
         job.results['web3_crawl_data'] = serialize_model(web3_data)
         job.urls_crawled = 1 # Count the identifier as one crawled item
-        job.links_found = web3_data.get("links_found_web3", []).count # Re-use links_found for posts found
+        job.links_found = len(web3_data.get("links_found_web3", [])) # Re-use links_found for posts found
         job.progress_percentage = 100.0
         self.logger.info(f"Web3 crawl job {job.id} completed for '{web3_content_identifier}'. Data extracted.")
 
@@ -1061,12 +1068,12 @@ class CrawlService:
         
         job.results['social_media_crawl_data'] = serialize_model(social_media_data)
         job.urls_crawled = 1 # Count the query as one crawled item
-        job.links_found = social_media_data.get("posts_found", 0) # Re-use links_found for posts found
+        job.links_found = len(social_media_data) # Re-use links_found for posts found
         job.progress_percentage = 100.0
         self.logger.info(f"Social media crawl job {job.id} completed for '{social_media_query}'. Data extracted.")
 
         # Example of adding an anomaly if no data was found
-        if social_media_data.get("posts_found", 0) == 0 and config.anomaly_detection_enabled:
+        if not social_media_data and config.anomaly_detection_enabled:
             job.anomalies_detected.append("No Social Media Posts Found")
             self.logger.critical(f"Job {job.id} completed with detected anomalies: {job.anomalies_detected}. ALERTING SYSTEM TRIGGERED (simulated).")
 

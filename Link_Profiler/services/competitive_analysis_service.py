@@ -7,6 +7,7 @@ import logging
 import asyncio
 from typing import List, Dict, Any, Set
 from urllib.parse import urlparse
+from datetime import datetime # Import datetime for analysis_date
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import LinkIntersectResult, CompetitiveKeywordAnalysisResult
@@ -48,6 +49,10 @@ class CompetitiveAnalysisService:
         
         # The core logic for this is already in BacklinkService, so we delegate.
         result = await self.backlink_service.perform_link_intersect_analysis(primary_domain, competitor_domains)
+        
+        # Ensure analysis_date is set
+        result.analysis_date = datetime.utcnow()
+        result.last_fetched_at = datetime.utcnow() # Ensure last_fetched_at is set
         
         self.logger.info(f"Link intersect analysis completed. Found {len(result.common_linking_domains)} common linking domains.")
         return result
@@ -99,7 +104,9 @@ class CompetitiveAnalysisService:
             competitor_domains=competitor_domains,
             common_keywords=sorted(list(common_keywords)),
             keyword_gaps=keyword_gaps,
-            primary_unique_keywords=sorted(list(primary_unique_keywords))
+            primary_unique_keywords=sorted(list(primary_unique_keywords)),
+            analysis_date=datetime.utcnow(), # Set analysis_date
+            last_fetched_at=datetime.utcnow() # Set last_fetched_at
         )
         
         self.logger.info(f"Competitive keyword analysis completed for {primary_domain}. Common: {len(result.common_keywords)}, Primary Unique: {len(result.primary_unique_keywords)}.")

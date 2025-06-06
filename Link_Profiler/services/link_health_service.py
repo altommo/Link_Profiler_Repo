@@ -9,9 +9,10 @@ from typing import List, Dict, Optional, Tuple
 import aiohttp
 from urllib.parse import urlparse
 import random # New: Import random for human-like delays
+from datetime import datetime # Import datetime for last_fetched_at
 
 from Link_Profiler.database.database import Database
-from Link_Profiler.core.models import SEOMetrics, Backlink, CrawlConfig, CrawlError
+from Link_Profiler.core.models import SEOMetrics, Backlink, CrawlConfig, CrawlError, LinkType # Import LinkType
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 
@@ -32,7 +33,7 @@ class LinkHealthService:
             max_depth=0, # Only check the given URLs, no further crawling
             max_pages=10000, # High limit for batch processing
             delay_seconds=0.1, # Be gentle
-            timeout_seconds=10, # Quick timeout for link checks
+            request_timeout=10, # Quick timeout for link checks
             user_agent="LinkHealthAuditor/1.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
             respect_robots_txt=True,
             follow_redirects=True, # Follow redirects to find final status
@@ -46,7 +47,7 @@ class LinkHealthService:
         if self._session is None or self._session.closed:
             # Use a connector with a higher limit for concurrent checks
             connector = aiohttp.TCPConnector(limit=50, limit_per_host=10, ttl_dns_cache=300, use_dns_cache=True)
-            timeout = aiohttp.ClientTimeout(total=self.default_crawl_config.timeout_seconds)
+            timeout = aiohttp.ClientTimeout(total=self.default_crawl_config.request_timeout)
             
             headers = {}
             if config_loader.get("anti_detection.request_header_randomization", False):
@@ -124,7 +125,7 @@ class LinkHealthService:
             link_check_tasks = []
             for backlink in outgoing_backlinks:
                 # Avoid checking canonical links or redirects as broken links
-                if backlink.link_type in [Backlink.CANONICAL, Backlink.REDIRECT]:
+                if backlink.link_type in [LinkType.CANONICAL, LinkType.REDIRECT]:
                     continue
                 link_check_tasks.append(self._check_link_status(backlink.target_url))
             
@@ -160,6 +161,8 @@ class LinkHealthService:
             seo_metrics = self.db.get_seo_metrics(source_url)
             if seo_metrics:
                 seo_metrics.broken_links = current_broken_links
+                seo_metrics.audit_timestamp = datetime.utcnow() # Update audit timestamp
+                seo_metrics.last_fetched_at = datetime.utcnow() # Set last_fetched_at
                 try:
                     self.db.save_seo_metrics(seo_metrics)
                     self.logger.info(f"Updated SEOMetrics for {source_url} with broken links.")

@@ -157,6 +157,7 @@ class SERPCrawler:
         # This is a simplified example, real-world would need more robust selectors
         elements = await page.query_selector_all('div.g, div.rc') # Common selectors for results
 
+        now = datetime.utcnow() # Capture current time once
         for i, element in enumerate(elements):
             if len(extracted_results) >= num_results:
                 break
@@ -179,7 +180,8 @@ class SERPCrawler:
                             snippet=snippet,
                             domain=urlparse(url).netloc,
                             position_type="organic",
-                            timestamp=datetime.now()
+                            timestamp=now, # Use the captured time
+                            last_fetched_at=now # Set last_fetched_at
                         )
                     )
             except Exception as e:
@@ -193,6 +195,7 @@ class SERPCrawler:
         # Bing's selectors can change frequently, these are examples
         elements = await page.query_selector_all('li.b_algo') # Common selector for results
 
+        now = datetime.utcnow() # Capture current time once
         for i, element in enumerate(elements):
             if len(extracted_results) >= num_results:
                 break
@@ -215,7 +218,8 @@ class SERPCrawler:
                             snippet=snippet,
                             domain=urlparse(url).netloc,
                             position_type="organic",
-                            timestamp=datetime.now()
+                            timestamp=now, # Use the captured time
+                            last_fetched_at=now # Set last_fetched_at
                         )
                     )
             except Exception as e:
