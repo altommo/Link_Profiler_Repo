@@ -457,9 +457,7 @@ class ContentGapAnalysisResultResponse(BaseModel): # New Pydantic model for Cont
 
     @classmethod
     def from_content_gap_analysis_result(cls, result: ContentGapAnalysisResult):
-        result_dict = result.to_dict() # Use to_dict() method
-        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
-        return cls(**result_dict)
+        return cls(**result.to_dict()) # Use to_dict() method
 
 # New: Pydantic models for Link Building
 class LinkProspectResponse(BaseModel):
@@ -728,3 +726,85 @@ class SEOMetricsResponse(BaseModel): # New Pydantic model for SEOMetrics
         metrics_dict = metrics.to_dict() # Use to_dict() method
         # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**metrics_dict)
+
+# --- Dashboard Specific Schemas ---
+class CrawlerMissionStatus(BaseModel):
+    active_jobs_count: int
+    queued_jobs_count: int
+    completed_jobs_24h_count: int
+    failed_jobs_24h_count: int
+    total_pages_crawled_24h: int
+    queue_depth: int
+    active_satellites_count: int
+    total_satellites_count: int
+    satellite_utilization_percentage: float
+    avg_job_completion_time_seconds: float
+    recent_job_errors: List[CrawlErrorResponse] # Use CrawlErrorResponse for consistency
+
+class BacklinkDiscoveryMetrics(BaseModel):
+    total_backlinks_discovered: int
+    unique_domains_discovered: int
+    new_backlinks_24h: int
+    avg_authority_score: float
+    top_linking_domains: List[str]
+    top_target_urls: List[str]
+    potential_spam_links_24h: int
+
+class ApiQuotaStatus(BaseModel):
+    api_name: str
+    limit: int
+    used: int
+    remaining: Optional[int]
+    reset_date: str # ISO format string
+    percentage_used: float
+    status: str # e.g., "OK", "Warning", "Critical"
+    predicted_exhaustion_date: Optional[str] = None # ISO format string or null
+    recommended_action: Optional[str] = None
+
+class DomainIntelligenceMetrics(BaseModel):
+    total_domains_analyzed: int
+    valuable_expired_domains_found: int
+    avg_domain_value_score: float
+    new_domains_added_24h: int
+    top_niches_identified: List[str]
+
+class PerformanceOptimizationMetrics(BaseModel):
+    avg_crawl_speed_pages_per_minute: float
+    avg_success_rate_percentage: float
+    avg_response_time_ms: float
+    bottlenecks_detected: List[str]
+    top_performing_satellites: List[str]
+    worst_performing_satellites: List[str]
+
+class DashboardAlert(BaseModel): # Renamed from AlertSummary for consistency
+    type: str
+    severity: AlertSeverity
+    message: str
+    timestamp: datetime # Added timestamp
+    affected_jobs: Optional[List[str]] = None
+    recommended_action: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+    class Config:
+        use_enum_values = True
+
+class SatelliteFleetStatus(BaseModel):
+    satellite_id: str
+    status: str # e.g., "active", "idle", "unresponsive"
+    last_heartbeat: datetime # ISO format string
+    jobs_completed_24h: int
+    errors_24h: int
+    avg_job_duration_seconds: Optional[float] = None
+    current_job_id: Optional[str] = None
+    current_job_type: Optional[str] = None
+    current_job_progress: Optional[float] = None
+
+class DashboardRealtimeUpdates(BaseModel):
+    timestamp: str # ISO format string
+    crawler_mission_status: CrawlerMissionStatus
+    backlink_discovery_metrics: BacklinkDiscoveryMetrics
+    api_quota_statuses: List[ApiQuotaStatus]
+    domain_intelligence_metrics: DomainIntelligenceMetrics
+    performance_optimization_metrics: PerformanceOptimizationMetrics
+    alerts: List[DashboardAlert]
+    satellite_fleet_status: List[SatelliteFleetStatus]
