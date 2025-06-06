@@ -74,6 +74,7 @@ validate_critical_config()
 
 
 # Retrieve configurations using the config_loader
+# The default for redis.url is now handled in config.yaml
 REDIS_URL = config_loader.get("redis.url")
 DATABASE_URL = config_loader.get("database.url")
 DEAD_LETTER_QUEUE_NAME = config_loader.get("queue.dead_letter_queue_name")
