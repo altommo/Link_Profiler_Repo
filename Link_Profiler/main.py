@@ -159,6 +159,8 @@ from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue, Prio
 # New: Import DistributedResilienceManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
 
+# New: Instantiate DistributedResilienceManager early as it's a dependency for others
+distributed_resilience_manager = DistributedResilienceManager(redis_client=redis_client)
 
 # New: Import API Clients
 from Link_Profiler.clients.google_search_console_client import GoogleSearchConsoleClient # Renamed GSCClient to GoogleSearchConsoleClient
@@ -218,8 +220,6 @@ domain_service_instance = DomainService(
 # New: Initialize GSCClient
 gsc_client_instance = GoogleSearchConsoleClient(session_manager=session_manager)
 
-# New: Instantiate DistributedResilienceManager early as it's a dependency for others
-distributed_resilience_manager = DistributedResilienceManager(redis_client=redis_client)
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
 # Removed 'gsc_client' argument as BacklinkService internally handles GSCBacklinkAPIClient instantiation.
