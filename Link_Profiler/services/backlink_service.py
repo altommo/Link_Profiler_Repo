@@ -110,7 +110,8 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
                     discovered_date=now - timedelta(days=random.randint(1, 365)),
                     last_seen_date=now, # Set last_seen_date to now
                     authority_passed=random.uniform(0.1, 1.0),
-                    spam_level=spam_level
+                    spam_level=spam_level,
+                    last_fetched_at=now # Add last_fetched_at
                 )
             )
         
@@ -126,7 +127,8 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
                     context_text="Check out this great quotes site.",
                     discovered_date=now - timedelta(days=50),
                     last_seen_date=now,
-                    spam_level=SpamLevel.CLEAN
+                    spam_level=SpamLevel.CLEAN,
+                    last_fetched_at=now # Add last_fetched_at
                 ),
                 Backlink(
                     id=str(uuid.uuid4()), # Ensure ID is generated
@@ -137,7 +139,8 @@ class SimulatedBacklinkAPIClient(BaseBacklinkAPIClient):
                     context_text="You can login here.",
                     discovered_date=now - timedelta(days=100),
                     last_seen_date=now,
-                    spam_level=SpamLevel.CLEAN
+                    spam_level=SpamLevel.CLEAN,
+                    last_fetched_at=now # Add last_fetched_at
                 )
             ])
 
@@ -267,7 +270,8 @@ class RealBacklinkAPIClient(BaseBacklinkAPIClient):
                                     discovered_date=discovered_date,
                                     last_seen_date=last_seen_date,
                                     authority_passed=authority_passed,
-                                    spam_level=spam_level
+                                    spam_level=spam_level,
+                                    last_fetched_at=now # Add last_fetched_at
                                 )
                             )
                     except Exception as parse_error:
@@ -387,7 +391,8 @@ class OpenLinkProfilerAPIClient(BaseBacklinkAPIClient):
                             context_text="", # OpenLinkProfiler API might not provide context text
                             discovered_date=now, # Use current date if API doesn't provide
                             last_seen_date=now, # Set last_seen_date to now
-                            spam_level=spam_level
+                            spam_level=spam_level,
+                            last_fetched_at=now # Add last_fetched_at
                         )
                     )
             self.logger.info(f"OpenLinkProfilerAPIClient: Fetched {len(backlinks)} backlinks for {target_url}.")
@@ -531,7 +536,8 @@ class GSCBacklinkAPIClient(BaseBacklinkAPIClient):
                             context_text="From GSC Top Linking Site",
                             discovered_date=now, # GSC doesn't provide discovery date for this report
                             last_seen_date=now, # Set last_seen_date to now
-                            spam_level=SpamLevel.CLEAN
+                            spam_level=SpamLevel.CLEAN,
+                            last_fetched_at=now # Add last_fetched_at
                         )
                     )
             self.logger.info(f"GSCBacklinkAPIClient: Found {len(backlinks)} backlinks for {target_url} from GSC.")
@@ -659,5 +665,6 @@ class BacklinkService:
             primary_domain=primary_domain,
             competitor_domains=competitor_domains,
             common_linking_domains=sorted(list(common_linking_domains)), # Return sorted list for consistency
-            analysis_date=datetime.utcnow() # Add analysis_date
+            analysis_date=datetime.utcnow(), # Add analysis_date
+            last_fetched_at=datetime.utcnow() # Add last_fetched_at
         )
