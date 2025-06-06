@@ -61,7 +61,7 @@ class NewsAPIClient(BaseAPIClient):
         self.logger.info(f"Searching NewsAPI.org for query: '{query}' (Limit: {limit})...")
         results = []
         try:
-            # _make_request now handles resilience
+            # _make_request now handles resilience and adds 'last_fetched_at'
             response_data = await self._make_request("GET", endpoint, params=params)
             
             for article in response_data.get("articles", []):
@@ -73,7 +73,8 @@ class NewsAPIClient(BaseAPIClient):
                     "author": article.get("author"),
                     "published_at": article.get("publishedAt"),
                     "source_name": article.get("source", {}).get("name"),
-                    "raw_data": article
+                    "raw_data": article,
+                    "last_fetched_at": response_data.get('last_fetched_at') # Get from _make_request
                 })
             self.logger.info(f"Found {len(results)} news articles for '{query}'.")
             return results

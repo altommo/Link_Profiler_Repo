@@ -1,6 +1,7 @@
 import logging
 import asyncio
 from typing import Dict, Any, Optional
+from datetime import datetime
 import aiohttp
 
 from Link_Profiler.config.config_loader import config_loader
@@ -52,7 +53,7 @@ class PageSpeedClient(BaseAPIClient):
 
         self.logger.info(f"Calling PageSpeed Insights API for URL: {url} (Strategy: {strategy})...")
         try:
-            # _make_request now handles resilience
+            # _make_request now handles resilience and adds 'last_fetched_at'
             response_data = await self._make_request("GET", self.base_url, params=params)
             self.logger.info(f"PageSpeed Insights data for {url} fetched successfully.")
             return response_data
@@ -62,4 +63,3 @@ class PageSpeedClient(BaseAPIClient):
         except Exception as e:
             self.logger.error(f"Error fetching PageSpeed Insights data for {url}: {e}", exc_info=True)
             return None
-

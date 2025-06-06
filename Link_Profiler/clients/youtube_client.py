@@ -61,10 +61,9 @@ class YouTubeClient(BaseAPIClient):
         self.logger.info(f"Searching YouTube for query: '{query}' (Limit: {limit})...")
         results = []
         try:
-            # _make_request now handles resilience
+            # _make_request now handles resilience and adds 'last_fetched_at'
             response_data = await self._make_request("GET", endpoint, params=params)
             
-            now_iso = datetime.utcnow().isoformat()
             for item in response_data.get("items", []):
                 video_id = item["id"]["videoId"]
                 results.append({
@@ -76,7 +75,7 @@ class YouTubeClient(BaseAPIClient):
                     "author": item["snippet"]["channelTitle"],
                     "published_at": item["snippet"]["publishedAt"],
                     "raw_data": item,
-                    "last_fetched_at": now_iso # Add last_fetched_at
+                    "last_fetched_at": response_data.get('last_fetched_at') # Get from _make_request
                 })
             self.logger.info(f"Found {len(results)} YouTube videos for '{query}'.")
             return results

@@ -92,27 +92,22 @@ class WHOISClient:
 
         self.logger.info(f"Calling WHOIS-JSON.com API for domain: {domain}...")
         try:
-            # Use resilience manager for the actual HTTP request
-            response = await self.resilience_manager.execute_with_resilience(
-                lambda: self.session_manager.get(endpoint, params=params, timeout=10),
-                url=endpoint # Pass the endpoint for circuit breaker naming
-            )
-            response.raise_for_status() # Raise an exception for HTTP errors
-            data = await response.json()
+            # _make_request now handles resilience and adds 'last_fetched_at'
+            response_data = await self._make_request("GET", endpoint, params=params)
             self.logger.info(f"WHOIS data for {domain} fetched successfully.")
             
             # Normalize the output
             normalized_data = {
-                "domain_name": data.get("domain_name"),
-                "registrar": data.get("registrar", {}).get("name"),
-                "creation_date": data.get("creation_date"),
-                "expiration_date": data.get("expiration_date"),
-                "name_servers": data.get("name_servers", []),
-                "status": data.get("status"),
-                "country": data.get("registrant", {}).get("country"),
-                "emails": data.get("emails", []),
-                "organization": data.get("registrant", {}).get("organization"),
-                'last_fetched_at': datetime.utcnow().isoformat()
+                "domain_name": response_data.get("domain_name"),
+                "registrar": response_data.get("registrar", {}).get("name"),
+                "creation_date": response_data.get("creation_date"),
+                "expiration_date": response_data.get("expiration_date"),
+                "name_servers": response_data.get("name_servers", []),
+                "status": response_data.get("status"),
+                "country": response_data.get("registrant", {}).get("country"),
+                "emails": response_data.get("emails", []),
+                "organization": response_data.get("registrant", {}).get("organization"),
+                'last_fetched_at': response_data.get('last_fetched_at') # Get from _make_request
             }
             return normalized_data
         except aiohttp.ClientResponseError as e:
