@@ -972,3 +972,32 @@ class SocialMention:
         if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
             data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
+
+
+@dataclass
+class SatellitePerformanceLog:
+    """Performance metrics for a crawler satellite."""
+    satellite_id: str
+    timestamp: datetime = field(default_factory=datetime.now)
+    pages_crawled: int = 0
+    links_extracted: int = 0
+    crawl_speed_pages_per_minute: float = 0.0
+    success_rate_percentage: float = 0.0
+    avg_response_time_ms: float = 0.0
+    cpu_utilization_percent: float = 0.0
+    memory_utilization_percent: float = 0.0
+    network_io_mbps: float = 0.0
+    errors_logged: int = 0
+    bottlenecks_detected: List[str] = field(default_factory=list)
+    last_fetched_at: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'SatellitePerformanceLog':
+        if 'timestamp' in data and isinstance(data['timestamp'], str):
+            data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
+        return cls(**data)
