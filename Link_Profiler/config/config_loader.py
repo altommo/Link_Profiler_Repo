@@ -8,6 +8,7 @@ import os
 import yaml
 import json
 import logging
+import re # Import regex module
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -16,16 +17,36 @@ logger = logging.getLogger(__name__)
 class EnvSafeLoader(yaml.SafeLoader):
     pass
 
+# Regex to find ${VAR:-default} or ${VAR} or $VAR
+ENV_VAR_PATTERN = re.compile(r'\$\{(?P<var>[a-zA-Z_][a-zA-Z0-9_]*)(?::-(?P<default>[^}]*))?\}|\$(?P<simple_var>[a-zA-Z_][a-zA-Z0-9_]*)')
+
 def construct_env_str(loader, node):
     """
-    Constructor for YAML strings that expands environment variables.
-    Handles both $VAR and ${VAR:-default} syntax.
+    Constructor for YAML strings that expands environment variables,
+    including support for ${VAR:-default} syntax.
     """
     value = loader.construct_scalar(node)
-    return os.path.expandvars(value)
+    if not isinstance(value, str):
+        return value
+
+    def replace_env_var(match):
+        var_name = match.group('var') or match.group('simple_var')
+        default_value = match.group('default')
+
+        if var_name:
+            env_value = os.environ.get(var_name)
+            if env_value is not None:
+                return env_value
+            elif default_value is not None:
+                return default_value
+            else:
+                # If no default is provided and env var is not set, return empty string
+                return ''
+        return match.group(0) # Return original match if no var_name (shouldn't happen with this regex)
+
+    return ENV_VAR_PATTERN.sub(replace_env_var, value)
 
 # Register the constructor for plain strings (which is where env vars will be)
-# This will apply os.path.expandvars to all string values loaded from YAML.
 EnvSafeLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_SCALAR_TAG, construct_env_str)
 
 
