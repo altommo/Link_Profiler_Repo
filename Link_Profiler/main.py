@@ -170,11 +170,12 @@ from Link_Profiler.clients.dns_client import DNSClient
 from Link_Profiler.clients.reddit_client import RedditClient
 from Link_Profiler.clients.youtube_client import YouTubeClient
 from Link_Profiler.clients.news_api_client import NewsAPIClient
-# from Link_Profiler.clients.wayback_machine_client import WaybackClient
-# from Link_Profiler.clients.common_crawl_client import CommonCrawlClient
-# from Link_Profiler.clients.nominatim_client import NominatimClient
-# from Link_Profiler.clients.security_trails_client import SecurityTrailsClient
-# from Link_Profiler.clients.ssl_labs_client import SSLLabsClient
+from Link_Profiler.clients.serpstack_client import SerpstackClient # Import SerpstackClient
+from Link_Profiler.clients.valueserp_client import ValueserpClient # Import ValueserpClient
+from Link_Profiler.clients.webscraping_ai_client import WebscrapingAIClient # Import WebscrapingAIClient
+from Link_Profiler.clients.hunter_io_client import HunterIOClient # Import HunterIOClient
+from Link_Profiler.clients.builtwith_client import BuiltWithClient # Import BuiltWithClient
+from Link_Profiler.clients.security_trails_client import SecurityTrailsClient # Import SecurityTrailsClient
 
 # Import api_cache singleton
 from Link_Profiler.utils.api_cache import api_cache
