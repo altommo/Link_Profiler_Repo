@@ -79,6 +79,8 @@ class MissionControlService:
 
         logger.debug("Aggregating new dashboard data...")
         
+        start_time = time.monotonic() # Define start_time here
+        
         # Refresh materialized views before querying for fresh data
         self.db.refresh_materialized_views()
 
