@@ -16,7 +16,7 @@ from typing import List, Optional, Dict, Any, Union, Annotated # Import Optional
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if project_root and project_root not in sys.path:
-    sys.sys.path.insert(0, project_root)
+    sys.path.insert(0, project_root)
     print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
 else:
     print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
@@ -150,7 +150,7 @@ from Link_Profiler.crawlers.web_crawler import EnhancedWebCrawler # Changed to E
 from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue, Priority
 
 # New: Import DistributedResilienceManager
-from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager, distributed_resilience_manager # Import the singleton
 
 # New: Import API Quota Manager
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager, api_quota_manager # Import both class and singleton
@@ -362,9 +362,6 @@ crawl_service_for_lifespan = CrawlService(
 ) 
 expired_domain_finder_service = ExpiredDomainFinderService(db, domain_service_instance, domain_analyzer_service) # Corrected class name
 
-# New: Instantiate DistributedResilienceManager
-distributed_resilience_manager = DistributedResilienceManager(redis_client=redis_client)
-
 # --- New: Instantiate SmartCrawlQueue and WebCrawler ---
 # Load crawler-specific configuration
 crawler_config_data = config_loader.get("crawler", {})
@@ -506,7 +503,7 @@ async def lifespan(app: FastAPI):
 
         try:
             await get_coordinator()
-            logger.info("JobCoordinator successfully initialized and background tasks started via get_coordinator.")
+            logger.info("JobCoordinator successfully initialized and background tasks started.")
         except Exception as e:
             logger.error(f"Failed to initialize JobCoordinator during lifespan startup: {e}", exc_info=True)
 

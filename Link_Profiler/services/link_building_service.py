@@ -5,10 +5,11 @@ File: Link_Profiler/services/link_building_service.py
 
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional, Set # Added Set import
+from typing import List, Dict, Any, Optional, Set
 from datetime import datetime
 from urllib.parse import urlparse
 import random
+import uuid # Import the uuid module
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import LinkProspect, Domain, Backlink, LinkProfile, LinkType # Import necessary models
