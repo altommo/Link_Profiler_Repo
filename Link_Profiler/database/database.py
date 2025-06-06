@@ -143,6 +143,24 @@ class Database:
                 WHERE last_checked IS NOT NULL
                 GROUP BY 1
                 ORDER BY 1 DESC;
+            """,
+            "mv_daily_satellite_performance": """
+                CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_satellite_performance AS
+                SELECT
+                    DATE_TRUNC('day', timestamp) AS day,
+                    satellite_id,
+                    AVG(pages_crawled) AS avg_pages_crawled,
+                    AVG(links_extracted) AS avg_links_extracted,
+                    AVG(crawl_speed_pages_per_minute) AS avg_crawl_speed_ppm,
+                    AVG(success_rate_percentage) AS avg_success_rate,
+                    AVG(avg_response_time_ms) AS avg_response_time_ms,
+                    AVG(cpu_utilization_percent) AS avg_cpu_utilization,
+                    AVG(memory_utilization_percent) AS avg_memory_utilization,
+                    AVG(network_io_mbps) AS avg_network_io,
+                    SUM(errors_logged) AS total_errors_logged
+                FROM satellite_performance_logs
+                GROUP BY 1, 2
+                ORDER BY 1 DESC, 2;
             """
         }
 
@@ -169,7 +187,12 @@ class Database:
             self.logger.error("Cannot refresh materialized views: Database engine not initialized.")
             return
 
-        view_names = ["mv_daily_job_stats", "mv_daily_backlink_stats", "mv_daily_domain_stats"]
+        view_names = [
+            "mv_daily_job_stats",
+            "mv_daily_backlink_stats",
+            "mv_daily_domain_stats",
+            "mv_daily_satellite_performance",
+        ]
         with self.engine.connect() as connection:
             for view_name in view_names:
                 try:
@@ -263,6 +286,8 @@ class Database:
             return DomainIntelligenceORM(**data)
         elif isinstance(dc_obj, SocialMention):
             return SocialMentionORM(**data)
+        elif isinstance(dc_obj, SatellitePerformanceLog):
+            return SatellitePerformanceLogORM(**data)
         else:
             raise TypeError(f"Unsupported dataclass type: {type(dc_obj)}")
 
@@ -330,6 +355,8 @@ class Database:
             return DomainIntelligence.from_dict(data)
         elif isinstance(orm_obj, SocialMentionORM):
             return SocialMention.from_dict(data)
+        elif isinstance(orm_obj, SatellitePerformanceLogORM):
+            return SatellitePerformanceLog.from_dict(data)
         else:
             raise TypeError(f"Unsupported ORM type for dataclass conversion: {type(orm_obj)}")
 
@@ -679,6 +706,22 @@ class Database:
             return session.query(SocialMentionORM).filter_by(query=query).order_by(SocialMentionORM.published_date.desc()).limit(limit).all()
         orm_mentions = self._execute_operation('select', 'social_mentions', _get)
         return [self._from_orm(m) for m in orm_mentions]
+
+    # --- Satellite Performance Log Operations ---
+    def add_satellite_performance_log(self, log: SatellitePerformanceLog) -> None:
+        """Adds a new satellite performance log entry."""
+        def _add(session):
+            orm_log = self._to_orm(log)
+            session.add(orm_log)
+        self._execute_operation('insert', 'satellite_performance_logs', _add)
+        self.logger.info(f"Added performance log for {log.satellite_id} at {log.timestamp}.")
+
+    def get_latest_satellite_performance_logs(self, limit: int = 100) -> List[SatellitePerformanceLog]:
+        """Retrieves recent satellite performance logs."""
+        def _get(session):
+            return session.query(SatellitePerformanceLogORM).order_by(SatellitePerformanceLogORM.timestamp.desc()).limit(limit).all()
+        orm_logs = self._execute_operation('select', 'satellite_performance_logs', _get)
+        return [self._from_orm(l) for l in orm_logs]
 
     # --- Keyword Suggestion Operations ---
     def get_latest_keyword_suggestions_for_seed(self, seed_keyword: str, limit: int = 100) -> List[KeywordSuggestion]:

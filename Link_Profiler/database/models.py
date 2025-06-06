@@ -492,3 +492,24 @@ class SocialMentionORM(Base):
 
     def __repr__(self):
         return f"<SocialMention(query='{self.query}', platform='{self.platform}', url='{self.mention_url}')>"
+
+
+class SatellitePerformanceLogORM(Base):
+    __tablename__ = 'satellite_performance_logs'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    satellite_id = Column(String, nullable=False, index=True)
+    timestamp = Column(DateTime, default=datetime.now, nullable=False)
+    pages_crawled = Column(Integer, default=0)
+    links_extracted = Column(Integer, default=0)
+    crawl_speed_pages_per_minute = Column(Float, default=0.0)
+    success_rate_percentage = Column(Float, default=0.0)
+    avg_response_time_ms = Column(Float, default=0.0)
+    cpu_utilization_percent = Column(Float, default=0.0)
+    memory_utilization_percent = Column(Float, default=0.0)
+    network_io_mbps = Column(Float, default=0.0)
+    errors_logged = Column(Integer, default=0)
+    bottlenecks_detected = Column(ARRAY(String), default=[])
+    last_fetched_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<SatellitePerformanceLog(satellite_id='{self.satellite_id}', timestamp='{self.timestamp}')>"

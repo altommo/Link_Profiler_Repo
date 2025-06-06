@@ -114,6 +114,15 @@ class ConfigLoader:
             elif config_key_path == 'ai_openrouter_api_key': # LP_AI_OPENROUTER_API_KEY
                 self._set_nested_value(self._config_data, 'ai.openrouter_api_key', value)
                 self.logger.debug(f"Applied environment variable LP_AI_OPENROUTER_API_KEY to ai.openrouter_api_key")
+            elif config_key_path == 'mission_control_enabled':
+                self._set_nested_value(self._config_data, 'mission_control.enabled', value.lower() == 'true')
+                self.logger.debug("Applied environment variable LP_MISSION_CONTROL_ENABLED to mission_control.enabled")
+            elif config_key_path == 'websocket_enabled':
+                self._set_nested_value(self._config_data, 'websocket.enabled', value.lower() == 'true')
+                self.logger.debug("Applied environment variable LP_WEBSOCKET_ENABLED to websocket.enabled")
+            elif config_key_path == 'dashboard_refresh_rate':
+                self._set_nested_value(self._config_data, 'mission_control.dashboard_refresh_rate', int(value))
+                self.logger.debug("Applied environment variable LP_DASHBOARD_REFRESH_RATE to mission_control.dashboard_refresh_rate")
             else:
                 # Generic handling for other LP_ variables
                 self._set_nested_value(self._config_data, config_key_path, value)
