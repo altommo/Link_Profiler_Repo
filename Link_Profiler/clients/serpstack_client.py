@@ -3,6 +3,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from urllib.parse import urlencode
+import time # Import time for performance measurement
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
