@@ -15,6 +15,7 @@ from Link_Profiler.core.models import SEOMetrics, Backlink, CrawlConfig
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
 from Link_Profiler.utils.session_manager import SessionManager # New: Import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +25,16 @@ class LinkHealthService:
     from a given set of source URLs. It checks for broken links (4xx/5xx status codes)
     and updates the SEOMetrics for the source pages.
     """
-    def __init__(self, database: Database, session_manager: SessionManager):
+    def __init__(self, database: Database, session_manager: SessionManager, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
         self.db = database
         self.logger = logging.getLogger(__name__)
         self.session_manager = session_manager # Store session manager instance
+        self.resilience_manager = resilience_manager # New: Store resilience_manager
+        if self.resilience_manager is None:
+            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
+            self.resilience_manager = global_resilience_manager
+            self.logger.warning("No DistributedResilienceManager provided to LinkHealthService. Falling back to global instance.")
+
         # Use a default crawl config for link checking, or allow it to be passed
         self.default_crawl_config = CrawlConfig(
             max_depth=0, # Only check the given URLs, no further crawling
@@ -65,8 +72,11 @@ class LinkHealthService:
 
         try:
             # Use HEAD request for efficiency, fall back to GET if HEAD is not allowed
-            async with self.session_manager.head(url, allow_redirects=self.default_crawl_config.follow_redirects) as response: # Use session_manager
-                return response.status, None
+            response = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                lambda: self.session_manager.head(url, allow_redirects=self.default_crawl_config.follow_redirects),
+                url=url # Use the URL for circuit breaker naming
+            )
+            return response.status, None
         except aiohttp.ClientError as e:
             # Catch network errors, DNS issues, etc.
             return 0, f"Network or client error: {str(e)}"

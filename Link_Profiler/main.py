@@ -211,7 +211,8 @@ dns_client_instance = DNSClient(session_manager=session_manager)
 # The DomainService constructor now handles the internal assignment of api_client
 # based on the config, so we just pass the necessary dependencies.
 domain_service_instance = DomainService(
-    session_manager=session_manager # Pass session manager
+    session_manager=session_manager, # Pass session manager
+    resilience_manager=distributed_resilience_manager # Pass resilience manager
 )
 
 # New: Initialize GSCClient
@@ -241,7 +242,8 @@ if config_loader.get("serp_crawler.playwright.enabled"):
 serp_service_instance = SERPService(
     serp_crawler=serp_crawler_instance,
     pagespeed_client=pagespeed_client_instance, # New: Pass pagespeed_client_instance
-    session_manager=session_manager # Pass session manager
+    session_manager=session_manager, # Pass session manager
+    resilience_manager=distributed_resilience_manager # Pass resilience manager
 )
 
 # New: Initialize GoogleTrendsClient
@@ -255,11 +257,12 @@ if config_loader.get("keyword_scraper.enabled"): # Assuming a config for keyword
 keyword_service_instance = KeywordService(
     keyword_scraper=keyword_scraper_instance,
     google_trends_client=google_trends_client_instance, # New: Pass google_trends_client_instance
-    session_manager=session_manager # Pass session manager
+    session_manager=session_manager, # Pass session manager
+    resilience_manager=distributed_resilience_manager # Pass resilience manager
 )
 
 # New: Initialize LinkHealthService
-link_health_service_instance = LinkHealthService(db, session_manager=session_manager) # Pass session_manager
+link_health_service_instance = LinkHealthService(db, session_manager=session_manager, resilience_manager=distributed_resilience_manager) # Pass session_manager and resilience_manager
 
 # New: Initialize TechnicalAuditor
 technical_auditor_instance = TechnicalAuditor(
@@ -267,7 +270,7 @@ technical_auditor_instance = TechnicalAuditor(
 )
 
 # New: Initialize AI Service
-ai_service_instance = AIService(database=db, session_manager=session_manager) # Pass database and session_manager
+ai_service_instance = AIService(database=db, session_manager=session_manager, resilience_manager=distributed_resilience_manager) # Pass database, session_manager and resilience_manager
 
 # New: Initialize Alert Service
 alert_service_instance = AlertService(db, connection_manager)
@@ -300,7 +303,9 @@ social_media_service_instance = SocialMediaService(
 # New: Initialize Web3 Service
 web3_service_instance = Web3Service(
     database=db, # Pass database, removed session_manager as per issue
-    session_manager=session_manager # Pass session_manager
+    session_manager=session_manager, # Pass session_manager
+    redis_client=redis_client, # Pass redis_client
+    resilience_manager=distributed_resilience_manager # Pass resilience_manager
 )
 
 # New: Initialize Link Building Service

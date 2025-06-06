@@ -537,7 +537,8 @@ class AIService:
         """
         # For domain value, we might not cache the AI result directly in Redis,
         # but rather store the DomainIntelligence object in the DB.
-        # So, for "cache" source, we'd retrieve from DB.
+        # For simplicity, we'll treat this as a live-only operation for now,
+        # but respect the allow_live flag.
         cached_domain_intelligence = self.db.get_domain_intelligence(domain_name)
         now = datetime.utcnow()
 
@@ -713,9 +714,11 @@ class AIService:
     async def _download_video(self, video_url: str) -> Optional[bytes]:
         """Download video from URL."""
         try:
-            async with self.session_manager.get(video_url, timeout=60) as response:
-                response.raise_for_status()
-                return await response.read()
+            video_data = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                lambda: self.session_manager.get(video_url, timeout=60).read(),
+                url=video_url # Use video_url for circuit breaker naming
+            )
+            return video_data
         except Exception as e:
             self.logger.error(f"Error downloading video from {video_url}: {e}")
             return None
@@ -783,23 +786,26 @@ class AIService:
             """
             
             # Make API call with image
-            response = await self.openrouter_client.http_client.chat.completions.create(
-                model=self.models.get("video_frame_analysis", "openai/gpt-4o"),
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{frame_b64}"
+            response = await self.resilience_manager.execute_with_resilience( # Use resilience_manager
+                lambda: self.openrouter_client.http_client.chat.completions.create(
+                    model=self.models.get("video_frame_analysis", "openai/gpt-4o"),
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{frame_b64}"
+                                    }
                                 }
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=500
+                            ]
+                        }
+                    ],
+                    max_tokens=500
+                ),
+                url=self.openrouter_client.base_url # Use OpenRouter base URL for circuit breaker naming
             )
             
             content = response.choices[0].message.content
