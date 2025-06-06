@@ -25,6 +25,7 @@ from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienc
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager # New: Import APIQuotaManager
 from Link_Profiler.clients.serpstack_client import SerpstackClient # New: Import SerpstackClient
 from Link_Profiler.clients.valueserp_client import ValueserpClient # New: Import ValueserpClient
+from Link_Profiler.services.api_routing_service import APIRoutingService # New: Import APIRoutingService
 
 logger = logging.getLogger(__name__)
 
@@ -297,21 +298,17 @@ class RealSERPAPIClient(BaseSERPAPIClient):
                 self.logger.error(f"SerpApi quota exceeded or subscription issue.")
             else:
                 self.logger.error(f"SerpApi HTTP error {e.status}: {e.message}")
-            return []
+            raise # Re-raise to trigger fallback in APIRoutingService
         except Exception as e:
-            self.logger.error(f"Error fetching SerpApi results for '{keyword}': {e}. Falling back to simulation.", exc_info=True)
-            # Fallback to simulation with warning
-            self.logger.warning("Falling back to simulated SERP data due to API error.")
-            fallback_client = SimulatedSERPAPIClient(self.session_manager, self.resilience_manager)
-            async with fallback_client:
-                return await fallback_client.get_serp_results(keyword, num_results, search_engine)
+            self.logger.error(f"Error fetching SerpApi results for '{keyword}': {e}.", exc_info=True)
+            raise # Re-raise to trigger fallback in APIRoutingService
 
 
 class SERPService:
     """
     Service for fetching Search Engine Results Page (SERP) data.
     """
-    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None, pagespeed_client: Optional[PageSpeedClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None): # New: Accept APIQuotaManager
+    def __init__(self, api_client: Optional[BaseSERPAPIClient] = None, serp_crawler: Optional[SERPCrawler] = None, pagespeed_client: Optional[PageSpeedClient] = None, redis_client: Optional[redis.Redis] = None, cache_ttl: int = 3600, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None, api_routing_service: Optional[APIRoutingService] = None): # New: Accept APIRoutingService
         self.logger = logging.getLogger(__name__)
         self.redis_client = redis_client
         self.cache_ttl = cache_ttl
@@ -335,14 +332,20 @@ class SERPService:
             self.api_quota_manager = global_api_quota_manager
             logger.warning("No APIQuotaManager provided to SERPService. Falling back to global instance.")
 
+        self.api_routing_service = api_routing_service # New: Store APIRoutingService
+        if self.api_routing_service is None:
+            # This service is enabled but no APIRoutingService was provided.
+            # This indicates a configuration error or missing dependency injection.
+            raise ValueError(f"{self.__class__.__name__} is enabled but no APIRoutingService was provided.")
+
         # Initialize all potential SERP API clients
         self._serp_clients: Dict[str, BaseSERPAPIClient] = {
-            "simulated": SimulatedSERPAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+            "simulated_serp_search": SimulatedSERPAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
         }
         if config_loader.get("external_apis.serpstack.enabled"):
-            self._serp_clients["serpstack"] = SerpstackClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+            self._serp_clients["serpstack"] = SerpstackClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager, api_quota_manager=self.api_quota_manager)
         if config_loader.get("external_apis.valueserp.enabled"):
-            self._serp_clients["valueserp"] = ValueserpClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+            self._serp_clients["valueserp"] = ValueserpClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager, api_quota_manager=self.api_quota_manager)
         # Add other real SERP API clients here if they exist in config
 
         self.serp_crawler = serp_crawler # Store the SERPCrawler instance
@@ -397,7 +400,7 @@ class SERPService:
     async def get_serp_data(self, keyword: str, num_results: int = 10, search_engine: str = "google", optimize_for_cost: bool = False) -> List[SERPResult]:
         """
         Fetches SERP data for a given keyword, applying a multi-tiered fallback strategy.
-        Prioritizes the local SERPCrawler if available, then uses API Quota Manager for external API selection,
+        Prioritizes the local SERPCrawler if available, then uses APIRoutingService for external API selection,
         and finally falls back to simulated data.
         """
         cache_key = f"serp_data:{keyword}:{num_results}:{search_engine}"
@@ -419,49 +422,30 @@ class SERPService:
             except Exception as e:
                 self.logger.warning(f"SERP Crawler failed for '{keyword}': {e}. Proceeding to external API fallback.")
 
-        # Tier 2: Use API Quota Manager to select and try external APIs
-        selected_api_name: Optional[str] = None
-        selected_client = None
+        # Tier 2: Use APIRoutingService to select and try external APIs
+        try:
+            self.logger.info(f"Routing SERP data request for '{keyword}' via APIRoutingService.")
+            # The api_call_func needs to be a partial function or lambda that takes the client instance
+            # and then the specific arguments for the client's method.
+            serp_results = await self.api_routing_service.route_api_call(
+                query_type="serp_search",
+                api_call_func=lambda client, **k: client.search(**k), # client.search(query, num_results, search_engine)
+                api_name_prefix="serp", # Used to identify relevant clients (serpstack, valueserp, simulated_serp_search)
+                optimize_for_cost=optimize_for_cost,
+                ml_enabled=config_loader.get("api_routing.ml_enabled", False),
+                query=keyword, # Pass actual arguments for client.search
+                num_results=num_results,
+                search_engine=search_engine
+            )
+            if serp_results:
+                await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", "get_serp_data_routed")
+                return serp_results
+        except Exception as e:
+            self.logger.error(f"APIRoutingService failed to route SERP data for '{keyword}': {e}. Falling back to simulated data.", exc_info=True)
 
-        if optimize_for_cost:
-            selected_api_name = await self.api_quota_manager.get_quota_optimized_api("serp_search")
-        else:
-            selected_api_name = await self.api_quota_manager.get_best_quality_api("serp_search")
-
-        if selected_api_name and selected_api_name in self._serp_clients:
-            selected_client = self._serp_clients[selected_api_name]
-            try:
-                self.logger.info(f"Attempting to fetch SERP data via selected API '{selected_api_name}' for '{keyword}'.")
-                serp_results = await selected_client.get_serp_results(keyword, num_results, search_engine)
-                if serp_results:
-                    self.api_quota_manager.record_usage(selected_api_name, 1) # Record usage
-                    self.logger.info(f"Successfully fetched SERP results via API '{selected_api_name}' for '{keyword}'.")
-                    await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", f"get_serp_data_{selected_api_name}")
-                    return serp_results
-            except Exception as e:
-                self.logger.warning(f"Selected API '{selected_api_name}' failed for '{keyword}': {e}. Attempting fallback API.")
-
-        # Tier 3: Fallback to any other available API (if the first selected one failed or was unavailable)
-        fallback_api_name = await self.api_quota_manager.get_any_available_api("serp_search")
-        # Ensure fallback API is different from the one just tried (if any) and is actually available
-        if fallback_api_name and fallback_api_name != selected_api_name and fallback_api_name in self._serp_clients:
-            fallback_client = self._serp_clients[fallback_api_name]
-            try:
-                self.logger.info(f"Attempting to fetch SERP data via fallback API '{fallback_api_name}' for '{keyword}'.")
-                serp_results = await fallback_client.get_serp_results(keyword, num_results, search_engine)
-                if serp_results:
-                    self.api_quota_manager.record_usage(fallback_api_name, 1) # Record usage
-                    self.logger.info(f"Successfully fetched SERP results via fallback API '{fallback_api_name}' for '{keyword}'.")
-                    await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", f"get_serp_data_{fallback_api_name}")
-                    return serp_results
-            except Exception as e:
-                self.logger.warning(f"Fallback API '{fallback_api_name}' also failed for '{keyword}': {e}. Falling back to simulated data.")
-        else:
-            self.logger.warning(f"No suitable fallback external SERP API client found via API Quota Manager for '{keyword}'.")
-
-        # Tier 4: Final Fallback to simulated data if all real APIs and crawler failed
+        # Tier 3: Final Fallback to simulated data if all real APIs and crawler failed
         self.logger.info(f"All real SERP data sources failed for '{keyword}'. Falling back to simulated data.")
-        simulated_client = self._serp_clients["simulated"]
+        simulated_client = self._serp_clients["simulated_serp_search"] # Directly use the simulated client
         serp_results = await simulated_client.get_serp_results(keyword, num_results, search_engine)
         await self._set_cached_response(cache_key, [sr.to_dict() for sr in serp_results], "serp_api", "get_serp_data_simulated")
         return serp_results

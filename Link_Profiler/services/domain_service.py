@@ -22,6 +22,11 @@ from Link_Profiler.utils.session_manager import SessionManager # Import SessionM
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # New: Import DistributedResilienceManager
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager # New: Import APIQuotaManager
 from Link_Profiler.clients.security_trails_client import SecurityTrailsClient # New: Import SecurityTrailsClient
+from Link_Profiler.clients.whois_client import WHOISClient # Import WHOISClient
+from Link_Profiler.clients.dns_client import DNSClient # Import DNSClient
+from Link_Profiler.clients.builtwith_client import BuiltWithClient # Import BuiltWithClient
+from Link_Profiler.clients.hunter_io_client import HunterIOClient # Import HunterIOClient
+from Link_Profiler.services.api_routing_service import APIRoutingService # New: Import APIRoutingService
 
 logger = logging.getLogger(__name__)
 
@@ -103,16 +108,17 @@ class DomainService:
     """
     _instance = None
 
-    def __new__(cls, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None): # New: Accept APIQuotaManager
+    def __new__(cls, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None, api_routing_service: Optional[APIRoutingService] = None): # New: Accept APIRoutingService
         if cls._instance is None:
             cls._instance = super(DomainService, cls).__new__(cls)
             cls._instance._initialized = False
             cls._instance.session_manager = session_manager # Store session_manager for clients
             cls._instance.resilience_manager = resilience_manager # New: Store resilience_manager
             cls._instance.api_quota_manager = api_quota_manager # New: Store APIQuotaManager
+            cls._instance.api_routing_service = api_routing_service # New: Store APIRoutingService
         return cls._instance
 
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None): # New: Accept APIQuotaManager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None, api_routing_service: Optional[APIRoutingService] = None): # New: Accept APIRoutingService
         if self._initialized:
             return
         self._initialized = True
@@ -130,12 +136,20 @@ class DomainService:
             self.api_quota_manager = global_api_quota_manager
             logger.warning("No APIQuotaManager provided to DomainService. Falling back to global instance.")
 
+        self.api_routing_service = api_routing_service # New: Store APIRoutingService
+        if self.api_routing_service is None:
+            # This service is enabled but no APIRoutingService was provided.
+            # This indicates a configuration error or missing dependency injection.
+            raise ValueError(f"{self.__class__.__name__} is enabled but no APIRoutingService was provided.")
+
         # Initialize all potential Domain API clients
         self._domain_clients: Dict[str, BaseAPIClient] = {
             "abstract_api": AbstractDomainAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
             "whois_json_api": WhoisJsonAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
-            "securitytrails": SecurityTrailsClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
-            # Add other domain-related clients here (e.g., BuiltWith, Clearbit if they provide relevant domain info)
+            "securitytrails": SecurityTrailsClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
+            "builtwith": BuiltWithClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
+            "hunter_io": HunterIOClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+            # Add other domain-related clients here (e.g., Clearbit if they provide relevant domain info)
         }
 
         # Configuration for live lookups
@@ -168,8 +182,7 @@ class DomainService:
     async def get_domain_info(self, domain_name: str) -> Optional[Domain]:
         """
         Fetches comprehensive information for a given domain.
-        Aggregates data from various sources using API Quota Manager for selection.
-        Applies a multi-tiered fallback strategy for API calls.
+        Aggregates data from various sources using APIRoutingService for selection and fallbacks.
         """
         if not domain_name:
             self.logger.warning("Attempted to get domain info for empty domain_name.")
@@ -184,103 +197,59 @@ class DomainService:
 
         domain_data: Dict[str, Any] = {"name": parsed_domain}
         
-        # Tier 1: Try best quality/quota-optimized APIs for each data type
         # --- WHOIS Lookup ---
         whois_data = None
-        selected_whois_api = await self.api_quota_manager.get_best_quality_api("whois_lookup")
-        if selected_whois_api and selected_whois_api in self._domain_clients:
-            whois_client = self._domain_clients[selected_whois_api]
-            try:
-                self.logger.info(f"Attempting WHOIS lookup via selected API '{selected_whois_api}'.")
-                whois_data = await whois_client.whois_lookup(parsed_domain)
-                if whois_data:
-                    self.api_quota_manager.record_usage(selected_whois_api, 1)
-                    domain_data["whois_data"] = whois_data
-            except Exception as e:
-                self.logger.warning(f"Selected WHOIS API '{selected_whois_api}' failed for {parsed_domain}: {e}. Attempting fallback.")
+        try:
+            whois_data = await self.api_routing_service.route_api_call(
+                query_type="whois_lookup",
+                api_call_func=lambda client, d_name: client.whois_lookup(d_name),
+                api_name_prefix="whois", # Matches whois_json_api, whois_client (if added)
+                d_name=parsed_domain
+            )
+            domain_data["whois_data"] = whois_data
+        except Exception as e:
+            self.logger.warning(f"Failed to get WHOIS data for {parsed_domain} after all fallbacks: {e}")
 
         # --- Domain Validation ---
         validation_data = None
-        selected_validation_api = await self.api_quota_manager.get_best_quality_api("domain_validation")
-        if selected_validation_api and selected_validation_api in self._domain_clients:
-            validation_client = self._domain_clients[selected_validation_api]
-            try:
-                self.logger.info(f"Attempting domain validation via selected API '{selected_validation_api}'.")
-                validation_data = await validation_client.validate_domain(parsed_domain)
-                if validation_data:
-                    self.api_quota_manager.record_usage(selected_validation_api, 1)
-                    domain_data["validation_data"] = validation_data
-                    domain_data["is_registered"] = validation_data.get("is_registered", False)
-                    domain_data["is_parked"] = validation_data.get("is_parked", False)
-                    domain_data["is_dead"] = validation_data.get("is_dead", False)
-                    domain_data["is_free"] = validation_data.get("is_free", False)
-                    domain_data["is_spam"] = validation_data.get("is_spam", False)
-            except Exception as e:
-                self.logger.warning(f"Selected validation API '{selected_validation_api}' failed for {parsed_domain}: {e}. Attempting fallback.")
+        try:
+            validation_data = await self.api_routing_service.route_api_call(
+                query_type="domain_validation",
+                api_call_func=lambda client, d_name: client.validate_domain(d_name),
+                api_name_prefix="abstract", # Matches abstract_api
+                d_name=parsed_domain
+            )
+            if validation_data:
+                domain_data["validation_data"] = validation_data
+                domain_data["is_registered"] = validation_data.get("is_registered", False)
+                domain_data["is_parked"] = validation_data.get("is_parked", False)
+                domain_data["is_dead"] = validation_data.get("is_dead", False)
+                domain_data["is_free"] = validation_data.get("is_free", False)
+                domain_data["is_spam"] = validation_data.get("is_spam", False)
+        except Exception as e:
+            self.logger.warning(f"Failed to get domain validation data for {parsed_domain} after all fallbacks: {e}")
 
-        # --- SEO Metrics ---
+        # --- SEO Metrics (e.g., Domain Authority, Page Authority, Trust Flow, Citation Flow) ---
         seo_metrics_data = None
-        selected_seo_api = await self.api_quota_manager.get_best_quality_api("domain_seo_metrics")
-        if selected_seo_api and selected_seo_api in self._domain_clients:
-            seo_client = self._domain_clients[selected_seo_api]
-            try:
-                self.logger.info(f"Attempting SEO metrics via selected API '{selected_seo_api}'.")
-                seo_metrics_data = await seo_client.get_domain_metrics(parsed_domain) 
-                if seo_metrics_data:
-                    self.api_quota_manager.record_usage(selected_seo_api, 1)
-                    domain_data["seo_metrics"] = seo_metrics_data
-            except Exception as e:
-                self.logger.warning(f"Selected SEO metrics API '{selected_seo_api}' failed for {parsed_domain}: {e}. Attempting fallback.")
+        try:
+            # Assuming SecurityTrailsClient has a get_domain_metrics method for SEO-like data
+            seo_metrics_data = await self.api_routing_service.route_api_call(
+                query_type="domain_seo_metrics",
+                api_call_func=lambda client, d_name: client.get_domain_metrics(d_name),
+                api_name_prefix="securitytrails", # Matches securitytrails
+                d_name=parsed_domain
+            )
+            domain_data["seo_metrics"] = seo_metrics_data
+        except Exception as e:
+            self.logger.warning(f"Failed to get SEO metrics for {parsed_domain} after all fallbacks: {e}. Falling back to simulated.")
+            domain_data["seo_metrics"] = self._simulate_seo_metrics(parsed_domain) # Final fallback to simulation
 
-        # Tier 2: Fallback to any other available API if Tier 1 failed
-        if not whois_data:
-            fallback_whois_api = await self.api_quota_manager.get_any_available_api("whois_lookup")
-            if fallback_whois_api and fallback_whois_api != selected_whois_api and fallback_whois_api in self._domain_clients:
-                fallback_whois_client = self._domain_clients[fallback_whois_api]
-                try:
-                    self.logger.info(f"Attempting WHOIS lookup via fallback API '{fallback_whois_api}'.")
-                    whois_data = await fallback_whois_client.whois_lookup(parsed_domain)
-                    if whois_data:
-                        self.api_quota_manager.record_usage(fallback_whois_api, 1)
-                        domain_data["whois_data"] = whois_data
-                except Exception as e:
-                    self.logger.warning(f"Fallback WHOIS API '{fallback_whois_api}' also failed for {parsed_domain}: {e}.")
-
-        if not validation_data:
-            fallback_validation_api = await self.api_quota_manager.get_any_available_api("domain_validation")
-            if fallback_validation_api and fallback_validation_api != selected_validation_api and fallback_validation_api in self._domain_clients:
-                fallback_validation_client = self._domain_clients[fallback_validation_api]
-                try:
-                    self.logger.info(f"Attempting domain validation via fallback API '{fallback_validation_api}'.")
-                    validation_data = await fallback_validation_client.validate_domain(parsed_domain)
-                    if validation_data:
-                        self.api_quota_manager.record_usage(fallback_validation_api, 1)
-                        domain_data["validation_data"] = validation_data
-                        domain_data["is_registered"] = validation_data.get("is_registered", False)
-                        domain_data["is_parked"] = validation_data.get("is_parked", False)
-                        domain_data["is_dead"] = validation_data.get("is_dead", False)
-                        domain_data["is_free"] = validation_data.get("is_free", False)
-                        domain_data["is_spam"] = validation_data.get("is_spam", False)
-                except Exception as e:
-                    self.logger.warning(f"Fallback validation API '{fallback_validation_api}' also failed for {parsed_domain}: {e}.")
-
-        if not seo_metrics_data:
-            fallback_seo_api = await self.api_quota_manager.get_any_available_api("domain_seo_metrics")
-            if fallback_seo_api and fallback_seo_api != selected_seo_api and fallback_seo_api in self._domain_clients:
-                fallback_seo_client = self._domain_clients[fallback_seo_api]
-                try:
-                    self.logger.info(f"Attempting SEO metrics via fallback API '{fallback_seo_api}'.")
-                    seo_metrics_data = await fallback_seo_client.get_domain_metrics(parsed_domain)
-                    if seo_metrics_data:
-                        self.api_quota_manager.record_usage(fallback_seo_api, 1)
-                        domain_data["seo_metrics"] = seo_metrics_data
-                except Exception as e:
-                    self.logger.warning(f"Fallback SEO metrics API '{fallback_seo_api}' also failed for {parsed_domain}: {e}.")
-
-        # Tier 3: DNS Records (A, AAAA, MX, NS, TXT) - uses internal logic or DOH
+        # --- DNS Records (A, AAAA, MX, NS, TXT) ---
+        # This part currently uses dns.asyncresolver directly or DOH, not a named client from external_apis
         domain_data["dns_records"] = await self._fetch_dns_records(parsed_domain)
         
-        # Tier 4: IP Information - uses internal logic
+        # --- IP Information ---
+        # This part currently uses internal logic, not a named client from external_apis
         domain_data["ip_info"] = await self._fetch_ip_info(parsed_domain)
 
         # Construct Domain object
