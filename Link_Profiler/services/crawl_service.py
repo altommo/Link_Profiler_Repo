@@ -829,19 +829,19 @@ class CrawlService:
             current_job = self.db.get_crawl_job(job.id)
             if current_job:
                 if current_job.status == CrawlStatus.PAUSED:
-                    self.logger.info(f"Technical audit for job {job.id} paused. Waiting to resume...")
+                    self.logger.info(f"Domain analysis for job {job.id} paused. Waiting to resume...")
                     while True:
                         await asyncio.sleep(5)
                         rechecked_job = self.db.get_crawl_job(job.id)
                         if rechecked_job and rechecked_job.status == CrawlStatus.IN_PROGRESS:
-                            self.logger.info(f"Technical audit for job {job.id} resumed.")
+                            self.logger.info(f"Domain analysis for job {job.id} resumed.")
                             break
                         elif rechecked_job and rechecked_job.status == CrawlStatus.STOPPED:
-                            self.logger.info(f"Technical audit for job {job.id} stopped during pause.")
+                            self.logger.info(f"Domain analysis for job {job.id} stopped during pause.")
                             job.status = CrawlStatus.STOPPED
                             return
                 elif current_job.status == CrawlStatus.STOPPED:
-                    self.logger.info(f"Technical audit for job {job.id} stopped.")
+                    self.logger.info(f"Domain analysis for job {job.id} stopped.")
                     job.status = CrawlStatus.STOPPED
                     return
 
@@ -1032,7 +1032,7 @@ class CrawlService:
         job.error_log.extend(job_errors)
         job.errors_count = len(job.error_log)
         
-        self.logger.info(f"Full SEO audit job {job.id} completed. Sub-audits: {completed_sub_audits}/2.")
+        self.logger.info(f"Full SEO audit job {job.id} completed. Sub-audits: {completed_sub_audits}/2. Regulatory Compliance: N/A.")
 
         if job.config.get("anomaly_detection_enabled", False):
             if job.anomalies_detected:
