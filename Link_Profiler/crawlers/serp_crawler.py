@@ -1,344 +1,224 @@
-"""
-SERP Crawler - Drives a headless browser (Playwright) to extract SERP data.
-File: Link_Profiler/crawlers/serp_crawler.py
-"""
-
-import asyncio
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional
-from datetime import datetime
-from urllib.parse import urlparse, urlencode
-import random # New: Import random for human-like delays
+from datetime import datetime, timedelta
+from urllib.parse import urlparse, urljoin
+import random
 
-from playwright.async_api import async_playwright, Page, BrowserContext, Browser
-from playwright_stealth import stealth_async
+from playwright.async_api import async_playwright, Browser, Page, TimeoutError as PlaywrightTimeoutError
 
-from Link_Profiler.core.models import SERPResult, CrawlResult, ContentType # Absolute import CrawlResult, ContentType
-from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
-from Link_Profiler.utils.content_validator import ContentValidator # New: Import ContentValidator
-from Link_Profiler.utils.anomaly_detector import anomaly_detector # New: Import AnomalyDetector
-from Link_Profiler.config.config_loader import config_loader # New: Import config_loader
+from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.core.models import SERPResult, SEOMetrics # Import SEOMetrics
+from Link_Profiler.utils.user_agent_manager import user_agent_manager
+from Link_Profiler.utils.api_rate_limiter import api_rate_limited
+from Link_Profiler.utils.session_manager import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
 
 logger = logging.getLogger(__name__)
 
 class SERPCrawler:
     """
-    Crawls Search Engine Results Pages (SERPs) using Playwright to extract data.
-    Supports Google and Bing.
+    Crawls Search Engine Results Pages (SERPs) using Playwright.
+    Designed to bypass basic bot detection and extract structured results.
     """
-    def __init__(self, headless: bool = True, browser_type: str = "chromium"):
+    def __init__(self, headless: bool = True, browser_type: str = "chromium", session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
+        self.logger = logging.getLogger(__name__ + ".SERPCrawler")
         self.headless = headless
-        self.browser_type = browser_type # 'chromium', 'firefox', 'webkit'
+        self.browser_type = browser_type
         self.browser: Optional[Browser] = None
-        self.context: Optional[BrowserContext] = None
-        self.logger = logging.getLogger(__name__)
-        self.content_validator = ContentValidator() # Initialize ContentValidator
+        self.enabled = config_loader.get("serp_crawler.playwright.enabled", False)
+        self.session_manager = session_manager
+        if self.session_manager is None:
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager
+            self.session_manager = global_session_manager
+            self.logger.warning("No SessionManager provided to SERPCrawler. Falling back to global SessionManager.")
+        
+        self.resilience_manager = resilience_manager
+        if self.enabled and self.resilience_manager is None:
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+
+        if not self.enabled:
+            self.logger.info("SERP Crawler (Playwright) is disabled by configuration.")
 
     async def __aenter__(self):
-        """Launches the browser and creates a new context."""
-        self.logger.info(f"Launching Playwright browser ({self.browser_type}, headless={self.headless})...")
-        self.playwright_instance = await async_playwright().start()
-        
-        # Determine headers based on config
-        headers = {}
-        if config_loader.get("anti_detection.request_header_randomization", False):
-            headers.update(user_agent_manager.get_random_headers())
-        elif config_loader.get("crawler.user_agent_rotation", False):
-            headers['User-Agent'] = user_agent_manager.get_random_user_agent()
-        # If neither is enabled, Playwright uses its default user agent.
+        """Launches the Playwright browser."""
+        if not self.enabled:
+            return self
 
-        context_options = {
-            "user_agent": headers.pop("User-Agent", None), # Remove from headers if set
-            "extra_http_headers": headers if headers else None,
-            "viewport": {"width": random.randint(1200, 1600), "height": random.randint(800, 1200)} # Random viewport
-        }
-
-        # New: Browser fingerprint randomization
-        if config_loader.get("anti_detection.browser_fingerprint_randomization", False):
-            # These options help randomize the browser's perceived environment
-            context_options.update({
-                "device_scale_factor": random.choice([1.0, 1.25, 1.5]),
-                "is_mobile": random.choice([True, False]),
-                "has_touch": random.choice([True, False]),
-                "screen": {
-                    "width": random.randint(1366, 1920),
-                    "height": random.randint(768, 1080)
-                },
-                "timezone_id": random.choice([
-                    "America/New_York", "Europe/London", "Asia/Tokyo",
-                    "America/Los_Angeles", "Europe/Berlin", "Asia/Shanghai"
-                ]),
-                "locale": random.choice(["en-US", "en-GB", "fr-FR", "de-DE", "ja-JP"]),
-                "color_scheme": random.choice(["light", "dark"]),
-                # These are not direct context options but can be influenced by user agent and other settings
-                # "cpu_cores": random.randint(2, 8), # Not directly supported by new_context
-                # "device_memory": random.randint(4, 16), # Not directly supported by new_context
-            })
-            self.logger.info("Browser fingerprint randomization enabled for Playwright.")
-
-        if self.browser_type == "chromium":
-            self.browser = await self.playwright_instance.chromium.launch(headless=self.headless)
-        elif self.browser_type == "firefox":
-            self.browser = await self.playwright_instance.firefox.launch(headless=self.headless)
-        elif self.browser_type == "webkit":
-            self.browser = await self.playwright_instance.webkit.launch(headless=self.headless)
-        else:
-            raise ValueError(f"Unsupported browser type: {self.browser_type}")
-        
-        self.context = await self.browser.new_context(**context_options)
-        self.logger.info("Playwright browser launched and context created.")
+        self.logger.info(f"Entering SERPCrawler context. Launching Playwright browser ({self.browser_type}, headless={self.headless})...")
+        try:
+            self.playwright_instance = await async_playwright().start()
+            if self.browser_type == "chromium":
+                self.browser = await self.playwright_instance.chromium.launch(headless=self.headless)
+            elif self.browser_type == "firefox":
+                self.browser = await self.playwright_instance.firefox.launch(headless=self.headless)
+            elif self.browser_type == "webkit":
+                self.browser = await self.playwright_instance.webkit.launch(headless=self.headless)
+            else:
+                raise ValueError(f"Unsupported browser type: {self.browser_type}")
+            self.logger.info("Playwright browser launched.")
+        except Exception as e:
+            self.logger.error(f"Failed to launch Playwright browser: {e}. SERP crawling will be disabled.", exc_info=True)
+            self.enabled = False
+            self.browser = None
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Closes the browser."""
+        """Closes the Playwright browser."""
         if self.browser:
-            self.logger.info("Closing Playwright browser...")
+            self.logger.info("Exiting SERPCrawler context. Closing Playwright browser.")
             await self.browser.close()
-            self.browser = None
-            self.context = None
-        if self.playwright_instance:
             await self.playwright_instance.stop()
-            self.playwright_instance = None
-        self.logger.info("Playwright browser closed.")
+            self.browser = None
 
-    async def _navigate_to_search(self, page: Page, keyword: str, search_engine: str = "google"):
-        """Navigates to the search engine and performs a search."""
-        if search_engine.lower() == "google":
-            search_url = f"https://www.google.com/search?q={urlencode({'q': keyword})}"
-            await page.goto(search_url, wait_until="domcontentloaded")
+    @api_rate_limited(service="serp_crawler", api_client_type="playwright", endpoint="get_serp_data")
+    async def get_serp_data(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
+        """
+        Fetches SERP data for a given keyword using Playwright.
+        """
+        if not self.enabled or not self.browser:
+            self.logger.warning(f"SERP Crawler not enabled or browser not launched. Skipping SERP data for '{keyword}'.")
+            return []
+
+        self.logger.info(f"Crawling SERP for keyword: '{keyword}' on {search_engine} (Limit: {num_results})...")
+        page: Optional[Page] = None
+        results: List[SERPResult] = []
+        try:
+            page = await self.browser.new_page()
             
-            if config_loader.get("anti_detection.stealth_mode", True):
-                await stealth_async(page)
-            
-            # Add human-like delays
+            # Set random user agent and other headers for stealth
+            headers = user_agent_manager.get_random_headers()
+            await page.set_extra_http_headers(headers)
+
+            # Simulate human-like delay
             if config_loader.get("anti_detection.human_like_delays", False):
-                await asyncio.sleep(random.uniform(1.0, 3.0)) # Wait for initial page load
-            
-            # Wait for results to load, adjust selector as needed
-            await page.wait_for_selector("#search #rso > div", timeout=10000) # Main results container
-        elif search_engine.lower() == "bing":
-            search_url = f"https://www.bing.com/search?q={urlencode({'q': keyword})}"
-            await page.goto(search_url, wait_until="domcontentloaded")
-            
-            if config_loader.get("anti_detection.stealth_mode", True):
-                await stealth_async(page)
+                delay_range = config_loader.get("anti_detection.random_delay_range", [1.0, 3.0])
+                await asyncio.sleep(random.uniform(delay_range[0], delay_range[1]))
 
-            # Add human-like delays
-            if config_loader.get("anti_detection.human_like_delays", False):
-                await asyncio.sleep(random.uniform(1.0, 3.0)) # Wait for initial page load
+            search_url = self._build_search_url(keyword, search_engine)
+            self.logger.debug(f"Navigating to: {search_url}")
 
-            await page.wait_for_selector("#b_results > li.b_algo", timeout=10000) # Main results container
+            # Use resilience manager for page navigation
+            await self.resilience_manager.execute_with_resilience(
+                lambda: page.goto(search_url, wait_until="domcontentloaded", timeout=config_loader.get("crawler.timeout_seconds", 30) * 1000),
+                url=search_url # Use search_url for circuit breaker naming
+            )
+
+            # Check for CAPTCHA or block page
+            if await self._is_captcha_page(page):
+                self.logger.warning(f"CAPTCHA detected for {search_url}. Cannot proceed with SERP crawl.")
+                return []
+
+            # Extract results based on search engine (simplified selectors)
+            if search_engine == "google":
+                results = await self._extract_google_results(page, keyword, num_results)
+            elif search_engine == "bing":
+                results = await self._extract_bing_results(page, keyword, num_results)
+            else:
+                self.logger.warning(f"Unsupported search engine for crawling: {search_engine}.")
+
+            self.logger.info(f"Found {len(results)} SERP results for '{keyword}' on {search_engine}.")
+            return results
+
+        except PlaywrightTimeoutError:
+            self.logger.error(f"Playwright timeout while crawling SERP for '{keyword}'.")
+            return []
+        except Exception as e:
+            self.logger.error(f"Error crawling SERP for '{keyword}': {e}", exc_info=True)
+            return []
+        finally:
+            if page:
+                await page.close()
+
+    def _build_search_url(self, keyword: str, search_engine: str) -> str:
+        """Constructs the search engine URL."""
+        encoded_keyword = keyword.replace(' ', '+')
+        if search_engine == "google":
+            return f"https://www.google.com/search?q={encoded_keyword}"
+        elif search_engine == "bing":
+            return f"https://www.bing.com/search?q={encoded_keyword}"
         else:
             raise ValueError(f"Unsupported search engine: {search_engine}")
 
-    async def _extract_google_serp_results(self, page: Page, keyword: str, num_results: int) -> List[SERPResult]:
-        """Extracts SERP results from a Google search results page."""
-        results: List[SERPResult] = []
-        
-        # Extract organic results
-        organic_results = await page.query_selector_all("#search #rso > div")
-        
-        for i, result_div in enumerate(organic_results):
-            if len(results) >= num_results:
+    async def _is_captcha_page(self, page: Page) -> bool:
+        """Checks if the current page is a CAPTCHA or block page."""
+        # Simple check: look for common CAPTCHA elements or text
+        content = await page.content()
+        if "captcha" in content.lower() or "verify you are human" in content.lower() or "unusual traffic" in content.lower():
+            return True
+        # Add more sophisticated checks if needed (e.g., specific element selectors)
+        return False
+
+    async def _extract_google_results(self, page: Page, keyword: str, num_results: int) -> List[SERPResult]:
+        """Extracts results from a Google SERP."""
+        extracted_results = []
+        # Google's selectors can change frequently, these are examples
+        # Look for organic results (usually in div with class 'g' or 'rc')
+        # This is a simplified example, real-world would need more robust selectors
+        elements = await page.query_selector_all('div.g, div.rc') # Common selectors for results
+
+        for i, element in enumerate(elements):
+            if len(extracted_results) >= num_results:
                 break
+            try:
+                title_element = await element.query_selector('h3')
+                url_element = await element.query_selector('a')
+                snippet_element = await element.query_selector('.VwiC3b, .lEBKkf') # Common snippet classes
 
-            # Skip non-organic results like "People also ask", "Top stories", etc.
-            # These often have specific classes or structures.
-            # Example: check if it's a standard organic result div
-            class_attr = await result_div.get_attribute("class")
-            if class_attr and ("g" not in class_attr.split() and "xpd" not in class_attr.split()):
-                # Refined skipping logic for common non-organic blocks
-                if await result_div.query_selector("div[role='heading'][aria-level='3']"): # People also ask
-                    continue
-                if await result_div.query_selector("g-section-with-header"): # Top stories, videos, etc.
-                    continue
-                if await result_div.query_selector("g-scrolling-carousel"): # Image carousel, shopping
-                    continue
-                # Add more specific checks if needed for other non-organic elements
-                
-                # If it's still not a standard organic result, skip
-                if not await result_div.query_selector("h3"): # Most organic results have an h3 title
-                    continue
+                title = await title_element.inner_text() if title_element else ""
+                url = await url_element.get_attribute('href') if url_element else ""
+                snippet = await snippet_element.inner_text() if snippet_element else ""
 
-            link_element = await result_div.query_selector("a[jsaction='click:h5fJlb']") # Common selector for organic links
-            if not link_element:
-                link_element = await result_div.query_selector("a[href^='http']") # Fallback for any link
-            
-            if link_element:
-                result_url = await link_element.get_attribute("href")
-                title_element = await result_div.query_selector("h3")
-                title_text = await title_element.text_content() if title_element else ""
-                
-                snippet_element = await result_div.query_selector(".VwiC3b") # Common snippet class
-                snippet_text = await snippet_element.text_content() if snippet_element else ""
-
-                # Basic rich features detection (can be expanded)
-                rich_features = []
-                if await result_div.query_selector(".yp1CPe"): # Featured snippet class
-                    rich_features.append("Featured Snippet")
-                if await result_div.query_selector(".kno-kp"): # Knowledge panel
-                    rich_features.append("Knowledge Panel")
-                if await result_div.query_selector(".g-img"): # Image result
-                    rich_features.append("Image Result")
-                if await result_div.query_selector("g-inner-card"): # Local pack, shopping results
-                    rich_features.append("Local/Shopping Result")
-                if await result_div.query_selector("g-video"): # Video result
-                    rich_features.append("Video Result")
-                if await result_div.query_selector("g-news"): # Top stories/News
-                    rich_features.append("News Result")
-
-                if result_url and title_text:
-                    results.append(
+                if url and title:
+                    extracted_results.append(
                         SERPResult(
                             keyword=keyword,
-                            rank=len(results) + 1, # Position based on extraction order
-                            url=result_url,
-                            title=title_text.strip(),
-                            snippet=snippet_text.strip(),
-                            position_type="organic", # Default to organic
-                            domain=urlparse(result_url).netloc, # Extract domain
+                            rank=i + 1,
+                            url=url,
+                            title=title,
+                            snippet=snippet,
+                            domain=urlparse(url).netloc,
+                            position_type="organic",
                             timestamp=datetime.now()
                         )
                     )
-        return results
+            except Exception as e:
+                self.logger.debug(f"Error extracting Google result: {e}")
+                continue
+        return extracted_results
 
-    async def _extract_bing_serp_results(self, page: Page, keyword: str, num_results: int) -> List[SERPResult]:
-        """Extracts SERP results from a Bing search results page."""
-        results: List[SERPResult] = []
-        
-        organic_results = await page.query_selector_all("#b_results > li.b_algo")
-        
-        for i, result_li in enumerate(organic_results):
-            if len(results) >= num_results:
+    async def _extract_bing_results(self, page: Page, keyword: str, num_results: int) -> List[SERPResult]:
+        """Extracts results from a Bing SERP."""
+        extracted_results = []
+        # Bing's selectors can change frequently, these are examples
+        elements = await page.query_selector_all('li.b_algo') # Common selector for results
+
+        for i, element in enumerate(elements):
+            if len(extracted_results) >= num_results:
                 break
+            try:
+                title_element = await element.query_selector('h2 a')
+                url_element = await element.query_selector('h2 a')
+                snippet_element = await element.query_selector('.b_snippet, .b_lineclamp4')
 
-            link_element = await result_li.query_selector("h2 > a")
-            if link_element:
-                result_url = await link_element.get_attribute("href")
-                title_text = await link_element.text_content()
-                
-                snippet_element = await result_li.query_selector(".b_vlist2 > p, .b_lineclamp2") # Common snippet classes
-                snippet_text = await snippet_element.text_content() if snippet_element else ""
+                title = await title_element.inner_text() if title_element else ""
+                url = await url_element.get_attribute('href') if url_element else ""
+                snippet = await snippet_element.inner_text() if snippet_element else ""
 
-                rich_features = []
-                # Bing-specific rich feature detection
-                if await result_li.query_selector(".b_factrow"): # Quick answers, definitions
-                    rich_features.append("Quick Answer/Fact")
-                if await result_li.query_selector(".b_ans"): # Answer box
-                    rich_features.append("Answer Box")
-                if await result_li.query_selector(".b_rc"): # Related searches, people also ask
-                    rich_features.append("Related Content")
-                if await result_li.query_selector(".b_img"): # Image result
-                    rich_features.append("Image Result")
-                if await result_li.query_selector(".b_video"): # Video result
-                    rich_features.append("Video Result")
-
-                if result_url and title_text:
-                    results.append(
+                if url and title:
+                    extracted_results.append(
                         SERPResult(
                             keyword=keyword,
-                            rank=len(results) + 1,
-                            url=result_url,
-                            title=title_text.strip(),
-                            snippet=snippet_text.strip(),
-                            position_type="organic", # Default to organic
-                            domain=urlparse(result_url).netloc, # Extract domain
+                            rank=i + 1,
+                            url=url,
+                            title=title,
+                            snippet=snippet,
+                            domain=urlparse(url).netloc,
+                            position_type="organic",
                             timestamp=datetime.now()
                         )
                     )
-        return results
-
-    async def get_serp_data(self, keyword: str, num_results: int = 10, search_engine: str = "google") -> List[SERPResult]:
-        """
-        Performs a search and extracts SERP data.
-        """
-        if not self.browser or not self.context:
-            raise RuntimeError("Browser not launched. Use SERPCrawler within an async context.")
-
-        page: Page = await self.context.new_page()
-        page_load_time: Optional[float] = None
-        
-        try:
-            start_time = datetime.now()
-            await self._navigate_to_search(page, keyword, search_engine)
-            end_time = datetime.now()
-            page_load_time = (end_time - start_time).total_seconds()
-
-            # New: Check for CAPTCHA after navigation
-            page_content = await page.content()
-            page_status = page.status() # This is the HTTP status of the main response
-            
-            # Create a dummy CrawlResult for anomaly detection
-            # Note: CrawlResult expects content_type as an Enum, not a string
-            temp_crawl_result = CrawlResult(
-                url=page.url,
-                status_code=page_status,
-                content_type=ContentType.HTML, # Assuming HTML for SERP pages
-                html_content=page_content,
-                load_time_ms=int(page_load_time * 1000),
-                error_message=None, # No error yet
-                timestamp=datetime.now(),
-                metadata={},
-                seo_metrics=None, # Not relevant here
-                anomaly_flags=[],
-                validation_issues=self.content_validator.detect_bot_indicators(page_content) # Use detect_bot_indicators
-            )
-
-            if config_loader.get("anti_detection.anomaly_detection_enabled", False):
-                anomalies = anomaly_detector.detect_anomalies_for_crawl_result(temp_crawl_result)
-                if anomalies:
-                    self.logger.warning(f"Anomalies detected on SERP page for '{keyword}': {anomalies}")
-                    # Decide how to handle anomalies for SERP. For now, just log and proceed.
-                    # In a real system, this might trigger a retry with a new proxy/fingerprint.
-
-            if any("CAPTCHA" in issue for issue in temp_crawl_result.validation_issues) or \
-               any("Cloudflare 'Attention Required' page" in issue for issue in temp_crawl_result.validation_issues):
-                if config_loader.get("anti_detection.captcha_solving_enabled", False):
-                    self.logger.warning(f"CAPTCHA detected on SERP for '{keyword}'. Attempting to solve (simulated).")
-                    # In a real scenario, you'd send the page content/screenshot to a CAPTCHA solving service API here.
-                    # For now, we'll return an empty list to indicate failure to proceed.
-                    return []
-                else:
-                    self.logger.warning(f"CAPTCHA detected on SERP for '{keyword}', but captcha_solving is disabled. Returning empty results.")
-                    return []
-
-            if search_engine.lower() == "google":
-                serp_results = await self._extract_google_serp_results(page, keyword, num_results)
-            elif search_engine.lower() == "bing":
-                serp_results = await self._extract_bing_serp_results(page, keyword, num_results)
-            else:
-                raise ValueError(f"Unsupported search engine: {search_engine}")
-            
-            # Populate page_load_time for each result
-            for result in serp_results:
-                result.page_load_time = page_load_time
-
-            self.logger.info(f"Extracted {len(serp_results)} SERP results for '{keyword}' from {search_engine}.")
-            return serp_results
-
-        except Exception as e:
-            self.logger.error(f"Error extracting SERP data for '{keyword}' from {search_engine}: {e}", exc_info=True)
-            return []
-        finally:
-            await page.close()
-
-# Example usage (for testing)
-async def main():
-    logging.basicConfig(level=logging.INFO)
-    keyword = "best python web frameworks"
-    
-    async with SERPCrawler(headless=True) as crawler:
-        results = await crawler.get_serp_data(keyword, num_results=5, search_engine="google")
-        for r in results:
-            print(f"Pos: {r.rank}, Title: {r.title}, URL: {r.url}, Snippet: {r.snippet[:50]}...")
-            # print(f"  Rich Features: {r.rich_features}, Load Time: {r.page_load_time:.2f}s") # Removed rich_features and page_load_time from SERPResult
-
-        print("\n--- Bing Search ---")
-        results_bing = await crawler.get_serp_data(keyword, num_results=5, search_engine="bing")
-        for r in results_bing:
-            print(f"Pos: {r.rank}, Title: {r.title}, URL: {r.url}, Snippet: {r.snippet[:50]}...")
-            # print(f"  Rich Features: {r.rich_features}, Load Time: {r.page_load_time:.2f}s") # Removed rich_features and page_load_time from SERPResult
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
+            except Exception as e:
+                self.logger.debug(f"Error extracting Bing result: {e}")
+                continue
+        return extracted_results
