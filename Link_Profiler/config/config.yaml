@@ -402,3 +402,69 @@ system:
   # to trigger automatic restarts of outdated satellite crawlers.
   current_code_version: "1.0.3" # Example: "1.0.0", "1.0.1", "2.0.0-beta"
   version_control_enabled: false # New: Control whether version comparison and auto-restart is active
+
+# Mission Control Dashboard Settings (New Section)
+mission_control:
+  enabled: true # Enable/disable the mission control dashboard features
+  dashboard_refresh_rate: 1000 # Refresh rate for WebSocket data in milliseconds
+  cache_ttl: 60 # TTL for cached dashboard data in seconds
+  history_retention_days: 30 # How many days of historical data to retain for dashboard charts
+
+# External API Quota Manager specific configurations (New/Updated Section)
+external_apis:
+  serpstack:
+    enabled: false
+    api_key: "${LP_SERPSTACK_API_KEY}"
+    monthly_limit: 1000
+    reset_day_of_month: 1
+    cost_per_unit: 0.001
+    quality_score: 5
+    supported_query_types: ["serp_search"]
+  valueserp:
+    enabled: false
+    api_key: "${LP_VALUESERP_API_KEY}"
+    monthly_limit: 100
+    reset_day_of_month: 1
+    cost_per_unit: 0.005
+    quality_score: 4
+    supported_query_types: ["serp_search"]
+  webscraping_ai:
+    enabled: false
+    api_key: "${LP_WEBSCRAPING_AI_API_KEY}"
+    monthly_limit: 1000
+    reset_day_of_month: 1
+    cost_per_unit: 0.002
+    quality_score: 4
+    supported_query_types: ["web_scrape"]
+  hunter_io:
+    enabled: false
+    api_key: "${LP_HUNTER_IO_API_KEY}"
+    monthly_limit: 50
+    reset_day_of_month: 1
+    cost_per_unit: 0.01
+    quality_score: 3
+    supported_query_types: ["email_lookup"]
+  builtwith:
+    enabled: false
+    api_key: "${LP_BUILTWITH_API_KEY}"
+    monthly_limit: 200
+    reset_day_of_month: 1
+    cost_per_unit: 0.008
+    quality_score: 4
+    supported_query_types: ["tech_stack"]
+  clearbit:
+    enabled: false
+    api_key: "${LP_CLEARBIT_API_KEY}"
+    monthly_limit: 50
+    reset_day_of_month: 1
+    cost_per_unit: 0.02
+    quality_score: 5
+    supported_query_types: ["company_info", "person_info"]
+  securitytrails:
+    enabled: false
+    api_key: "${LP_SECURITYTRAILS_API_KEY}"
+    monthly_limit: 50
+    reset_day_of_month: 1
+    cost_per_unit: 0.015
+    quality_score: 5
+    supported_query_types: ["domain_data", "dns_history"]
