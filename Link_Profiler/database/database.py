@@ -62,7 +62,7 @@ class Database:
     def _connect(self):
         """Establishes connection to the PostgreSQL database."""
         if not self.database_url:
-            self.logger.error("Database URL is not configured.")
+            self.logger.critical("Database URL is not configured.")
             return
 
         try:
@@ -78,6 +78,7 @@ class Database:
             )
             self.logger.info("Database connection established.")
             self._run_migrations()
+            self._create_materialized_views() # New: Create materialized views after migrations
         except SQLAlchemyError as e:
             self.logger.critical(f"Failed to connect to database: {e}", exc_info=True)
             self.engine = None
@@ -91,6 +92,97 @@ class Database:
             self.logger.info("Database migrations applied.")
         except Exception as e:
             self.logger.error(f"Failed to run migrations: {e}")
+
+    def _create_materialized_views(self):
+        """
+        Creates or refreshes materialized views for dashboard performance.
+        This is a simplified approach; in a production environment, these
+        would typically be managed via Alembic migrations.
+        """
+        if not self.engine:
+            self.logger.error("Cannot create materialized views: Database engine not initialized.")
+            return
+
+        views_sql = {
+            "mv_daily_job_stats": """
+                CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_job_stats AS
+                SELECT
+                    DATE_TRUNC('day', created_date) AS day,
+                    job_type,
+                    COUNT(id) AS total_jobs,
+                    COUNT(CASE WHEN status = 'completed' THEN 1 END) AS completed_jobs,
+                    COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed_jobs,
+                    SUM(urls_crawled) AS total_pages_crawled,
+                    AVG(EXTRACT(EPOCH FROM (completed_date - started_date))) AS avg_job_duration_seconds
+                FROM crawl_jobs
+                WHERE created_date IS NOT NULL
+                GROUP BY 1, 2
+                ORDER BY 1 DESC, 2;
+            """,
+            "mv_daily_backlink_stats": """
+                CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_backlink_stats AS
+                SELECT
+                    DATE_TRUNC('day', discovered_date) AS day,
+                    COUNT(id) AS total_backlinks_discovered,
+                    COUNT(DISTINCT source_domain_name) AS unique_domains_discovered,
+                    COUNT(CASE WHEN spam_level IN ('likely_spam', 'confirmed_spam') THEN 1 END) AS potential_spam_links,
+                    AVG(authority_passed) AS avg_authority_passed
+                FROM backlinks
+                WHERE discovered_date IS NOT NULL
+                GROUP BY 1
+                ORDER BY 1 DESC;
+            """,
+            "mv_daily_domain_stats": """
+                CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_domain_stats AS
+                SELECT
+                    DATE_TRUNC('day', last_checked) AS day,
+                    COUNT(name) AS total_domains_analyzed,
+                    COUNT(CASE WHEN authority_score >= 20 AND spam_score <= 0.3 THEN 1 END) AS valuable_domains_found,
+                    AVG(authority_score) AS avg_domain_authority_score
+                FROM domains
+                WHERE last_checked IS NOT NULL
+                GROUP BY 1
+                ORDER BY 1 DESC;
+            """
+        }
+
+        with self.engine.connect() as connection:
+            for view_name, sql in views_sql.items():
+                try:
+                    connection.execute(text(sql))
+                    connection.commit()
+                    self.logger.info(f"Materialized view '{view_name}' created or already exists.")
+                    # Create index on the 'day' column for faster queries
+                    connection.execute(text(f"CREATE INDEX IF NOT EXISTS idx_{view_name}_day ON {view_name} (day);"))
+                    connection.commit()
+                    self.logger.info(f"Index on '{view_name}.day' created or already exists.")
+                except SQLAlchemyError as e:
+                    self.logger.error(f"Error creating materialized view '{view_name}': {e}", exc_info=True)
+                    connection.rollback()
+                except Exception as e:
+                    self.logger.error(f"Unexpected error during materialized view creation for '{view_name}': {e}", exc_info=True)
+                    connection.rollback()
+
+    def refresh_materialized_views(self):
+        """Refreshes all materialized views."""
+        if not self.engine:
+            self.logger.error("Cannot refresh materialized views: Database engine not initialized.")
+            return
+
+        view_names = ["mv_daily_job_stats", "mv_daily_backlink_stats", "mv_daily_domain_stats"]
+        with self.engine.connect() as connection:
+            for view_name in view_names:
+                try:
+                    self.logger.info(f"Refreshing materialized view: {view_name}")
+                    connection.execute(text(f"REFRESH MATERIALIZED VIEW {view_name};"))
+                    connection.commit()
+                    self.logger.info(f"Materialized view '{view_name}' refreshed successfully.")
+                except SQLAlchemyError as e:
+                    self.logger.error(f"Error refreshing materialized view '{view_name}': {e}", exc_info=True)
+                    connection.rollback()
+                except Exception as e:
+                    self.logger.error(f"Unexpected error during materialized view refresh for '{view_name}': {e}", exc_info=True)
+                    connection.rollback()
 
     def get_session(self):
         """Returns a SQLAlchemy session."""
@@ -549,6 +641,52 @@ class Database:
         for target, source in rows:
             mapping.setdefault(target, set()).add(source)
         return mapping
+
+    # --- URL Operations ---
+    def get_url(self, url: str) -> Optional[URL]:
+        """Retrieves a URL by its URL string."""
+        def _get(session):
+            return session.query(URLORM).filter_by(url=url).first()
+        orm_url = self._execute_operation('select', 'urls', _get)
+        return self._from_orm(orm_url) if orm_url else None
+
+    def save_url(self, url_obj: URL) -> None:
+        """Saves or updates a URL."""
+        def _save(session):
+            orm_url = self._to_orm(url_obj)
+            existing_url = session.query(URLORM).filter_by(url=url_obj.url).first()
+            if existing_url:
+                for key, value in orm_url.__dict__.items():
+                    if key != '_sa_instance_state':
+                        setattr(existing_url, key, value)
+            else:
+                session.add(orm_url)
+        self._execute_operation('upsert', 'urls', _save)
+        self.logger.info(f"Saved URL {url_obj.url}.")
+
+    # --- Social Mention Operations ---
+    def add_social_mentions(self, mentions: List[SocialMention]) -> None:
+        """Adds a list of social mentions to the database."""
+        def _add(session):
+            orm_mentions = [self._to_orm(m) for m in mentions]
+            session.add_all(orm_mentions)
+        self._execute_operation('insert', 'social_mentions', _add)
+        self.logger.info(f"Added {len(mentions)} social mentions.")
+
+    def get_latest_social_mentions_for_query(self, query: str, limit: int = 100) -> List[SocialMention]:
+        """Retrieves the latest social mentions for a specific query."""
+        def _get(session):
+            return session.query(SocialMentionORM).filter_by(query=query).order_by(SocialMentionORM.published_date.desc()).limit(limit).all()
+        orm_mentions = self._execute_operation('select', 'social_mentions', _get)
+        return [self._from_orm(m) for m in orm_mentions]
+
+    # --- Keyword Suggestion Operations ---
+    def get_latest_keyword_suggestions_for_seed(self, seed_keyword: str, limit: int = 100) -> List[KeywordSuggestion]:
+        """Retrieves the latest keyword suggestions for a specific seed keyword."""
+        def _get(session):
+            return session.query(KeywordSuggestionORM).filter_by(seed_keyword=seed_keyword).order_by(KeywordSuggestionORM.data_timestamp.desc()).limit(limit).all()
+        orm_suggestions = self._execute_operation('select', 'keyword_suggestions', _get)
+        return [self._from_orm(s) for s in orm_suggestions]
 
 # Create a singleton instance
 db = Database()
