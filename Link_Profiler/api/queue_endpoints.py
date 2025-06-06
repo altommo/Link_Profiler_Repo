@@ -105,6 +105,10 @@ async def submit_crawl_to_queue(request: QueueCrawlRequest) -> Dict[str, str]:
     # Ensure config is passed as a dictionary to CrawlJob
     crawl_config_dict = request.config if request.config is not None else {}
     
+    # Map string priority to integer priority for CrawlJob
+    priority_map = {"low": 10, "normal": 5, "high": 1}
+    job_priority_int = priority_map.get(request.priority.lower(), 5) # Default to normal (5)
+
     # Create a CrawlJob object
     job = CrawlJob(
         id=job_id,
@@ -115,7 +119,7 @@ async def submit_crawl_to_queue(request: QueueCrawlRequest) -> Dict[str, str]:
         config=crawl_config_dict, # Pass as dict
         # initial_seed_urls is not part of CrawlJob dataclass directly, it's part of the request
         # If needed in CrawlJob, it should be added to its definition or stored in config/results
-        priority=request.priority,
+        priority=job_priority_int, # Use the converted integer priority
         scheduled_at=request.scheduled_at,
         cron_schedule=request.cron_schedule
     )

@@ -3,31 +3,6 @@ from typing import Annotated, Dict, List, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-# Import globally initialized instances from main.py
-try:
-    import logging
-logger = logging.getLogger(__name__)
-except ImportError:
-    logger = logging.getLogger(__name__)
-    logging.basicConfig(level=logging.INFO)
-    # Dummy instances for testing or if main.py is not fully initialized
-    class DummyAIService:
-        enabled = False
-        async def generate_content_ideas(self, topic, num_ideas): return []
-        async def analyze_competitors(self, primary_domain, competitor_domains): return {}
-        async def suggest_semantic_keywords(self, keyword): return []
-        async def analyze_domain_value(self, domain_name, domain_info, link_profile_summary): return {"value_adjustment": 0, "reasons": ["AI disabled"], "details": {}}
-        async def analyze_content_gaps(self, target_url, competitor_urls): return {"missing_topics": [], "missing_keywords": [], "content_format_gaps": [], "actionable_insights": ["AI disabled"]}
-        async def score_content(self, content, target_keyword): return {"seo_score": 50, "keyword_density_score": 50, "readability_score": 50, "semantic_keywords": [], "improvement_suggestions": ["AI disabled"]}
-        async def classify_content(self, content, target_keyword): return "unknown"
-        async def analyze_technical_seo(self, url, html_content, lighthouse_report): return {"technical_issues": [], "technical_suggestions": [], "overall_technical_score": 50}
-        async def analyze_content_nlp(self, content): return {"entities": [], "sentiment": "neutral", "topics": []}
-        async def analyze_video_content(self, video_url, video_data): raise NotImplementedError("AI disabled")
-        async def assess_content_quality(self, content, url): return (None, "AI disabled")
-        async def perform_topic_clustering(self, texts, num_clusters): return {}
-    ai_service_instance = DummyAIService()
-
-
 # Import shared Pydantic models and dependencies
 from Link_Profiler.api.schemas import (
     ContentGenerationRequest, CompetitorStrategyAnalysisRequest,
@@ -41,13 +16,45 @@ from Link_Profiler.api.dependencies import get_current_user
 # Import core models
 from Link_Profiler.core.models import User
 
+# Import the actual AIService class for type hinting and dependency injection
+from Link_Profiler.services.ai_service import AIService
+
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
+
+# Global variable to hold the initialized AIService instance.
+# This will be set by main.py during application startup.
+_global_ai_service_instance: Optional[AIService] = None
+
+def set_global_ai_service_instance(instance: AIService):
+    """
+    Sets the global AIService instance for use in API endpoints.
+    This function should be called once during application startup (e.g., in main.py's lifespan).
+    """
+    global _global_ai_service_instance
+    _global_ai_service_instance = instance
+    logger.info("AI Service instance set in ai.py.")
+
+async def get_ai_service() -> AIService:
+    """
+    FastAPI dependency that provides the AIService instance.
+    Raises an HTTPException if the service is not initialized or not enabled.
+    """
+    if _global_ai_service_instance is None:
+        logger.error("AI Service instance not initialized. Call set_global_ai_service_instance during app startup.")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not initialized.")
+    if not _global_ai_service_instance.enabled:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
+    return _global_ai_service_instance
+
 
 ai_router = APIRouter(prefix="/api/ai", tags=["AI Services"])
 
 @ai_router.post("/generate_content_ideas", response_model=List[str])
 async def generate_content_ideas_endpoint(
     request: ContentGenerationRequest,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    ai_service: Annotated[AIService, Depends(get_ai_service)] # Inject AI service
 ):
     """
     Generates content ideas based on a given topic using AI.
@@ -56,11 +63,8 @@ async def generate_content_ideas_endpoint(
     if not request.topic:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Topic must be provided.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-
     try:
-        ideas = await ai_service_instance.generate_content_ideas(request.topic, request.num_ideas)
+        ideas = await ai_service.generate_content_ideas(request.topic, request.num_ideas)
         if not ideas:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No content ideas generated for '{request.topic}'.")
         return ideas
@@ -71,7 +75,8 @@ async def generate_content_ideas_endpoint(
 @ai_router.post("/suggest_semantic_keywords", response_model=List[str])
 async def suggest_semantic_keywords_endpoint(
     keyword: str,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    ai_service: Annotated[AIService, Depends(get_ai_service)] # Inject AI service
 ):
     """
     Suggests semantically related keywords for a primary keyword using AI.
@@ -80,11 +85,8 @@ async def suggest_semantic_keywords_endpoint(
     if not keyword:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Keyword must be provided.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-
     try:
-        keywords = await ai_service_instance.suggest_semantic_keywords(keyword)
+        keywords = await ai_service.suggest_semantic_keywords(keyword)
         if not keywords:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No semantic keywords suggested for '{keyword}'.")
         return keywords
@@ -95,7 +97,8 @@ async def suggest_semantic_keywords_endpoint(
 @ai_router.post("/analyze_domain_value", response_model=DomainAnalysisResponse)
 async def analyze_domain_value_endpoint(
     domain_name: str,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    ai_service: Annotated[AIService, Depends(get_ai_service)] # Inject AI service
 ):
     """
     Performs an AI-driven analysis of a domain's potential value.
@@ -104,14 +107,11 @@ async def analyze_domain_value_endpoint(
     if not domain_name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Domain name must be provided.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-    
     # This endpoint would typically fetch domain_info and link_profile from DB/services
     # For simplicity, we'll pass None for now, assuming AI can work with just domain_name
     # or that the AI service itself fetches necessary data.
     try:
-        analysis_result = await ai_service_instance.analyze_domain_value(domain_name, None, None)
+        analysis_result = await ai_service.analyze_domain_value(domain_name, None, None)
         if not analysis_result:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AI could not perform domain value analysis for {domain_name}.")
         # Map AI service's raw dict output to DomainAnalysisResponse schema
@@ -129,7 +129,8 @@ async def analyze_domain_value_endpoint(
 @ai_router.post("/analyze_content_gaps", response_model=ContentGapAnalysisResultResponse)
 async def analyze_content_gaps_endpoint(
     request: ContentGapAnalysisRequest,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    ai_service: Annotated[AIService, Depends(get_ai_service)] # Inject AI service
 ):
     """
     Analyzes content gaps between a target URL and its competitors using AI.
@@ -138,11 +139,8 @@ async def analyze_content_gaps_endpoint(
     if not request.target_url or not request.competitor_urls:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target URL and competitor URLs must be provided.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-    
     try:
-        result = await ai_service_instance.analyze_content_gaps(request.target_url, request.competitor_urls)
+        result = await ai_service.analyze_content_gaps(request.target_url, request.competitor_urls)
         if not result:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AI could not perform content gap analysis for {request.target_url}.")
         return result # ContentGapAnalysisResult is already a dataclass, should map directly
@@ -154,7 +152,8 @@ async def analyze_content_gaps_endpoint(
 async def score_content_endpoint(
     content: str,
     target_keyword: str,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    ai_service: Annotated[AIService, Depends(get_ai_service)] # Inject AI service
 ):
     """
     Analyzes and scores content for SEO optimization using AI.
@@ -163,11 +162,8 @@ async def score_content_endpoint(
     if not content or not target_keyword:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content and target keyword must be provided.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-    
     try:
-        result = await ai_service_instance.score_content(content, target_keyword)
+        result = await ai_service.score_content(content, target_keyword)
         if not result:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AI could not score content for {target_keyword}.")
         return result
@@ -179,7 +175,8 @@ async def score_content_endpoint(
 async def classify_content_endpoint(
     content: str,
     target_keyword: str,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    ai_service: Annotated[AIService, Depends(get_ai_service)] # Inject AI service
 ):
     """
     Classifies content based on quality and relevance using AI.
@@ -188,11 +185,8 @@ async def classify_content_endpoint(
     if not content or not target_keyword:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content and target keyword must be provided.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-    
     try:
-        classification = await ai_service_instance.classify_content(content, target_keyword)
+        classification = await ai_service.classify_content(content, target_keyword)
         if not classification:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AI could not classify content for {target_keyword}.")
         return classification
@@ -205,6 +199,7 @@ async def analyze_technical_seo_endpoint(
     url: str,
     html_content: str,
     current_user: Annotated[User, Depends(get_current_user)], # Moved to be a non-default argument
+    ai_service: Annotated[AIService, Depends(get_ai_service)], # Inject AI service
     lighthouse_report: Optional[Dict[str, Any]] = None
 ):
     """
@@ -214,11 +209,8 @@ async def analyze_technical_seo_endpoint(
     if not url or not html_content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="URL and HTML content must be provided.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-    
     try:
-        result = await ai_service_instance.analyze_technical_seo(url, html_content, lighthouse_report)
+        result = await ai_service.analyze_technical_seo(url, html_content, lighthouse_report)
         if not result:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AI could not perform technical SEO analysis for {url}.")
         return SEOMetricsResponse(**result) # Map raw AI dict to SEOMetricsResponse
@@ -229,7 +221,8 @@ async def analyze_technical_seo_endpoint(
 @ai_router.post("/analyze_competitors", response_model=Dict[str, Any])
 async def analyze_competitors_endpoint(
     request: CompetitorStrategyAnalysisRequest,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    ai_service: Annotated[AIService, Depends(get_ai_service)] # Inject AI service
 ):
     """
     Analyzes competitor strategies using AI.
@@ -238,11 +231,8 @@ async def analyze_competitors_endpoint(
     if not request.primary_domain or not request.competitor_domains:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Primary domain and competitor domains must be provided.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-
     try:
-        analysis_result = await ai_service_instance.analyze_competitors(request.primary_domain, request.competitor_domains)
+        analysis_result = await ai_service.analyze_competitors(request.primary_domain, request.competitor_domains)
         if not analysis_result:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AI could not perform competitor strategy analysis for {request.primary_domain}.")
         return analysis_result
@@ -253,7 +243,8 @@ async def analyze_competitors_endpoint(
 @ai_router.post("/analyze_content_nlp", response_model=Dict[str, Any])
 async def analyze_content_nlp_endpoint(
     content: str,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    ai_service: Annotated[AIService, Depends(get_ai_service)] # Inject AI service
 ):
     """
     Performs Natural Language Processing (NLP) on content using AI.
@@ -262,11 +253,8 @@ async def analyze_content_nlp_endpoint(
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content must be provided.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-    
     try:
-        result = await ai_service_instance.analyze_content_nlp(content)
+        result = await ai_service.analyze_content_nlp(content)
         if not result:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI could not perform content NLP analysis.")
         return result
@@ -277,7 +265,8 @@ async def analyze_content_nlp_endpoint(
 @ai_router.post("/analyze_video_content", response_model=Dict[str, Any])
 async def analyze_video_content_endpoint(
     video_url: str,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    ai_service: Annotated[AIService, Depends(get_ai_service)] # Inject AI service
 ):
     """
     Analyzes video content (transcription, topics) using AI.
@@ -286,11 +275,8 @@ async def analyze_video_content_endpoint(
     if not video_url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Video URL must be provided.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-    
     try:
-        result = await ai_service_instance.analyze_video_content(video_url)
+        result = await ai_service.analyze_video_content(video_url)
         if not result:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AI could not analyze video content for {video_url}.")
         return result
@@ -304,7 +290,8 @@ async def analyze_video_content_endpoint(
 async def assess_content_quality_endpoint(
     content: str,
     url: str,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    ai_service: Annotated[AIService, Depends(get_ai_service)] # Inject AI service
 ):
     """
     Assesses the quality of content using AI.
@@ -313,11 +300,8 @@ async def assess_content_quality_endpoint(
     if not content or not url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Content and URL must be provided.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-    
     try:
-        score, classification = await ai_service_instance.assess_content_quality(content, url)
+        score, classification = await ai_service.assess_content_quality(content, url)
         if score is None or classification is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"AI could not assess content quality for {url}.")
         return {"quality_score": score, "classification": classification}
@@ -328,7 +312,8 @@ async def assess_content_quality_endpoint(
 @ai_router.post("/perform_topic_clustering", response_model=Dict[str, List[str]])
 async def perform_topic_clustering_endpoint(
     request: TopicClusteringRequest,
-    current_user: Annotated[User, Depends(get_current_user)]
+    current_user: Annotated[User, Depends(get_current_user)],
+    ai_service: Annotated[AIService, Depends(get_ai_service)] # Inject AI service
 ):
     """
     Performs AI-powered topic clustering on a list of texts.
@@ -337,11 +322,8 @@ async def perform_topic_clustering_endpoint(
     if not request.texts:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Texts must be provided for topic clustering.")
     
-    if not ai_service_instance.enabled:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="AI Service is not enabled or configured.")
-    
     try:
-        result = await ai_service_instance.perform_topic_clustering(request.texts, request.num_clusters)
+        result = await ai_service.perform_topic_clustering(request.texts, request.num_clusters)
         if not result:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI could not perform topic clustering.")
         return result

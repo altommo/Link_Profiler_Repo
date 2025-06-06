@@ -2,8 +2,7 @@ import logging
 from fastapi import APIRouter, Depends
 from typing import Annotated
 
-# Import the globally initialized logger from main.py
-import logging
+# Import logging directly
 logger = logging.getLogger(__name__)
 
 # Import Pydantic models from the shared schemas file

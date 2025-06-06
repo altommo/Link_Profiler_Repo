@@ -144,7 +144,7 @@ from Link_Profiler.monitoring.prometheus_metrics import (
 # as they are now in queue_endpoints.py
 from Link_Profiler.api.queue_endpoints import set_coordinator_dependencies, get_coordinator # Import from queue_endpoints
 from Link_Profiler.api.ai import set_global_ai_service_instance # Import for setting AI service instance
-from Link_Profiler.api.dependencies import set_auth_service_instance # Import for setting auth service instance
+from Link_Profiler.api.dependencies import set_auth_service_instance, get_current_user # Import for setting auth service instance and get_current_user
 
 # New: Import WebCrawler and SmartCrawlQueue
 from Link_Profiler.crawlers.web_crawler import EnhancedWebCrawler # Changed to EnhancedWebCrawler
