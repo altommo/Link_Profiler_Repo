@@ -91,6 +91,7 @@ class APIQuotaManager:
         self.exhaustion_warning_days = 7 # Days until exhaustion to start applying heavy penalty
 
         self.ml_predictor = SimpleMLPredictor() # Initialize the ML predictor
+        self.ml_enabled_for_routing = config.get("api_routing.ml_enabled", False) # New config flag
 
         self.logger.info("APIQuotaManager initialized.")
 
