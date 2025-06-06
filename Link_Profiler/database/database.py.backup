@@ -86,7 +86,7 @@ class Database:
     def _run_migrations(self):
         """Applies Alembic migrations to ensure the database schema is up to date."""
         try:
-            alembic_cfg = Config('/opt/Link_Profiler_Repo/alembic.ini')
+            alembic_cfg = Config(os.path.join(os.path.dirname(__file__), '..', '..', 'alembic.ini'))
             command.upgrade(alembic_cfg, 'head')
             self.logger.info("Database migrations applied.")
         except Exception as e:
