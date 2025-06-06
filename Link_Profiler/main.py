@@ -258,7 +258,7 @@ keyword_service_instance = KeywordService(
 )
 
 # New: Initialize LinkHealthService
-link_health_service_instance = LinkHealthService(db)
+link_health_service_instance = LinkHealthService(db, session_manager=session_manager) # Pass session_manager
 
 # New: Initialize TechnicalAuditor
 technical_auditor_instance = TechnicalAuditor(
@@ -298,7 +298,8 @@ social_media_service_instance = SocialMediaService(
 
 # New: Initialize Web3 Service
 web3_service_instance = Web3Service(
-    database=db # Pass database, removed session_manager as per issue
+    database=db, # Pass database, removed session_manager as per issue
+    session_manager=session_manager # Pass session_manager
 )
 
 # New: Initialize Link Building Service
