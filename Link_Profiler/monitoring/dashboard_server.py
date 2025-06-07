@@ -89,6 +89,20 @@ except ImportError:
             return True
     async def get_coordinator():
         return DummyCoordinator()
+    
+    # Create dummy get_current_user function
+    def get_current_user():
+        """Dummy get_current_user for standalone testing"""
+        from Link_Profiler.core.models import User
+        return User(
+            user_id="dummy-admin",
+            username="admin",
+            email="admin@test.com",
+            is_admin=True,
+            created_date=datetime.now(),
+            updated_date=datetime.now(),
+            last_login=datetime.now()
+        )
 
 
 # Import Prometheus metrics and health check functions
