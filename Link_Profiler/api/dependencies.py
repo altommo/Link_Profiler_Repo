@@ -1,46 +1,63 @@
 import logging
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from typing import Annotated
 
-# Import required modules directly instead of from main.py to avoid circular import
-from Link_Profiler.services.auth_service import AuthService
-from Link_Profiler.database.database import db # Use the global db instance
-from Link_Profiler.config.config_loader import config_loader # Use the global config_loader instance
 from Link_Profiler.core.models import User
+from Link_Profiler.services.auth_service import auth_service_instance
 
-# Initialize logger
 logger = logging.getLogger(__name__)
 
-# OAuth2PasswordBearer for token extraction
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# Initialize auth service locally to avoid circular imports
-# These are already singletons initialized in main.py, so just reference them
-auth_service_instance = AuthService(db) # Pass the db singleton
-
-# --- Dependency for current user authentication ---
-async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> User:
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
-    Retrieves the current authenticated user based on the provided token.
+    Retrieves the current authenticated user based on the JWT token.
+    Raises HTTPException if authentication fails.
     """
-    try:
-        # Ensure auth_service_instance is not None before calling its method
-        if auth_service_instance is None:
-            logger.error("AuthService instance is None in dependencies.py. It might not have been initialized in main.py.")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Authentication service not available."
-            )
-        user = await auth_service_instance.get_current_user(token)
-        return user
-    except HTTPException: # Re-raise HTTPException from auth_service
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in get_current_user: {e}", exc_info=True)
+    user = await auth_service_instance.get_current_user(token)
+    if not user:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error during authentication.",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    return user
 
+async def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    """
+    Dependency to ensure the current user is an admin.
+    """
+    if not current_user.is_admin:
+        logger.warning(f"User {current_user.username} (ID: {current_user.id}) attempted admin access without privileges.")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operation forbidden: Admin access required"
+        )
+    return current_user
+
+async def get_current_customer_user(current_user: User = Depends(get_current_user)) -> User:
+    """
+    Dependency to ensure the current user has the 'customer' role.
+    """
+    if current_user.role != "customer" and not current_user.is_admin: # Admins can also access customer routes
+        logger.warning(f"User {current_user.username} (ID: {current_user.id}) attempted customer access with role '{current_user.role}'.")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operation forbidden: Customer role required"
+        )
+    return current_user
+
+async def get_current_user_with_roles(required_roles: list[str]):
+    """
+    A factory function to create a dependency that checks for multiple roles.
+    Usage: Depends(get_current_user_with_roles(["admin", "analyst"]))
+    """
+    async def _get_current_user_with_roles(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in required_roles and not current_user.is_admin: # Admins bypass role checks
+            logger.warning(f"User {current_user.username} (ID: {current_user.id}) attempted access with role '{current_user.role}'. Required roles: {required_roles}.")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Operation forbidden: One of {', '.join(required_roles)} roles required"
+            )
+        return current_user
+    return _get_current_user_with_roles

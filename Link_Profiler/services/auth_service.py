@@ -76,26 +76,43 @@ class AuthService:
         return pwd_context.hash(password)
 
     def create_access_token(self, data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
-        """Creates a JWT access token."""
+        """
+        Creates a JWT access token.
+        Includes 'sub' (username), 'role', and 'organization_id' in the payload.
+        """
         self._check_secret_key()
         to_encode = data.copy()
         if expires_delta:
             expire = datetime.utcnow() + expires_delta
         else:
             expire = datetime.utcnow() + timedelta(minutes=self.access_token_expire_minutes)
-        to_encode.update({"exp": expire})
-        encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
+        
+        # Ensure 'role' and 'organization_id' are included if present in data
+        # 'sub' is typically the username
+        payload = {
+            "sub": to_encode.get("sub"),
+            "role": to_encode.get("role"),
+            "organization_id": to_encode.get("organization_id"),
+            "exp": expire
+        }
+        encoded_jwt = jwt.encode(payload, self.secret_key, algorithm=self.algorithm)
         return encoded_jwt
 
     def decode_access_token(self, token: str) -> Optional[TokenData]:
-        """Decodes and validates a JWT access token."""
+        """
+        Decodes and validates a JWT access token.
+        Extracts 'username', 'role', and 'organization_id'.
+        """
         self._check_secret_key()
         try:
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
             username: str = payload.get("sub")
+            role: Optional[str] = payload.get("role")
+            organization_id: Optional[str] = payload.get("organization_id")
+
             if username is None:
                 return None
-            token_data = TokenData(username=username)
+            token_data = TokenData(username=username, role=role, organization_id=organization_id)
         except JWTError:
             return None
         except Exception as e:
@@ -103,7 +120,7 @@ class AuthService:
             return None
         return token_data
 
-    async def register_user(self, username: str, email: str, password: str) -> User:
+    async def register_user(self, username: str, email: str, password: str, is_admin: bool = False, role: str = "customer", organization_id: Optional[str] = None) -> User:
         """Registers a new user."""
         self._check_secret_key()
         hashed_password = self.get_password_hash(password)
@@ -114,11 +131,13 @@ class AuthService:
             email=email,
             hashed_password=hashed_password,
             is_active=True,
-            is_admin=False # Default to non-admin
+            is_admin=is_admin, # Use provided is_admin
+            role=role, # Use provided role
+            organization_id=organization_id # Use provided organization_id
         )
         try:
             created_user = self.db.create_user(new_user)
-            self.logger.info(f"User '{username}' registered successfully.")
+            self.logger.info(f"User '{username}' registered successfully with role '{role}'.")
             return created_user
         except ValueError as e:
             self.logger.warning(f"User registration failed for '{username}': {e}")
@@ -129,6 +148,9 @@ class AuthService:
         self._check_secret_key()
         user = self.db.get_user_by_username(username)
         if not user:
+            return None
+        if not user.is_active:
+            self.logger.warning(f"Authentication failed for '{username}': user is inactive.")
             return None
         if not self.verify_password(password, user.hashed_password):
             return None
@@ -148,6 +170,14 @@ class AuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found", headers={"WWW-Authenticate": "Bearer"})
         if not user.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user", headers={"WWW-Authenticate": "Bearer"})
+        
+        # Ensure the role and organization_id from the token match the user from DB
+        # This adds an extra layer of security if user roles can change dynamically
+        if user.role != token_data.role or user.organization_id != token_data.organization_id:
+            self.logger.warning(f"User {user.username} token data mismatch with DB. Token role: {token_data.role}, DB role: {user.role}. Re-issuing token might be needed.")
+            # Optionally, raise HTTPException or force re-login
+            # For now, we'll proceed but log a warning.
+            
         return user
 
 
