@@ -285,7 +285,7 @@ class MissionControlService:
         ).fetchone()
         
         total_backlinks_discovered = daily_backlink_stats_orm.total_backlinks_discovered if daily_backlink_stats_orm else 0
-        unique_domains_discovered = daily_backlink_stats_orm.unique_domains_discovered if daily_backlink_stats_orm else 0
+        unique_domains_discovered = daily_domain_stats_orm.unique_domains_discovered if daily_domain_stats_orm else 0
         potential_spam_links_24h = daily_backlink_stats_orm.potential_spam_links if daily_backlink_stats_orm else 0
         avg_authority_score = daily_backlink_stats_orm.avg_authority_passed if daily_backlink_stats_orm else 0
 

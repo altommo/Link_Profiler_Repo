@@ -1,11 +1,12 @@
 import React from 'react';
 import useMissionControlStore from '../stores/missionControlStore';
 import DataCard from '../components/ui/DataCard';
-import { MissionControlData } from '../types'; // Assuming you have a types file for MissionControlData
 import { API_BASE_URL } from '../config'; // Assuming you have a config file for API_BASE_URL
+import { useAuth } from '../hooks/useAuth'; // Import useAuth
 
 const Jobs: React.FC = () => {
   const { data, fetchData } = useMissionControlStore(); // Get fetchData to refresh data
+  const { token } = useAuth(); // Get token from useAuth
 
   if (!data) {
     return (
@@ -23,7 +24,7 @@ const Jobs: React.FC = () => {
       return;
     }
     try {
-      const token = localStorage.getItem('access_token'); // Assuming token is stored in localStorage
+      if (!token) throw new Error("Authentication token not found.");
       const response = await fetch(`${API_BASE_URL}/api/monitoring/jobs/${jobId}/${action}`, {
         method: 'POST',
         headers: {
@@ -48,7 +49,7 @@ const Jobs: React.FC = () => {
       return;
     }
     try {
-      const token = localStorage.getItem('access_token');
+      if (!token) throw new Error("Authentication token not found.");
       const response = await fetch(`${API_BASE_URL}/api/monitoring/jobs/${action}`, {
         method: 'POST',
         headers: {
@@ -73,7 +74,7 @@ const Jobs: React.FC = () => {
       return;
     }
     try {
-      const token = localStorage.getItem('access_token');
+      if (!token) throw new Error("Authentication token not found.");
       const response = await fetch(`${API_BASE_URL}/api/monitoring/satellites/control/${satelliteId}/${command}`, {
         method: 'POST',
         headers: {
@@ -98,7 +99,7 @@ const Jobs: React.FC = () => {
       return;
     }
     try {
-      const token = localStorage.getItem('access_token');
+      if (!token) throw new Error("Authentication token not found.");
       const response = await fetch(`${API_BASE_URL}/api/monitoring/satellites/control/all/${command}`, {
         method: 'POST',
         headers: {

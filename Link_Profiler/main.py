@@ -546,10 +546,12 @@ app.mount(
 )
 
 # Mount the mission-control-dashboard static files
+# The 'dist' directory contains the built React application.
+# We mount it as a static directory, but also need to serve index.html for client-side routing.
 app.mount(
-    "/mission-control",
-    StaticFiles(directory=os.path.join(project_root, "mission-control-dashboard", "dist")),
-    name="mission-control-dashboard",
+    "/mission-control/assets", # Mount assets separately to avoid conflicts with root index.html
+    StaticFiles(directory=os.path.join(project_root, "mission-control-dashboard", "dist", "assets")),
+    name="mission-control-dashboard-assets",
 )
 
 
@@ -970,6 +972,27 @@ app.include_router(reports_router)
 app.include_router(users_router)
 app.include_router(websocket_router)
 app.include_router(mission_control_router)
+
+# Catch-all route for the Mission Control Dashboard SPA
+# This must come AFTER all other API routes to ensure they are matched first.
+@app.get("/mission-control/{path:path}")
+async def serve_mission_control_spa(request: Request, path: str):
+    """
+    Serves the Mission Control Dashboard SPA's index.html for all client-side routes.
+    """
+    # Construct the path to index.html within the 'dist' directory
+    index_html_path = os.path.join(project_root, "mission-control-dashboard", "dist", "index.html")
+    
+    # Check if the requested path is for a static asset that exists
+    # This is a fallback, as assets should ideally be served by the /mission-control/assets mount
+    # but ensures direct access to other static files (like favicon.ico in root of dist) works.
+    static_file_path = os.path.join(project_root, "mission-control-dashboard", "dist", path)
+    if os.path.exists(static_file_path) and os.path.isfile(static_file_path):
+        return StaticFiles(directory=os.path.join(project_root, "mission-control-dashboard", "dist"))(request)
+
+    # For all other paths under /mission-control, serve index.html
+    return HTMLResponse(content=open(index_html_path, "r").read())
+
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
