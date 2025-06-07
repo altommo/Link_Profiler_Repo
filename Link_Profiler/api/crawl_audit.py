@@ -23,7 +23,7 @@ except ImportError:
 # Import shared Pydantic models and dependencies
 from Link_Profiler.api.schemas import (
     CrawlConfigRequest, StartCrawlRequest, LinkHealthAuditRequest, TechnicalAuditRequest,
-    DomainAnalysisJobRequest, FullSEOAduitRequest, Web3CrawlRequest, SocialMediaCrawlRequest,
+    DomainAnalysisJobRequest, FullSEOAuditRequest, Web3CrawlRequest, SocialMediaCrawlRequest, # Corrected FullSEOAduitRequest to FullSEOAuditRequest
     ContentGapAnalysisRequest, ContentGapAnalysisResultResponse, TopicClusteringRequest
 )
 from Link_Profiler.api.dependencies import get_current_user
@@ -135,7 +135,7 @@ async def start_technical_audit(
 
 @crawl_audit_router.post("/audit/full_seo_audit", response_model=Dict[str, str], status_code=status.HTTP_202_ACCEPTED)
 async def start_full_seo_audit(
-    request: FullSEOAduitRequest,
+    request: FullSEOAuditRequest, # Corrected FullSEOAduitRequest to FullSEOAuditRequest
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(get_current_user)]
 ):
