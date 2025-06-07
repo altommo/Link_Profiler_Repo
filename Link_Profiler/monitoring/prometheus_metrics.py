@@ -202,6 +202,12 @@ DASHBOARD_ALERTS_TOTAL = Counter(
     ['alert_type', 'severity']
 )
 
+# --- Mission Control Dashboard Specific Metrics ---
+DASHBOARD_MODULE_REFRESH_DURATION_SECONDS = Histogram(
+    'link_profiler_dashboard_module_refresh_duration_seconds',
+    'Duration of individual dashboard module data refreshes',
+    ['module_name']
+)
 
 # --- Utility function to expose metrics ---
 def get_metrics_text():
