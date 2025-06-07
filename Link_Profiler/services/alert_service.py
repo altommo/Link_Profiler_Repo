@@ -12,10 +12,11 @@ from urllib.parse import urlparse # Import urlparse
 
 from Link_Profiler.database.database import Database
 from Link_Profiler.core.models import AlertRule, CrawlJob, CrawlStatus, SEOMetrics, AlertSeverity, AlertChannel # Import AlertChannel and SEOMetrics
-from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.config.config_loader import ConfigLoader # Import ConfigLoader
 from Link_Profiler.utils.connection_manager import ConnectionManager # For WebSocket notifications
 from Link_Profiler.monitoring.health_monitor import Alert, AlertLevel # Import Alert and AlertLevel
 from Link_Profiler.monitoring.alert_manager import AlertManager # New: Import AlertManager
+import redis.asyncio as redis # Import redis.asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -23,19 +24,21 @@ class AlertService:
     """
     Manages alert rules, evaluates conditions, and dispatches notifications.
     """
-    def __init__(self, db: Database, connection_manager: ConnectionManager, alert_manager: Optional[AlertManager] = None): # New: Accept AlertManager
+    def __init__(self, db: Database, connection_manager: ConnectionManager, redis_client: redis.Redis, config_loader: ConfigLoader, alert_manager: Optional[AlertManager] = None): # New: Accept redis_client and config_loader
         self.db = db
         self.connection_manager = connection_manager
+        self.redis_client = redis_client # Store redis_client
+        self.config_loader = config_loader # Store config_loader
         self.alert_manager = alert_manager # Use the injected alert manager
         if self.alert_manager is None:
             # Fallback to a local alert manager if none is provided (e.g., for testing)
             from Link_Profiler.monitoring.alert_manager import AlertManager as LocalAlertManager # Avoid name collision
-            self.alert_manager = LocalAlertManager()
+            self.alert_manager = LocalAlertManager(redis_client=self.redis_client, config_loader=self.config_loader) # Pass dependencies to AlertManager
             logger.warning("No AlertManager provided to AlertService. Falling back to local AlertManager.")
 
         self.active_rules: List[AlertRule] = []
         self.last_evaluation_times: Dict[str, datetime] = {} # Track last time a rule was evaluated
-        self.cooldown_period_seconds = config_loader.get("monitoring.alert_cooldown", 300) # Default 5 minutes
+        self.cooldown_period_seconds = self.config_loader.get("monitoring.alert_cooldown", 300) # Default 5 minutes
 
     async def __aenter__(self):
         """Initializes the AlertService and loads active rules."""
@@ -257,3 +260,5 @@ class AlertService:
             return current_value
         return None # Value is not a number
 
+# Create a singleton instance for global use (will be properly initialized in main.py)
+alert_service_instance: Optional[AlertService] = None
