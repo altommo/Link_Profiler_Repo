@@ -561,6 +561,58 @@ class Database:
         orm_user = self._execute_operation('select', 'users', _get)
         return self._from_orm(orm_user) if orm_user else None
 
+    def get_user_by_id(self, user_id: str) -> Optional[User]:
+        """Fetches a user by their ID."""
+        def _get(session):
+            return session.query(UserORM).filter_by(id=user_id).first()
+        orm_user = self._execute_operation('select', 'users', _get)
+        return self._from_orm(orm_user) if orm_user else None
+
+    def get_all_users(self) -> List[User]:
+        """Retrieves all users from the database."""
+        def _get(session):
+            return session.query(UserORM).all()
+        orm_users = self._execute_operation('select', 'users', _get)
+        return [self._from_orm(user) for user in orm_users]
+
+    def update_user(self, user: User) -> User:
+        """Updates an existing user's information."""
+        def _update(session):
+            orm_user = session.query(UserORM).filter_by(id=user.id).first()
+            if not orm_user:
+                raise ValueError(f"User with ID {user.id} not found for update.")
+            
+            # Update fields from the dataclass to the ORM object
+            orm_user.username = user.username
+            orm_user.email = user.email
+            orm_user.hashed_password = user.hashed_password
+            orm_user.is_active = user.is_active
+            orm_user.is_admin = user.is_admin
+            orm_user.role = user.role # Update role
+            orm_user.organization_id = user.organization_id # Update organization_id
+            orm_user.last_fetched_at = datetime.utcnow() # Update last_fetched_at on update
+            return orm_user
+
+        updated_orm_user = self._execute_operation('update', 'users', _update)
+        self.logger.info(f"Updated user {user.username} (ID: {user.id}).")
+        return self._from_orm(updated_orm_user)
+
+    def delete_user(self, user_id: str) -> bool:
+        """Deletes a user by their ID."""
+        def _delete(session):
+            orm_user = session.query(UserORM).filter_by(id=user_id).first()
+            if orm_user:
+                session.delete(orm_user)
+                return True
+            return False
+        
+        success = self._execute_operation('delete', 'users', _delete)
+        if success:
+            self.logger.info(f"Deleted user ID: {user_id}.")
+        else:
+            self.logger.warning(f"Attempted to delete non-existent user ID: {user_id}.")
+        return success
+
     # --- Backlink Update ---
     def update_backlink(self, backlink: Backlink) -> None:
         """Updates an existing backlink or inserts it if not present."""
