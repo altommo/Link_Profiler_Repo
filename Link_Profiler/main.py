@@ -98,7 +98,7 @@ from Link_Profiler.utils.session_manager import session_manager # Use the single
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse # Import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
