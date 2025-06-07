@@ -270,3 +270,6 @@ class DistributedResilienceManager:
 class CircuitBreakerOpenError(Exception):
     """Exception raised when circuit breaker is open."""
     pass
+
+# Create a singleton instance for global use (will be properly initialized in main.py)
+distributed_resilience_manager: Optional[DistributedResilienceManager] = None
