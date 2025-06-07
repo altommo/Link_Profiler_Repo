@@ -22,7 +22,7 @@ class APIQuotaManager:
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
-            cls._instance = super(APIQuotaManager, cls).__new__(cls)
+            cls._instance = super(cls, cls).__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
@@ -458,3 +458,6 @@ class APIQuotaManager:
                 'predicted_exhaustion_date': predicted_exhaustion.isoformat() if predicted_exhaustion else None
             }
         return status
+
+# Create a singleton instance for global use (will be properly initialized in main.py)
+api_quota_manager: Optional[APIQuotaManager] = None
