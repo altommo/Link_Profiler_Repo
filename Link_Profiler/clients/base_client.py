@@ -1,8 +1,8 @@
 import logging
 from typing import Optional, Dict, Any
-from Link_Profiler.utils.session_manager import SessionManager, session_manager as global_session_manager
-from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager, distributed_resilience_manager as global_resilience_manager # Import DistributedResilienceManager and its singleton
-from Link_Profiler.utils.api_quota_manager import APIQuotaManager, api_quota_manager as global_api_quota_manager # Import APIQuotaManager and its singleton
+from Link_Profiler.utils.session_manager import SessionManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager
 from datetime import datetime # Import datetime
 import asyncio # Import asyncio for sleep
 
@@ -11,37 +11,23 @@ class BaseAPIClient:
     Base class for all API clients to provide common functionality
     like session management and logging.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
+    def __init__(self, session_manager: SessionManager, resilience_manager: DistributedResilienceManager, api_quota_manager: APIQuotaManager):
         self.logger = logging.getLogger(self.__class__.__name__)
         
-        # Session Manager: Use provided or global singleton
+        # Session Manager: Must be provided
         self.session_manager = session_manager
-        if self.session_manager is None:
-            self.session_manager = global_session_manager
-            self.logger.debug(f"No SessionManager provided for {self.__class__.__name__}. Using global singleton.")
-
-        # Resilience Manager: Use provided or global singleton
-        self.resilience_manager = resilience_manager
-        if self.resilience_manager is None:
-            self.resilience_manager = global_resilience_manager
-            self.logger.debug(f"No DistributedResilienceManager provided for {self.__class__.__name__}. Using global singleton.")
-        
-        # API Quota Manager: Use provided or global singleton
-        self.api_quota_manager = api_quota_manager
-        if self.api_quota_manager is None:
-            self.api_quota_manager = global_api_quota_manager
-            self.logger.debug(f"No APIQuotaManager provided for {self.__class__.__name__}. Using global singleton.")
-
-        # Basic validation after attempting to set singletons
         if not self.session_manager:
-            self.logger.error(f"SessionManager is not initialized for {self.__class__.__name__}. This is a critical error.")
-            raise RuntimeError("SessionManager is not initialized.")
+            raise ValueError(f"SessionManager must be provided for {self.__class__.__name__}.")
+
+        # Resilience Manager: Must be provided
+        self.resilience_manager = resilience_manager
         if not self.resilience_manager:
-            self.logger.error(f"DistributedResilienceManager is not initialized for {self.__class__.__name__}. This is a critical error.")
-            raise RuntimeError("DistributedResilienceManager is not initialized.")
+            raise ValueError(f"DistributedResilienceManager must be provided for {self.__class__.__name__}.")
+        
+        # API Quota Manager: Must be provided
+        self.api_quota_manager = api_quota_manager
         if not self.api_quota_manager:
-            self.logger.error(f"APIQuotaManager is not initialized for {self.__class__.__name__}. This is a critical error.")
-            raise RuntimeError("APIQuotaManager is not initialized.")
+            raise ValueError(f"APIQuotaManager must be provided for {self.__class__.__name__}.")
 
 
     async def __aenter__(self):

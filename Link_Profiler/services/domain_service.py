@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 class AbstractDomainAPIClient(BaseAPIClient):
     """Client for AbstractAPI Domain Validation and WHOIS."""
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
-        super().__init__(session_manager, resilience_manager) # Pass resilience_manager to BaseAPIClient
+    def __init__(self, session_manager: SessionManager, resilience_manager: DistributedResilienceManager, api_quota_manager: APIQuotaManager): # New: Accept resilience_manager
+        super().__init__(session_manager, resilience_manager, api_quota_manager) # Pass resilience_manager to BaseAPIClient
         self.enabled = config_loader.get("domain_api.abstract_api.enabled", False)
         self.api_key = config_loader.get("domain_api.abstract_api.api_key")
         self.base_url = config_loader.get("domain_api.abstract_api.base_url", "https://domain-validation.abstractapi.com/v1/")
@@ -67,8 +67,8 @@ class AbstractDomainAPIClient(BaseAPIClient):
 
 class WhoisJsonAPIClient(BaseAPIClient):
     """Client for WHOIS-JSON.com API."""
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
-        super().__init__(session_manager, resilience_manager) # Pass resilience_manager to BaseAPIClient
+    def __init__(self, session_manager: SessionManager, resilience_manager: DistributedResilienceManager, api_quota_manager: APIQuotaManager): # New: Accept resilience_manager
+        super().__init__(session_manager, resilience_manager, api_quota_manager) # Pass resilience_manager to BaseAPIClient
         self.enabled = config_loader.get("domain_api.whois_json_api.enabled", False)
         self.api_key = config_loader.get("domain_api.whois_json_api.api_key") # Optional for this API
         self.base_url = config_loader.get("domain_api.whois_json_api.base_url", "https://www.whois-json.com/api/v1/whois")
@@ -114,7 +114,7 @@ class DomainService:
             cls._instance._initialized = False # Initialize flag here
         return cls._instance
 
-    def __init__(self, db, smart_api_router_service: SmartAPIRouterService, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
+    def __init__(self, db, smart_api_router_service: SmartAPIRouterService, session_manager: SessionManager, resilience_manager: DistributedResilienceManager, api_quota_manager: APIQuotaManager):
         if self._initialized:
             return
         self._initialized = True
@@ -123,37 +123,29 @@ class DomainService:
         self.db = db # Store db instance
         self.smart_api_router_service = smart_api_router_service # Store smart_api_router_service
 
-        # Handle optional dependencies with fallbacks to global singletons
+        # Dependencies must be provided, no fallbacks to global singletons here
         self.session_manager = session_manager
-        if self.session_manager is None:
-            from Link_Profiler.utils.session_manager import session_manager as global_session_manager
-            self.session_manager = global_session_manager
-            self.logger.warning("No SessionManager provided to DomainService. Falling back to global instance.")
-
         self.resilience_manager = resilience_manager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            self.logger.warning("No DistributedResilienceManager provided to DomainService. Falling back to global instance.")
-
         self.api_quota_manager = api_quota_manager
-        if self.api_quota_manager is None:
-            from Link_Profiler.utils.api_quota_manager import api_quota_manager as global_api_quota_manager
-            self.api_quota_manager = global_api_quota_manager
-            self.logger.warning("No APIQuotaManager provided to DomainService. Falling back to global instance.")
 
-        # Ensure smart_api_router_service is not None after all fallbacks
-        if self.smart_api_router_service is None:
-            raise ValueError(f"{self.__class__.__name__} requires a SmartAPIRouterService instance.")
+        # Ensure dependencies are not None
+        if not self.session_manager:
+            raise ValueError(f"SessionManager must be provided to {self.__class__.__name__}.")
+        if not self.resilience_manager:
+            raise ValueError(f"DistributedResilienceManager must be provided to {self.__class__.__name__}.")
+        if not self.api_quota_manager:
+            raise ValueError(f"APIQuotaManager must be provided to {self.__class__.__name__}.")
+        if not self.smart_api_router_service:
+            raise ValueError(f"SmartAPIRouterService must be provided to {self.__class__.__name__}.")
 
         # Initialize all potential Domain API clients
         # These clients now get their dependencies from the DomainService instance
         self._domain_clients: Dict[str, BaseAPIClient] = {
-            "abstract_api": AbstractDomainAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
-            "whois_json_api": WhoisJsonAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
-            "securitytrails": SecurityTrailsClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
-            "builtwith": BuiltWithClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
-            "hunter_io": HunterIOClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+            "abstract_api": AbstractDomainAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager, api_quota_manager=self.api_quota_manager),
+            "whois_json_api": WhoisJsonAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager, api_quota_manager=self.api_quota_manager),
+            "securitytrails": SecurityTrailsClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager, api_quota_manager=self.api_quota_manager),
+            "builtwith": BuiltWithClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager, api_quota_manager=self.api_quota_manager),
+            "hunter_io": HunterIOClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager, api_quota_manager=self.api_quota_manager)
             # Add other domain-related clients here (e.g., Clearbit if they provide relevant domain info)
         }
 

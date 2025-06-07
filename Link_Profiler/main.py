@@ -282,7 +282,10 @@ else:
 # DomainService now takes SmartAPIRouterService
 domain_service_instance = DomainService(
     db=db, # DomainService needs db
-    smart_api_router_service=smart_api_router_service # Pass the new router service
+    smart_api_router_service=smart_api_router_service, # Pass the new router service
+    session_manager=session_manager, # Pass session_manager
+    resilience_manager=distributed_resilience_manager, # Pass resilience_manager
+    api_quota_manager=api_quota_manager # Pass api_quota_manager
 )
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
@@ -523,11 +526,15 @@ async def lifespan(app: FastAPI):
             connection_manager=connection_manager
         )
 
+        # Removed the explicit starting of JobCoordinator background tasks here.
+        # These tasks are now managed by the standalone job_coordinator.py process.
+        # The get_coordinator() call will still initialize the singleton instance
+        # if it hasn't been already, and call its __aenter__ method.
         try:
             await get_coordinator()
-            logger.info("JobCoordinator successfully initialized and background tasks started.")
+            logger.info("JobCoordinator instance successfully retrieved/initialized (background tasks are managed externally).")
         except Exception as e:
-            logger.error(f"Failed to initialize JobCoordinator during lifespan startup: {e}", exc_info=True)
+            logger.error(f"Failed to retrieve/initialize JobCoordinator during lifespan startup: {e}", exc_info=True)
 
         asyncio.create_task(alert_service_instance.refresh_rules())
 

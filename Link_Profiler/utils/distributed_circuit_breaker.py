@@ -173,8 +173,18 @@ class ExponentialBackoff:
 
 class DistributedResilienceManager:
     """Manages distributed circuit breakers and retry logic."""
-    
+    _instance: Optional['DistributedResilienceManager'] = None
+    _initialized: bool = False
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super(DistributedResilienceManager, cls).__new__(cls)
+        return cls._instance
+
     def __init__(self, redis_client: redis.Redis):
+        if self._initialized:
+            return
+        self._initialized = True
         self.redis = redis_client
         self.backoff = ExponentialBackoff()
         self.circuit_breaker_configs: Dict[str, DistributedCircuitBreakerConfig] = {}
@@ -235,7 +245,7 @@ class DistributedResilienceManager:
         for attempt in range(max_retries):
             try:
                 result = await asyncio.wait_for(
-                    func(url, *args, **kwargs),
+                    func(*args, **kwargs), # Pass args and kwargs directly to func
                     timeout=self.global_cb_config.timeout_duration
                 )
                 if self.global_cb_config.enabled:
@@ -271,5 +281,6 @@ class CircuitBreakerOpenError(Exception):
     """Exception raised when circuit breaker is open."""
     pass
 
-# Create a singleton instance for global use (will be properly initialized in main.py)
-distributed_resilience_manager: Optional[DistributedResilienceManager] = None
+# The global singleton instance will now be managed by the class itself
+# and explicitly instantiated in main.py.
+# distributed_resilience_manager: Optional[DistributedResilienceManager] = None
