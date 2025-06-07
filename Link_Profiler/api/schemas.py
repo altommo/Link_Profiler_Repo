@@ -111,7 +111,7 @@ class DomainAnalysisJobRequest(BaseModel): # New Pydantic model for domain analy
     limit: Optional[int] = Field(None, description="Maximum number of valuable domains to return.")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration for the analysis (e.g., user agent).")
 
-class FullSEOAduitRequest(BaseModel): # New Pydantic model for full SEO audit job submission
+class FullSEOAuditRequest(BaseModel): # New Pydantic model for full SEO audit job submission
     urls_to_audit: List[str] = Field(..., description="A list of URLs to perform a full SEO audit on.")
     config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration for the audit (e.g., user agent).")
 
@@ -136,6 +136,15 @@ class TopicClusteringRequest(BaseModel): # New Pydantic model for Topic Clusteri
 class LinkVelocityRequest(BaseModel): # New Pydantic model for Link Velocity Request
     time_unit: str = Field("month", description="The unit of time ('day', 'week', 'month', 'quarter', 'year').")
     num_units: int = Field(6, description="The number of past units to retrieve data for.")
+
+# New: Pydantic model for QueueCrawlRequest
+class QueueCrawlRequest(BaseModel):
+    target_url: str = Field(..., description="The URL to crawl.")
+    config: Optional[CrawlConfigRequest] = Field(None, description="Optional crawl configuration.")
+    priority: int = Field(5, ge=1, le=10, description="Priority of the job (1=highest, 10=lowest).")
+    scheduled_at: Optional[datetime] = Field(None, description="Optional: UTC datetime to schedule the job for.")
+    cron_schedule: Optional[str] = Field(None, description="Optional: Cron string for recurring jobs.")
+
 
 # --- Pydantic Models for API Responses and other requests (moved from main.py) ---
 
@@ -658,8 +667,8 @@ class CrawlerHealthResponse(BaseModel):
     memory_usage: float
     jobs_processed: int
     current_job_id: Optional[str] = None
-    error_rate: float
-    uptime_seconds: float
+    current_job_type: Optional[str] = None
+    current_job_progress: Optional[float] = None
 
 class SEOMetricsResponse(BaseModel): # New Pydantic model for SEOMetrics
     domain_authority: Optional[int] = None
@@ -816,3 +825,4 @@ class DashboardRealtimeUpdates(BaseModel):
     performance_optimization_metrics: PerformanceOptimizationMetrics
     alerts: List[DashboardAlert]
     satellite_fleet_status: List[SatelliteFleetStatus]
+
