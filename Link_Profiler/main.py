@@ -193,7 +193,7 @@ from Link_Profiler.services.serp_service import SERPService
 from Link_Profiler.services.keyword_service import KeywordService
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.ai_service import AIService
-from Link_Profiler.services.alert_service import AlertService, alert_service_instance # Import AlertService and its singleton
+from Link_Profiler.services.alert_service import AlertService # Import AlertService class only
 from Link_Profiler.services.report_service import ReportService
 from Link_Profiler.services.competitive_analysis_service import CompetitiveAnalysisService
 from Link_Profiler.services.social_media_service import SocialMediaService
@@ -419,6 +419,9 @@ mission_control_service = MissionControlService(
 main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, browser=playwright_browser_instance, resilience_manager=distributed_resilience_manager, session_manager=session_manager) # Changed to EnhancedWebCrawler
 # --- End New Instantiation ---
 
+# Initialize AlertService instance after its dependencies are available
+alert_service_instance = AlertService(db=db, connection_manager=connection_manager, redis_client=redis_client, config_loader=config_loader)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -441,7 +444,7 @@ async def lifespan(app: FastAPI):
         keyword_service_instance,
         link_health_service_instance,
         technical_auditor_instance,
-        alert_service_instance,
+        alert_service_instance, # Add alert_service_instance to lifespan
         report_service_instance,
         competitive_analysis_service_instance,
         social_media_service_instance,
@@ -970,7 +973,6 @@ app.include_router(competitive_analysis_router)
 app.include_router(crawl_audit_router)
 app.include_router(link_building_router)
 app.include_router(public_jobs_router)
-app.include_router(reports_router)
 app.include_router(users_router)
 app.include_router(websocket_router)
 app.include_router(mission_control_router)
