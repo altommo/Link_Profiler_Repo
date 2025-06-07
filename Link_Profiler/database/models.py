@@ -334,6 +334,8 @@ class UserORM(Base):
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
+    role = Column(String, nullable=False, default="customer") # New: Role field
+    organization_id = Column(String, nullable=True) # New: For multi-tenancy
     created_at = Column(DateTime, default=datetime.now)
     last_fetched_at = Column(DateTime, default=datetime.utcnow) # New: Timestamp of last fetch/update
 
