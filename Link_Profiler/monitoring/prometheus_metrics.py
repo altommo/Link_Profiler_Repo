@@ -209,6 +209,12 @@ DASHBOARD_MODULE_REFRESH_DURATION_SECONDS = Histogram(
     ['module_name']
 )
 
+SATELLITE_STATUS_GAUGE = Gauge(
+    'link_profiler_satellite_status',
+    'Current status of each satellite (1=active, 0=inactive)',
+    ['satellite_id', 'status']
+)
+
 # --- Utility function to expose metrics ---
 def get_metrics_text():
     """Returns the current metrics in Prometheus text format."""
