@@ -15,7 +15,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-# Import globally initialized instances from main.py (or dummy for standalone testing)
+# --- Global Dependency Imports and Dummy Implementations ---
+# This block attempts to import core components from main.py.
+# If main.py or its dependencies are not fully set up (e.g., during standalone testing),
+# dummy implementations are provided to prevent crashes.
 try:
     from Link_Profiler.main import (
         logger, db, redis_client, config_loader,
@@ -23,10 +26,12 @@ try:
         keyword_service_instance, ai_service_instance, clickhouse_loader_instance,
         auth_service_instance, get_coordinator
     )
-    from Link_Profiler.api.dependencies import get_current_user
 except ImportError:
+    # Fallback logger for standalone operation
     logger = logging.getLogger(__name__)
     logging.basicConfig(level=logging.INFO)
+    logger.warning("Could not import core components from Link_Profiler.main. Using dummy implementations for dashboard_server.")
+
     # Dummy instances for testing or if main.py is not fully initialized
     class DummyDB:
         def ping(self): return True
@@ -89,11 +94,21 @@ except ImportError:
             return True
     async def get_coordinator():
         return DummyCoordinator()
-    
-    # Create dummy get_current_user function
+
+# --- Ensure get_current_user is always defined ---
+# This block specifically handles the import of get_current_user.
+# It ensures that even if the main application context is not fully available,
+# a dummy get_current_user is provided to allow the dashboard to run.
+try:
+    from Link_Profiler.api.dependencies import get_current_user
+except ImportError:
+    logger.warning("Could not import get_current_user from Link_Profiler.api.dependencies. Using dummy implementation.")
+    # Create dummy get_current_user function for standalone testing
     def get_current_user():
         """Dummy get_current_user for standalone testing"""
         from Link_Profiler.core.models import User
+        # Re-import datetime here to ensure it's available in the dummy function's scope
+        from datetime import datetime
         return User(
             user_id="dummy-admin",
             username="admin",
@@ -103,7 +118,6 @@ except ImportError:
             updated_date=datetime.now(),
             last_login=datetime.now()
         )
-
 
 # Import Prometheus metrics and health check functions
 from Link_Profiler.monitoring.prometheus_metrics import get_metrics_text
