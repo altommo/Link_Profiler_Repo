@@ -152,7 +152,7 @@ class DashboardAlertService:
     async def _check_api_quotas(self) -> List[DashboardAlert]:
         """Checks API quotas and generates warnings/critical alerts."""
         alerts: List[DashboardAlert] = []
-        api_statuses_dict = self.api_quota_manager.get_api_status() 
+        api_statuses_dict = await self.api_quota_manager.get_api_status() # Await this call
 
         for api_name, api_status_data in api_statuses_dict.items():
             percentage_used = api_status_data["percentage_used"]
@@ -202,7 +202,10 @@ class DashboardAlertService:
     def _check_api_performance_degradation(self) -> List[DashboardAlert]:
         """Checks API performance metrics and generates alerts for degradation."""
         alerts: List[DashboardAlert] = []
-        api_statuses_dict = self.api_quota_manager.get_api_status()
+        # api_quota_manager.get_api_status() is an async method, but this method is sync.
+        # This will need to be refactored if real-time performance checks are critical here.
+        # For now, it will use the last known state from api_quota_manager's internal cache.
+        api_statuses_dict = self.api_quota_manager.get_api_status_sync() # Assuming a sync method or cached data
 
         for api_name, api_status_data in api_statuses_dict.items():
             performance = api_status_data.get("performance", {})

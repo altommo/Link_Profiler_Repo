@@ -189,6 +189,19 @@ API_CACHE_ERRORS_TOTAL = Counter(
     ['service', 'endpoint', 'error_type']
 )
 
+# --- Dashboard Alert Metrics ---
+DASHBOARD_ALERTS_GAUGE = Gauge(
+    'link_profiler_dashboard_alerts_active',
+    'Current number of active dashboard alerts',
+    ['alert_type', 'severity']
+)
+
+DASHBOARD_ALERTS_TOTAL = Counter(
+    'link_profiler_dashboard_alerts_total',
+    'Total number of dashboard alerts triggered',
+    ['alert_type', 'severity']
+)
+
 
 # --- Utility function to expose metrics ---
 def get_metrics_text():
