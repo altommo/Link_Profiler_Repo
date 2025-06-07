@@ -26,7 +26,7 @@ from Link_Profiler.clients.whois_client import WHOISClient # Import WHOISClient
 from Link_Profiler.clients.dns_client import DNSClient # Import DNSClient
 from Link_Profiler.clients.builtwith_client import BuiltWithClient # Import BuiltWithClient
 from Link_Profiler.clients.hunter_io_client import HunterIOClient # Import HunterIOClient
-from Link_Profiler.services.api_routing_service import APIRoutingService # New: Import APIRoutingService
+from Link_Profiler.services.smart_api_router_service import SmartAPIRouterService # New: Import SmartAPIRouterService
 
 logger = logging.getLogger(__name__)
 
@@ -104,45 +104,50 @@ class WhoisJsonAPIClient(BaseAPIClient):
 class DomainService:
     """
     Service for fetching and processing comprehensive domain information.
-    Aggregates data from various sources (WHOIS, DNS, SEO metrics).
+    Aggregates data from various sources using SmartAPIRouterService for selection and fallbacks.
     """
     _instance = None
 
-    def __new__(cls, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None, api_routing_service: Optional[APIRoutingService] = None): # New: Accept APIRoutingService
+    def __new__(cls, *args, **kwargs): # Accept all args and kwargs
         if cls._instance is None:
             cls._instance = super(DomainService, cls).__new__(cls)
-            cls._instance._initialized = False
-            cls._instance.session_manager = session_manager # Store session_manager for clients
-            cls._instance.resilience_manager = resilience_manager # New: Store resilience_manager
-            cls._instance.api_quota_manager = api_quota_manager # New: Store APIQuotaManager
-            cls._instance.api_routing_service = api_routing_service # New: Store APIRoutingService
+            cls._instance._initialized = False # Initialize flag here
         return cls._instance
 
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None, api_routing_service: Optional[APIRoutingService] = None): # New: Accept APIRoutingService
+    def __init__(self, db, smart_api_router_service: SmartAPIRouterService, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
         if self._initialized:
             return
         self._initialized = True
         self.logger = logging.getLogger(__name__ + ".DomainService")
-        self.session_manager = session_manager # Ensure it's set for this instance
-        self.resilience_manager = resilience_manager # Ensure it's set for this instance
+        
+        self.db = db # Store db instance
+        self.smart_api_router_service = smart_api_router_service # Store smart_api_router_service
+
+        # Handle optional dependencies with fallbacks to global singletons
+        self.session_manager = session_manager
+        if self.session_manager is None:
+            from Link_Profiler.utils.session_manager import session_manager as global_session_manager
+            self.session_manager = global_session_manager
+            self.logger.warning("No SessionManager provided to DomainService. Falling back to global instance.")
+
+        self.resilience_manager = resilience_manager
         if self.resilience_manager is None:
             from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
             self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to DomainService. Falling back to global instance.")
+            self.logger.warning("No DistributedResilienceManager provided to DomainService. Falling back to global instance.")
 
         self.api_quota_manager = api_quota_manager
         if self.api_quota_manager is None:
             from Link_Profiler.utils.api_quota_manager import api_quota_manager as global_api_quota_manager
             self.api_quota_manager = global_api_quota_manager
-            logger.warning("No APIQuotaManager provided to DomainService. Falling back to global instance.")
+            self.logger.warning("No APIQuotaManager provided to DomainService. Falling back to global instance.")
 
-        self.api_routing_service = api_routing_service # New: Store APIRoutingService
-        if self.api_routing_service is None:
-            # This service is enabled but no APIRoutingService was provided.
-            # This indicates a configuration error or missing dependency injection.
-            raise ValueError(f"{self.__class__.__name__} is enabled but no APIRoutingService was provided.")
+        # Ensure smart_api_router_service is not None after all fallbacks
+        if self.smart_api_router_service is None:
+            raise ValueError(f"{self.__class__.__name__} requires a SmartAPIRouterService instance.")
 
         # Initialize all potential Domain API clients
+        # These clients now get their dependencies from the DomainService instance
         self._domain_clients: Dict[str, BaseAPIClient] = {
             "abstract_api": AbstractDomainAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
             "whois_json_api": WhoisJsonAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager),
@@ -182,7 +187,7 @@ class DomainService:
     async def get_domain_info(self, domain_name: str) -> Optional[Domain]:
         """
         Fetches comprehensive information for a given domain.
-        Aggregates data from various sources using APIRoutingService for selection and fallbacks.
+        Aggregates data from various sources using SmartAPIRouterService for selection and fallbacks.
         """
         if not domain_name:
             self.logger.warning("Attempted to get domain info for empty domain_name.")
@@ -200,7 +205,7 @@ class DomainService:
         # --- WHOIS Lookup ---
         whois_data = None
         try:
-            whois_data = await self.api_routing_service.route_api_call(
+            whois_data = await self.smart_api_router_service.route_api_call(
                 query_type="whois_lookup",
                 api_call_func=lambda client, d_name: client.whois_lookup(d_name),
                 api_name_prefix="whois", # Matches whois_json_api, whois_client (if added)
@@ -213,7 +218,7 @@ class DomainService:
         # --- Domain Validation ---
         validation_data = None
         try:
-            validation_data = await self.api_routing_service.route_api_call(
+            validation_data = await self.smart_api_router_service.route_api_call(
                 query_type="domain_validation",
                 api_call_func=lambda client, d_name: client.validate_domain(d_name),
                 api_name_prefix="abstract", # Matches abstract_api
@@ -233,7 +238,7 @@ class DomainService:
         seo_metrics_data = None
         try:
             # Assuming SecurityTrailsClient has a get_domain_metrics method for SEO-like data
-            seo_metrics_data = await self.api_routing_service.route_api_call(
+            seo_metrics_data = await self.smart_api_router_service.route_api_call(
                 query_type="domain_seo_metrics",
                 api_call_func=lambda client, d_name: client.get_domain_metrics(d_name),
                 api_name_prefix="securitytrails", # Matches securitytrails
