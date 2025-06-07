@@ -16,7 +16,7 @@ from typing import List, Optional, Dict, Any, Union, Annotated # Import Optional
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if project_root and project_root not in sys.path:
-    sys.sys.path.insert(0, project_root)
+    sys.path.insert(0, project_root) # Corrected: sys.sys.path.insert -> sys.path.insert
     print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
 else:
     print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
@@ -114,7 +114,8 @@ import psutil
 import psycopg2
 
 from playwright.async_api import async_playwright, Browser
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # Added missing imports
+# Removed: from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # Added missing imports
+# These are now imported from Link_Profiler.api.dependencies or handled by FastAPI directly
 
 # New: Import SubdomainRouterMiddleware
 from Link_Profiler.middleware.subdomain_router import SubdomainRouterMiddleware
@@ -256,6 +257,10 @@ from Link_Profiler.api.websocket import websocket_router
 from Link_Profiler.api.mission_control import mission_control_router
 # New: Import customer_router
 from Link_Profiler.api.customer_routes import customer_router
+
+# New: Import authentication dependencies
+from Link_Profiler.api.dependencies import get_current_user, get_current_admin_user, get_current_customer_user # Import specific dependency functions
+from fastapi.security import OAuth2PasswordRequestForm # Only import this specific class needed for /token endpoint
 
 
 # Initialize ClickHouse Loader conditionally
@@ -601,25 +606,10 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
 )
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+# Removed: oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+# Removed: async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+# Removed: async def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
-    user = await auth_service_instance.get_current_user(token)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return user
-
-async def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Operation forbidden: Admin access required"
-        )
-    return current_user
 
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -632,7 +622,8 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         )
     access_token_expires = timedelta(minutes=auth_service_instance.access_token_expire_minutes)
     access_token = auth_service_instance.create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={"sub": user.username, "role": user.role, "organization_id": user.organization_id}, # Pass role and org_id
+        expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -653,20 +644,20 @@ async def register_user(user_create: UserCreate):
     return UserResponse.from_user(new_user)
 
 @app.get("/users/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user)):
+async def read_users_me(current_user: User = Depends(get_current_user)): # Use imported get_current_user
     return UserResponse.from_user(current_user)
 
 # --- New Admin API Endpoints for Mission Control Dashboard ---
 
 @app.get("/admin/users", response_model=List[UserResponse])
-async def get_all_users(current_user: User = Depends(get_current_admin_user)):
+async def get_all_users(current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """Retrieve all users. Requires admin access."""
     logger.info(f"Admin user {current_user.username} requesting all users.")
     users = db.get_all_users()
     return [UserResponse.from_user(user) for user in users]
 
 @app.post("/admin/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def create_new_user(user_create: UserCreate, current_user: User = Depends(get_current_admin_user)):
+async def create_new_user(user_create: UserCreate, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """Create a new user. Requires admin access."""
     logger.info(f"Admin user {current_user.username} creating new user: {user_create.username}.")
     existing_user = db.get_user_by_username(user_create.username)
@@ -685,7 +676,7 @@ async def create_new_user(user_create: UserCreate, current_user: User = Depends(
     return UserResponse.from_user(new_user)
 
 @app.put("/admin/users/{user_id}", response_model=UserResponse)
-async def update_existing_user(user_id: str, user_update: UserCreate, current_user: User = Depends(get_current_admin_user)):
+async def update_existing_user(user_id: str, user_update: UserCreate, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """Update an existing user's details. Requires admin access."""
     logger.info(f"Admin user {current_user.username} updating user ID: {user_id}.")
     user = db.get_user_by_id(user_id)
@@ -705,7 +696,7 @@ async def update_existing_user(user_id: str, user_update: UserCreate, current_us
     return UserResponse.from_user(updated_user)
 
 @app.delete("/admin/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_existing_user(user_id: str, current_user: User = Depends(get_current_admin_user)):
+async def delete_existing_user(user_id: str, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """Delete a user. Requires admin access."""
     logger.info(f"Admin user {current_user.username} deleting user ID: {user_id}.")
     if current_user.user_id == user_id:
@@ -717,7 +708,7 @@ async def delete_existing_user(user_id: str, current_user: User = Depends(get_cu
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @app.get("/admin/config", response_model=SystemConfigResponse)
-async def get_system_config(current_user: User = Depends(get_current_admin_user)):
+async def get_system_config(current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """Retrieve current system configuration. Requires admin access."""
     logger.info(f"Admin user {current_user.username} requesting system config.")
     # For simplicity, return a subset of config that might be editable via UI
@@ -732,7 +723,7 @@ async def get_system_config(current_user: User = Depends(get_current_admin_user)
     )
 
 @app.put("/admin/config", response_model=SystemConfigResponse)
-async def update_system_config(config_update: SystemConfigUpdate, current_user: User = Depends(get_current_admin_user)):
+async def update_system_config(config_update: SystemConfigUpdate, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """Update system configuration. Requires admin access."""
     logger.info(f"Admin user {current_user.username} updating system config.")
     # Apply updates to config_loader (which should persist them if configured)
@@ -763,7 +754,7 @@ async def update_system_config(config_update: SystemConfigUpdate, current_user: 
 async def get_audit_logs(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(get_current_admin_user) # Use imported get_current_admin_user
 ):
     """Retrieve recent audit logs. Requires admin access."""
     logger.info(f"Admin user {current_user.username} requesting audit logs (limit={limit}, offset={offset}).")
@@ -777,7 +768,7 @@ async def get_audit_logs(
     return simulated_logs[offset:offset+limit]
 
 @app.get("/admin/api_keys", response_model=List[Dict[str, Any]])
-async def get_api_keys(current_user: User = Depends(get_current_admin_user)):
+async def get_api_keys(current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """Retrieve configured external API keys (masked). Requires admin access."""
     logger.info(f"Admin user {current_user.username} requesting API keys.")
     # This is a placeholder. You would retrieve this from a secure config store.
@@ -796,7 +787,7 @@ async def get_api_keys(current_user: User = Depends(get_current_admin_user)):
     return masked_keys
 
 @app.post("/admin/api_keys/{api_name}/update", response_model=Dict[str, str])
-async def update_api_key(api_name: str, new_key: str, current_user: User = Depends(get_current_admin_user)):
+async def update_api_key(api_name: str, new_key: str, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """Update an external API key. Requires admin access."""
     logger.info(f"Admin user {current_user.username} updating API key for {api_name}.")
     # This is a placeholder. You would update this in a secure config store.
@@ -822,7 +813,7 @@ async def health_check_main_endpoint():
     return Response(content=json.dumps(health_status, indent=2), media_type="application/json", status_code=status_code)
 
 @app.get("/api/monitoring/stats")
-async def get_api_stats_main_endpoint(current_user: User = Depends(get_current_admin_user)):
+async def get_api_stats_main_endpoint(current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """
     Retrieves aggregated statistics for the Link Profiler system.
     Requires admin authentication.
@@ -831,7 +822,7 @@ async def get_api_stats_main_endpoint(current_user: User = Depends(get_current_a
     return await _get_aggregated_stats_for_api()
 
 @app.get("/api/monitoring/satellites")
-async def get_satellites_main_endpoint(current_user: User = Depends(get_current_admin_user)):
+async def get_satellites_main_endpoint(current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """
     Retrieves detailed health information for all satellite crawlers.
     Requires admin authentication.
@@ -842,7 +833,7 @@ async def get_satellites_main_endpoint(current_user: User = Depends(get_current_
 @app.get("/api/monitoring/jobs")
 async def get_jobs_main_endpoint(
     status_filter: Optional[str] = Query(None, description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED')."),
-    current_user: User = Depends(get_current_admin_user)
+    current_user: User = Depends(get_current_admin_user) # Use imported get_current_admin_user
 ):
     """
     Retrieves a list of crawl jobs, optionally filtered by status.
@@ -873,7 +864,7 @@ async def get_jobs_main_endpoint(
             db.Session.remove()
 
 @app.post("/api/monitoring/jobs/{job_id}/cancel")
-async def cancel_job_main_endpoint(job_id: str, current_user: User = Depends(get_current_admin_user)):
+async def cancel_job_main_endpoint(job_id: str, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """
     Cancels a specific crawl job.
     Requires admin authentication.
@@ -892,7 +883,7 @@ async def cancel_job_main_endpoint(job_id: str, current_user: User = Depends(get
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to cancel job {job_id}: {e}")
 
 @app.post("/api/monitoring/jobs/pause_all")
-async def pause_all_jobs_main_endpoint(current_user: User = Depends(get_current_admin_user)):
+async def pause_all_jobs_main_endpoint(current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """
     Pauses all new job processing.
     Requires admin authentication.
@@ -907,7 +898,7 @@ async def pause_all_jobs_main_endpoint(current_user: User = Depends(get_current_
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to pause all jobs: {e}")
 
 @app.post("/api/monitoring/jobs/resume_all")
-async def resume_all_jobs_main_endpoint(current_user: User = Depends(get_current_admin_user)):
+async def resume_all_jobs_main_endpoint(current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """
     Resumes all job processing.
     Requires admin authentication.
@@ -922,7 +913,7 @@ async def resume_all_jobs_main_endpoint(current_user: User = Depends(get_current
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to resume all jobs: {e}")
 
 @app.post("/api/monitoring/satellites/control/{crawler_id}/{command}")
-async def control_single_satellite_main_endpoint(crawler_id: str, command: str, current_user: User = Depends(get_current_admin_user)):
+async def control_single_satellite_main_endpoint(crawler_id: str, command: str, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """
     Sends a control command to a specific satellite crawler.
     Commands: PAUSE, RESUME, SHUTDOWN, RESTART.
@@ -940,7 +931,7 @@ async def control_single_satellite_main_endpoint(crawler_id: str, command: str, 
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to control satellite {crawler_id}: {e}")
 
 @app.post("/api/monitoring/satellites/control/all/{command}")
-async def control_all_satellites_main_endpoint(command: str, current_user: User = Depends(get_current_admin_user)):
+async def control_all_satellites_main_endpoint(command: str, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """
     Sends a control command to all active satellite crawlers.
     Commands: PAUSE, RESUME, SHUTDOWN, RESTART.
@@ -970,14 +961,14 @@ async def metrics():
     return HTMLResponse(content=get_metrics_text(), media_type="text/plain")
 
 @app.get("/link_profile/{target_url:path}", response_model=LinkProfileResponse)
-async def get_link_profile(target_url: str, current_user: User = Depends(get_current_user)):
+async def get_link_profile(target_url: str, current_user: User = Depends(get_current_user)): # Use imported get_current_user
     profile = db.get_link_profile(target_url)
     if not profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link profile not found")
     return LinkProfileResponse.from_link_profile(profile)
 
 @app.get("/domain/info/{domain_name}", response_model=DomainResponse)
-async def get_domain_info(domain_name: str, current_user: User = Depends(get_current_user)):
+async def get_domain_info(domain_name: str, current_user: User = Depends(get_current_user)): # Use imported get_current_user
     domain = db.get_domain(domain_name)
     if not domain:
         # DomainService now uses smart_api_router_service internally
@@ -995,6 +986,7 @@ app.include_router(competitive_analysis_router)
 app.include_router(crawl_audit_router)
 app.include_router(link_building_router)
 app.include_router(public_jobs_router)
+app.include_router(reports_router)
 app.include_router(users_router)
 app.include_router(websocket_router)
 app.include_router(mission_control_router)
