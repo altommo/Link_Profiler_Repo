@@ -15,7 +15,7 @@ import redis.asyncio as redis # Import redis for caching
 
 from Link_Profiler.core.models import KeywordSuggestion # Absolute import
 from Link_Profiler.crawlers.keyword_scraper import KeywordScraper # New import
-from Link_Profiler.config.config_loader import config_loader # Import config_loader
+from Link_Profiler.config.config_loader import config_loader # New import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited # Import the rate limiter
 from Link_Profiler.utils.user_agent_manager import user_agent_manager # New: Import UserAgentManager
 from Link_Profiler.clients.google_trends_client import GoogleTrendsClient # New: Import GoogleTrendsClient
@@ -52,15 +52,13 @@ class SimulatedKeywordAPIClient(BaseKeywordAPIClient):
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to SimulatedKeywordAPIClient. Falling back to local SessionManager.")
         
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
         if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to SimulatedKeywordAPIClient. Falling back to global instance.")
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
 
     async def __aenter__(self):
@@ -127,15 +125,13 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to RealKeywordAPIClient. Falling back to local SessionManager.")
         
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
         if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to RealKeywordAPIClient. Falling back to global instance.")
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
 
     async def __aenter__(self):
@@ -208,15 +204,13 @@ class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to RealKeywordMetricsAPIClient. Falling back to local SessionManager.")
         
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
         if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to RealKeywordMetricsAPIClient. Falling back to global instance.")
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
 
     async def __aenter__(self):
@@ -254,7 +248,7 @@ class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
                 "competition": data.get("competition"),
                 "difficulty": data.get("difficulty"),
                 "relevance": data.get("relevance"),
-                "source": data.get("source", "RealMetricsAPI"),
+                "source": data.get("source", "RealAPI"),
                 "last_fetched_at": datetime.utcnow() # Set last_fetched_at for live data
             }
         except Exception as e:
@@ -276,15 +270,13 @@ class KeywordService:
         self.session_manager = session_manager # Store the injected session manager
         if self.session_manager is None:
             # Fallback to a local session manager if none is provided (e.g., for testing)
-            from Link_Profiler.utils.session_manager import session_manager as LocalSessionManager # Avoid name collision
+            from Link_Profiler.utils.session_manager import SessionManager as LocalSessionManager # Avoid name collision
             self.session_manager = LocalSessionManager()
             logger.warning("No SessionManager provided to KeywordService. Falling back to local SessionManager.")
         
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
         if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to KeywordService. Falling back to global instance.")
+            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
         # Determine which API client to use based on config_loader priority
         if config_loader.get("keyword_api.real_api.enabled"):
