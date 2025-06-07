@@ -6,6 +6,7 @@ from Link_Profiler.core.models import User, CrawlJob, CrawlStatus
 from Link_Profiler.api.schemas import CrawlJobResponse, UserResponse, QueueCrawlRequest, CrawlConfigRequest # Import necessary schemas
 from Link_Profiler.database.database import db # Import the database singleton
 from Link_Profiler.api.queue_endpoints import submit_crawl_to_queue # Import the function to submit jobs
+from datetime import datetime # Import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -134,4 +135,3 @@ async def get_customer_usage_metrics(current_user: User = Depends(get_current_us
     }
     
     return simulated_usage
-
