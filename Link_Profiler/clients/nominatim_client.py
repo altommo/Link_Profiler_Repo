@@ -13,35 +13,25 @@ import time # Import time for time.monotonic()
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
+from Link_Profiler.clients.base_client import BaseAPIClient # Import BaseAPIClient
 from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # Import DistributedResilienceManager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
 
 logger = logging.getLogger(__name__)
 
-class NominatimClient:
+class NominatimClient(BaseAPIClient): # Inherit from BaseAPIClient
     """
     Client for geocoding and reverse geocoding using OpenStreetMap Nominatim API.
     Requires a custom User-Agent.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
+        super().__init__(session_manager, resilience_manager, api_quota_manager) # Call BaseAPIClient's init
         self.logger = logging.getLogger(__name__ + ".NominatimClient")
         self.base_url = config_loader.get("local_seo.nominatim_api.base_url")
         self.user_agent = config_loader.get("local_seo.nominatim_api.user_agent")
         self.enabled = config_loader.get("local_seo.nominatim_api.enabled", False)
-        self.session_manager = session_manager
-        if self.session_manager is None:
-            from Link_Profiler.utils.session_manager import session_manager as global_session_manager
-            self.session_manager = global_session_manager
-            logger.warning("No SessionManager provided to NominatimClient. Falling back to global SessionManager.")
         
-        self.resilience_manager = resilience_manager
-        if self.resilience_manager is None:
-            from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
-            self.resilience_manager = global_resilience_manager
-            logger.warning("No DistributedResilienceManager provided to NominatimClient. Falling back to global instance.")
-
-        self._last_call_time: float = 0.0 # For explicit throttling
-
         if not self.enabled:
             self.logger.info("Nominatim API is disabled by configuration.")
         elif not self.user_agent:
@@ -50,9 +40,9 @@ class NominatimClient:
 
     async def __aenter__(self):
         """Initialise aiohttp session."""
+        await super().__aenter__() # Call BaseAPIClient's __aenter__
         if self.enabled:
             self.logger.info("Entering NominatimClient context.")
-            await self.session_manager.__aenter__()
             # Set user-agent for the session manager's client session
             if self.session_manager._session:
                 self.session_manager._session.headers.update({'User-Agent': self.user_agent})
@@ -60,18 +50,9 @@ class NominatimClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close aiohttp session."""
+        await super().__aexit__(exc_type, exc_val, exc_tb) # Call BaseAPIClient's __aexit__
         if self.enabled:
             self.logger.info("Exiting NominatimClient context.")
-            await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
-
-    async def _throttle(self):
-        """Ensures at least 1 second delay between calls to Nominatim."""
-        elapsed = time.monotonic() - self._last_call_time
-        if elapsed < 1.0:
-            wait_time = 1.0 - elapsed
-            self.logger.debug(f"Throttling Nominatim API. Waiting for {wait_time:.2f} seconds.")
-            await asyncio.sleep(wait_time)
-        self._last_call_time = time.monotonic()
 
     @api_rate_limited(service="nominatim_api", api_client_type="nominatim_client", endpoint="geocode_search")
     async def geocode_search(self, query: str, limit: int = 1) -> List[Dict[str, Any]]:
@@ -89,8 +70,6 @@ class NominatimClient:
             self.logger.warning(f"Nominatim API is disabled. Simulating geocode search for '{query}'.")
             return self._simulate_geocode_results(query, limit)
 
-        await self._throttle() # Apply explicit throttling
-
         endpoint = f"{self.base_url}/search" # Corrected endpoint for search
         params = {
             'q': query,
@@ -100,25 +79,17 @@ class NominatimClient:
         }
 
         self.logger.info(f"Calling Nominatim API for geocode search: '{query}' (limit: {limit})...")
-        results = []
         try:
-            response = await self.resilience_manager.execute_with_resilience(
-                lambda: self.session_manager.get(endpoint, params=params, timeout=10),
-                url=endpoint # Pass the endpoint for circuit breaker naming
-            )
-            response.raise_for_status()
-            data = await response.json()
-            results.extend(data)
+            # Use _make_request which handles throttling, resilience, and performance recording
+            data = await self._make_request("GET", endpoint, params=params)
+            results = data if isinstance(data, list) else [] # Ensure it's a list
             self.logger.info(f"Found {len(results)} geocode results for '{query}'.")
             return results
         except aiohttp.ClientResponseError as e:
-            if e.status == 429:
-                self.logger.warning(f"Nominatim API rate limit exceeded for '{query}'. Retrying after 60 seconds.")
-                await asyncio.sleep(60)
-                return await self.geocode_search(query, limit) # Retry the call
-            else:
-                self.logger.error(f"Network/API error geocoding '{query}' with Nominatim (Status: {e.status}): {e}", exc_info=True)
-                return self._simulate_geocode_results(query, limit) # Fallback to simulation on error
+            # BaseAPIClient's _make_request will raise ClientResponseError for 4xx/5xx.
+            # Specific retry logic for 429 can be handled here if needed, but resilience_manager should handle it.
+            self.logger.error(f"Network/API error geocoding '{query}' with Nominatim (Status: {e.status}): {e}", exc_info=True)
+            return self._simulate_geocode_results(query, limit) # Fallback to simulation on error
         except Exception as e:
             self.logger.error(f"Unexpected error geocoding '{query}' with Nominatim: {e}", exc_info=True)
             return self._simulate_geocode_results(query, limit) # Fallback to simulation on error
@@ -139,8 +110,6 @@ class NominatimClient:
             self.logger.warning(f"Nominatim API is disabled. Simulating reverse geocode for {lat}, {lon}.")
             return self._simulate_reverse_geocode_result(lat, lon)
 
-        await self._throttle() # Apply explicit throttling
-
         endpoint = f"{self.base_url}/reverse"
         params = {
             'lat': lat,
@@ -151,21 +120,12 @@ class NominatimClient:
 
         self.logger.info(f"Calling Nominatim API for reverse geocode: {lat}, {lon}...")
         try:
-            response = await self.resilience_manager.execute_with_resilience(
-                lambda: self.session_manager.get(endpoint, params=params, timeout=10),
-                url=endpoint # Pass the endpoint for circuit breaker naming
-            )
-            response.raise_for_status()
-            data = await response.json()
+            # Use _make_request which handles throttling, resilience, and performance recording
+            data = await self._make_request("GET", endpoint, params=params)
             return data
         except aiohttp.ClientResponseError as e:
-            if e.status == 429:
-                self.logger.warning(f"Nominatim API rate limit exceeded for {lat}, {lon}. Retrying after 60 seconds.")
-                await asyncio.sleep(60)
-                return await self.reverse_geocode(lat, lon) # Retry the call
-            else:
-                self.logger.error(f"Network/API error reverse geocoding {lat}, {lon} with Nominatim (Status: {e.status}): {e}", exc_info=True)
-                return self._simulate_reverse_geocode_result(lat, lon) # Fallback to simulation on error
+            self.logger.error(f"Network/API error reverse geocoding {lat}, {lon} with Nominatim (Status: {e.status}): {e}", exc_info=True)
+            return self._simulate_reverse_geocode_result(lat, lon) # Fallback to simulation on error
         except Exception as e:
             self.logger.error(f"Unexpected error reverse geocoding {lat}, {lon} with Nominatim: {e}", exc_info=True)
             return self._simulate_reverse_geocode_result(lat, lon) # Fallback to simulation on error
