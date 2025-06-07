@@ -1,68 +1,134 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+/* src/index.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+/* Base styles for the entire application */
+html, body, #root {
+  height: 100%; /* Ensure html, body, and root div take full height */
 }
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  font-family: 'Space Mono', monospace; /* Use a monospace font for a techy feel */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #0a0a1a; /* Deep dark blue/purple for space theme */
+  color: #e0e0e0; /* Light gray for text */
+  overflow-y: scroll; /* Always show scrollbar to prevent layout shifts */
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+/* Custom scrollbar for a sleek look */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+::-webkit-scrollbar-track {
+  background: #1a1a3a; /* Darker track */
+  border-radius: 10px;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+::-webkit-scrollbar-thumb {
+  background: #007bff; /* Blue thumb */
+  border-radius: 10px;
 }
+
+::-webkit-scrollbar-thumb:hover {
+  background: #0056b3; /* Darker blue on hover */
+}
+
+/* --- Login Page Specific Styles --- */
+.login-container {
+  @apply flex items-center justify-center min-h-screen bg-nasa-dark-blue;
+}
+
+.login-card {
+  @apply bg-nasa-medium-blue p-8 rounded-lg shadow-lg text-center w-full max-w-md;
+  border: 1px solid #007bff; /* Blue border */
+  box-shadow: 0 0 15px rgba(0, 123, 255, 0.5); /* Subtle blue glow */
+}
+
+.login-title {
+  @apply text-3xl font-bold text-nasa-cyan mb-2;
+}
+
+.login-subtitle {
+  @apply text-nasa-light-gray text-lg mb-6;
+}
+
+.login-form .form-group {
+  @apply mb-4 text-left;
+}
+
+.login-form label {
+  @apply block text-nasa-light-gray text-sm font-bold mb-2;
+}
+
+.login-form .form-input {
+  @apply shadow appearance-none border border-nasa-light-gray rounded w-full py-2 px-3 text-nasa-dark-blue leading-tight focus:outline-none focus:shadow-outline bg-nasa-light-gray;
+}
+
+.login-button {
+  @apply bg-nasa-cyan hover:bg-nasa-blue text-nasa-dark-blue font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-colors duration-200;
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.3); /* Cyan glow */
+}
+
+.login-button:disabled {
+  @apply opacity-50 cursor-not-allowed;
+  box-shadow: none;
+}
+
+.error-message {
+  @apply text-red-500 text-sm mt-2 mb-4;
+}
+
+/* --- General UI Components (from previous steps, ensuring consistency) --- */
+.btn-primary {
+  @apply bg-nasa-cyan text-nasa-dark-blue font-bold py-2 px-4 rounded transition-colors duration-200 hover:bg-nasa-blue;
+}
+
+.btn-secondary {
+  @apply bg-nasa-medium-blue text-nasa-light-gray font-bold py-2 px-4 rounded border border-nasa-light-gray transition-colors duration-200 hover:bg-nasa-dark-blue;
+}
+
+.btn-danger {
+  @apply bg-red-600 text-white font-bold py-2 px-4 rounded transition-colors duration-200 hover:bg-red-700;
+}
+
+.btn-xs {
+  @apply text-xs py-1 px-2;
+}
+
+.form-select, .form-input {
+  @apply block w-full px-3 py-2 bg-nasa-medium-blue border border-nasa-light-gray rounded-md shadow-sm focus:outline-none focus:ring-nasa-cyan focus:border-nasa-cyan sm:text-sm text-nasa-light-gray;
+}
+
+.form-checkbox {
+  @apply h-4 w-4 text-nasa-cyan border-nasa-light-gray rounded focus:ring-nasa-cyan bg-nasa-medium-blue;
+}
+
+/* Navigation Link Styles for Sidebar */
+.nav-link {
+  @apply flex items-center p-3 rounded-lg text-nasa-light-gray hover:bg-nasa-dark-blue transition-colors duration-200;
+}
+
+.nav-link-active {
+  @apply bg-nasa-dark-blue text-nasa-cyan font-semibold;
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.2); /* Subtle glow for active link */
+}
+
+/* Tailwind custom colours (defined in tailwind.config.js) */
+/* Ensure these are correctly picked up by Tailwind */
+/*
+  colors: {
+    'nasa-dark-blue': '#0A0A1A',
+    'nasa-medium-blue': '#1A1A3A',
+    'nasa-light-gray': '#E0E0E0',
+    'nasa-cyan': '#00FFFF',
+    'nasa-amber': '#FFBF00',
+    'nasa-red': '#FF0000',
+    'nasa-green': '#00FF00',
+    'nasa-blue': '#007BFF',
+  },
+*/
