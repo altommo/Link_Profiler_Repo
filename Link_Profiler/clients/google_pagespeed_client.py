@@ -9,6 +9,7 @@ from Link_Profiler.clients.base_client import BaseAPIClient
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +17,8 @@ class PageSpeedClient(BaseAPIClient):
     """
     Client for Google PageSpeed Insights API.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
-        super().__init__(session_manager, resilience_manager)
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
+        super().__init__(session_manager, resilience_manager, api_quota_manager) # Pass api_quota_manager to base class
         self.logger = logging.getLogger(__name__ + ".PageSpeedClient")
         self.base_url = config_loader.get("serp_api.pagespeed_insights_api.base_url")
         self.api_key = config_loader.get("serp_api.pagespeed_insights_api.api_key")
