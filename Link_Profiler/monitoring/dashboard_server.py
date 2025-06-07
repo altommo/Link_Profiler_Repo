@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 
 from fastapi import FastAPI, Request, Response, Depends, HTTPException, status, Query # Import Query
 import json # Import json
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse # Import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -147,14 +147,16 @@ dashboard_app.mount(
 @dashboard_app.get("/", response_class=HTMLResponse)
 async def dashboard_home(request: Request):
     """
-    Serves the main dashboard HTML page.
+    Serves the main dashboard HTML page, now deprecated.
     """
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+    # Redirect to the new Mission Control Dashboard
+    return RedirectResponse(url="/mission-control", status_code=status.HTTP_302_FOUND)
 
 @dashboard_app.get("/health")
 async def health_check_endpoint():
     """
     Performs a comprehensive health check of the API and its dependencies.
+    This endpoint remains active for external monitoring tools.
     """
     health_status = await health_check_internal()
     status_code = status.HTTP_200_OK if health_status["status"] == "healthy" else status.HTTP_503_SERVICE_UNAVAILABLE
@@ -164,152 +166,48 @@ async def health_check_endpoint():
 async def prometheus_metrics_endpoint():
     """
     Exposes Prometheus metrics in the Prometheus text format.
+    This endpoint remains active for external monitoring tools.
     """
     return Response(content=get_metrics_text(), media_type="text/plain; version=0.0.4; charset=utf-8")
 
-@dashboard_app.get("/api/stats")
-async def get_api_stats_endpoint(current_user: User = Depends(get_current_user)):
-    """
-    Retrieves aggregated statistics for the Link Profiler system.
-    Requires admin authentication.
-    """
-    verify_admin_access(current_user)
-    logger.info(f"Dashboard: Received request for aggregated stats by admin: {current_user.username}.")
-    return await _get_aggregated_stats_for_api()
+# The following API endpoints are being removed from dashboard_server.py
+# and will be moved to Link_Profiler/main.py or consumed directly from queue_endpoints.py
+# by the new Mission Control Dashboard.
 
-@dashboard_app.get("/api/satellites")
-async def get_satellites_endpoint(current_user: User = Depends(get_current_user)):
-    """
-    Retrieves detailed health information for all satellite crawlers.
-    Requires admin authentication.
-    """
-    verify_admin_access(current_user)
-    logger.info(f"Dashboard: Received request for detailed satellite health by admin: {current_user.username}.")
-    return await _get_satellites_data_internal()
+# @dashboard_app.get("/api/stats")
+# async def get_api_stats_endpoint(current_user: User = Depends(get_current_user)):
+#     ...
 
-@dashboard_app.get("/api/jobs")
-async def get_jobs_endpoint(
-    status_filter: Optional[str] = Query(None, description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED')."),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Retrieves a list of crawl jobs, optionally filtered by status.
-    Requires admin authentication.
-    """
-    verify_admin_access(current_user)
-    logger.info(f"Dashboard: Received request for jobs by admin: {current_user.username} (status_filter: {status_filter}).")
-    
-    try:
-        all_jobs = db.get_all_crawl_jobs()
-        
-        if status_filter:
-            try:
-                filter_status = CrawlStatus[status_filter.upper()]
-                all_jobs = [job for job in all_jobs if job.status == filter_status]
-            except KeyError:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid status_filter: {status_filter}. Must be one of {list(CrawlStatus.__members__.keys())}.")
-        
-        # Sort by created date, newest first
-        sorted_jobs = sorted(all_jobs, key=lambda job: job.created_date, reverse=True)
-        
-        # Convert CrawlJob objects to their dictionary representation for JSON serialization
-        return [job.to_dict() for job in sorted_jobs]
-    except Exception as e:
-        logger.error(f"Dashboard: Error retrieving jobs: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve jobs: {e}")
-    finally:
-        if db and hasattr(db, 'Session'):
-            db.Session.remove()
+# @dashboard_app.get("/api/satellites")
+# async def get_satellites_endpoint(current_user: User = Depends(get_current_user)):
+#     ...
 
-@dashboard_app.post("/api/jobs/{job_id}/cancel")
-async def cancel_job_endpoint(job_id: str, current_user: User = Depends(get_current_user)):
-    """
-    Cancels a specific crawl job.
-    Requires admin authentication.
-    """
-    verify_admin_access(current_user)
-    logger.info(f"Dashboard: Received request to cancel job {job_id} by admin: {current_user.username}.")
-    try:
-        coordinator = await get_coordinator()
-        success = await coordinator.cancel_job(job_id)
-        if success:
-            return {"message": f"Job {job_id} cancelled successfully."}
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found or could not be cancelled.")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Dashboard: Error cancelling job {job_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to cancel job {job_id}: {e}")
+# @dashboard_app.get("/api/jobs")
+# async def get_jobs_endpoint(
+#     status_filter: Optional[str] = Query(None, description="Filter jobs by status..."),
+#     current_user: User = Depends(get_current_user)
+# ):
+#     ...
 
-@dashboard_app.post("/api/jobs/pause_all")
-async def pause_all_jobs_endpoint(current_user: User = Depends(get_current_user)):
-    """
-    Pauses all new job processing.
-    Requires admin authentication.
-    """
-    verify_admin_access(current_user)
-    logger.info(f"Dashboard: Received request to pause all jobs by admin: {current_user.username}.")
-    try:
-        coordinator = await get_coordinator()
-        await coordinator.pause_job_processing()
-        return {"message": "All new job processing paused."}
-    except Exception as e:
-        logger.error(f"Dashboard: Error pausing all jobs: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to pause all jobs: {e}")
+# @dashboard_app.post("/api/jobs/{job_id}/cancel")
+# async def cancel_job_endpoint(job_id: str, current_user: User = Depends(get_current_user)):
+#     ...
 
-@dashboard_app.post("/api/jobs/resume_all")
-async def resume_all_jobs_endpoint(current_user: User = Depends(get_current_user)):
-    """
-    Resumes all job processing.
-    Requires admin authentication.
-    """
-    verify_admin_access(current_user)
-    logger.info(f"Dashboard: Received request to resume all jobs by admin: {current_user.username}.")
-    try:
-        coordinator = await get_coordinator()
-        await coordinator.resume_job_processing()
-        return {"message": "All job processing resumed."}
-    except Exception as e:
-        logger.error(f"Dashboard: Error resuming all jobs: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to resume all jobs: {e}")
+# @dashboard_app.post("/api/jobs/pause_all")
+# async def pause_all_jobs_endpoint(current_user: User = Depends(get_current_user)):
+#     ...
 
-@dashboard_app.post("/api/satellites/control/{crawler_id}/{command}")
-async def control_single_satellite_endpoint(crawler_id: str, command: str, current_user: User = Depends(get_current_user)):
-    """
-    Sends a control command to a specific satellite crawler.
-    Commands: PAUSE, RESUME, SHUTDOWN, RESTART.
-    Requires admin authentication.
-    """
-    verify_admin_access(current_user)
-    logger.info(f"Dashboard: Received command '{command}' for satellite '{crawler_id}' by admin: {current_user.username}.")
-    try:
-        coordinator = await get_coordinator()
-        response = await coordinator.send_control_command(crawler_id, command)
-        return response
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Dashboard: Error controlling satellite {crawler_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to control satellite {crawler_id}: {e}")
+# @dashboard_app.post("/api/jobs/resume_all")
+# async def resume_all_jobs_endpoint(current_user: User = Depends(get_current_user)):
+#     ...
 
-@dashboard_app.post("/api/satellites/control/all/{command}")
-async def control_all_satellites_endpoint(command: str, current_user: User = Depends(get_current_user)):
-    """
-    Sends a control command to all active satellite crawlers.
-    Commands: PAUSE, RESUME, SHUTDOWN, RESTART.
-    Requires admin authentication.
-    """
-    verify_admin_access(current_user)
-    logger.info(f"Dashboard: Received command '{command}' for all satellites by admin: {current_user.username}.")
-    try:
-        coordinator = await get_coordinator()
-        response = await coordinator.send_global_control_command(command)
-        return response
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Dashboard: Error controlling all satellites: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to control all satellites: {e}")
+# @dashboard_app.post("/api/satellites/control/{crawler_id}/{command}")
+# async def control_single_satellite_endpoint(crawler_id: str, command: str, current_user: User = Depends(get_current_user)):
+#     ...
+
+# @dashboard_app.post("/api/satellites/control/all/{command}")
+# async def control_all_satellites_endpoint(command: str, current_user: User = Depends(get_current_user)):
+#     ...
 
 # You can run this dashboard server independently for testing:
 # uvicorn Link_Profiler.monitoring.dashboard_server:dashboard_app --host 0.0.0.0 --port 8001 --reload

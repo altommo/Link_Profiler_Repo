@@ -240,3 +240,20 @@ async def cancel_job_endpoint(job_id: str, current_user: User = Depends(get_curr
     except Exception as e:
         logger.error(f"Error cancelling job {job_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to cancel job {job_id}: {e}")
+
+@queue_router.get("/processing_status", response_model=Dict[str, bool])
+async def get_processing_status_endpoint(current_user: User = Depends(get_current_user)):
+    """
+    Retrieves the current global job processing pause status. Requires authentication.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required.")
+    
+    logger.info(f"Admin user {current_user.username} requesting global processing status.")
+    try:
+        coordinator = await get_coordinator()
+        is_paused = await coordinator.is_processing_paused()
+        return {"is_paused": is_paused}
+    except Exception as e:
+        logger.error(f"Error retrieving processing status: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve processing status: {e}")

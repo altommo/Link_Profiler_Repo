@@ -1,9 +1,11 @@
 import React from 'react';
 import useMissionControlStore from '../stores/missionControlStore';
 import DataCard from '../components/ui/DataCard';
+import { MissionControlData } from '../types'; // Assuming you have a types file for MissionControlData
+import { API_BASE_URL } from '../config'; // Assuming you have a config file for API_BASE_URL
 
 const Jobs: React.FC = () => {
-  const { data } = useMissionControlStore();
+  const { data, fetchData } = useMissionControlStore(); // Get fetchData to refresh data
 
   if (!data) {
     return (
@@ -16,6 +18,106 @@ const Jobs: React.FC = () => {
 
   const { crawler_mission_status, satellite_fleet_status } = data;
 
+  const handleJobAction = async (jobId: string, action: 'cancel') => {
+    if (!window.confirm(`Are you sure you want to ${action} job ${jobId}?`)) {
+      return;
+    }
+    try {
+      const token = localStorage.getItem('access_token'); // Assuming token is stored in localStorage
+      const response = await fetch(`${API_BASE_URL}/api/monitoring/jobs/${jobId}/${action}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Failed to ${action} job`);
+      }
+      alert(`Job ${jobId} ${action}led successfully.`);
+      fetchData(); // Refresh data after action
+    } catch (error: any) {
+      alert(`Error ${action}ing job: ${error.message}`);
+      console.error(`Error ${action}ing job ${jobId}:`, error);
+    }
+  };
+
+  const handleGlobalJobAction = async (action: 'pause_all' | 'resume_all') => {
+    if (!window.confirm(`Are you sure you want to ${action.replace('_', ' ')} jobs?`)) {
+      return;
+    }
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`${API_BASE_URL}/api/monitoring/jobs/${action}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Failed to ${action.replace('_', ' ')} jobs`);
+      }
+      alert(`Jobs ${action.replace('_', ' ')} successfully.`);
+      fetchData();
+    } catch (error: any) {
+      alert(`Error ${action.replace('_', ' ')} jobs: ${error.message}`);
+      console.error(`Error ${action.replace('_', ' ')} jobs:`, error);
+    }
+  };
+
+  const handleSatelliteControl = async (satelliteId: string, command: 'PAUSE' | 'RESUME' | 'SHUTDOWN' | 'RESTART') => {
+    if (!window.confirm(`Are you sure you want to ${command.toLowerCase()} satellite ${satelliteId}?`)) {
+      return;
+    }
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`${API_BASE_URL}/api/monitoring/satellites/control/${satelliteId}/${command}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Failed to ${command.toLowerCase()} satellite`);
+      }
+      alert(`Satellite ${satelliteId} ${command.toLowerCase()}ed successfully.`);
+      fetchData();
+    } catch (error: any) {
+      alert(`Error ${command.toLowerCase()}ing satellite: ${error.message}`);
+      console.error(`Error ${command.toLowerCase()}ing satellite ${satelliteId}:`, error);
+    }
+  };
+
+  const handleGlobalSatelliteControl = async (command: 'PAUSE' | 'RESUME' | 'SHUTDOWN' | 'RESTART') => {
+    if (!window.confirm(`Are you sure you want to ${command.toLowerCase()} ALL satellites?`)) {
+      return;
+    }
+    try {
+      const token = localStorage.getItem('access_token');
+      const response = await fetch(`${API_BASE_URL}/api/monitoring/satellites/control/all/${command}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || `Failed to ${command.toLowerCase()} all satellites`);
+      }
+      alert(`All satellites ${command.toLowerCase()}ed successfully.`);
+      fetchData();
+    } catch (error: any) {
+      alert(`Error ${command.toLowerCase()}ing all satellites: ${error.message}`);
+      console.error(`Error ${command.toLowerCase()}ing all satellites:`, error);
+    }
+  };
+
   return (
     <div className="space-y-8">
       <h1 className="text-4xl font-bold text-nasa-cyan mb-4">Job Management Console</h1>
@@ -26,6 +128,10 @@ const Jobs: React.FC = () => {
             <p className="text-nasa-light-gray text-lg">Active Jobs: <span className="text-nasa-amber">{crawler_mission_status.active_jobs_count}</span></p>
             <p className="text-nasa-light-gray text-lg">Queued Jobs: <span className="text-nasa-cyan">{crawler_mission_status.queued_jobs_count}</span></p>
             <p className="text-nasa-light-gray text-lg">Total Queue Depth: <span className="text-nasa-cyan">{crawler_mission_status.queue_depth}</span></p>
+            <div className="flex space-x-2 mt-4">
+              <button className="btn-primary" onClick={() => handleGlobalJobAction('pause_all')}>Pause All Jobs</button>
+              <button className="btn-secondary" onClick={() => handleGlobalJobAction('resume_all')}>Resume All Jobs</button>
+            </div>
           </div>
         </DataCard>
 
@@ -40,6 +146,11 @@ const Jobs: React.FC = () => {
       </div>
 
       <DataCard title="Satellite Job Status">
+        <div className="flex space-x-2 mb-4">
+          <button className="btn-primary" onClick={() => handleGlobalSatelliteControl('PAUSE')}>Pause All Satellites</button>
+          <button className="btn-secondary" onClick={() => handleGlobalSatelliteControl('RESUME')}>Resume All Satellites</button>
+          <button className="btn-danger" onClick={() => handleGlobalSatelliteControl('SHUTDOWN')}>Shutdown All Satellites</button>
+        </div>
         <div className="max-h-96 overflow-y-auto pr-2">
           {satellite_fleet_status.length > 0 ? (
             <table className="w-full text-left text-nasa-light-gray text-sm">
@@ -52,6 +163,7 @@ const Jobs: React.FC = () => {
                   <th className="py-2 px-4">Jobs (24h)</th>
                   <th className="py-2 px-4">Errors (24h)</th>
                   <th className="py-2 px-4">Last Heartbeat</th>
+                  <th className="py-2 px-4">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -72,6 +184,11 @@ const Jobs: React.FC = () => {
                     <td className="py-2 px-4">{sat.jobs_completed_24h}</td>
                     <td className="py-2 px-4">{sat.errors_24h}</td>
                     <td className="py-2 px-4">{new Date(sat.last_heartbeat).toLocaleTimeString()}</td>
+                    <td className="py-2 px-4 space-x-1">
+                      <button className="btn-xs btn-secondary" onClick={() => handleSatelliteControl(sat.satellite_id, 'PAUSE')}>Pause</button>
+                      <button className="btn-xs btn-primary" onClick={() => handleSatelliteControl(sat.satellite_id, 'RESUME')}>Resume</button>
+                      <button className="btn-xs btn-danger" onClick={() => handleSatelliteControl(sat.satellite_id, 'SHUTDOWN')}>Shutdown</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -105,6 +222,38 @@ const Jobs: React.FC = () => {
             <p className="text-nasa-light-gray text-sm">No recent job errors to display.</p>
           )}
         </div>
+      </DataCard>
+
+      {/* Placeholder for All Jobs Table - This would require fetching all jobs from /api/monitoring/jobs */}
+      <DataCard title="All Crawl Jobs">
+        <p className="text-nasa-light-gray text-sm">
+          This section will display a comprehensive list of all crawl jobs with filtering and sorting options.
+          (Functionality to be implemented by fetching data from <code>/api/monitoring/jobs</code>)
+        </p>
+        {/* Example:
+        <table className="w-full text-left text-nasa-light-gray text-sm">
+          <thead>
+            <tr>
+              <th>Job ID</th>
+              <th>Target URL</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {allJobs.map(job => (
+              <tr key={job.id}>
+                <td>{job.id}</td>
+                <td>{job.target_url}</td>
+                <td>{job.status}</td>
+                <td>
+                  <button className="btn-xs btn-danger" onClick={() => handleJobAction(job.id, 'cancel')}>Cancel</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        */}
       </DataCard>
     </div>
   );
