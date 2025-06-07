@@ -3,7 +3,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from urllib.parse import urlencode
-import time # Import time for performance measurement
+# Removed time import as it's no longer needed for manual performance measurement
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
@@ -52,16 +52,10 @@ class ValueserpClient(BaseAPIClient):
             "country": country,
         }
 
-        start_time = time.monotonic()
-        success = False
         try:
             data = await self._make_request("GET", self.base_url, params=params)
-            success = True
             self.logger.info(f"ValueSERP search for '{query}' successful.")
             return data
         except Exception as e:
             self.logger.error(f"Error during ValueSERP search for '{query}': {e}", exc_info=True)
             return {"error": str(e)}
-        finally:
-            response_time_ms = (time.monotonic() - start_time) * 1000
-            self.api_quota_manager.record_api_performance("valueserp", success, response_time_ms)

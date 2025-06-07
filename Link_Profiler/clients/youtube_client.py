@@ -10,6 +10,7 @@ from Link_Profiler.clients.base_client import BaseAPIClient
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
 
 logger = logging.getLogger(__name__)
 
@@ -17,15 +18,16 @@ class YouTubeClient(BaseAPIClient):
     """
     Client for interacting with the YouTube Data API v3.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
-        super().__init__(session_manager, resilience_manager)
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
+        super().__init__(session_manager, resilience_manager, api_quota_manager) # Pass api_quota_manager to base class
         self.logger = logging.getLogger(__name__ + ".YouTubeClient")
         self.base_url = config_loader.get("social_media_crawler.youtube_api.base_url")
         self.api_key = config_loader.get("social_media_crawler.youtube_api.api_key")
         self.enabled = config_loader.get("social_media_crawler.youtube_api.enabled", False)
 
-        if self.enabled and self.resilience_manager is None:
-            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+        # Removed redundant check as BaseAPIClient handles resilience_manager validation
+        # if self.enabled and self.resilience_manager is None:
+        #     raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
         if not self.enabled:
             self.logger.info("YouTube Data API is disabled by configuration.")
