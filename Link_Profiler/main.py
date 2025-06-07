@@ -16,7 +16,7 @@ from typing import List, Optional, Dict, Any, Union, Annotated # Import Optional
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if project_root and project_root not in sys.path:
-    sys.path.insert(0, project_root)
+    sys.sys.path.insert(0, project_root)
     print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
 else:
     print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
@@ -85,6 +85,10 @@ LOG_LEVEL = config_loader.get("logging.level")
 API_CACHE_ENABLED = config_loader.get("api_cache.enabled")
 API_CACHE_TTL = config_loader.get("api_cache.ttl")
 
+# New: Subdomain configuration for UI routing
+CUSTOMER_SUBDOMAIN = config_loader.get("subdomains.customer", "customer")
+MISSION_CONTROL_SUBDOMAIN = config_loader.get("subdomains.mission_control", "mission-control")
+
 
 # Initialize Redis connection pool and client (moved up to ensure it's defined before lifespan)
 import redis.asyncio as redis
@@ -111,6 +115,9 @@ import psycopg2
 
 from playwright.async_api import async_playwright, Browser
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # Added missing imports
+
+# New: Import SubdomainRouterMiddleware
+from Link_Profiler.middleware.subdomain_router import SubdomainRouterMiddleware
 
 # New: Import DistributedResilienceManager (Initialize before APIQuotaManager)
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # Import the class only
@@ -247,6 +254,8 @@ from Link_Profiler.api.reports import reports_router
 from Link_Profiler.api.users import users_router
 from Link_Profiler.api.websocket import websocket_router
 from Link_Profiler.api.mission_control import mission_control_router
+# New: Import customer_router
+from Link_Profiler.api.customer_routes import customer_router
 
 
 # Initialize ClickHouse Loader conditionally
@@ -542,21 +551,34 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Add the subdomain router middleware BEFORE other middleware or routes
+app.add_middleware(
+    SubdomainRouterMiddleware,
+    customer_subdomain=CUSTOMER_SUBDOMAIN,
+    mission_control_subdomain=MISSION_CONTROL_SUBDOMAIN
+)
+
 templates = Jinja2Templates(directory=os.path.join(project_root, "admin-management-console"))
 
+# Mount static files for admin console (if still needed, or remove if replaced by mission-control-dashboard)
 app.mount(
     "/static",
     StaticFiles(directory=os.path.join(project_root, "admin-management-console", "static")),
     name="static",
 )
 
-# Mount the mission-control-dashboard static files
-# The 'dist' directory contains the built React application.
-# We mount it as a static directory, but also need to serve index.html for client-side routing.
+# Mount the mission-control-dashboard static assets
 app.mount(
-    "/mission-control/assets", # Mount assets separately to avoid conflicts with root index.html
+    "/mission-control/assets",
     StaticFiles(directory=os.path.join(project_root, "mission-control-dashboard", "dist", "assets")),
     name="mission-control-dashboard-assets",
+)
+
+# Mount the customer-dashboard static assets
+app.mount(
+    "/customer-dashboard/assets",
+    StaticFiles(directory=os.path.join(project_root, "customer-dashboard", "dist", "assets")),
+    name="customer-dashboard-assets",
 )
 
 
@@ -976,29 +998,55 @@ app.include_router(public_jobs_router)
 app.include_router(users_router)
 app.include_router(websocket_router)
 app.include_router(mission_control_router)
+app.include_router(customer_router) # Include the new customer router
 
-# Catch-all route for the Mission Control Dashboard SPA
+# Catch-all route for serving SPAs based on subdomain
 # This must come AFTER all other API routes to ensure they are matched first.
-@app.get("/mission-control/{path:path}")
-async def serve_mission_control_spa(request: Request, path: str):
+@app.get("/{path:path}", response_class=HTMLResponse)
+async def serve_dashboard_spa(request: Request, path: str):
     """
-    Serves the Mission Control Dashboard SPA's index.html for all client-side routes.
+    Serves the appropriate SPA (Customer or Mission Control) based on subdomain,
+    or redirects if no specific subdomain is matched.
     """
-    # Construct the path to index.html within the 'dist' directory
-    index_html_path = os.path.join(project_root, "mission-control-dashboard", "dist", "index.html")
+    # If it's an API request (detected by middleware), let it pass to other routers
+    # This check is mostly defensive; API routes should be matched before this catch-all.
+    if request.state.is_api_request:
+        raise HTTPException(status_code=404, detail="API endpoint not found or handled by other routers.")
+
+    if request.state.is_customer_dashboard:
+        dashboard_path = os.path.join(project_root, "customer-dashboard", "dist")
+        index_html_path = os.path.join(dashboard_path, "index.html")
+        
+        # Serve assets directly if they exist (e.g., /assets/index-XXXX.js)
+        # Note: Vite typically serves assets under a specific path like /assets/
+        # The mount point for customer-dashboard assets is /customer-dashboard/assets
+        # So, direct access to /customer-dashboard/assets/file.js will be handled by the mount.
+        # This catch-all is for client-side routing (e.g., /dashboard, /jobs) which should serve index.html.
+        
+        if os.path.exists(index_html_path):
+            return HTMLResponse(content=open(index_html_path, "r").read())
+        else:
+            logger.error(f"Customer dashboard index.html not found at {index_html_path}")
+            raise HTTPException(status_code=500, detail="Customer Dashboard not built or found.")
+
+    elif request.state.is_mission_control_dashboard:
+        dashboard_path = os.path.join(project_root, "mission-control-dashboard", "dist")
+        index_html_path = os.path.join(dashboard_path, "index.html")
+
+        # Serve assets directly if they exist (similar to customer dashboard logic)
+        # The mount point for mission-control-dashboard assets is /mission-control/assets
+        
+        if os.path.exists(index_html_path):
+            return HTMLResponse(content=open(index_html_path, "r").read())
+        else:
+            logger.error(f"Mission Control dashboard index.html not found at {index_html_path}")
+            raise HTTPException(status_code=500, detail="Mission Control Dashboard not built or found.")
     
-    # Check if the requested path is for a static asset that exists
-    # This is a fallback, as assets should ideally be served by the /mission-control/assets mount
-    # but ensures direct access to other static files (like favicon.ico in root of dist) works.
-    static_file_path = os.path.join(project_root, "mission-control-dashboard", "dist", path)
-    if os.path.exists(static_file_path) and os.path.isfile(static_file_path):
-        return StaticFiles(directory=os.path.join(project_root, "mission-control-dashboard", "dist"))(request)
-
-    # For all other paths under /mission-control, serve index.html
-    return HTMLResponse(content=open(index_html_path, "r").read())
-
-
-@app.get("/", response_class=HTMLResponse)
-async def read_root():
-    # Redirect root to the new Mission Control Dashboard
-    return RedirectResponse(url="/mission-control", status_code=status.HTTP_302_FOUND)
+    else:
+        # If no specific dashboard subdomain, redirect to customer dashboard by default
+        # This assumes the main domain (e.g., yspanel.com) should redirect to customer.yspanel.com
+        logger.info(f"No specific dashboard subdomain detected for host {request.headers.get('host')}. Redirecting to customer dashboard.")
+        # Construct the full URL for redirection, preserving scheme
+        redirect_host = f"{CUSTOMER_SUBDOMAIN}.{request.url.hostname}"
+        redirect_url = request.url.replace(netloc=redirect_host, path="/")._url
+        return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
