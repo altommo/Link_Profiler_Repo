@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { WS_BASE_URL } from '../config'; // Import WS_BASE_URL from config
 
 interface UseWebSocketOptions {
   path: string;
@@ -26,18 +27,17 @@ const useWebSocket = (options: UseWebSocketOptions) => {
 
   const [isConnected, setIsConnected] = useState(false);
   const ws = useRef<WebSocket | null>(null);
-  const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
+  // Use ReturnType<typeof setTimeout> for browser-compatible type
+  const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCount = useRef(0);
   const isMounted = useRef(true); // To track if component is mounted
 
   const getWebSocketUrl = useCallback(() => {
     // Determine WebSocket protocol based on current location's protocol
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Use the VITE_REACT_APP_WS_URL environment variable if available,
-    // otherwise construct from current host.
-    // This allows for easy configuration in development (e.g., pointing to localhost:8000)
-    // and production (e.g., pointing to your Nginx proxy).
-    const baseWsUrl = import.meta.env.VITE_REACT_APP_WS_URL || `${protocol}//${window.location.host}`;
+    
+    // Use WS_BASE_URL from config.ts
+    const baseWsUrl = WS_BASE_URL;
     
     // Ensure the path starts with a slash and baseWsUrl doesn't end with one if path is absolute
     const fullPath = path.startsWith('/') ? path : `/${path}`;

@@ -4,6 +4,35 @@ import DataCard from '../components/ui/DataCard';
 import { API_BASE_URL } from '../config'; // Assuming you have a config file for API_BASE_URL
 import { useAuth } from '../hooks/useAuth'; // Import useAuth
 
+// Define interfaces for the data structures used in this component
+interface CrawlerMissionStatusData {
+  active_jobs_count: number;
+  queued_jobs_count: number;
+  queue_depth: number;
+  completed_jobs_24h_count: number;
+  failed_jobs_24h_count: number;
+  total_pages_crawled_24h: number;
+  avg_job_completion_time_seconds: number;
+  recent_job_errors: Array<{
+    error_type: string;
+    message: string;
+    url: string;
+    timestamp: string;
+    details?: any;
+  }>;
+}
+
+interface SatelliteStatus {
+  satellite_id: string;
+  status: 'active' | 'idle' | 'offline' | 'error'; // Example statuses
+  current_job_id: string | null;
+  current_job_type: string | null;
+  current_job_progress: number | null;
+  jobs_completed_24h: number;
+  errors_24h: number;
+  last_heartbeat: string; // ISO string date
+}
+
 const Jobs: React.FC = () => {
   const { data, fetchData } = useMissionControlStore(); // Get fetchData to refresh data
   const { token } = useAuth(); // Get token from useAuth
@@ -170,7 +199,7 @@ const Jobs: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {satellite_fleet_status.map((sat) => (
+                  {satellite_fleet_status.map((sat: SatelliteStatus) => ( // Explicitly type sat
                     <tr key={sat.satellite_id} className="border-b border-gray-700">
                       <td className="py-2 px-4">{sat.satellite_id}</td>
                       <td className={`py-2 px-4 ${
