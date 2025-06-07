@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User } from '../types'; // Import User type
-import { getCrawlJobs } from '../services/api'; // Import API service
+import { useAuth } from '../hooks/useAuth';
 
 // Define a type for a single job
 interface CrawlJob {
@@ -11,28 +10,26 @@ interface CrawlJob {
   created: string;
 }
 
-interface CrawlJobsProps {
-  user: User | null; // User can be null if not logged in yet
-}
-
-const CrawlJobs: React.FC<CrawlJobsProps> = ({ user }) => {
+const CrawlJobs: React.FC = () => {
+  const { user } = useAuth();
   const [jobs, setJobs] = useState<CrawlJob[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string>('');
 
   useEffect(() => {
     const fetchJobs = async () => {
       try {
         setLoading(true);
-        setError(null);
+        setError('');
         
-        // In a real application, you'd fetch data from your backend API
-        // const data = await getCrawlJobs(user.id); 
-        
-        // Simulate API call
-        const data = await getCrawlJobs(); // Use the imported API service
-        setJobs(data);
-      } catch (err: any) {
+        // Simulate API call with mock data
+        const simulatedData: CrawlJob[] = [
+          { id: 'job-001', targetUrl: 'https://example.com', status: 'Completed', progress: 100, created: '2024-01-15' },
+          { id: 'job-002', targetUrl: 'https://testsite.org', status: 'In Progress', progress: 65, created: '2024-01-16' },
+          { id: 'job-003', targetUrl: 'https://sample.net', status: 'Failed', progress: 0, created: '2024-01-17' },
+        ];
+        setJobs(simulatedData);
+      } catch (err) {
         setError('Failed to fetch crawl jobs. Please try again later.');
         console.error('Error fetching crawl jobs:', err);
       } finally {
@@ -40,62 +37,121 @@ const CrawlJobs: React.FC<CrawlJobsProps> = ({ user }) => {
       }
     };
 
-    if (user) { // Only fetch if user is available
+    if (user) {
       fetchJobs();
     }
-  }, [user]); // Re-fetch if user changes
+  }, [user]);
 
   if (loading) {
-    return <div className="text-center text-nasa-light-gray text-xl mt-20">Loading crawl jobs...</div>;
+    return (
+      <div className="flex items-center justify-center min-h-96">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading crawl jobs...</p>
+        </div>
+      </div>
+    );
   }
 
   if (error) {
-    return <div className="text-center text-red-500 text-xl mt-20">{error}</div>;
+    return (
+      <div className="text-center text-red-600 p-6">
+        <p>{error}</p>
+      </div>
+    );
   }
 
   if (jobs.length === 0) {
-    return <div className="text-center text-nasa-light-gray text-xl mt-20">No crawl jobs found for your account.</div>;
+    return (
+      <div className="text-center text-gray-600 p-6">
+        <p>No crawl jobs found for your account.</p>
+        <button className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">
+          Submit Your First Job
+        </button>
+      </div>
+    );
   }
 
   return (
     <div className="p-6">
-      <h2 className="text-3xl font-bold text-nasa-cyan mb-4">Your Crawl Jobs</h2>
-      <p className="text-nasa-light-gray mb-6">Here you can view the status and details of all your submitted crawl jobs.</p>
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold text-gray-900">Your Crawl Jobs</h1>
+        <p className="text-gray-600 mt-2">Monitor and manage your crawl job submissions</p>
+      </div>
 
-      <div className="overflow-x-auto bg-nasa-gray rounded-lg shadow-lg border border-nasa-cyan">
-        <table className="min-w-full text-left text-nasa-light-gray text-sm">
-          <thead>
-            <tr className="text-nasa-cyan border-b border-nasa-light-gray">
-              <th className="py-3 px-4">Job ID</th>
-              <th className="py-3 px-4">Target URL</th>
-              <th className="py-3 px-4">Status</th>
-              <th className="py-3 px-4">Progress</th>
-              <th className="py-3 px-4">Created Date</th>
-              <th className="py-3 px-4">Actions</th>
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Job ID
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Target URL
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Status
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Progress
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Created
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Actions
+              </th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="bg-white divide-y divide-gray-200">
             {jobs.map((job) => (
-              <tr key={job.id} className="border-b border-gray-700 last:border-b-0">
-                <td className="py-3 px-4">{job.id}</td>
-                <td className="py-3 px-4"><a href={job.targetUrl} target="_blank" rel="noopener noreferrer" className="text-nasa-cyan hover:underline">{job.targetUrl}</a></td>
-                <td className="py-3 px-4">
-                  <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                    job.status === 'Completed' ? 'bg-green-500 text-white' :
-                    job.status === 'In Progress' ? 'bg-nasa-amber text-nasa-dark-blue' :
-                    job.status === 'Failed' ? 'bg-red-500 text-white' :
-                    'bg-gray-500 text-white'
+              <tr key={job.id}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  {job.id}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <a 
+                    href={job.targetUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="text-blue-600 hover:text-blue-800"
+                  >
+                    {job.targetUrl}
+                  </a>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                    job.status === 'Completed' ? 'bg-green-100 text-green-800' :
+                    job.status === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                    job.status === 'Failed' ? 'bg-red-100 text-red-800' :
+                    'bg-gray-100 text-gray-800'
                   }`}>
                     {job.status}
                   </span>
                 </td>
-                <td className="py-3 px-4">{job.progress}%</td>
-                <td className="py-3 px-4">{job.created}</td>
-                <td className="py-3 px-4 space-x-2">
-                  <button className="btn-secondary btn-xs">View Details</button>
-                  {job.status === 'In Progress' || job.status === 'Pending' ? (
-                    <button className="btn-danger btn-xs">Cancel</button>
-                  ) : null}
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <div className="flex items-center">
+                    <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
+                      <div 
+                        className="bg-blue-600 h-2 rounded-full" 
+                        style={{ width: `${job.progress}%` }}
+                      ></div>
+                    </div>
+                    <span>{job.progress}%</span>
+                  </div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {job.created}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                  <button className="text-blue-600 hover:text-blue-900">
+                    View Details
+                  </button>
+                  {(job.status === 'In Progress' || job.status === 'Pending') && (
+                    <button className="text-red-600 hover:text-red-900">
+                      Cancel
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -103,8 +159,10 @@ const CrawlJobs: React.FC<CrawlJobsProps> = ({ user }) => {
         </table>
       </div>
 
-      <div className="mt-6 text-right">
-        <button className="btn-primary">Submit New Crawl Job</button>
+      <div className="mt-6 flex justify-end">
+        <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium">
+          Submit New Crawl Job
+        </button>
       </div>
     </div>
   );

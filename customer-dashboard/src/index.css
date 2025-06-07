@@ -1,134 +1,82 @@
-/* src/index.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Base styles for the entire application */
-html, body, #root {
-  height: 100%; /* Ensure html, body, and root div take full height */
+/* Custom base styles */
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }
 
-body {
-  margin: 0;
-  font-family: 'Space Mono', monospace; /* Use a monospace font for a techy feel */
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: #0a0a1a; /* Deep dark blue/purple for space theme */
-  color: #e0e0e0; /* Light gray for text */
-  overflow-y: scroll; /* Always show scrollbar to prevent layout shifts */
+/* Custom components */
+@layer components {
+  .btn-primary {
+    @apply bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors duration-200;
+  }
+
+  .btn-secondary {
+    @apply bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium py-2 px-4 rounded-md border border-gray-300 transition-colors duration-200;
+  }
+
+  .btn-danger {
+    @apply bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-md transition-colors duration-200;
+  }
+
+  .btn-xs {
+    @apply text-xs py-1 px-2;
+  }
+
+  .form-input {
+    @apply block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm;
+  }
+
+  .form-select {
+    @apply block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm;
+  }
+
+  .form-checkbox {
+    @apply h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500;
+  }
+
+  .nav-link {
+    @apply flex items-center p-3 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors duration-200;
+  }
+
+  .nav-link-active {
+    @apply bg-blue-50 text-blue-600 font-semibold;
+  }
+
+  .error-message {
+    @apply text-red-600 text-sm mt-2 mb-4;
+  }
 }
 
-/* Custom scrollbar for a sleek look */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
+/* Custom scrollbar */
+@layer utilities {
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
 
-::-webkit-scrollbar-track {
-  background: #1a1a3a; /* Darker track */
-  border-radius: 10px;
-}
+  ::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 10px;
+  }
 
-::-webkit-scrollbar-thumb {
-  background: #007bff; /* Blue thumb */
-  border-radius: 10px;
-}
+  ::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 10px;
+  }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #0056b3; /* Darker blue on hover */
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
 }
-
-/* --- Login Page Specific Styles --- */
-.login-container {
-  @apply flex items-center justify-center min-h-screen bg-nasa-dark-blue;
-}
-
-.login-card {
-  @apply bg-nasa-medium-blue p-8 rounded-lg shadow-lg text-center w-full max-w-md;
-  border: 1px solid #007bff; /* Blue border */
-  box-shadow: 0 0 15px rgba(0, 123, 255, 0.5); /* Subtle blue glow */
-}
-
-.login-title {
-  @apply text-3xl font-bold text-nasa-cyan mb-2;
-}
-
-.login-subtitle {
-  @apply text-nasa-light-gray text-lg mb-6;
-}
-
-.login-form .form-group {
-  @apply mb-4 text-left;
-}
-
-.login-form label {
-  @apply block text-nasa-light-gray text-sm font-bold mb-2;
-}
-
-.login-form .form-input {
-  @apply shadow appearance-none border border-nasa-light-gray rounded w-full py-2 px-3 text-nasa-dark-blue leading-tight focus:outline-none focus:shadow-outline bg-nasa-light-gray;
-}
-
-.login-button {
-  @apply bg-nasa-cyan hover:bg-nasa-blue text-nasa-dark-blue font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-colors duration-200;
-  box-shadow: 0 0 10px rgba(0, 255, 255, 0.3); /* Cyan glow */
-}
-
-.login-button:disabled {
-  @apply opacity-50 cursor-not-allowed;
-  box-shadow: none;
-}
-
-.error-message {
-  @apply text-red-500 text-sm mt-2 mb-4;
-}
-
-/* --- General UI Components (from previous steps, ensuring consistency) --- */
-.btn-primary {
-  @apply bg-nasa-cyan text-nasa-dark-blue font-bold py-2 px-4 rounded transition-colors duration-200 hover:bg-nasa-blue;
-}
-
-.btn-secondary {
-  @apply bg-nasa-medium-blue text-nasa-light-gray font-bold py-2 px-4 rounded border border-nasa-light-gray transition-colors duration-200 hover:bg-nasa-dark-blue;
-}
-
-.btn-danger {
-  @apply bg-red-600 text-white font-bold py-2 px-4 rounded transition-colors duration-200 hover:bg-red-700;
-}
-
-.btn-xs {
-  @apply text-xs py-1 px-2;
-}
-
-.form-select, .form-input {
-  @apply block w-full px-3 py-2 bg-nasa-medium-blue border border-nasa-light-gray rounded-md shadow-sm focus:outline-none focus:ring-nasa-cyan focus:border-nasa-cyan sm:text-sm text-nasa-light-gray;
-}
-
-.form-checkbox {
-  @apply h-4 w-4 text-nasa-cyan border-nasa-light-gray rounded focus:ring-nasa-cyan bg-nasa-medium-blue;
-}
-
-/* Navigation Link Styles for Sidebar */
-.nav-link {
-  @apply flex items-center p-3 rounded-lg text-nasa-light-gray hover:bg-nasa-dark-blue transition-colors duration-200;
-}
-
-.nav-link-active {
-  @apply bg-nasa-dark-blue text-nasa-cyan font-semibold;
-  box-shadow: 0 0 8px rgba(0, 255, 255, 0.2); /* Subtle glow for active link */
-}
-
-/* Tailwind custom colours (defined in tailwind.config.js) */
-/* Ensure these are correctly picked up by Tailwind */
-/*
-  colors: {
-    'nasa-dark-blue': '#0A0A1A',
-    'nasa-medium-blue': '#1A1A3A',
-    'nasa-light-gray': '#E0E0E0',
-    'nasa-cyan': '#00FFFF',
-    'nasa-amber': '#FFBF00',
-    'nasa-red': '#FF0000',
-    'nasa-green': '#00FF00',
-    'nasa-blue': '#007BFF',
-  },
-*/

@@ -8,15 +8,15 @@ import CrawlJobs from './components/CrawlJobs';
 import UserProfile from './components/UserProfile';
 import Login from './components/Login';
 
-const ProtectedRoute: React.FC<{ children: JSX.Element }> = ({ children }) => {
+const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-nasa-dark-blue"> {/* Changed background to nasa-dark-blue */}
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-nasa-cyan mx-auto"></div> {/* Changed border color */}
-          <p className="mt-4 text-nasa-light-gray">Authenticating...</p> {/* Changed text color */}
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Authenticating...</p>
         </div>
       </div>
     );
@@ -26,22 +26,21 @@ const ProtectedRoute: React.FC<{ children: JSX.Element }> = ({ children }) => {
     return <Navigate to="/login" replace />;
   }
 
-  return children;
+  return <>{children}</>;
 };
 
 function App() {
-  const { isAuthenticated, user } = useAuth(); // Destructure user from useAuth
+  const { isAuthenticated } = useAuth();
 
   return (
-    <div className="min-h-screen bg-nasa-dark-blue"> {/* Changed background to nasa-dark-blue for consistency */}
+    <div className="min-h-screen bg-gray-50">
       {isAuthenticated ? (
         <Layout>
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            {/* Pass user prop to CrawlJobs and UserProfile */}
-            <Route path="/jobs" element={<ProtectedRoute><CrawlJobs user={user} /></ProtectedRoute>} />
-            <Route path="/profile" element={<ProtectedRoute><UserProfile user={user} /></ProtectedRoute>} />
+            <Route path="/jobs" element={<ProtectedRoute><CrawlJobs /></ProtectedRoute>} />
+            <Route path="/profile" element={<ProtectedRoute><UserProfile /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </Layout>
