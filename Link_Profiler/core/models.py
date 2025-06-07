@@ -696,6 +696,8 @@ class User:
     hashed_password: str
     is_active: bool = True
     is_admin: bool = False
+    role: str = "customer" # New: Role field (e.g., "customer", "admin", "analyst")
+    organization_id: Optional[str] = None # New: For multi-tenancy
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
