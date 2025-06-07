@@ -16,6 +16,7 @@ from Link_Profiler.clients.base_client import BaseAPIClient
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,8 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
     in the web interface. This client provides search analytics data.
     """
     
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # Accept session_manager and resilience_manager
-        super().__init__(session_manager, resilience_manager) # Call BaseAPIClient's init
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None): # Accept session_manager, resilience_manager, and api_quota_manager
+        super().__init__(session_manager, resilience_manager, api_quota_manager) # Call BaseAPIClient's init with all arguments
         self.logger = logging.getLogger(__name__ + ".GoogleSearchConsoleClient")
         self.service = None
         self._creds = None
