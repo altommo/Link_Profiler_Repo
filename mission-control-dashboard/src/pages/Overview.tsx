@@ -40,6 +40,7 @@ const Overview: React.FC = () => {
       <h1 className="text-4xl font-bold text-nasa-cyan mb-4">Mission Overview</h1>
       <p className="text-sm text-nasa-light-gray">Last Updated: {new Date(data.timestamp).toLocaleTimeString()}</p>
 
+      {/* Adjusted grid for responsiveness: 1 column on small, 2 on medium, 3 on large */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Crawler Mission Status - Updated to use new shared components */}
         <CrawlerMissionStatus

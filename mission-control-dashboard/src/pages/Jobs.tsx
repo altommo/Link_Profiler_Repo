@@ -123,13 +123,14 @@ const Jobs: React.FC = () => {
     <div className="space-y-8">
       <h1 className="text-4xl font-bold text-nasa-cyan mb-4">Job Management Console</h1>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Adjusted grid for responsiveness: 1 column on small, 2 on medium, 3 on large */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
         <DataCard title="Active & Queued Jobs">
           <div className="space-y-4">
             <p className="text-nasa-light-gray text-lg">Active Jobs: <span className="text-nasa-amber">{crawler_mission_status.active_jobs_count}</span></p>
             <p className="text-nasa-light-gray text-lg">Queued Jobs: <span className="text-nasa-cyan">{crawler_mission_status.queued_jobs_count}</span></p>
             <p className="text-nasa-light-gray text-lg">Total Queue Depth: <span className="text-nasa-cyan">{crawler_mission_status.queue_depth}</span></p>
-            <div className="flex space-x-2 mt-4">
+            <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 mt-4">
               <button className="btn-primary" onClick={() => handleGlobalJobAction('pause_all')}>Pause All Jobs</button>
               <button className="btn-secondary" onClick={() => handleGlobalJobAction('resume_all')}>Resume All Jobs</button>
             </div>
@@ -147,53 +148,55 @@ const Jobs: React.FC = () => {
       </div>
 
       <DataCard title="Satellite Job Status">
-        <div className="flex space-x-2 mb-4">
+        <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 mb-4">
           <button className="btn-primary" onClick={() => handleGlobalSatelliteControl('PAUSE')}>Pause All Satellites</button>
           <button className="btn-secondary" onClick={() => handleGlobalSatelliteControl('RESUME')}>Resume All Satellites</button>
           <button className="btn-danger" onClick={() => handleGlobalSatelliteControl('SHUTDOWN')}>Shutdown All Satellites</button>
         </div>
         <div className="max-h-96 overflow-y-auto pr-2">
           {satellite_fleet_status.length > 0 ? (
-            <table className="w-full text-left text-nasa-light-gray text-sm">
-              <thead>
-                <tr className="text-nasa-cyan border-b border-nasa-light-gray">
-                  <th className="py-2 px-4">Satellite ID</th>
-                  <th className="py-2 px-4">Status</th>
-                  <th className="py-2 px-4">Current Job</th>
-                  <th className="py-2 px-4">Progress</th>
-                  <th className="py-2 px-4">Jobs (24h)</th>
-                  <th className="py-2 px-4">Errors (24h)</th>
-                  <th className="py-2 px-4">Last Heartbeat</th>
-                  <th className="py-2 px-4">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {satellite_fleet_status.map((sat) => (
-                  <tr key={sat.satellite_id} className="border-b border-gray-700">
-                    <td className="py-2 px-4">{sat.satellite_id}</td>
-                    <td className={`py-2 px-4 ${
-                      sat.status === 'active' ? 'text-green-500' :
-                      sat.status === 'idle' ? 'text-nasa-amber' :
-                      'text-red-500'
-                    }`}>
-                      {sat.status.toUpperCase()}
-                    </td>
-                    <td className="py-2 px-4">{sat.current_job_id ? `${sat.current_job_type || 'N/A'} (${sat.current_job_id.substring(0, 6)}...)` : 'Idle'}</td>
-                    <td className="py-2 px-4">
-                      {sat.current_job_progress !== null ? `${sat.current_job_progress.toFixed(1)}%` : 'N/A'}
-                    </td>
-                    <td className="py-2 px-4">{sat.jobs_completed_24h}</td>
-                    <td className="py-2 px-4">{sat.errors_24h}</td>
-                    <td className="py-2 px-4">{new Date(sat.last_heartbeat).toLocaleTimeString()}</td>
-                    <td className="py-2 px-4 space-x-1">
-                      <button className="btn-xs btn-secondary" onClick={() => handleSatelliteControl(sat.satellite_id, 'PAUSE')}>Pause</button>
-                      <button className="btn-xs btn-primary" onClick={() => handleSatelliteControl(sat.satellite_id, 'RESUME')}>Resume</button>
-                      <button className="btn-xs btn-danger" onClick={() => handleSatelliteControl(sat.satellite_id, 'SHUTDOWN')}>Shutdown</button>
-                    </td>
+            <div className="overflow-x-auto"> {/* Added for horizontal scrolling on small screens */}
+              <table className="w-full text-left text-nasa-light-gray text-sm min-w-[700px]"> {/* min-width to prevent squishing */}
+                <thead>
+                  <tr className="text-nasa-cyan border-b border-nasa-light-gray">
+                    <th className="py-2 px-4">Satellite ID</th>
+                    <th className="py-2 px-4">Status</th>
+                    <th className="py-2 px-4">Current Job</th>
+                    <th className="py-2 px-4">Progress</th>
+                    <th className="py-2 px-4">Jobs (24h)</th>
+                    <th className="py-2 px-4">Errors (24h)</th>
+                    <th className="py-2 px-4">Last Heartbeat</th>
+                    <th className="py-2 px-4">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {satellite_fleet_status.map((sat) => (
+                    <tr key={sat.satellite_id} className="border-b border-gray-700">
+                      <td className="py-2 px-4">{sat.satellite_id}</td>
+                      <td className={`py-2 px-4 ${
+                        sat.status === 'active' ? 'text-green-500' :
+                        sat.status === 'idle' ? 'text-nasa-amber' :
+                        'text-red-500'
+                      }`}>
+                        {sat.status.toUpperCase()}
+                      </td>
+                      <td className="py-2 px-4">{sat.current_job_id ? `${sat.current_job_type || 'N/A'} (${sat.current_job_id.substring(0, 6)}...)` : 'Idle'}</td>
+                      <td className="py-2 px-4">
+                        {sat.current_job_progress !== null ? `${sat.current_job_progress.toFixed(1)}%` : 'N/A'}
+                      </td>
+                      <td className="py-2 px-4">{sat.jobs_completed_24h}</td>
+                      <td className="py-2 px-4">{sat.errors_24h}</td>
+                      <td className="py-2 px-4">{new Date(sat.last_heartbeat).toLocaleTimeString()}</td>
+                      <td className="py-2 px-4 space-x-1">
+                        <button className="btn-xs btn-secondary" onClick={() => handleSatelliteControl(sat.satellite_id, 'PAUSE')}>Pause</button>
+                        <button className="btn-xs btn-primary" onClick={() => handleSatelliteControl(sat.satellite_id, 'RESUME')}>Resume</button>
+                        <button className="btn-xs btn-danger" onClick={() => handleSatelliteControl(sat.satellite_id, 'SHUTDOWN')}>Shutdown</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : (
             <p className="text-nasa-light-gray text-sm">No detailed satellite job data available.</p>
           )}

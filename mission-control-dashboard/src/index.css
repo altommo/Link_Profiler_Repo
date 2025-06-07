@@ -4,6 +4,10 @@
 @tailwind utilities;
 
 /* Base styles for the entire application */
+html, body, #root {
+  height: 100%; /* Ensure html, body, and root div take full height */
+}
+
 body {
   margin: 0;
   font-family: 'Space Mono', monospace; /* Use a monospace font for a techy feel */
@@ -102,6 +106,16 @@ body {
 
 .form-checkbox {
   @apply h-4 w-4 text-nasa-cyan border-nasa-light-gray rounded focus:ring-nasa-cyan bg-nasa-medium-blue;
+}
+
+/* Navigation Link Styles for Sidebar */
+.nav-link {
+  @apply flex items-center p-3 rounded-lg text-nasa-light-gray hover:bg-nasa-dark-blue transition-colors duration-200;
+}
+
+.nav-link-active {
+  @apply bg-nasa-dark-blue text-nasa-cyan font-semibold;
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.2); /* Subtle glow for active link */
 }
 
 /* Tailwind custom colours (defined in tailwind.config.js) */
