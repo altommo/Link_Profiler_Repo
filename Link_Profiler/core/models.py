@@ -733,6 +733,8 @@ class Token:
 class TokenData:
     """Represents data extracted from a JWT token."""
     username: Optional[str] = None
+    role: Optional[str] = None # New: Add role to TokenData
+    organization_id: Optional[str] = None # New: Add organization_id to TokenData
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
