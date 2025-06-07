@@ -826,3 +826,19 @@ class DashboardRealtimeUpdates(BaseModel):
     alerts: List[DashboardAlert]
     satellite_fleet_status: List[SatelliteFleetStatus]
 
+# New: Pydantic models for System Configuration
+class SystemConfigResponse(BaseModel):
+    logging_level: str
+    api_cache_enabled: bool
+    api_cache_ttl: int
+    crawler_max_depth: int
+    crawler_render_javascript: bool
+    # Add other relevant config items here
+
+class SystemConfigUpdate(BaseModel):
+    logging_level: Optional[str] = None
+    api_cache_enabled: Optional[bool] = None
+    api_cache_ttl: Optional[int] = None
+    crawler_max_depth: Optional[int] = None
+    crawler_render_javascript: Optional[bool] = None
+    # Add other relevant config items here
