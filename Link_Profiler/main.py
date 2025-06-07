@@ -118,7 +118,7 @@ from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienc
 distributed_resilience_manager = DistributedResilienceManager(redis_client=redis_client)
 
 # New: Import API Quota Manager (Initialize after DistributedResilienceManager)
-from Link_Profiler.utils.api_quota_manager import APIQuotaManager, api_quota_manager # Import both class and singleton
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import the class only
 
 # New: Import SmartAPIRouterService (Initialize after APIQuotaManager and all clients)
 from Link_Profiler.services.smart_api_router_service import SmartAPIRouterService, smart_api_router_service # Import both class and singleton
