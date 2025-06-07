@@ -30,7 +30,7 @@ const ProtectedRoute: React.FC<{ children: JSX.Element }> = ({ children }) => {
 };
 
 function App() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth(); // Destructure user from useAuth
 
   return (
     <div className="min-h-screen bg-nasa-dark-blue"> {/* Changed background to nasa-dark-blue for consistency */}
@@ -39,8 +39,9 @@ function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-            <Route path="/jobs" element={<ProtectedRoute><CrawlJobs /></ProtectedRoute>} />
-            <Route path="/profile" element={<ProtectedRoute><UserProfile /></ProtectedRoute>} />
+            {/* Pass user prop to CrawlJobs and UserProfile */}
+            <Route path="/jobs" element={<ProtectedRoute><CrawlJobs user={user} /></ProtectedRoute>} />
+            <Route path="/profile" element={<ProtectedRoute><UserProfile user={user} /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </Layout>

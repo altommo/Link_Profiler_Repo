@@ -28,8 +28,8 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
       >
         <div className="flex justify-between items-center mb-8">
           <h2 className="text-nasa-cyan text-3xl font-bold">
-            <i className="fas fa-rocket mr-2"></i>MC
-          </h2>
+            <i className="fas fa-rocket mr-2"></i>LP
+          </h2> {/* Changed to LP for Link Profiler */}
           <button onClick={toggleSidebar} className="text-nasa-cyan text-2xl md:hidden focus:outline-none">
             <i className="fas fa-times"></i> {/* Close icon for mobile */}
           </button>
@@ -37,13 +37,13 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
 
         <nav className="space-y-4">
           <NavLink
-            to="/overview"
+            to="/dashboard" // Changed from /overview to /dashboard
             className={({ isActive }) =>
               `nav-link ${isActive ? 'nav-link-active' : ''}`
             }
             onClick={isOpen ? toggleSidebar : undefined} // Close sidebar on link click in mobile
           >
-            <i className="fas fa-tachometer-alt mr-3"></i>Overview
+            <i className="fas fa-tachometer-alt mr-3"></i>Dashboard
           </NavLink>
           <NavLink
             to="/jobs"
@@ -55,15 +55,16 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
             <i className="fas fa-tasks mr-3"></i>Jobs
           </NavLink>
           <NavLink
-            to="/alerts"
+            to="/profile" // Added link to UserProfile
             className={({ isActive }) =>
               `nav-link ${isActive ? 'nav-link-active' : ''}`
             }
             onClick={isOpen ? toggleSidebar : undefined}
           >
-            <i className="fas fa-bell mr-3"></i>Alerts
+            <i className="fas fa-user-circle mr-3"></i>Profile
           </NavLink>
-          {isAdmin && (
+          {/* Removed Alerts and Settings as they are not defined in App.tsx routes for customer dashboard */}
+          {/* {isAdmin && (
             <NavLink
               to="/settings"
               className={({ isActive }) =>
@@ -73,7 +74,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
             >
               <i className="fas fa-cogs mr-3"></i>Settings
             </NavLink>
-          )}
+          )} */}
         </nav>
       </aside>
     </>

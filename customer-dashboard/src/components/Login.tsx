@@ -2,10 +2,10 @@ import React, { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 
 const Login: React.FC = () => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [username, setUsername] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string>(''); // Initialize as empty string
 
   const { login } = useAuth();
 
@@ -16,27 +16,27 @@ const Login: React.FC = () => {
 
     try {
       await login(username, password);
-    } catch (err) {
-      setError('Invalid username or password');
+    } catch (err: any) {
+      setError(err.message || 'Invalid username or password');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
+    <div className="login-container"> {/* Applied custom class */}
+      <div className="login-card"> {/* Applied custom class */}
         <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+          <h2 className="login-title"> {/* Applied custom class */}
             Sign in to your account
           </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
+          <p className="login-subtitle"> {/* Applied custom class */}
             Access your Link Profiler dashboard
           </p>
         </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+        <form className="login-form" onSubmit={handleSubmit}> {/* Applied custom class */}
           <div className="rounded-md shadow-sm -space-y-px">
-            <div>
+            <div className="form-group"> {/* Applied custom class */}
               <label htmlFor="username" className="sr-only">
                 Username
               </label>
@@ -45,13 +45,13 @@ const Login: React.FC = () => {
                 name="username"
                 type="text"
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                className="form-input" {/* Applied custom class */}
                 placeholder="Username"
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUsername(e.target.value)}
               />
             </div>
-            <div>
+            <div className="form-group"> {/* Applied custom class */}
               <label htmlFor="password" className="sr-only">
                 Password
               </label>
@@ -60,16 +60,16 @@ const Login: React.FC = () => {
                 name="password"
                 type="password"
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                className="form-input rounded-b-md" {/* Applied custom class, kept rounded-b-md */}
                 placeholder="Password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
               />
             </div>
           </div>
 
           {error && (
-            <div className="text-red-600 text-sm text-center">
+            <div className="error-message"> {/* Applied custom class */}
               {error}
             </div>
           )}
@@ -78,16 +78,16 @@ const Login: React.FC = () => {
             <button
               type="submit"
               disabled={loading}
-              className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+              className="login-button" {/* Applied custom class */}
             >
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </div>
 
-          <div className="text-center">
-            <p className="text-sm text-gray-600">
+          <div className="text-center mt-4"> {/* Added margin-top */}
+            <p className="text-sm text-nasa-light-gray"> {/* Changed text color */}
               Don't have an account?{' '}
-              <a href="/register" className="font-medium text-blue-600 hover:text-blue-500">
+              <a href="/register" className="font-medium text-nasa-cyan hover:text-nasa-blue"> {/* Changed text color */}
                 Contact support
               </a>
             </p>

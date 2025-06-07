@@ -15,8 +15,8 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar }) => {
         <button onClick={toggleSidebar} className="text-nasa-cyan text-2xl mr-4 focus:outline-none">
           <i className="fas fa-bars"></i> {/* FontAwesome bars icon for mobile menu */}
         </button>
-        <Link to="/overview" className="text-nasa-cyan text-2xl font-bold">
-          Mission Control
+        <Link to="/dashboard" className="text-nasa-cyan text-2xl font-bold"> {/* Changed to /dashboard */}
+          Link Profiler
         </Link>
       </div>
       <div className="flex items-center space-x-4">
