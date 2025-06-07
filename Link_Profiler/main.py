@@ -16,7 +16,7 @@ from typing import List, Optional, Dict, Any, Union, Annotated # Import Optional
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 if project_root and project_root not in sys.path:
-    sys.path.insert(0, project_root)
+    sys.sys.path.insert(0, project_root)
     print(f"PROJECT_ROOT (discovered and added to sys.path): {project_root}")
 else:
     print(f"PROJECT_ROOT (discovery failed or already in sys.path): {project_root}")
@@ -86,10 +86,6 @@ API_CACHE_ENABLED = config_loader.get("api_cache.enabled")
 API_CACHE_TTL = config_loader.get("api_cache.ttl")
 
 
-# Initialize core dependencies that other modules might import
-# db = Database(db_url=DATABASE_URL) # Database singleton is already initialized via db = Database()
-# auth_service_instance = AuthService(db) # AuthService singleton is already initialized via auth_service_instance = AuthService()
-
 # Initialize Redis connection pool and client (moved up to ensure it's defined before lifespan)
 import redis.asyncio as redis
 redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
@@ -116,13 +112,83 @@ import psycopg2
 from playwright.async_api import async_playwright, Browser
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # Added missing imports
 
+# New: Import DistributedResilienceManager (Initialize before APIQuotaManager)
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager, distributed_resilience_manager # Import the singleton
+
+# New: Import API Quota Manager (Initialize after DistributedResilienceManager)
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager, api_quota_manager # Import both class and singleton
+
+# New: Import SmartAPIRouterService (Initialize after APIQuotaManager and all clients)
+from Link_Profiler.services.smart_api_router_service import SmartAPIRouterService, smart_api_router_service # Import both class and singleton
+
+# New: Import API Clients (Instantiate all of them)
+from Link_Profiler.clients.google_search_console_client import GoogleSearchConsoleClient # Renamed GSCClient to GoogleSearchConsoleClient
+from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient
+from Link_Profiler.clients.google_trends_client import GoogleTrendsClient
+from Link_Profiler.clients.whois_client import WHOISClient
+from Link_Profiler.clients.dns_client import DNSClient
+from Link_Profiler.clients.reddit_client import RedditClient
+from Link_Profiler.clients.youtube_client import YouTubeClient
+from Link_Profiler.clients.news_api_client import NewsAPIClient
+from Link_Profiler.clients.serpstack_client import SerpstackClient # Import SerpstackClient
+from Link_Profiler.clients.valueserp_client import ValueserpClient # Import ValueserpClient
+from Link_Profiler.clients.webscraping_ai_client import WebscrapingAIClient # Import WebscrapingAIClient
+from Link_Profiler.clients.hunter_io_client import HunterIOClient # Import HunterIOClient
+from Link_Profiler.clients.builtwith_client import BuiltWithClient # Import BuiltWithClient
+from Link_Profiler.clients.security_trails_client import SecurityTrailsClient # Import SecurityTrailsClient
+
+
+# Initialize API Quota Manager (requires resilience_manager)
+api_quota_manager = APIQuotaManager(config_loader._config_data, resilience_manager=distributed_resilience_manager)
+
+# Initialize all individual API clients, passing all required dependencies
+gsc_client_instance = GoogleSearchConsoleClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+pagespeed_client_instance = PageSpeedClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+google_trends_client_instance = GoogleTrendsClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+whois_client_instance = WHOISClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+dns_client_instance = DNSClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+reddit_client_instance = RedditClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+youtube_client_instance = YouTubeClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+news_api_client_instance = NewsAPIClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+serpstack_client_instance = SerpstackClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+valueserp_client_instance = ValueserpClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+webscraping_ai_client_instance = WebscrapingAIClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+hunter_io_client_instance = HunterIOClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+builtwith_client_instance = BuiltWithClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+security_trails_client_instance = SecurityTrailsClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
+
+
+# Initialize SmartAPIRouterService (requires all clients)
+smart_api_router_service = SmartAPIRouterService(
+    config=config_loader._config_data,
+    session_manager=session_manager,
+    resilience_manager=distributed_resilience_manager,
+    api_quota_manager=api_quota_manager,
+    google_search_console_client=gsc_client_instance,
+    google_pagespeed_client=pagespeed_client_instance,
+    google_trends_client=google_trends_client_instance,
+    whois_client=whois_client_instance,
+    dns_client=dns_client_instance,
+    reddit_client=reddit_client_instance,
+    youtube_client=youtube_client_instance,
+    news_api_client=news_api_client_instance,
+    serpstack_client=serpstack_client_instance,
+    valueserp_client=valueserp_client_instance,
+    webscraping_ai_client=webscraping_ai_client_instance,
+    hunter_io_client=hunter_io_client_instance,
+    builtwith_client=builtwith_client_instance,
+    security_trails_client=security_trails_client_instance
+)
+
+
+# Now import other services that will use the SmartAPIRouterService
 from Link_Profiler.services.crawl_service import CrawlService
-from Link_Profiler.services.domain_service import DomainService # Removed specific APIClient imports
-from Link_Profiler.services.backlink_service import BacklinkService # Removed specific APIClient imports
+from Link_Profiler.services.domain_service import DomainService
+from Link_Profiler.services.backlink_service import BacklinkService
 from Link_Profiler.services.domain_analyzer_service import DomainAnalyzerService
 from Link_Profiler.services.expired_domain_finder_service import ExpiredDomainFinderService
-from Link_Profiler.services.serp_service import SERPService # Removed specific APIClient imports
-from Link_Profiler.services.keyword_service import KeywordService # Removed specific APIClient imports
+from Link_Profiler.services.serp_service import SERPService
+from Link_Profiler.services.keyword_service import KeywordService
 from Link_Profiler.services.link_health_service import LinkHealthService
 from Link_Profiler.services.ai_service import AIService
 from Link_Profiler.services.alert_service import AlertService, alert_service_instance # Import AlertService and its singleton
@@ -149,33 +215,11 @@ from Link_Profiler.api.queue_endpoints import set_coordinator_dependencies, get_
 from Link_Profiler.crawlers.web_crawler import EnhancedWebCrawler # Changed to EnhancedWebCrawler
 from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue, Priority
 
-# New: Import DistributedResilienceManager
-from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager, distributed_resilience_manager # Import the singleton
-
-# New: Import API Quota Manager
-from Link_Profiler.utils.api_quota_manager import APIQuotaManager, api_quota_manager # Import both class and singleton
-
 # New: Import Dashboard Alert Service
 from Link_Profiler.services.dashboard_alert_service import DashboardAlertService, dashboard_alert_service # Import both class and singleton
 
 # New: Import Mission Control Service
 from Link_Profiler.services.mission_control_service import MissionControlService, mission_control_service # Import both class and singleton
-
-# New: Import API Clients
-from Link_Profiler.clients.google_search_console_client import GoogleSearchConsoleClient # Renamed GSCClient to GoogleSearchConsoleClient
-from Link_Profiler.clients.google_pagespeed_client import PageSpeedClient
-from Link_Profiler.clients.google_trends_client import GoogleTrendsClient
-from Link_Profiler.clients.whois_client import WHOISClient
-from Link_Profiler.clients.dns_client import DNSClient
-from Link_Profiler.clients.reddit_client import RedditClient
-from Link_Profiler.clients.youtube_client import YouTubeClient
-from Link_Profiler.clients.news_api_client import NewsAPIClient
-from Link_Profiler.clients.serpstack_client import SerpstackClient # Import SerpstackClient
-from Link_Profiler.clients.valueserp_client import ValueserpClient # Import ValueserpClient
-from Link_Profiler.clients.webscraping_ai_client import WebscrapingAIClient # Import WebscrapingAIClient
-from Link_Profiler.clients.hunter_io_client import HunterIOClient # Import HunterIOClient
-from Link_Profiler.clients.builtwith_client import BuiltWithClient # Import BuiltWithClient
-from Link_Profiler.clients.security_trails_client import SecurityTrailsClient # Import SecurityTrailsClient
 
 # Import api_cache singleton
 from Link_Profiler.utils.api_cache import api_cache
@@ -217,34 +261,19 @@ else:
     logger.info("ClickHouse integration disabled (USE_CLICKHOUSE is not 'true').")
 
 
-# New: Initialize WHOISClient and DNSClient
-whois_client_instance = WHOISClient(session_manager=session_manager)
-dns_client_instance = DNSClient(session_manager=session_manager)
-
 # Initialize DomainService globally, but manage its lifecycle with lifespan
-# Determine which DomainAPIClient to use based on priority: AbstractAPI > Real (paid) > WHOIS-JSON > Simulated
-# The DomainService constructor now handles the internal assignment of api_client
-# based on the config, so we just pass the necessary dependencies.
+# DomainService now takes SmartAPIRouterService
 domain_service_instance = DomainService(
-    session_manager=session_manager, # Pass session manager
-    resilience_manager=distributed_resilience_manager, # Pass resilience manager
-    api_quota_manager=api_quota_manager # Pass API quota manager
+    db=db, # DomainService needs db
+    smart_api_router_service=smart_api_router_service # Pass the new router service
 )
-
-# New: Initialize GSCClient
-gsc_client_instance = GoogleSearchConsoleClient(session_manager=session_manager)
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
-# Removed 'gsc_client' argument as BacklinkService internally handles GSCBacklinkAPIClient instantiation.
+# BacklinkService now takes SmartAPIRouterService
 backlink_service_instance = BacklinkService(
-    # redis_client=redis_client, # BacklinkService does not directly use redis_client
-    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
-    # database=db, # BacklinkService does not directly use db
-    session_manager=session_manager # Pass session manager
+    db=db, # BacklinkService needs db
+    smart_api_router_service=smart_api_router_service # Pass the new router service
 )
-
-# New: Initialize PageSpeedClient
-pagespeed_client_instance = PageSpeedClient(session_manager=session_manager)
 
 # New: Initialize SERPService and SERPCrawler
 serp_crawler_instance = None
@@ -254,31 +283,23 @@ if config_loader.get("serp_crawler.playwright.enabled"):
         headless=config_loader.get("serp_crawler.playwright.headless"),
         browser_type=config_loader.get("serp_crawler.playwright.browser_type")
     )
+# SERPService now takes SmartAPIRouterService
 serp_service_instance = SERPService(
     serp_crawler=serp_crawler_instance,
-    pagespeed_client=pagespeed_client_instance, # New: Pass pagespeed_client_instance
     redis_client=redis_client, # Pass redis_client for caching
     cache_ttl=API_CACHE_TTL, # Pass cache_ttl
-    session_manager=session_manager, # Pass session manager
-    resilience_manager=distributed_resilience_manager, # Pass resilience manager
-    api_quota_manager=api_quota_manager # Pass API quota manager
+    smart_api_router_service=smart_api_router_service # Pass the new router service
 )
-
-# New: Initialize GoogleTrendsClient
-google_trends_client_instance = GoogleTrendsClient(session_manager=session_manager)
 
 # New: Initialize KeywordService and KeywordScraper
 keyword_scraper_instance = None
 if config_loader.get("keyword_scraper.enabled"): # Assuming a config for keyword_scraper.enabled
     logger.info("Initialising KeywordScraper.")
     keyword_scraper_instance = KeywordScraper(session_manager=session_manager)
+# KeywordService now takes SmartAPIRouterService
 keyword_service_instance = KeywordService(
-    # api_client=RealKeywordAPIClient(api_key=config_loader.get("keyword_api.real_api.api_key"), base_url=config_loader.get("keyword_api.real_api.base_url"), session_manager=session_manager) if config_loader.get("keyword_api.real_api.enabled") else SimulatedKeywordAPIClient(session_manager=session_manager),
     keyword_scraper=keyword_scraper_instance,
-    google_trends_client=google_trends_client_instance, # New: Pass google_trends_client_instance
-    # redis_client=redis_client, # Pass redis_client for caching
-    # cache_ttl=API_CACHE_TTL, # Pass cache_ttl
-    session_manager=session_manager # Pass session manager
+    smart_api_router_service=smart_api_router_service # Pass the new router service
 )
 
 # New: Initialize LinkHealthService
@@ -290,7 +311,7 @@ technical_auditor_instance = TechnicalAuditor(
 )
 
 # New: Initialize AI Service
-ai_service_instance = AIService(session_manager=session_manager)
+ai_service_instance = AIService(session_manager=session_manager) # AI Service might need router too if it uses external APIs
 
 # New: Initialize Report Service
 report_service_instance = ReportService(db)
@@ -298,31 +319,21 @@ report_service_instance = ReportService(db)
 # New: Initialize Competitive Analysis Service
 competitive_analysis_service_instance = CompetitiveAnalysisService(db, backlink_service_instance, serp_service_instance)
 
-# New: Initialize RedditClient, YouTubeClient, NewsAPIClient
-reddit_client_instance = RedditClient(session_manager=session_manager)
-youtube_client_instance = YouTubeClient(session_manager=session_manager)
-news_api_client_instance = NewsAPIClient(session_manager=session_manager)
-
 # New: Initialize Social Media Service and Crawler
 social_media_crawler_instance = None
 if config_loader.get("social_media_crawler.enabled"):
     logger.info("Initialising SocialMediaCrawler.")
     social_media_crawler_instance = SocialMediaCrawler(session_manager=session_manager)
+# SocialMediaService now takes SmartAPIRouterService
 social_media_service_instance = SocialMediaService(
     social_media_crawler=social_media_crawler_instance,
-    # redis_client=redis_client, # SocialMediaService does not directly use redis_client
-    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
-    reddit_client=reddit_client_instance, # New: Pass RedditClient
-    youtube_client=youtube_client_instance, # New: Pass YouTubeClient
-    news_api_client=news_api_client_instance, # New: Pass NewsAPIClient
-    session_manager=session_manager # Pass session manager
+    smart_api_router_service=smart_api_router_service # Pass the new router service
 )
 
 # New: Initialize Web3 Service
+# Web3Service now takes SmartAPIRouterService
 web3_service_instance = Web3Service(
-    # redis_client=redis_client, # Web3Service does not directly use redis_client
-    # cache_ttl=API_CACHE_TTL, # Caching is handled by api_cache decorator
-    session_manager=session_manager # Pass session manager
+    smart_api_router_service=smart_api_router_service # Pass the new router service
 )
 
 # New: Initialize Link Building Service
@@ -387,9 +398,6 @@ main_crawl_config = CrawlConfig(**crawler_config_data)
 # Create SmartCrawlQueue instance
 smart_crawl_queue = SmartCrawlQueue(redis_client=redis_client)
 
-# Initialize APIQuotaManager
-api_quota_manager = APIQuotaManager(config_loader._config_data) # Pass the raw config data for initialization
-
 # Initialize DashboardAlertService
 dashboard_alert_service = DashboardAlertService(
     db=db,
@@ -417,12 +425,12 @@ async def lifespan(app: FastAPI):
     """
     context_managers = [
         session_manager,
-        domain_service_instance,
-        ai_service_instance,
-        api_cache,
+        distributed_resilience_manager, # Add resilience manager to lifespan
+        api_quota_manager, # Add API quota manager to lifespan
+        smart_api_router_service, # Add smart API router service to lifespan
+        # Individual API clients are managed by SmartAPIRouterService, no need to add them here
         auth_service_instance,
         connection_manager,
-        api_quota_manager,
         dashboard_alert_service, # Add DashboardAlertService to lifespan
         mission_control_service, # Add MissionControlService to lifespan
         backlink_service_instance,
@@ -436,16 +444,9 @@ async def lifespan(app: FastAPI):
         social_media_service_instance,
         web3_service_instance,
         link_building_service_instance,
-        gsc_client_instance,
-        pagespeed_client_instance,
-        google_trends_client_instance,
-        whois_client_instance,
-        dns_client_instance,
-        reddit_client_instance,
-        youtube_client_instance,
-        news_api_client_instance,
         main_web_crawler,
-        distributed_resilience_manager
+        # DomainService is now managed by smart_api_router_service, no need to add it here directly
+        domain_service_instance # DomainService still needs to be entered for its own internal setup
     ]
 
     if clickhouse_loader_instance:
@@ -637,6 +638,7 @@ async def get_link_profile(target_url: str, current_user: User = Depends(get_cur
 async def get_domain_info(domain_name: str, current_user: User = Depends(get_current_user)):
     domain = db.get_domain(domain_name)
     if not domain:
+        # DomainService now uses smart_api_router_service internally
         async with domain_service_instance as ds:
             domain = await ds.get_domain_info(domain_name)
             if domain:

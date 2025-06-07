@@ -7,50 +7,11 @@ import random # For simulating ML model output
 from collections import deque # For tracking recent performance
 
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager, CircuitBreakerState # Import CircuitBreakerState
+from Link_Profiler.utils.ml_cost_optimizer import MLCostOptimizer # Import the new ML model
 
 logger = logging.getLogger(__name__)
 
-class SimpleMLPredictor:
-    """
-    A placeholder for a simple Machine Learning model that predicts API call value/cost.
-    In a real scenario, this would be a trained model (e.g., scikit-learn, TensorFlow).
-    For now, it provides a simulated prediction based on input features.
-    """
-    def __init__(self):
-        self.logger = logging.getLogger(__name__ + ".SimpleMLPredictor")
-        self.logger.info("SimpleMLPredictor initialized (placeholder for actual ML model).")
-
-    def predict_value(self, features: Dict[str, Any]) -> float:
-        """
-        Simulates a prediction of the value/cost-effectiveness of an API call.
-        Features might include: quality_score, success_rate, avg_response_time,
-        remaining_quota, cost_per_unit, predicted_exhaustion_date.
-        
-        Returns a score where higher is better (more cost-effective/valuable).
-        """
-        # This is a very simplistic, rule-based "prediction" for demonstration.
-        # A real ML model would learn these relationships from data.
-        
-        score = 0.0
-        
-        # Prioritize quality and success
-        score += features.get('quality_score', 0) * 0.5
-        score += features.get('success_rate', 0.0) * 10
-        
-        # Penalize high response time
-        if features.get('avg_response_time', 0) > 500:
-            score -= (features['avg_response_time'] / 500) * 0.1
-            
-        # Reward remaining quota, penalize cost
-        if features.get('remaining_quota') is not None:
-            score += min(features['remaining_quota'] / 100, 10) # Cap reward
-        score -= features.get('cost_per_unit', 0) * 5
-        
-        # Add some randomness to simulate model variability
-        score += random.uniform(-0.5, 0.5)
-        
-        self.logger.debug(f"ML Predictor input: {features}, Predicted Score: {score:.2f}")
-        return score
+# Removed SimpleMLPredictor as it's replaced by MLCostOptimizer
 
 class APIQuotaManager:
     """
@@ -91,7 +52,9 @@ class APIQuotaManager:
         }
         self.exhaustion_warning_days = 7 # Days until exhaustion to start applying heavy penalty
 
-        self.ml_predictor = SimpleMLPredictor() # Initialize the ML predictor
+        # Initialize the new MLCostOptimizer
+        ml_weights = config.get("api_routing.ml_weights", None)
+        self.ml_predictor = MLCostOptimizer(weights=ml_weights)
         self.ml_enabled_for_routing = config.get("api_routing.ml_enabled", False) # New config flag
         self.recent_calls_window_size = config.get("api_routing.recent_calls_window_size", 50) # Number of recent calls to track for dynamic weighting
 
@@ -325,8 +288,10 @@ class APIQuotaManager:
         
         remaining = self.get_remaining_quota(api_name)
         remaining_val = float('inf') if remaining is None else remaining
+        limit_val = quota_data.get('limit', -1) # Get the limit for ratio calculation
 
         predicted_exhaustion = self.predict_exhaustion_date(api_name)
+        time_to_exhaustion_seconds = (predicted_exhaustion - datetime.now()).total_seconds() if predicted_exhaustion else float('inf')
 
         # Circuit Breaker Penalty
         cb = self.resilience_manager.get_circuit_breaker(api_name)
@@ -343,14 +308,14 @@ class APIQuotaManager:
         if len(recent_calls) >= 5: # Need at least 5 recent calls to make a judgment
             recent_successes = sum(1 for s, _ in recent_calls if s)
             recent_failures = len(recent_calls) - recent_successes
-            recent_avg_response_time = sum(rt for _, rt in recent_calls) / len(recent_calls)
+            recent_avg_response_time = sum(rt for _, rt in recent_calls) / len(recent_calls) if len(recent_calls) > 0 else 0.0
 
             # If recent success rate is significantly lower than overall, penalize
-            if recent_successes / len(recent_calls) < success_rate * 0.9: # 10% drop
+            if success_rate > 0 and (recent_successes / len(recent_calls)) < success_rate * 0.9: # 10% drop
                 dynamic_performance_adjustment += (recent_successes / len(recent_calls) - success_rate) * self.weights['success_rate'] * 0.5 # Half the normal weight
 
             # If recent response time is significantly higher than overall, penalize
-            if recent_avg_response_time > avg_response_time * 1.1: # 10% increase
+            if avg_response_time > 0 and recent_avg_response_time > avg_response_time * 1.1: # 10% increase
                 dynamic_performance_adjustment += (recent_avg_response_time / self.performance_thresholds['high_response_time_ms']) * self.weights['response_time'] * 0.5 # Half the normal weight
         
         # Performance Penalty (based on overall performance)
@@ -363,13 +328,12 @@ class APIQuotaManager:
         # Exhaustion Penalty
         exhaustion_penalty = 0
         if predicted_exhaustion:
-            time_to_exhaustion = (predicted_exhaustion - datetime.now()).total_seconds()
-            if time_to_exhaustion < 0: # Already exhausted
+            if time_to_exhaustion_seconds < 0: # Already exhausted
                 exhaustion_penalty = -float('inf')
-            elif time_to_exhaustion < timedelta(days=1).total_seconds(): # Less than 1 day
+            elif time_to_exhaustion_seconds < timedelta(days=1).total_seconds(): # Less than 1 day
                 exhaustion_penalty = self.weights['exhaustion_penalty_factor'] * 100 # Very high penalty
-            elif time_to_exhaustion < timedelta(days=self.exhaustion_warning_days).total_seconds(): # Within warning days
-                exhaustion_penalty = self.weights['exhaustion_penalty_factor'] * (1 - (time_to_exhaustion / timedelta(days=self.exhaustion_warning_days).total_seconds())) # Scale penalty
+            elif time_to_exhaustion_seconds < timedelta(days=self.exhaustion_warning_days).total_seconds(): # Within warning days
+                exhaustion_penalty = self.weights['exhaustion_penalty_factor'] * (1 - (time_to_exhaustion_seconds / timedelta(days=self.exhaustion_warning_days).total_seconds())) # Scale penalty
 
         # ML Model Integration
         ml_score = 0.0
@@ -377,11 +341,13 @@ class APIQuotaManager:
             features = {
                 'quality_score': quality,
                 'success_rate': success_rate,
-                'avg_response_time': avg_response_time,
+                'avg_response_time_ms': avg_response_time,
                 'remaining_quota': remaining_val,
+                'limit': limit_val, # Pass limit for ratio calculation
                 'cost_per_unit': cost_per_unit,
-                'time_to_exhaustion_seconds': time_to_exhaustion if predicted_exhaustion else float('inf'),
-                'circuit_breaker_state': cb_status['state'].value
+                'time_to_exhaustion_seconds': time_to_exhaustion_seconds,
+                'circuit_breaker_state': cb_status['state'].value,
+                'dynamic_performance_adjustment': dynamic_performance_adjustment # Pass this to ML model
             }
             ml_score = self.ml_predictor.predict_value(features)
             self.logger.debug(f"API {api_name} ML Score: {ml_score:.2f}")
@@ -397,7 +363,7 @@ class APIQuotaManager:
         elif strategy == 'quota_optimized':
             if ml_enabled:
                 # When ML is enabled for quota optimization, its prediction heavily influences the score
-                score = ml_score * 1000000 # Scale ML score to be dominant
+                score = ml_score # Use ML score directly
             else:
                 score = (remaining_val * self.weights['remaining_quota'] + 
                          cost_per_unit * self.weights['cost_per_unit'] + 
