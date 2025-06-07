@@ -289,10 +289,13 @@ domain_service_instance = DomainService(
 )
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
-# BacklinkService now takes SmartAPIRouterService
+# BacklinkService constructor signature: (session_manager, resilience_manager, api_client=None, redis_client=None, cache_ttl=3600, database=None)
 backlink_service_instance = BacklinkService(
-    db=db, # BacklinkService needs db
-    smart_api_router_service=smart_api_router_service # Pass the new router service
+    session_manager=session_manager,
+    resilience_manager=distributed_resilience_manager,
+    redis_client=redis_client,
+    cache_ttl=API_CACHE_TTL,
+    database=db # BacklinkService needs db as database parameter
 )
 
 # New: Initialize SERPService and SERPCrawler
@@ -303,12 +306,16 @@ if config_loader.get("serp_crawler.playwright.enabled"):
         headless=config_loader.get("serp_crawler.playwright.headless"),
         browser_type=config_loader.get("serp_crawler.playwright.browser_type")
     )
-# SERPService now takes SmartAPIRouterService
+# SERPService constructor signature: (api_client=None, serp_crawler=None, pagespeed_client=None, redis_client=None, cache_ttl=3600, session_manager=None, resilience_manager=None, api_quota_manager=None, api_routing_service=None)
 serp_service_instance = SERPService(
     serp_crawler=serp_crawler_instance,
-    redis_client=redis_client, # Pass redis_client for caching
-    cache_ttl=API_CACHE_TTL, # Pass cache_ttl
-    smart_api_router_service=smart_api_router_service # Pass the new router service
+    pagespeed_client=pagespeed_client_instance,
+    redis_client=redis_client,
+    cache_ttl=API_CACHE_TTL,
+    session_manager=session_manager,
+    resilience_manager=distributed_resilience_manager,
+    api_quota_manager=api_quota_manager,
+    api_routing_service=smart_api_router_service # Pass the router service as api_routing_service
 )
 
 # New: Initialize KeywordService and KeywordScraper
@@ -316,10 +323,13 @@ keyword_scraper_instance = None
 if config_loader.get("keyword_scraper.enabled"): # Assuming a config for keyword_scraper.enabled
     logger.info("Initialising KeywordScraper.")
     keyword_scraper_instance = KeywordScraper(session_manager=session_manager)
-# KeywordService now takes SmartAPIRouterService
+# KeywordService constructor signature: (database=None, api_client=None, keyword_scraper=None, google_trends_client=None, session_manager=None, resilience_manager=None)
 keyword_service_instance = KeywordService(
+    database=db,
     keyword_scraper=keyword_scraper_instance,
-    smart_api_router_service=smart_api_router_service # Pass the new router service
+    google_trends_client=google_trends_client_instance,
+    session_manager=session_manager,
+    resilience_manager=distributed_resilience_manager
 )
 
 # New: Initialize LinkHealthService
@@ -331,7 +341,11 @@ technical_auditor_instance = TechnicalAuditor(
 )
 
 # New: Initialize AI Service
-ai_service_instance = AIService(session_manager=session_manager) # AI Service might need router too if it uses external APIs
+ai_service_instance = AIService(
+    database=db,
+    session_manager=session_manager,
+    resilience_manager=distributed_resilience_manager
+)
 
 # New: Initialize Report Service
 report_service_instance = ReportService(db)
@@ -344,16 +358,23 @@ social_media_crawler_instance = None
 if config_loader.get("social_media_crawler.enabled"):
     logger.info("Initialising SocialMediaCrawler.")
     social_media_crawler_instance = SocialMediaCrawler(session_manager=session_manager)
-# SocialMediaService now takes SmartAPIRouterService
+# SocialMediaService constructor signature: (database, session_manager, social_media_crawler=None, reddit_client=None, youtube_client=None, news_api_client=None, resilience_manager=None)
 social_media_service_instance = SocialMediaService(
+    database=db,
+    session_manager=session_manager,
     social_media_crawler=social_media_crawler_instance,
-    smart_api_router_service=smart_api_router_service # Pass the new router service
+    reddit_client=reddit_client_instance,
+    youtube_client=youtube_client_instance,
+    news_api_client=news_api_client_instance,
+    resilience_manager=distributed_resilience_manager
 )
 
 # New: Initialize Web3 Service
-# Web3Service now takes SmartAPIRouterService
+# Web3Service constructor signature: (database, redis_client=None, cache_ttl=3600)
 web3_service_instance = Web3Service(
-    smart_api_router_service=smart_api_router_service # Pass the new router service
+    database=db,
+    redis_client=redis_client,
+    cache_ttl=API_CACHE_TTL
 )
 
 # New: Initialize Link Building Service
