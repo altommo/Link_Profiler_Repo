@@ -10,6 +10,7 @@ from Link_Profiler.clients.base_client import BaseAPIClient
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +20,8 @@ class GoogleTrendsClient(BaseAPIClient):
     Note: pytrends is a wrapper around Google Trends website, not an official API.
     It might be unstable and subject to changes.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
-        super().__init__(session_manager, resilience_manager)
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
+        super().__init__(session_manager, resilience_manager, api_quota_manager) # Pass api_quota_manager to base class
         self.logger = logging.getLogger(__name__ + ".GoogleTrendsClient")
         self.enabled = config_loader.get("keyword_api.google_trends_api.enabled", False)
         
@@ -28,8 +29,9 @@ class GoogleTrendsClient(BaseAPIClient):
         # It also has rate limits and can be blocked.
         # For server-side use, it's often better to use a proxy or a dedicated service.
         
-        if self.enabled and self.resilience_manager is None:
-            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+        # Removed redundant check as BaseAPIClient handles resilience_manager validation
+        # if self.enabled and self.resilience_manager is None:
+        #     raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
         if not self.enabled:
             self.logger.info("Google Trends API is disabled by configuration.")

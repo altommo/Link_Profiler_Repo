@@ -12,6 +12,7 @@ from Link_Profiler.clients.base_client import BaseAPIClient
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.session_manager import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
 
 logger = logging.getLogger(__name__)
 
@@ -19,16 +20,17 @@ class RedditClient(BaseAPIClient):
     """
     Client for interacting with the Reddit API (via PRAW).
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
-        super().__init__(session_manager, resilience_manager)
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
+        super().__init__(session_manager, resilience_manager, api_quota_manager) # Pass api_quota_manager to base class
         self.logger = logging.getLogger(__name__ + ".RedditClient")
         self.enabled = config_loader.get("social_media_crawler.reddit_api.enabled", False)
         self.client_id = config_loader.get("social_media_crawler.reddit_api.client_id")
         self.client_secret = config_loader.get("social_media_crawler.reddit_api.client_secret")
         self.user_agent = config_loader.get("social_media_crawler.reddit_api.user_agent", "LinkProfilerBot/1.0")
 
-        if self.enabled and self.resilience_manager is None:
-            raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+        # Removed redundant check as BaseAPIClient handles resilience_manager validation
+        # if self.enabled and self.resilience_manager is None:
+        #     raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
 
         if not self.enabled:
             self.logger.info("Reddit API is disabled by configuration.")
