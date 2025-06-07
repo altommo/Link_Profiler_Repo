@@ -1,37 +1,52 @@
 import React, { useState, useEffect } from 'react';
-// Assuming you'll have an API service to fetch/update user data
-// import { getUserProfile, updateProfile } from '../services/api'; 
+import { User } from '../types'; // Import User type
+import { getUserProfile, updateProfile } from '../services/api'; // Import API service
 
-const UserProfile = ({ user }) => {
-  const [profileData, setProfileData] = useState({
+interface UserProfileProps {
+  user: User | null; // User can be null if not logged in yet
+}
+
+interface ProfileData {
+  username: string;
+  email: string;
+  organization: string;
+  subscriptionTier: string;
+  apiCallsRemaining: number;
+  crawlCreditsRemaining: number;
+}
+
+const UserProfile: React.FC<UserProfileProps> = ({ user }) => {
+  const [profileData, setProfileData] = useState<ProfileData>({
     username: '',
     email: '',
-    // Add other fields like organization, subscription tier, etc.
+    organization: '',
+    subscriptionTier: '',
+    apiCallsRemaining: 0,
+    crawlCreditsRemaining: 0,
   });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [isEditing, setIsEditing] = useState(false);
-  const [message, setMessage] = useState(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchProfile = async () => {
       try {
         setLoading(true);
         setError(null);
-        // In a real application, you'd fetch data from your backend API
-        // const data = await getUserProfile(user.id); 
         
-        // Simulate API call
-        const simulatedData = {
-          username: user ? user.username : 'GuestUser',
-          email: user ? user.email : 'guest@example.com',
-          organization: 'Acme Corp',
-          subscriptionTier: 'Premium',
-          apiCallsRemaining: 5000,
-          crawlCreditsRemaining: 200,
-        };
-        setProfileData(simulatedData);
-      } catch (err) {
+        if (user) {
+          const data = await getUserProfile(); // Use the imported API service
+          setProfileData({
+            username: data.username,
+            email: data.email,
+            organization: 'Acme Corp', // Placeholder, assuming API doesn't return this
+            subscriptionTier: 'Premium', // Placeholder
+            apiCallsRemaining: 5000, // Placeholder
+            crawlCreditsRemaining: 200, // Placeholder
+          });
+        }
+      } catch (err: any) {
         setError('Failed to fetch profile data. Please try again later.');
         console.error('Error fetching profile:', err);
       } finally {
@@ -44,7 +59,7 @@ const UserProfile = ({ user }) => {
     }
   }, [user]);
 
-  const handleChange = (e) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setProfileData(prevData => ({
       ...prevData,
@@ -52,16 +67,16 @@ const UserProfile = ({ user }) => {
     }));
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setMessage(null);
+    setError(null); // Clear previous errors
     try {
-      // In a real application, you'd send updated data to your backend API
-      // await updateProfile(user.id, profileData);
+      await updateProfile(profileData); // Use the imported API service
       setMessage('Profile updated successfully!');
       setIsEditing(false);
-    } catch (err) {
+    } catch (err: any) {
       setError('Failed to update profile. Please try again.');
       console.error('Error updating profile:', err);
     } finally {
@@ -70,23 +85,23 @@ const UserProfile = ({ user }) => {
   };
 
   if (loading) {
-    return <div className="loading-message">Loading profile...</div>;
+    return <div className="text-center text-nasa-light-gray text-xl mt-20">Loading profile...</div>;
   }
 
   if (error) {
-    return <div className="error-message">{error}</div>;
+    return <div className="text-center text-red-500 text-xl mt-20">{error}</div>;
   }
 
   return (
-    <div className="user-profile-container">
-      <h2>Your Profile</h2>
-      <p>Manage your account details and subscription information.</p>
+    <div className="p-6">
+      <h2 className="text-3xl font-bold text-nasa-cyan mb-4">Your Profile</h2>
+      <p className="text-nasa-light-gray mb-6">Manage your account details and subscription information.</p>
 
-      {message && <div className="success-message">{message}</div>}
+      {message && <div className="bg-green-500 text-white p-3 rounded mb-4">{message}</div>}
 
-      <form onSubmit={handleSubmit}>
-        <div className="profile-field">
-          <label htmlFor="username">Username:</label>
+      <form onSubmit={handleSubmit} className="bg-nasa-gray p-6 rounded-lg shadow-lg border border-nasa-cyan">
+        <div className="mb-4">
+          <label htmlFor="username" className="block text-nasa-light-gray text-sm font-bold mb-2">Username:</label>
           {isEditing ? (
             <input
               type="text"
@@ -95,14 +110,15 @@ const UserProfile = ({ user }) => {
               value={profileData.username}
               onChange={handleChange}
               required
+              className="form-input"
             />
           ) : (
-            <span>{profileData.username}</span>
+            <span className="text-nasa-cyan text-lg">{profileData.username}</span>
           )}
         </div>
 
-        <div className="profile-field">
-          <label htmlFor="email">Email:</label>
+        <div className="mb-4">
+          <label htmlFor="email" className="block text-nasa-light-gray text-sm font-bold mb-2">Email:</label>
           {isEditing ? (
             <input
               type="email"
@@ -111,44 +127,45 @@ const UserProfile = ({ user }) => {
               value={profileData.email}
               onChange={handleChange}
               required
+              className="form-input"
             />
           ) : (
-            <span>{profileData.email}</span>
+            <span className="text-nasa-cyan text-lg">{profileData.email}</span>
           )}
         </div>
 
-        <div className="profile-field">
-          <label>Organization:</label>
-          <span>{profileData.organization}</span>
+        <div className="mb-4">
+          <label className="block text-nasa-light-gray text-sm font-bold mb-2">Organization:</label>
+          <span className="text-nasa-cyan text-lg">{profileData.organization}</span>
         </div>
 
-        <div className="profile-field">
-          <label>Subscription Tier:</label>
-          <span>{profileData.subscriptionTier}</span>
+        <div className="mb-4">
+          <label className="block text-nasa-light-gray text-sm font-bold mb-2">Subscription Tier:</label>
+          <span className="text-nasa-cyan text-lg">{profileData.subscriptionTier}</span>
         </div>
 
-        <div className="profile-field">
-          <label>API Calls Remaining (Monthly):</label>
-          <span>{profileData.apiCallsRemaining}</span>
+        <div className="mb-4">
+          <label className="block text-nasa-light-gray text-sm font-bold mb-2">API Calls Remaining (Monthly):</label>
+          <span className="text-nasa-cyan text-lg">{profileData.apiCallsRemaining}</span>
         </div>
 
-        <div className="profile-field">
-          <label>Crawl Credits Remaining:</label>
-          <span>{profileData.crawlCreditsRemaining}</span>
+        <div className="mb-4">
+          <label className="block text-nasa-light-gray text-sm font-bold mb-2">Crawl Credits Remaining:</label>
+          <span className="text-nasa-cyan text-lg">{profileData.crawlCreditsRemaining}</span>
         </div>
 
-        <div className="profile-actions">
+        <div className="mt-6 space-x-4">
           {isEditing ? (
             <>
-              <button type="submit" className="save-button" disabled={loading}>
+              <button type="submit" className="btn-primary" disabled={loading}>
                 {loading ? 'Saving...' : 'Save Changes'}
               </button>
-              <button type="button" className="cancel-button" onClick={() => setIsEditing(false)} disabled={loading}>
+              <button type="button" className="btn-secondary" onClick={() => setIsEditing(false)} disabled={loading}>
                 Cancel
               </button>
             </>
           ) : (
-            <button type="button" className="edit-button" onClick={() => setIsEditing(true)}>
+            <button type="button" className="btn-primary" onClick={() => setIsEditing(true)}>
               Edit Profile
             </button>
           )}

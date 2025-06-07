@@ -33,10 +33,7 @@ const useWebSocket = (options: UseWebSocketOptions) => {
   const isMounted = useRef(true); // To track if component is mounted
 
   const getWebSocketUrl = useCallback(() => {
-    // Determine WebSocket protocol based on current location's protocol
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    
-    // Use WS_BASE_URL from config.ts
+    // Use WS_BASE_URL from config.ts directly
     const baseWsUrl = WS_BASE_URL;
     
     // Ensure the path starts with a slash and baseWsUrl doesn't end with one if path is absolute

@@ -13,10 +13,10 @@ const ProtectedRoute: React.FC<{ children: JSX.Element }> = ({ children }) => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+      <div className="flex items-center justify-center min-h-screen bg-nasa-dark-blue"> {/* Changed background to nasa-dark-blue */}
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Authenticating...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-nasa-cyan mx-auto"></div> {/* Changed border color */}
+          <p className="mt-4 text-nasa-light-gray">Authenticating...</p> {/* Changed text color */}
         </div>
       </div>
     );
@@ -33,7 +33,7 @@ function App() {
   const { isAuthenticated } = useAuth();
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-nasa-dark-blue"> {/* Changed background to nasa-dark-blue for consistency */}
       {isAuthenticated ? (
         <Layout>
           <Routes>

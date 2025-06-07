@@ -1,41 +1,13 @@
 import React from 'react';
 import useMissionControlStore from '../stores/missionControlStore';
 import DataCard from '../components/ui/DataCard';
-import { API_BASE_URL } from '../config'; // Assuming you have a config file for API_BASE_URL
-import { useAuth } from '../hooks/useAuth'; // Import useAuth
-
-// Define interfaces for the data structures used in this component
-interface CrawlerMissionStatusData {
-  active_jobs_count: number;
-  queued_jobs_count: number;
-  queue_depth: number;
-  completed_jobs_24h_count: number;
-  failed_jobs_24h_count: number;
-  total_pages_crawled_24h: number;
-  avg_job_completion_time_seconds: number;
-  recent_job_errors: Array<{
-    error_type: string;
-    message: string;
-    url: string;
-    timestamp: string;
-    details?: any;
-  }>;
-}
-
-interface SatelliteStatus {
-  satellite_id: string;
-  status: 'active' | 'idle' | 'offline' | 'error'; // Example statuses
-  current_job_id: string | null;
-  current_job_type: string | null;
-  current_job_progress: number | null;
-  jobs_completed_24h: number;
-  errors_24h: number;
-  last_heartbeat: string; // ISO string date
-}
+import { API_BASE_URL } from '../config';
+import { useAuth } from '../hooks/useAuth';
+import { SatelliteFleetStatus, CrawlError, CrawlerMissionStatus } from '../types'; // Import types from types.ts
 
 const Jobs: React.FC = () => {
-  const { data, fetchData } = useMissionControlStore(); // Get fetchData to refresh data
-  const { token } = useAuth(); // Get token from useAuth
+  const { data } = useMissionControlStore(); // Removed fetchData as it's not exposed by the store
+  const { token } = useAuth();
 
   if (!data) {
     return (
@@ -47,6 +19,14 @@ const Jobs: React.FC = () => {
   }
 
   const { crawler_mission_status, satellite_fleet_status } = data;
+
+  // Placeholder for a function to trigger data refresh if needed,
+  // but currently, data is updated via WebSocket in useRealTimeData.
+  const refreshData = () => {
+    console.log("Manual data refresh triggered (if implemented)");
+    // In a real scenario, you might dispatch an action to the store
+    // to refetch data from a REST API, or rely solely on WebSocket updates.
+  };
 
   const handleJobAction = async (jobId: string, action: 'cancel') => {
     if (!window.confirm(`Are you sure you want to ${action} job ${jobId}?`)) {
@@ -66,7 +46,7 @@ const Jobs: React.FC = () => {
         throw new Error(errorData.detail || `Failed to ${action} job`);
       }
       alert(`Job ${jobId} ${action}led successfully.`);
-      fetchData(); // Refresh data after action
+      refreshData(); // Call placeholder refresh
     } catch (error: any) {
       alert(`Error ${action}ing job: ${error.message}`);
       console.error(`Error ${action}ing job ${jobId}:`, error);
@@ -91,7 +71,7 @@ const Jobs: React.FC = () => {
         throw new Error(errorData.detail || `Failed to ${action.replace('_', ' ')} jobs`);
       }
       alert(`Jobs ${action.replace('_', ' ')} successfully.`);
-      fetchData();
+      refreshData(); // Call placeholder refresh
     } catch (error: any) {
       alert(`Error ${action.replace('_', ' ')} jobs: ${error.message}`);
       console.error(`Error ${action.replace('_', ' ')} jobs:`, error);
@@ -116,7 +96,7 @@ const Jobs: React.FC = () => {
         throw new Error(errorData.detail || `Failed to ${command.toLowerCase()} satellite`);
       }
       alert(`Satellite ${satelliteId} ${command.toLowerCase()}ed successfully.`);
-      fetchData();
+      refreshData(); // Call placeholder refresh
     } catch (error: any) {
       alert(`Error ${command.toLowerCase()}ing satellite: ${error.message}`);
       console.error(`Error ${command.toLowerCase()}ing satellite ${satelliteId}:`, error);
@@ -138,10 +118,10 @@ const Jobs: React.FC = () => {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || `Failed to ${command.toLowerCase()} all satellites`);
+        throw new Error(errorData.detail || `Failed to ${action.toLowerCase()} all satellites`);
       }
       alert(`All satellites ${command.toLowerCase()}ed successfully.`);
-      fetchData();
+      refreshData(); // Call placeholder refresh
     } catch (error: any) {
       alert(`Error ${command.toLowerCase()}ing all satellites: ${error.message}`);
       console.error(`Error ${command.toLowerCase()}ing all satellites:`, error);
@@ -199,7 +179,7 @@ const Jobs: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {satellite_fleet_status.map((sat: SatelliteStatus) => ( // Explicitly type sat
+                  {satellite_fleet_status.map((sat: SatelliteFleetStatus) => ( // Explicitly type sat
                     <tr key={sat.satellite_id} className="border-b border-gray-700">
                       <td className="py-2 px-4">{sat.satellite_id}</td>
                       <td className={`py-2 px-4 ${
@@ -235,7 +215,7 @@ const Jobs: React.FC = () => {
       <DataCard title="Recent Job Errors (Last 24h)">
         <div className="max-h-60 overflow-y-auto pr-2">
           {crawler_mission_status.recent_job_errors.length > 0 ? (
-            crawler_mission_status.recent_job_errors.map((error, index) => (
+            crawler_mission_status.recent_job_errors.map((error: CrawlError, index: number) => ( // Explicitly type error
               <div key={index} className="text-sm text-red-400 mb-2 p-2 border border-red-600 rounded">
                 <p><strong>Type:</strong> {error.error_type}</p>
                 <p><strong>Message:</strong> {error.message}</p>
