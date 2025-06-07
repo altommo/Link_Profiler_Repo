@@ -113,7 +113,9 @@ from playwright.async_api import async_playwright, Browser
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm # Added missing imports
 
 # New: Import DistributedResilienceManager (Initialize before APIQuotaManager)
-from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager, distributed_resilience_manager # Import the singleton
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # Import the class only
+# Instantiate the singleton after redis_client is available
+distributed_resilience_manager = DistributedResilienceManager(redis_client=redis_client)
 
 # New: Import API Quota Manager (Initialize after DistributedResilienceManager)
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager, api_quota_manager # Import both class and singleton
