@@ -14,9 +14,20 @@ from Link_Profiler.database.models import Base
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
-config.set_main_option(
-    "sqlalchemy.url", config_loader.get("database.url") or ""
-)
+
+# Retrieve the database URL from the config_loader
+db_url = config_loader.get("database.url")
+
+# Explicitly check if the database URL is available
+# If not, raise a more informative error.
+if not db_url:
+    raise ValueError(
+        "Database URL (database.url) not found in configuration. "
+        "Ensure LP_DATABASE_URL environment variable is set or "
+        "database.url is configured in a config file."
+    )
+
+config.set_main_option("sqlalchemy.url", db_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
