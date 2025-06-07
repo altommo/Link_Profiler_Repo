@@ -8,7 +8,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from urllib.parse import quote_plus
-import time # Import time for time.monotonic()
+# Removed time import as it's no longer needed for manual performance measurement
 import aiohttp # Re-import aiohttp
 
 from Link_Profiler.config.config_loader import config_loader
@@ -90,10 +90,7 @@ class WaybackClient(BaseAPIClient):
         self.base_url = config_loader.get("historical_data.wayback_machine_api.base_url", 
                                          "http://web.archive.org/cdx/search/cdx")
         self.enabled = config_loader.get("historical_data.wayback_machine_api.enabled", False)
-        # resilience_manager and api_quota_manager are now handled by BaseAPIClient's __init__
         
-        self._last_call_time: float = 0.0 # For explicit throttling
-
         if not self.enabled:
             self.logger.info("Wayback Machine API is disabled by configuration.")
 
@@ -105,15 +102,6 @@ class WaybackClient(BaseAPIClient):
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Closes the aiohttp session."""
         await super().__aexit__(exc_type, exc_val, exc_tb)
-
-    async def _throttle(self):
-        """Ensures at least 0.5 second delay between calls to Wayback Machine."""
-        elapsed = time.monotonic() - self._last_call_time
-        if elapsed < 0.5:
-            wait_time = 0.5 - elapsed
-            self.logger.debug(f"Throttling Wayback Machine API. Waiting for {wait_time:.2f} seconds.")
-            await asyncio.sleep(wait_time)
-        self._last_call_time = time.monotonic()
 
     @api_rate_limited(service="wayback_machine_api", api_client_type="wayback_client", endpoint="get_snapshots")
     async def get_snapshots(self, url: str, limit: int = 10, from_date: Optional[str] = None, 
@@ -134,8 +122,6 @@ class WaybackClient(BaseAPIClient):
         if not self.enabled:
             self.logger.warning("Wayback Machine API is disabled.")
             return []
-
-        await self._throttle() # Apply explicit throttling
 
         # Normalize dates to YYYYMMDD format
         if from_date:
@@ -168,12 +154,9 @@ class WaybackClient(BaseAPIClient):
 
         self.logger.info(f"Fetching Wayback snapshots for {url} (limit: {limit})")
         
-        start_time = time.monotonic()
-        success = False
         try:
-            # Use resilience manager for the actual HTTP request
+            # Use _make_request for the actual HTTP request
             data = await self._make_request("GET", self.base_url, params=params)
-            success = True
             
             if not data or len(data) < 2:  # First row is header
                 self.logger.info(f"No snapshots found for {url}")
@@ -193,19 +176,11 @@ class WaybackClient(BaseAPIClient):
             return snapshots
                 
         except aiohttp.ClientResponseError as e:
-            if e.status == 429:
-                self.logger.warning(f"Wayback Machine API rate limit exceeded for {url}. Retrying after 60 seconds.")
-                await asyncio.sleep(60)
-                return await self.get_snapshots(url, limit, from_date, to_date, collapse) # Retry the call
-            else:
-                self.logger.error(f"Network error fetching Wayback snapshots for {url} (Status: {e.status}): {e}")
-                return []
+            self.logger.error(f"Network error fetching Wayback snapshots for {url} (Status: {e.status}): {e}")
+            return []
         except Exception as e:
             self.logger.error(f"Unexpected error fetching Wayback snapshots for {url}: {e}")
             return []
-        finally:
-            response_time_ms = (time.monotonic() - start_time) * 1000
-            self.api_quota_manager.record_api_performance("wayback_machine_api", success, response_time_ms)
 
     @api_rate_limited(service="wayback_machine_api", api_client_type="wayback_client", endpoint="check_availability")
     async def check_availability(self, url: str, timestamp: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -222,41 +197,27 @@ class WaybackClient(BaseAPIClient):
         if not self.enabled:
             return None
             
-        await self._throttle() # Apply explicit throttling
-
         availability_url = "http://archive.org/wayback/available"
         params = {'url': url}
         
         if timestamp:
             params['timestamp'] = timestamp
             
-        start_time = time.monotonic()
-        success = False
         try:
-            # Use resilience manager for the actual HTTP request
+            # Use _make_request for the actual HTTP request
             data = await self._make_request("GET", availability_url, params=params)
-            success = True
             
             if data.get('archived_snapshots', {}).get('closest', {}).get('available'):
-                data['last_fetched_at'] = datetime.utcnow().isoformat() # Set last_fetched_at for live data
                 return data['archived_snapshots']['closest']
                     
             return None
                 
         except aiohttp.ClientResponseError as e:
-            if e.status == 429:
-                self.logger.warning(f"Wayback Machine API rate limit exceeded for availability check for {url}. Retrying after 60 seconds.")
-                await asyncio.sleep(60)
-                return await self.check_availability(url, timestamp) # Retry the call
-            else:
-                self.logger.error(f"Network error checking Wayback availability for {url} (Status: {e.status}): {e}")
-                return None
+            self.logger.error(f"Network error checking Wayback availability for {url} (Status: {e.status}): {e}")
+            return None
         except Exception as e:
             self.logger.error(f"Unexpected error checking Wayback availability for {url}: {e}")
             return None
-        finally:
-            response_time_ms = (time.monotonic() - start_time) * 1000
-            self.api_quota_manager.record_api_performance("wayback_machine_api", success, response_time_ms)
 
     async def get_first_snapshot(self, url: str) -> Optional[WaybackSnapshot]:
         """Get the earliest snapshot of a URL."""
@@ -267,4 +228,3 @@ class WaybackClient(BaseAPIClient):
         """Get the most recent snapshot of a URL."""
         snapshots = await self.get_snapshots(url, limit=1, collapse='timestamp:1')
         return snapshots[-1] if snapshots else None
-
