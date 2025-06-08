@@ -22,6 +22,7 @@ const Dashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const handleWebSocketMessage = (data: DashboardRealtimeUpdates) => {
+    console.log("Received WebSocket data:", data); // Log incoming data
     setDashboardData(data);
     setError(null);
   };
@@ -52,14 +53,15 @@ const Dashboard: React.FC = () => {
     );
   }
 
+  // Destructure with default empty objects/arrays for safety
   const {
-    crawler_mission_status,
-    backlink_discovery_metrics,
-    api_quota_statuses,
-    domain_intelligence_metrics,
-    performance_optimization_metrics,
-    alerts,
-    satellite_fleet_status,
+    crawler_mission_status = {} as CrawlerMissionStatus,
+    backlink_discovery_metrics = {} as BacklinkDiscoveryMetrics,
+    api_quota_statuses = [],
+    domain_intelligence_metrics = {} as DomainIntelligenceMetrics,
+    performance_optimization_metrics = {} as PerformanceOptimizationMetrics,
+    alerts = [],
+    satellite_fleet_status = [],
   } = dashboardData;
 
   return (
@@ -70,20 +72,20 @@ const Dashboard: React.FC = () => {
         {/* Crawler Mission Status */}
         <ModuleContainer title="Crawler Mission Status">
           <div className="grid grid-cols-2 gap-4">
-            <MetricDisplay label="Active Jobs" value={crawler_mission_status.active_jobs_count} />
-            <MetricDisplay label="Queued Jobs" value={crawler_mission_status.queued_jobs_count} />
-            <MetricDisplay label="Completed (24h)" value={crawler_mission_status.completed_jobs_24h_count} />
-            <MetricDisplay label="Failed (24h)" value={crawler_mission_status.failed_jobs_24h_count} />
-            <MetricDisplay label="Pages Crawled (24h)" value={crawler_mission_status.total_pages_crawled_24h} />
-            <MetricDisplay label="Queue Depth" value={crawler_mission_status.queue_depth} />
-            <MetricDisplay label="Active Satellites" value={`${crawler_mission_status.active_satellites_count}/${crawler_mission_status.total_satellites_count}`} />
+            <MetricDisplay label="Active Jobs" value={crawler_mission_status.active_jobs_count ?? 0} />
+            <MetricDisplay label="Queued Jobs" value={crawler_mission_status.queued_jobs_count ?? 0} />
+            <MetricDisplay label="Completed (24h)" value={crawler_mission_status.completed_jobs_24h_count ?? 0} />
+            <MetricDisplay label="Failed (24h)" value={crawler_mission_status.failed_jobs_24h_count ?? 0} />
+            <MetricDisplay label="Pages Crawled (24h)" value={crawler_mission_status.total_pages_crawled_24h ?? 0} />
+            <MetricDisplay label="Queue Depth" value={crawler_mission_status.queue_depth ?? 0} />
+            <MetricDisplay label="Active Satellites" value={`${crawler_mission_status.active_satellites_count ?? 0}/${crawler_mission_status.total_satellites_count ?? 0}`} />
             <MetricDisplay label="Satellite Utilization" value={`${(crawler_mission_status.satellite_utilization_percentage ?? 0).toFixed(1)}%`} />
             <MetricDisplay label="Avg. Job Completion" value={`${(crawler_mission_status.avg_job_completion_time_seconds ?? 0).toFixed(1)}s`} />
           </div>
           {/* Safely access recent_job_errors */}
           <ListDisplay
             title="Recent Job Errors"
-            items={crawler_mission_status.recent_job_errors?.map(err => `${err.error_type}: ${err.message.substring(0, 50)}...`) ?? []}
+            items={crawler_mission_status.recent_job_errors?.map(err => `${err.error_type}: ${err.message?.substring(0, 50) ?? ''}...`) ?? []}
             emptyMessage="No recent job errors."
             itemColorClass={(item: string) => { // Explicitly type item
               if (item.includes('[CRITICAL]')) return 'text-red-500';
@@ -124,10 +126,10 @@ const Dashboard: React.FC = () => {
         {/* Domain Intelligence Command Center */}
         <ModuleContainer title="Domain Intelligence Command Center">
           <div className="grid grid-cols-2 gap-4">
-            <MetricDisplay label="Total Domains Analyzed" value={domain_intelligence_metrics.total_domains_analyzed} />
-            <MetricDisplay label="Valuable Expired Domains Found" value={domain_intelligence_metrics.valuable_expired_domains_found} />
+            <MetricDisplay label="Total Domains Analyzed" value={domain_intelligence_metrics.total_domains_analyzed ?? 0} />
+            <MetricDisplay label="Valuable Expired Domains Found" value={domain_intelligence_metrics.valuable_expired_domains_found ?? 0} />
             <MetricDisplay label="Avg. Domain Value Score" value={(domain_intelligence_metrics.avg_domain_value_score ?? 0).toFixed(1)} />
-            <MetricDisplay label="New Domains Added (24h)" value={domain_intelligence_metrics.new_domains_added_24h} />
+            <MetricDisplay label="New Domains Added (24h)" value={domain_intelligence_metrics.new_domains_added_24h ?? 0} />
           </div>
           {/* Safely access top_niches_identified */}
           <ListDisplay
