@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config'; // Assuming API_BASE_URL is defined here
 import { SystemConfig, User, ApiKeyInfo } from '../types'; // Assuming these types are defined
 import { useAuth } from '../contexts/AuthContext';
+import DataCard from '../components/ui/DataCard'; // Added import for DataCard
 
 const Settings: React.FC = () => {
   const { token, user } = useAuth();
@@ -217,8 +218,8 @@ const Settings: React.FC = () => {
               <thead>
                 <tr className="text-nasa-cyan border-b border-nasa-light-gray">
                   <th className="py-2 px-4">API Name</th>
-                  <th className="py-2 px-4">Enabled</th>
                   <th className="py-2 px-4">Key (Masked)</th>
+                  <th className="py-2 px-4">Enabled</th>
                   <th className="py-2 px-4">Monthly Limit</th>
                   <th className="py-2 px-4">Cost/Unit</th>
                   <th className="py-2 px-4">Actions</th>

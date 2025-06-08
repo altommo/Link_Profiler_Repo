@@ -6,12 +6,14 @@ import { API_BASE_URL } from '../config';
 interface AuthContextType {
   user: User | null;
   token: string | null;
-  login: (newToken: string) => Promise<void>; // Changed to accept newToken directly
+  isAuthenticated: boolean; // Added
+  isAdmin: boolean;       // Added
+  login: (token: string) => Promise<void>;
   logout: () => void;
   loading: boolean;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined); // Exported
 
 interface AuthProviderProps {
   children: ReactNode;
@@ -21,6 +23,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [loading, setLoading] = useState<boolean>(true);
+
+  const isAuthenticated = user !== null; // Derived
+  const isAdmin = user?.is_admin || false; // Derived
 
   useEffect(() => {
     const verifyToken = async () => {
@@ -65,7 +70,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, token, isAuthenticated, isAdmin, login, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );
@@ -76,5 +81,5 @@ export const useAuth = () => {
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
-  return context;
+  return context as AuthContextType; // Type assertion here
 };
