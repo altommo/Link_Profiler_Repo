@@ -12,7 +12,7 @@ import uuid # Import uuid for Backlink ID
 from playwright.async_api import async_playwright, Browser, Page, TimeoutError as PlaywrightTimeoutError
 
 from Link_Profiler.core.models import URL, Backlink, CrawlConfig, CrawlResult, SEOMetrics, CrawlError, ContentType, SpamLevel, LinkType # Import LinkType
-from Link_Profiler.database.database import Database
+from Link_Profiler.database.database import Database # Keep import for type hinting if needed elsewhere, but not used in __init__
 from Link_Profiler.utils.user_agent_manager import user_agent_manager
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.utils.content_validator import ContentValidator
@@ -32,12 +32,12 @@ class EnhancedWebCrawler:
     Includes advanced features like anti-bot detection, content validation,
     and anomaly detection.
     """
-    def __init__(self, config: CrawlConfig, db: Database, job_id: str, ai_service: AIService, playwright_browser: Optional[Browser] = None, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, crawl_queue: Optional[SmartCrawlQueue] = None):
+    def __init__(self, config: CrawlConfig, ai_service: AIService, playwright_browser: Optional[Browser] = None, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, crawl_queue: Optional[SmartCrawlQueue] = None):
         self.config = config
-        self.db = db
-        self.job_id = job_id
+        # Removed self.db = db
+        # Removed self.job_id = job_id
         self.ai_service = ai_service
-        self.logger = logging.getLogger(__name__ + f".EnhancedWebCrawler({job_id})")
+        self.logger = logging.getLogger(__name__ + f".EnhancedWebCrawler") # Removed job_id from logger name
         self.playwright_browser = playwright_browser # Injected Playwright browser instance
         self.session_manager = session_manager
         if self.session_manager is None:
