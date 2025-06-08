@@ -9,6 +9,7 @@ import logging
 import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime # Added import for datetime
+import re # Import re for regex operations
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.core.models import CrawlConfig, SEOMetrics # Import CrawlConfig and SEOMetrics
@@ -34,6 +35,22 @@ class TechnicalAuditor:
         if not self._check_lighthouse_installed():
             self.logger.error(f"Lighthouse CLI not found at '{self.lighthouse_path}'. Technical audits will be disabled.")
             self.enabled = False
+
+    async def __aenter__(self):
+        """
+        Asynchronous context manager entry point.
+        No specific async setup needed for this service.
+        """
+        self.logger.info("TechnicalAuditor entered context.")
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """
+        Asynchronous context manager exit point.
+        No specific async teardown needed for this service.
+        """
+        self.logger.info("TechnicalAuditor exited context.")
+        pass
 
     def _check_lighthouse_installed(self) -> bool:
         """Checks if Lighthouse CLI is installed and accessible."""
@@ -90,7 +107,7 @@ class TechnicalAuditor:
             '--output-path=stdout',
             '--chrome-flags="--headless --disable-gpu --no-sandbox"', # --no-sandbox for Docker environments
             '--quiet',
-            f'--max-wait-for-load={config.request_timeout * 1000}' if config and config.request_timeout else '--max-wait-for-load=30000', # Default to 30s
+            f'--max-wait-for-load={config.timeout_seconds * 1000}' if config and config.timeout_seconds else '--max-wait-for-load=30000', # Default to 30s
             '--emulated-form-factor=mobile', # Default to mobile audit
             '--throttling-method=simulate',
             user_agent_flag
