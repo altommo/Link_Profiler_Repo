@@ -10,8 +10,14 @@ from datetime import datetime
 from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
-from alembic import command
-from alembic.config import Config
+try:
+    from alembic import command
+    from alembic.config import Config
+    ALEMBIC_AVAILABLE = True
+except ImportError:
+    ALEMBIC_AVAILABLE = False
+    command = None
+    Config = None
 import json # Import json for serializing/deserializing JSONB fields
 
 from Link_Profiler.config.config_loader import config_loader
@@ -86,6 +92,10 @@ class Database:
 
     def _run_migrations(self):
         """Applies Alembic migrations to ensure the database schema is up to date."""
+        if not ALEMBIC_AVAILABLE:
+            self.logger.warning("Alembic not available. Skipping database migrations.")
+            return
+            
         try:
             alembic_cfg = Config(os.path.join(os.path.dirname(__file__), '..', '..', 'alembic.ini'))
             command.upgrade(alembic_cfg, 'head')
