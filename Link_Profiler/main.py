@@ -242,7 +242,7 @@ from Link_Profiler.utils.api_cache import api_cache
 from Link_Profiler.api.schemas import (
     UserCreate, UserResponse, Token, CrawlJobResponse, LinkProfileResponse, DomainResponse, 
     ReportJobResponse, QueueStatsResponse, SERPResultResponse, KeywordSuggestionResponse, 
-    LinkIntersectResponse, CompetitiveKeywordAnalysisResultResponse, AlertRuleResponse, 
+    LinkIntersectResponse, CompetitiveKeywordAnalysisResponse, AlertRuleResponse, # Corrected import name
     ContentGapAnalysisResultResponse, LinkProspectResponse, OutreachCampaignResponse, 
     OutreachEventResponse, SEOMetricsResponse, QueueCrawlRequest, SystemConfigResponse, SystemConfigUpdate # Added QueueCrawlRequest, SystemConfig schemas
 )
