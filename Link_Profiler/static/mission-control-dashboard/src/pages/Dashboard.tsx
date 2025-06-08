@@ -39,7 +39,12 @@ const Dashboard: React.FC = () => {
   });
 
   if (error) {
-    return <div className="text-red-500 p-4">{error}</div>;
+    return (
+      <div className="text-red-500 p-4">
+        <p>Error: {error}</p>
+        <p className="text-sm mt-2">Please ensure the backend API is running and accessible.</p>
+      </div>
+    );
   }
 
   if (!dashboardData) {
