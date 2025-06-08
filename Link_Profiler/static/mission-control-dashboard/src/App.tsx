@@ -11,6 +11,9 @@ import Overview from './pages/Overview'; // Import the new Overview page
 const App: React.FC = () => {
   const { isAuthenticated, isAdmin, loading } = useAuth();
 
+  // Add console logs to track state changes
+  console.log("App.tsx - loading:", loading, "isAuthenticated:", isAuthenticated);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white">
