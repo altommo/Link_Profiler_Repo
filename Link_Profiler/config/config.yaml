@@ -39,13 +39,13 @@ logging:
 api:
   host: "0.0.0.0"
   port: 8000
-  # Publicly accessible URL for the main API (coordinator).
-  # This MUST be set to the HTTPS URL if your dashboard is served over HTTPS,
-  # otherwise, you will encounter "Mixed Content" errors in the browser.
-  # Example: "https://monitor.yspanel.com:8000"
+  # Publicly accessible URL for the main API.
+  # This is the URL that external clients (like your frontend dashboard) will use to connect.
+  # If your dashboard is served over HTTPS, this MUST be an HTTPS URL to avoid "Mixed Content" errors.
+  # Example: "https://api.yspanel.com"
   external_url: "https://api.yspanel.com"
   # Internal URL for the main API, used for backend-to-backend communication (e.g., dashboard to main API).
-  # This should be the address accessible within your internal network (e.g., Docker service service_name, localhost).
+  # This should be the address accessible within your internal network (e.g., Docker service name, localhost).
   internal_url: "http://localhost:8000" # Default for local development, change for Docker/Kubernetes
 
 # Database settings (PostgreSQL)
