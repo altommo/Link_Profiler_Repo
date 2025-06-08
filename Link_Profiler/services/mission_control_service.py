@@ -1,22 +1,23 @@
-import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+import asyncio
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 import time # For performance timing
 import random # For simulation
 
+import redis.asyncio as redis # Import the module for type hinting
+
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.database.database import db # Access db singleton directly
-import redis.asyncio as redis # Import the module for type hinting
+from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue # Import the concrete SmartCrawlQueue
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import the concrete APIQuotaManager
+from Link_Profiler.services.dashboard_alert_service import DashboardAlertService # Import the concrete DashboardAlertService
 from Link_Profiler.api.schemas import (
     CrawlerMissionStatus, BacklinkDiscoveryMetrics, ApiQuotaStatus,
     DomainIntelligenceMetrics, PerformanceOptimizationMetrics, DashboardAlert,
-    DashboardRealtimeUpdates, SatelliteFleetStatus, CrawlStatus, CrawlError, SpamLevel,
+    DashboardRealtimeUpdates, SatelliteFleetStatus, CrawlStatus, CrawlErrorResponse, SpamLevel, # Corrected CrawlError to CrawlErrorResponse
     ApiPerformanceMetrics # Import ApiPerformanceMetrics
 )
-from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import the concrete APIQuotaManager
-from Link_Profiler.services.dashboard_alert_service import DashboardAlertService # Import the concrete DashboardAlertService
-from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue # Import the concrete SmartCrawlQueue
 from Link_Profiler.monitoring.prometheus_metrics import (
     DASHBOARD_MODULE_REFRESH_DURATION_SECONDS, SATELLITE_STATUS_GAUGE
 )
@@ -29,23 +30,42 @@ class MissionControlService:
     Aggregates data from database, Redis, and other services.
     """
     _instance = None
+    _initialized = False
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super(MissionControlService, cls).__new__(cls)
-            cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, smart_crawl_queue: SmartCrawlQueue, api_quota_manager: APIQuotaManager, dashboard_alert_service: DashboardAlertService):
+    def __init__(self, 
+                 redis_client: Optional[redis.Redis] = None, # Explicitly accept redis_client
+                 smart_crawl_queue: Optional[SmartCrawlQueue] = None,
+                 api_quota_manager: Optional[APIQuotaManager] = None,
+                 dashboard_alert_service: Optional[DashboardAlertService] = None):
+        
         if self._initialized:
             return
         self._initialized = True
+        
         self.logger = logging.getLogger(__name__ + ".MissionControlService")
-        self.db = db # Access db singleton directly
-        self.redis = smart_crawl_queue.redis_client # Access redis client from smart_crawl_queue
+        
+        self.redis = redis_client # Store the provided redis_client
         self.smart_crawl_queue = smart_crawl_queue
         self.api_quota_manager = api_quota_manager
         self.dashboard_alert_service = dashboard_alert_service
+        self.db = db # Access db singleton directly
+
+        # Fallback for redis_client if not directly provided
+        if not self.redis:
+            if self.smart_crawl_queue and hasattr(self.smart_crawl_queue, 'redis'): # Check for 'redis' attribute in smart_crawl_queue
+                self.redis = self.smart_crawl_queue.redis
+            
+            if not self.redis:
+                self.logger.warning("No Redis client provided to MissionControlService. Creating fallback connection.")
+                self.redis = redis.from_url(config_loader.get("redis.url", "redis://localhost:6379/0"))
+        
+        if not self.redis:
+            raise ValueError("MissionControlService requires a Redis client.")
 
         self.dashboard_refresh_rate_seconds = config_loader.get("mission_control.dashboard_refresh_rate", 1000) / 1000
         self.websocket_enabled = config_loader.get("mission_control.websocket_enabled", False)
@@ -139,7 +159,6 @@ class MissionControlService:
         
         duration = time.monotonic() - start_time
         DASHBOARD_MODULE_REFRESH_DURATION_SECONDS.labels(module_name="all_dashboard_updates").observe(duration)
-        self.logger.debug(f"Aggregated real-time updates in {duration:.4f} seconds.")
         self._cached_data = updates
         self._last_cache_update = now
         return updates
@@ -158,7 +177,7 @@ class MissionControlService:
         total_pages_crawled_24h = 0
         total_job_completion_time = 0
         completed_job_count = 0
-        recent_job_errors: List[CrawlError] = []
+        recent_job_errors: List[CrawlErrorResponse] = [] # Changed type hint to CrawlErrorResponse
 
         now = datetime.utcnow()
         twenty_four_hours_ago = now - timedelta(hours=24)
@@ -184,15 +203,30 @@ class MissionControlService:
             # Collect recent errors from job.errors (list of CrawlError dataclasses)
             for error in job.errors: # Assuming job.errors is a list of CrawlError dataclasses
                 if error.timestamp >= twenty_four_hours_ago:
-                    recent_job_errors.append(error)
+                    recent_job_errors.append(CrawlErrorResponse.from_crawl_error(error)) # Convert to Pydantic model
 
-        queue_depth = await self.smart_crawl_queue.get_total_queue_depth()
+        queue_stats = await self.smart_crawl_queue.get_queue_stats()
+        queue_depth = queue_stats.get("total_tasks_overall", 0)
         
         # Get satellite status for utilization calculation
         # This will be fetched by _get_satellite_fleet_status and passed to the main aggregation
         # For this specific function, we can get a quick count
-        active_satellites_count = await self.smart_crawl_queue.get_active_worker_count()
-        total_satellites_count = await self.smart_crawl_queue.get_registered_worker_count()
+        # These counts should come from JobCoordinator's stats, not SmartCrawlQueue directly
+        # For now, use placeholders or integrate with JobCoordinator.get_queue_stats()
+        active_satellites_count = 0 # Placeholder
+        total_satellites_count = 0 # Placeholder
+        
+        # Attempt to get from JobCoordinator if available
+        try:
+            from Link_Profiler.queue_system.job_coordinator import get_coordinator
+            coordinator = await get_coordinator()
+            coordinator_stats = await coordinator.get_queue_stats()
+            active_satellites_count = coordinator_stats.get("active_crawlers", 0)
+            total_satellites_count = len(coordinator_stats.get("satellite_crawlers", {}))
+        except Exception as e:
+            self.logger.warning(f"Could not get active satellite count from JobCoordinator: {e}. Using 0.")
+
+
         satellite_utilization_percentage = (active_satellites_count / total_satellites_count * 100) if total_satellites_count > 0 else 0
 
         avg_job_completion_time_seconds = (total_job_completion_time / completed_job_count) if completed_job_count > 0 else 0
@@ -208,7 +242,7 @@ class MissionControlService:
             total_satellites_count=total_satellites_count,
             satellite_utilization_percentage=round(satellite_utilization_percentage, 2),
             avg_job_completion_time_seconds=round(avg_job_completion_time_seconds, 2),
-            recent_job_errors=[err.model_dump() for err in recent_job_errors[:10]] # Convert CrawlError to dict for Pydantic schema
+            recent_job_errors=recent_job_errors[:10] # Limit to 10 recent errors
         )
         duration = time.monotonic() - start_time
         DASHBOARD_MODULE_REFRESH_DURATION_SECONDS.labels(module_name="crawler_mission_status").observe(duration)

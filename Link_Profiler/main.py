@@ -8,6 +8,7 @@ import sys
 import time
 import logging # Import logging early
 from typing import List, Optional, Dict, Any, Union, Annotated # Import Optional here
+import inspect # Import inspect for signature validation
 
 # --- Robust Project Root Discovery ---
 # Assuming this file is at Link_Profiler/Link_Profiler/main.py
@@ -293,7 +294,7 @@ domain_service_instance = DomainService(
 backlink_service_instance = BacklinkService(
     session_manager=session_manager,
     resilience_manager=distributed_resilience_manager,
-    redis_client=redis_client,
+    redis_client=redis_client, # Already passing redis_client
     cache_ttl=API_CACHE_TTL,
     database=db # BacklinkService needs db as database parameter
 )
@@ -312,7 +313,7 @@ if config_loader.get("serp_crawler.playwright.enabled"):
 serp_service_instance = SERPService(
     serp_crawler=serp_crawler_instance,
     pagespeed_client=pagespeed_client_instance,
-    redis_client=redis_client,
+    redis_client=redis_client, # Already passing redis_client
     cache_ttl=API_CACHE_TTL,
     session_manager=session_manager,
     resilience_manager=distributed_resilience_manager,
@@ -445,7 +446,7 @@ crawler_config_data['headless_browser'] = config_loader.get("browser_crawler.hea
 main_crawl_config = CrawlConfig(**crawler_config_data)
 
 # Create SmartCrawlQueue instance
-smart_crawl_queue = SmartCrawlQueue(redis_client=redis_client)
+smart_crawl_queue = SmartCrawlQueue(redis_client=redis_client, config_loader=config_loader) # Pass redis_client and config_loader here
 
 # Initialize DashboardAlertService
 dashboard_alert_service = DashboardAlertService(
@@ -456,7 +457,7 @@ dashboard_alert_service = DashboardAlertService(
 
 # Initialize MissionControlService
 mission_control_service = MissionControlService(
-    redis_client=redis_client,  # Add this single line
+    redis_client=redis_client,  # Pass the redis_client singleton
     smart_crawl_queue=smart_crawl_queue,
     api_quota_manager=api_quota_manager,
     dashboard_alert_service=dashboard_alert_service
@@ -468,6 +469,49 @@ main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smar
 
 # Initialize AlertService instance after its dependencies are available
 alert_service_instance = AlertService(db=db, connection_manager=connection_manager, redis_client=redis_client, config_loader=config_loader)
+
+async def validate_redis_dependencies(redis_client: redis.Redis, services_to_validate: List[Any]) -> bool:
+    """
+    Validates that the Redis client is connected and that all specified services
+    accept a 'redis_client' parameter in their constructor.
+    """
+    logger.info("Starting Redis and service dependency validation...")
+    
+    # 1. Test Redis connection
+    try:
+        await redis_client.ping()
+        logger.info("✅ Redis connection validated.")
+    except Exception as e:
+        logger.critical(f"❌ CRITICAL: Redis connection failed: {e}")
+        return False
+    
+    # 2. Validate service constructors
+    all_valid = True
+    for service_class in services_to_validate:
+        try:
+            # Get the __init__ signature
+            sig = inspect.signature(service_class.__init__)
+            
+            # Check if 'redis_client' is a parameter
+            if 'redis_client' not in sig.parameters:
+                logger.critical(f"❌ CRITICAL: {service_class.__name__}.__init__ does NOT accept 'redis_client' parameter.")
+                all_valid = False
+            else:
+                # Optionally, check its type hint if desired, but just presence is enough for this check
+                param = sig.parameters['redis_client']
+                if param.kind == inspect.Parameter.POSITIONAL_ONLY:
+                    logger.warning(f"⚠️ WARNING: {service_class.__name__}.__init__ 'redis_client' parameter is positional-only. Consider making it keyword-only or mixed.")
+                logger.info(f"✅ {service_class.__name__}.__init__ 'redis_client' parameter validated.")
+        except Exception as e:
+            logger.critical(f"❌ CRITICAL: Error inspecting {service_class.__name__}.__init__: {e}")
+            all_valid = False
+            
+    if not all_valid:
+        logger.critical("❌ CRITICAL: One or more Redis service dependencies failed validation. Application may not function correctly.")
+    else:
+        logger.info("✅ All Redis service dependencies validated successfully.")
+        
+    return all_valid
 
 
 @asynccontextmanager
@@ -534,6 +578,17 @@ async def lifespan(app: FastAPI):
 
     entered_contexts = []
     try:
+        # Perform Redis dependency validation early
+        if not await validate_redis_dependencies(redis_client, [
+            DistributedResilienceManager, SmartAPIRouterService, APIQuotaManager,
+            SmartCrawlQueue, DashboardAlertService, MissionControlService, AlertService,
+            DomainService, BacklinkService, SERPService, KeywordService,
+            AIService, SocialMediaService, Web3Service,
+            # Add any other services that directly accept redis_client
+        ]):
+            logger.critical("Critical Redis dependencies not met. Aborting application startup.")
+            raise RuntimeError("Critical Redis dependencies not met. Aborting application startup.")
+
         for cm in context_managers:
             logger.info(f"Application startup: Entering {cm.__class__.__name__} context.")
             entered_contexts.append(await cm.__aenter__())
