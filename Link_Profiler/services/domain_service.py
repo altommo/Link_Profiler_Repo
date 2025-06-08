@@ -12,6 +12,7 @@ import json  # Import json for serializing/deserializing WHOIS data
 import random  # Import random for simulation functions
 import dns.asyncresolver  # For real DNS lookups
 import aiohttp # Import aiohttp for ClientError
+import redis.asyncio as redis # Import redis.asyncio
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.clients.base_client import BaseAPIClient
@@ -114,7 +115,7 @@ class DomainService:
             cls._instance._initialized = False # Initialize flag here
         return cls._instance
 
-    def __init__(self, db, smart_api_router_service: SmartAPIRouterService, session_manager: SessionManager, resilience_manager: DistributedResilienceManager, api_quota_manager: APIQuotaManager):
+    def __init__(self, db, smart_api_router_service: SmartAPIRouterService, session_manager: SessionManager, resilience_manager: DistributedResilienceManager, api_quota_manager: APIQuotaManager, redis_client: Optional[redis.Redis] = None):
         if self._initialized:
             return
         self._initialized = True
@@ -127,6 +128,7 @@ class DomainService:
         self.session_manager = session_manager
         self.resilience_manager = resilience_manager
         self.api_quota_manager = api_quota_manager
+        self.redis_client = redis_client # Store redis_client
 
         # Ensure dependencies are not None
         if not self.session_manager:
@@ -137,6 +139,7 @@ class DomainService:
             raise ValueError(f"APIQuotaManager must be provided to {self.__class__.__name__}.")
         if not self.smart_api_router_service:
             raise ValueError(f"SmartAPIRouterService must be provided to {self.__class__.__name__}.")
+        # redis_client is Optional, so no strict check here, but it's good practice to have it.
 
         # Initialize all potential Domain API clients
         # These clients now get their dependencies from the DomainService instance
