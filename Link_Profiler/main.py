@@ -456,6 +456,7 @@ dashboard_alert_service = DashboardAlertService(
 
 # Initialize MissionControlService
 mission_control_service = MissionControlService(
+    redis_client=redis_client,  # Add this single line
     smart_crawl_queue=smart_crawl_queue,
     api_quota_manager=api_quota_manager,
     dashboard_alert_service=dashboard_alert_service
