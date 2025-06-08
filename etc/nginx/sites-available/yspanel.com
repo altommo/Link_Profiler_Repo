@@ -4,13 +4,13 @@
 
 server {
     listen 80;
-server_name www.yspanel.com api.yspanel.com linkprofiler.yspanel.com monitor.yspanel.com; # Add all your domains here
+    server_name www.yspanel.com api.yspanel.com linkprofiler.yspanel.com monitor.yspanel.com; # Add all your domains here
     return 301 https://$host$request_uri; # Redirect HTTP to HTTPS
 }
 
 server {
     listen 443 ssl http2; # Listen for HTTPS traffic
-server_name www.yspanel.com api.yspanel.com linkprofiler.yspanel.com monitor.yspanel.com; # Add all your domains here
+    server_name www.yspanel.com api.yspanel.com linkprofiler.yspanel.com monitor.yspanel.com; # Add all your domains here
 
     # SSL certificate paths (replace with your actual paths, e.g., from Certbot)
     ssl_certificate /etc/letsencrypt/live/www.yspanel.com/fullchain.pem;
@@ -36,21 +36,7 @@ server_name www.yspanel.com api.yspanel.com linkprofiler.yspanel.com monitor.ysp
         proxy_redirect off; # Important for correct URL rewriting
     }
 
-    # If you have a separate monitoring dashboard service on port 8001,
-    # you might need a separate location block for it, or a separate server block
-    # if it's on a different subdomain. Example for monitor.yspanel.com:
-    # This assumes monitor.yspanel.com is served by the Python monitoring dashboard app on port 8001
-    location /monitor/ { # Or just / if monitor.yspanel.com is dedicated to the dashboard
-        proxy_pass http://127.0.0.1:8001/; # Forward requests to your Monitoring Dashboard app
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_redirect off;
-    }
-
-    # If you want to serve static files directly from Nginx
-    # location /static/ {
-    #     alias /opt/Link_Profiler_Repo/Link_Profiler/static/;
-    # }
+    # REMOVED: The /monitor/ location block that was proxying to port 8001
+    # The main FastAPI app on port 8000 now handles all subdomains including monitor.yspanel.com
+    # and serves the appropriate dashboard based on the Host header
 }

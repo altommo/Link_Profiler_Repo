@@ -88,11 +88,7 @@ API_CACHE_TTL = config_loader.get("api_cache.ttl")
 
 # New: Subdomain configuration for UI routing
 CUSTOMER_SUBDOMAIN = config_loader.get("subdomains.customer", "customer")
-MISSION_CONTROL_SUBDOMAIN = config_loader.get("subdomains.mission_control", "monitor")
-
-# Log the subdomain configuration for debugging
-logger.info(f"Subdomain configuration - Customer: '{CUSTOMER_SUBDOMAIN}', Mission Control: '{MISSION_CONTROL_SUBDOMAIN}'")
-logger.info(f"Expected URLs - Customer: {CUSTOMER_SUBDOMAIN}.yspanel.com, Mission Control: {MISSION_CONTROL_SUBDOMAIN}.yspanel.com")
+MISSION_CONTROL_SUBDOMAIN = config_loader.get("subdomains.mission_control", "mission-control")
 
 
 # Initialize Redis connection pool and client (moved up to ensure it's defined before lifespan)
@@ -134,8 +130,7 @@ distributed_resilience_manager = DistributedResilienceManager(redis_client=redis
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import the class only
 
 # New: Import SmartAPIRouterService (Initialize after APIQuotaManager and all clients)
-from Link_Profiler.services.smart_api_router_service import SmartAPIRouterService # Removed smart_api_router_service from import
-# Import both class and singleton
+from Link_Profiler.services.smart_api_router_service import SmartAPIRouterService, smart_api_router_service # Import both class and singleton
 
 # New: Import API Clients (Instantiate all of them)
 from Link_Profiler.clients.google_search_console_client import GoogleSearchConsoleClient # Renamed GSCClient to GoogleSearchConsoleClient
@@ -155,7 +150,7 @@ from Link_Profiler.clients.security_trails_client import SecurityTrailsClient # 
 
 
 # Initialize API Quota Manager (requires resilience_manager)
-api_quota_manager = APIQuotaManager(config_loader._config_data, resilience_manager=distributed_resilience_manager, redis_client=redis_client)
+api_quota_manager = APIQuotaManager(config_loader._config_data, resilience_manager=distributed_resilience_manager)
 
 # Initialize all individual API clients, passing all required dependencies
 gsc_client_instance = GoogleSearchConsoleClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
@@ -180,7 +175,6 @@ smart_api_router_service = SmartAPIRouterService(
     session_manager=session_manager,
     resilience_manager=distributed_resilience_manager,
     api_quota_manager=api_quota_manager,
-    redis_client=redis_client, # Pass redis_client
     google_search_console_client=gsc_client_instance,
     google_pagespeed_client=pagespeed_client_instance,
     google_trends_client=google_trends_client_instance,
@@ -246,7 +240,7 @@ from Link_Profiler.utils.api_cache import api_cache
 from Link_Profiler.api.schemas import (
     UserCreate, UserResponse, Token, CrawlJobResponse, LinkProfileResponse, DomainResponse, 
     ReportJobResponse, QueueStatsResponse, SERPResultResponse, KeywordSuggestionResponse, 
-    LinkIntersectResponse, CompetitiveKeywordAnalysisResponse, AlertRuleResponse, # Corrected import name
+    LinkIntersectResponse, CompetitiveKeywordAnalysisResponse, AlertRuleResponse, 
     ContentGapAnalysisResultResponse, LinkProspectResponse, OutreachCampaignResponse, 
     OutreachEventResponse, SEOMetricsResponse, QueueCrawlRequest, SystemConfigResponse, SystemConfigUpdate # Added QueueCrawlRequest, SystemConfig schemas
 )
@@ -292,8 +286,7 @@ domain_service_instance = DomainService(
     smart_api_router_service=smart_api_router_service, # Pass the new router service
     session_manager=session_manager, # Pass session_manager
     resilience_manager=distributed_resilience_manager, # Pass resilience_manager
-    api_quota_manager=api_quota_manager, # Pass api_quota_manager
-    redis_client=redis_client # Pass redis_client
+    api_quota_manager=api_quota_manager # Pass api_quota_manager
 )
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
@@ -342,8 +335,7 @@ keyword_service_instance = KeywordService(
     keyword_scraper=keyword_scraper_instance,
     google_trends_client=google_trends_client_instance,
     session_manager=session_manager,
-    resilience_manager=distributed_resilience_manager,
-    redis_client=redis_client # Pass redis_client
+    resilience_manager=distributed_resilience_manager
 )
 
 # New: Initialize LinkHealthService
@@ -358,8 +350,7 @@ technical_auditor_instance = TechnicalAuditor(
 ai_service_instance = AIService(
     database=db,
     session_manager=session_manager,
-    resilience_manager=distributed_resilience_manager,
-    redis_client=redis_client # Pass redis_client
+    resilience_manager=distributed_resilience_manager
 )
 
 # New: Initialize Report Service
@@ -384,8 +375,7 @@ social_media_service_instance = SocialMediaService(
     reddit_client=reddit_client_instance,
     youtube_client=youtube_client_instance,
     news_api_client=news_api_client_instance,
-    resilience_manager=distributed_resilience_manager,
-    redis_client=redis_client # Pass redis_client
+    resilience_manager=distributed_resilience_manager
 )
 
 # New: Initialize Web3 Service
@@ -513,7 +503,7 @@ async def validate_redis_dependencies(redis_client: redis.Redis, services_to_val
                     logger.warning(f"⚠️ WARNING: {service_class.__name__}.__init__ 'redis_client' parameter is positional-only. Consider making it keyword-only or mixed.")
                 logger.info(f"✅ {service_class.__name__}.__init__ 'redis_client' parameter validated.")
         except Exception as e:
-            logger.critical(f"❌ CRITICAL: Error inspecting {service_class.__name__}.__init__: {e}", exc_info=True) # Added exc_info
+            logger.critical(f"❌ CRITICAL: Error inspecting {service_class.__name__}.__init__: {e}")
             all_valid = False
             
     if not all_valid:
@@ -599,16 +589,10 @@ async def lifespan(app: FastAPI):
             logger.critical("Critical Redis dependencies not met. Aborting application startup.")
             raise RuntimeError("Critical Redis dependencies not met. Aborting application startup.")
 
-        for i, cm in enumerate(context_managers):
-            logger.info(f"Application startup: Attempting to enter {cm.__class__.__name__} context (Index: {i})...")
-            try:
-                entered_contexts.append(await cm.__aenter__())
-                logger.info(f"Application startup: Successfully entered {cm.__class__.__name__} context (Index: {i}).")
-            except Exception as e:
-                logger.critical(f"Application startup: FAILED to enter {cm.__class__.__name__} context (Index: {i}): {e}", exc_info=True)
-                raise # Re-raise to ensure lifespan exits
-
-        logger.info("Application startup: All context managers entered successfully.")
+        for cm in context_managers:
+            logger.info(f"Application startup: Entering {cm.__class__.__name__} context.")
+            entered_contexts.append(await cm.__aenter__())
+        
         logger.info("Application startup: Pinging Redis.")
         if redis_client:
             try:
@@ -671,21 +655,26 @@ app.add_middleware(
     mission_control_subdomain=MISSION_CONTROL_SUBDOMAIN
 )
 
+templates = Jinja2Templates(directory=os.path.join(project_root, "admin-management-console"))
 
-
-
+# Mount static files for admin console (if still needed, or remove if replaced by mission-control-dashboard)
+app.mount(
+    "/static",
+    StaticFiles(directory=os.path.join(project_root, "admin-management-console", "static")),
+    name="static",
+)
 
 # Mount the mission-control-dashboard static assets
 app.mount(
-    "/assets",
-    StaticFiles(directory=os.path.join(project_root, "Link_Profiler", "static", "mission-control-dashboard", "dist", "assets")),
+    "/mission-control/assets",
+    StaticFiles(directory=os.path.join(project_root, "mission-control-dashboard", "dist", "assets")),
     name="mission-control-dashboard-assets",
 )
 
 # Mount the customer-dashboard static assets
 app.mount(
     "/customer-dashboard/assets",
-    StaticFiles(directory=os.path.join(project_root, "Link_Profiler", "static", "customer-dashboard", "dist", "assets")),
+    StaticFiles(directory=os.path.join(project_root, "customer-dashboard", "dist", "assets")),
     name="customer-dashboard-assets",
 )
 
@@ -796,7 +785,7 @@ async def update_existing_user(user_id: str, user_update: UserCreate, current_us
         user.hashed_password = auth_service_instance.get_password_hash(user_update.password)
     
     updated_user = db.update_user(user)
-    return UserResponse.from_user(updated_user) # Corrected: Changed new_user to updated_user
+    return UserResponse.from_user(updated_user)
 
 @app.delete("/admin/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_existing_user(user_id: str, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
@@ -1105,33 +1094,34 @@ async def serve_dashboard_spa(request: Request, path: str):
     """
     # If it's an API request (detected by middleware), let it pass to other routers
     # This check is mostly defensive; API routes should be matched before this catch-all.
-    if hasattr(request.state, 'is_api_request') and request.state.is_api_request:
+    if request.state.is_api_request:
         raise HTTPException(status_code=404, detail="API endpoint not found or handled by other routers.")
 
-    # Check if this is a customer dashboard request
-    if hasattr(request.state, 'is_customer_dashboard') and request.state.is_customer_dashboard:
-        dashboard_path = os.path.join(project_root, "Link_Profiler", "static", "customer-dashboard", "dist")
+    if request.state.is_customer_dashboard:
+        dashboard_path = os.path.join(project_root, "customer-dashboard", "dist")
         index_html_path = os.path.join(dashboard_path, "index.html")
         
-        logger.info(f"Serving customer dashboard from {index_html_path} for request to {request.url}")
+        # Serve assets directly if they exist (e.g., /assets/index-XXXX.js)
+        # Note: Vite typically serves assets under a specific path like /assets/
+        # The mount point for customer-dashboard assets is /customer-dashboard/assets
+        # So, direct access to /customer-dashboard/assets/file.js will be handled by the mount.
+        # This catch-all is for client-side routing (e.g., /dashboard, /jobs) which should serve index.html.
         
         if os.path.exists(index_html_path):
-            with open(index_html_path, "r", encoding="utf-8") as f:
-                return HTMLResponse(content=f.read())
+            return HTMLResponse(content=open(index_html_path, "r").read())
         else:
             logger.error(f"Customer dashboard index.html not found at {index_html_path}")
             raise HTTPException(status_code=500, detail="Customer Dashboard not built or found.")
 
-    # Check if this is a mission control dashboard request
-    elif hasattr(request.state, 'is_mission_control_dashboard') and request.state.is_mission_control_dashboard:
-        dashboard_path = os.path.join(project_root, "Link_Profiler", "static", "mission-control-dashboard", "dist")
+    elif request.state.is_mission_control_dashboard:
+        dashboard_path = os.path.join(project_root, "mission-control-dashboard", "dist")
         index_html_path = os.path.join(dashboard_path, "index.html")
 
-        logger.info(f"Serving mission control dashboard from {index_html_path} for request to {request.url}")
+        # Serve assets directly if they exist (similar to customer dashboard logic)
+        # The mount point for mission-control-dashboard assets is /mission-control/assets
         
         if os.path.exists(index_html_path):
-            with open(index_html_path, "r", encoding="utf-8") as f:
-                return HTMLResponse(content=f.read())
+            return HTMLResponse(content=open(index_html_path, "r").read())
         else:
             logger.error(f"Mission Control dashboard index.html not found at {index_html_path}")
             raise HTTPException(status_code=500, detail="Mission Control Dashboard not built or found.")
@@ -1139,22 +1129,8 @@ async def serve_dashboard_spa(request: Request, path: str):
     else:
         # If no specific dashboard subdomain, redirect to customer dashboard by default
         # This assumes the main domain (e.g., yspanel.com) should redirect to customer.yspanel.com
-        host = request.headers.get('host', 'localhost')
-        logger.info(f"No specific dashboard subdomain detected for host {host}. Redirecting to customer dashboard.")
-        
-        # Extract the domain from the current host (remove subdomain if present)
-        host_parts = host.split('.')
-        if len(host_parts) > 2:
-            # Remove subdomain, keep domain.tld
-            base_domain = '.'.join(host_parts[1:])
-        else:
-            # Already a base domain
-            base_domain = host
-        
-        # Construct the redirect URL
-        redirect_host = f"{CUSTOMER_SUBDOMAIN}.{base_domain}"
-        scheme = "https" if request.url.scheme == "https" else "http"
-        redirect_url = f"{scheme}://{redirect_host}/"
-        
-        logger.info(f"Redirecting from {host} to {redirect_url}")
+        logger.info(f"No specific dashboard subdomain detected for host {request.headers.get('host')}. Redirecting to customer dashboard.")
+        # Construct the full URL for redirection, preserving scheme
+        redirect_host = f"{CUSTOMER_SUBDOMAIN}.{request.url.hostname}"
+        redirect_url = request.url.replace(netloc=redirect_host, path="/")._url
         return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)

@@ -403,6 +403,11 @@ system:
   current_code_version: "1.0.3" # Example: "1.0.0", "1.0.1", "2.0.0-beta"
   version_control_enabled: false # New: Control whether version comparison and auto-restart is active
 
+# Subdomain Configuration (New Section)
+subdomains:
+  customer: "customer" # Customer dashboard subdomain (customer.yspanel.com)
+  mission_control: "monitor" # Mission control dashboard subdomain (monitor.yspanel.com)
+
 # Mission Control Dashboard Settings (New Section)
 mission_control:
   enabled: true # Enable/disable the mission control dashboard features

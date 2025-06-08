@@ -700,6 +700,7 @@ class User:
     organization_id: Optional[str] = None # New: For multi-tenancy
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+    last_updated: Optional[datetime] = None # Database field that was added manually
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
 
     def to_dict(self) -> Dict[str, Any]:
@@ -712,6 +713,8 @@ class User:
             data['created_at'] = datetime.fromisoformat(data['created_at'])
         if 'updated_at' in data and isinstance(data['updated_at'], str):
             data['updated_at'] = datetime.fromisoformat(data['updated_at'])
+        if 'last_updated' in data and isinstance(data['last_updated'], str):
+            data['last_updated'] = datetime.fromisoformat(data['last_updated'])
         if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
             data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)

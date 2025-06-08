@@ -8,3 +8,10 @@ __pycache__/
 .pytest_cache/
 .env
 *.egg-info/
+
+# Dashboard builds (keep source, ignore dist)
+mission-control-dashboard/dist/
+customer-dashboard/dist/
+Link_Profiler/static/*/dist/
+node_modules/
+package-lock.json

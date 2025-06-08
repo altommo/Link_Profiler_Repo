@@ -36,7 +36,6 @@ class APIQuotaManager:
         self._api_performance: Dict[str, Dict[str, Any]] = {} # Stores performance metrics
         self.resilience_manager = resilience_manager # Store the resilience manager
         self.redis_client = redis_client # Stored redis_client
-        self._load_api_configs(config)
 
         # Configurable weights and thresholds for API selection logic
         self.weights = {
@@ -54,11 +53,16 @@ class APIQuotaManager:
         }
         self.exhaustion_warning_days = 7 # Days until exhaustion to start applying heavy penalty
 
+        # Initialize recent_calls_window_size before loading configs
+        self.recent_calls_window_size = config.get("api_routing.recent_calls_window_size", 50) # Number of recent calls to track for dynamic weighting
+        
         # Initialize the new MLCostOptimizer
         ml_weights = config.get("api_routing.ml_weights", None)
         self.ml_predictor = MLCostOptimizer(weights=ml_weights)
         self.ml_enabled_for_routing = config.get("api_routing.ml_enabled", False) # New config flag
-        self.recent_calls_window_size = config.get("api_routing.recent_calls_window_size", 50) # Number of recent calls to track for dynamic weighting
+
+        # Load API configs after all attributes are initialized
+        self._load_api_configs(config)
 
         self.logger.info("APIQuotaManager initialized.")
 

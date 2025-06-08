@@ -26,20 +26,29 @@ class SubdomainRouterMiddleware(BaseHTTPMiddleware):
         request.state.is_api_request = False # Default for API requests
         request.state.subdomain = None
 
+        logger.debug(f"Processing request - Host: {host}, Path: {request.url.path}")
+
         if host:
             parsed_host = urlparse(f"http://{host}") # Prepend scheme for urlparse
-            hostname_parts = parsed_host.hostname.split('.')
+            hostname_parts = parsed_host.hostname.split('.') if parsed_host.hostname else []
+            
+            logger.debug(f"Hostname parts: {hostname_parts}")
             
             if len(hostname_parts) > 2: # e.g., customer.example.com
                 subdomain = hostname_parts[0]
                 request.state.subdomain = subdomain
+                logger.debug(f"Detected subdomain: {subdomain}")
 
                 if subdomain == self.customer_subdomain:
                     request.state.is_customer_dashboard = True
-                    logger.debug(f"Request for customer dashboard detected from host: {host}")
+                    logger.info(f"✅ Customer dashboard request detected from host: {host}")
                 elif subdomain == self.mission_control_subdomain:
                     request.state.is_mission_control_dashboard = True
-                    logger.debug(f"Request for mission control dashboard detected from host: {host}")
+                    logger.info(f"✅ Mission control dashboard request detected from host: {host}")
+                else:
+                    logger.debug(f"Unknown subdomain '{subdomain}' from host: {host}")
+            else:
+                logger.debug(f"No subdomain detected in host: {host} (parts: {hostname_parts})")
             
             # Determine if it's an API request (e.g., api.example.com or example.com/api)
             # This is a simplified check; a more robust solution might involve checking path prefixes
@@ -52,6 +61,11 @@ class SubdomainRouterMiddleware(BaseHTTPMiddleware):
                 else:
                     # If no specific subdomain and not /api, it's likely the root domain serving the main API docs or default UI
                     logger.debug(f"Default/root domain request from host: {host}, path: {request.url.path}")
+        else:
+            logger.warning("No host header found in request")
+
+        # Log final state
+        logger.debug(f"Request routing state - Customer: {request.state.is_customer_dashboard}, Mission Control: {request.state.is_mission_control_dashboard}, API: {request.state.is_api_request}")
 
         response = await call_next(request)
         return response

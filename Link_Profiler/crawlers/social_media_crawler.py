@@ -19,7 +19,6 @@ class SocialMediaCrawler:
     and would typically involve more complex scraping logic or dedicated APIs.
     """
     def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
-        super().__init__(session_manager, resilience_manager) # Pass to BaseAPIClient (if it were a subclass)
         self.logger = logging.getLogger(__name__ + ".SocialMediaCrawler")
         self.enabled = config_loader.get("social_media_crawler.enabled", False)
         self.session_manager = session_manager

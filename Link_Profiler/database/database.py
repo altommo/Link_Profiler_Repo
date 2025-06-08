@@ -303,7 +303,25 @@ class Database:
             return None
 
         # Convert ORM object to dict, handling SQLAlchemy internal state
-        data = {c.key: getattr(orm_obj, c.key) for c in inspect(orm_obj).mapper.column_attrs}
+        try:
+            # Try to access attributes normally first
+            data = {c.key: getattr(orm_obj, c.key) for c in inspect(orm_obj).mapper.column_attrs}
+        except Exception as e:
+            # If object is detached from session, manually extract data
+            self.logger.warning(f"ORM object {type(orm_obj)} is detached from session, extracting data manually: {e}")
+            data = {}
+            for c in inspect(orm_obj).mapper.column_attrs:
+                try:
+                    # Try to get the value from the object's __dict__ directly
+                    if hasattr(orm_obj, '__dict__') and c.key in orm_obj.__dict__:
+                        data[c.key] = orm_obj.__dict__[c.key]
+                    else:
+                        # Set to None if we can't access it
+                        data[c.key] = None
+                        self.logger.debug(f"Could not access attribute {c.key} on detached ORM object")
+                except Exception as attr_error:
+                    self.logger.warning(f"Failed to access attribute {c.key}: {attr_error}")
+                    data[c.key] = None
 
         # Specific conversions from ORM to dataclass
         if isinstance(orm_obj, DomainORM):
@@ -560,9 +578,26 @@ class Database:
     def get_user_by_username(self, username: str) -> Optional[User]:
         """Fetches a user by username."""
         def _get(session):
-            return session.query(UserORM).filter_by(username=username).first()
-        orm_user = self._execute_operation('select', 'users', _get)
-        return self._from_orm(orm_user) if orm_user else None
+            orm_user = session.query(UserORM).filter_by(username=username).first()
+            if orm_user:
+                # Access all attributes while the object is still attached to the session
+                user_data = {
+                    'id': orm_user.id,
+                    'username': orm_user.username,
+                    'email': orm_user.email,
+                    'hashed_password': orm_user.hashed_password,
+                    'is_active': orm_user.is_active,
+                    'is_admin': orm_user.is_admin,
+                    'role': orm_user.role,
+                    'organization_id': orm_user.organization_id,
+                    'created_at': orm_user.created_at,
+                    'updated_at': orm_user.created_at,  # Use created_at as fallback for updated_at
+                    'last_updated': getattr(orm_user, 'last_updated', None),
+                    'last_fetched_at': getattr(orm_user, 'last_fetched_at', None)
+                }
+                return User.from_dict(user_data)
+            return None
+        return self._execute_operation('select', 'users', _get)
 
     def get_user_by_email(self, email: str) -> Optional[User]:
         """Fetches a user by email address."""
