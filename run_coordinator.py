@@ -63,7 +63,7 @@ def main():
             connection_manager = ConnectionManager()
             
             # Initialize alert service
-            alert_service = AlertService(db, connection_manager)
+            alert_service = AlertService(db, connection_manager, redis_client, config_loader)
             
             # Initialize JobCoordinator with correct parameters
             coordinator = JobCoordinator(
