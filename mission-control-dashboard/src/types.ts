@@ -119,3 +119,36 @@ export interface DashboardRealtimeUpdates {
   alerts: DashboardAlert[];
   satellite_fleet_status: SatelliteFleetStatus[];
 }
+
+// New interfaces for Settings.tsx
+export interface SystemConfig {
+  logging_level: string;
+  api_cache_enabled: boolean;
+  api_cache_ttl: number;
+  crawler_max_depth: number;
+  crawler_render_javascript: boolean;
+  // Add other relevant config items here
+}
+
+export interface ApiKeyInfo {
+  api_name: string;
+  enabled: boolean;
+  api_key_masked: string;
+  monthly_limit: number;
+  cost_per_unit: number;
+}
+
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  is_active: boolean;
+  is_admin: boolean;
+  created_at: string; // ISO format datetime string
+  last_updated?: string; // ISO format datetime string
+}
+
+export interface Token {
+  access_token: string;
+  token_type: string;
+}

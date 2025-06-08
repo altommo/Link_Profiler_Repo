@@ -4,32 +4,35 @@ interface ListDisplayProps {
   title: string;
   items: string[];
   emptyMessage?: string;
-  itemColorClass?: string; // Tailwind CSS class for item text color
+  // itemColorClass can now be a string (Tailwind class) or a function that returns a string
+  itemColorClass?: string | ((item: string) => string);
   maxHeight?: string; // Tailwind CSS class for max height, e.g., 'max-h-40'
 }
 
 const ListDisplay: React.FC<ListDisplayProps> = ({
   title,
   items,
-  emptyMessage = 'No data available.',
-  itemColorClass = 'text-nasa-light-gray',
-  maxHeight = 'max-h-40',
+  emptyMessage = 'No items to display.',
+  itemColorClass,
+  maxHeight = 'max-h-64', // Default max height
 }) => {
   return (
-    <>
-      <h3 className="text-xl font-bold text-nasa-cyan mt-6 mb-3">{title}</h3>
-      <div className={`${maxHeight} overflow-y-auto pr-2`}>
+    <div className="bg-gray-800 p-4 rounded-lg shadow-md">
+      <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
+      <div className={`overflow-y-auto ${maxHeight}`}>
         {items.length > 0 ? (
-          items.map((item, index) => (
-            <p key={index} className={`text-sm mb-1 ${itemColorClass}`}>
-              {item}
-            </p>
-          ))
+          <ul className="list-disc list-inside text-gray-300">
+            {items.map((item, index) => (
+              <li key={index} className={typeof itemColorClass === 'function' ? itemColorClass(item) : itemColorClass || ''}>
+                {item}
+              </li>
+            ))}
+          </ul>
         ) : (
-          <p className="text-nasa-light-gray text-sm">{emptyMessage}</p>
+          <p className="text-gray-400">{emptyMessage}</p>
         )}
       </div>
-    </>
+    </div>
   );
 };
 

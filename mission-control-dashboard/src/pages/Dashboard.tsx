@@ -5,7 +5,7 @@ import ListDisplay from '../components/shared/ListDisplay';
 import ApiQuotaStatus from '../components/modules/ApiQuotaStatus';
 import BacklinkDiscovery from '../components/modules/BacklinkDiscovery';
 import PerformanceOptimization from '../components/modules/PerformanceOptimization';
-import { useWebSocket } from '../hooks/useWebSocket';
+import useWebSocket from '../hooks/useWebSocket'; // Corrected import
 import {
   DashboardRealtimeUpdates,
   CrawlerMissionStatus,
@@ -78,7 +78,11 @@ const Dashboard: React.FC = () => {
               title="Recent Job Errors"
               items={crawler_mission_status.recent_job_errors.map(err => `${err.error_type}: ${err.message.substring(0, 50)}...`)}
               emptyMessage="No recent job errors."
-              itemColorClass="text-red-400"
+              itemColorClass={(item: string) => { // Explicitly type item
+                if (item.includes('[CRITICAL]')) return 'text-red-500';
+                if (item.includes('[WARNING]')) return 'text-orange-400';
+                return 'text-blue-400';
+              }}
               maxHeight="max-h-32"
             />
           )}
@@ -94,7 +98,7 @@ const Dashboard: React.FC = () => {
               title="Active Alerts"
               items={alerts.map(alert => `[${alert.severity}] ${alert.message}`)}
               emptyMessage="No active alerts."
-              itemColorClass={(item) => {
+              itemColorClass={(item: string) => { // Explicitly type item
                 if (item.includes('[CRITICAL]')) return 'text-red-500';
                 if (item.includes('[WARNING]')) return 'text-orange-400';
                 return 'text-blue-400';
@@ -138,7 +142,7 @@ const Dashboard: React.FC = () => {
               title="Satellites"
               items={satellite_fleet_status.map(sat => `${sat.satellite_id} - ${sat.status} (Last Seen: ${new Date(sat.last_heartbeat).toLocaleTimeString()})`)}
               emptyMessage="No satellites online."
-              itemColorClass={(item) => {
+              itemColorClass={(item: string) => { // Explicitly type item
                 if (item.includes('unresponsive')) return 'text-red-500';
                 if (item.includes('idle')) return 'text-orange-400';
                 return 'text-green-400';

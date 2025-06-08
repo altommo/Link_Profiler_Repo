@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { WS_BASE_URL } from '../config'; // Import WS_BASE_URL from config
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { WS_BASE_URL, RECONNECT_INTERVAL_MS, MAX_RECONNECT_ATTEMPTS } from '../config';
 
 interface UseWebSocketOptions {
   path: string;
@@ -11,115 +11,89 @@ interface UseWebSocketOptions {
   maxRetries?: number;
 }
 
-const defaultReconnectInterval = 3000; // 3 seconds
-const defaultMaxRetries = 5;
-
-const useWebSocket = (options: UseWebSocketOptions) => {
-  const {
-    path,
-    onMessage,
-    onConnect,
-    onDisconnect,
-    onError,
-    reconnectInterval = defaultReconnectInterval,
-    maxRetries = defaultMaxRetries,
-  } = options;
-
-  const [isConnected, setIsConnected] = useState(false);
+const useWebSocket = ({
+  path,
+  onMessage,
+  onConnect,
+  onDisconnect,
+  onError,
+  reconnectInterval = RECONNECT_INTERVAL_MS,
+  maxRetries = MAX_RECONNECT_ATTEMPTS,
+}: UseWebSocketOptions) => {
   const ws = useRef<WebSocket | null>(null);
-  // Use ReturnType<typeof setTimeout> for browser-compatible type
-  const reconnectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
   const retryCount = useRef(0);
-  const isMounted = useRef(true); // To track if component is mounted
-
-  const getWebSocketUrl = useCallback(() => {
-    // Use WS_BASE_URL from config.ts directly
-    const baseWsUrl = WS_BASE_URL;
-    
-    // Ensure the path starts with a slash and baseWsUrl doesn't end with one if path is absolute
-    const fullPath = path.startsWith('/') ? path : `/${path}`;
-    const finalUrl = `${baseWsUrl}${fullPath}`;
-    
-    console.log(`Attempting to connect to WebSocket: ${finalUrl}`);
-    return finalUrl;
-  }, [path]);
+  const reconnectTimeout = useRef<NodeJS.Timeout | null>(null);
 
   const connect = useCallback(() => {
-    if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) {
-      return; // Already connected or connecting
+    if (reconnectTimeout.current) {
+      clearTimeout(reconnectTimeout.current);
+      reconnectTimeout.current = null;
     }
 
     if (retryCount.current >= maxRetries) {
-      console.warn(`Max WebSocket reconnection retries (${maxRetries}) reached. Aborting.`);
+      console.warn(`WebSocket: Max reconnect attempts (${maxRetries}) reached for ${path}. Aborting.`);
       return;
     }
 
-    const url = getWebSocketUrl();
-    ws.current = new WebSocket(url);
+    const socket = new WebSocket(`${WS_BASE_URL}${path}`);
 
-    ws.current.onopen = () => {
-      if (isMounted.current) { // Only update state if component is mounted
-        console.log('WebSocket connected');
-        setIsConnected(true);
-        retryCount.current = 0; // Reset retry count on successful connection
-        if (reconnectTimeout.current) {
-          clearTimeout(reconnectTimeout.current);
-          reconnectTimeout.current = null;
-        }
-        onConnect?.();
+    socket.onopen = () => {
+      console.log(`WebSocket: Connected to ${path}`);
+      setIsConnected(true);
+      retryCount.current = 0; // Reset retry count on successful connection
+      onConnect?.();
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        onMessage(data);
+      } catch (e) {
+        console.error('WebSocket: Failed to parse message data:', e);
+        onMessage(event.data); // Pass raw data if parsing fails
       }
     };
 
-    ws.current.onmessage = (event) => {
-      if (isMounted.current) { // Only process message if component is mounted
-        onMessage(event.data);
-      }
-    };
+    socket.onclose = (event) => {
+      console.log(`WebSocket: Disconnected from ${path}`, event.code, event.reason);
+      setIsConnected(false);
+      onDisconnect?.();
 
-    ws.current.onclose = (event) => {
-      if (isMounted.current) { // Only update state if component is mounted
-        console.log('WebSocket disconnected:', event.code, event.reason);
-        setIsConnected(false);
-        onDisconnect?.();
-
-        // Attempt to reconnect
-        if (reconnectTimeout.current) {
-          clearTimeout(reconnectTimeout.current);
-        }
-        retryCount.current += 1;
-        console.log(`Attempting to reconnect WebSocket in ${reconnectInterval / 1000}s (Attempt ${retryCount.current}/${maxRetries})...`);
+      // Attempt to reconnect
+      if (!event.wasClean && retryCount.current < maxRetries) {
+        retryCount.current++;
+        console.log(`WebSocket: Attempting to reconnect in ${reconnectInterval / 1000}s (attempt ${retryCount.current}/${maxRetries})...`);
         reconnectTimeout.current = setTimeout(() => {
           connect();
         }, reconnectInterval);
       }
     };
 
-    ws.current.onerror = (event) => {
-      if (isMounted.current) { // Only update state if component is mounted
-        console.error('WebSocket error:', event);
-        onError?.(event);
-        ws.current?.close(); // Close to trigger onclose and reconnect logic
-      }
+    socket.onerror = (event) => {
+      console.error(`WebSocket: Error on ${path}:`, event);
+      onError?.(event);
+      socket.close(); // Close socket to trigger onclose and reconnect logic
     };
-  }, [getWebSocketUrl, onMessage, onConnect, onDisconnect, onError, reconnectInterval, maxRetries]);
+
+    ws.current = socket;
+  }, [path, onMessage, onConnect, onDisconnect, onError, reconnectInterval, maxRetries]);
 
   useEffect(() => {
-    isMounted.current = true; // Set to true on mount
     connect();
 
     return () => {
-      isMounted.current = false; // Set to false on unmount
-      // Clean up on unmount
       if (ws.current) {
-        ws.current.close();
+        console.log(`WebSocket: Cleaning up connection for ${path}`);
+        ws.current.close(1000, 'Component unmounted');
       }
       if (reconnectTimeout.current) {
         clearTimeout(reconnectTimeout.current);
       }
     };
-  }, [connect]);
+  }, [connect, path]); // Re-run effect if 'connect' changes (which it won't due to useCallback) or path changes
 
-  return { isConnected };
+  return { isConnected, ws: ws.current };
 };
 
 export default useWebSocket;
