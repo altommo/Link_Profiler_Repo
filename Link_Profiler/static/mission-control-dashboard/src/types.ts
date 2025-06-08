@@ -1,3 +1,18 @@
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  is_active: boolean;
+  is_admin: boolean;
+  created_at: string; // ISO format datetime string
+  last_updated?: string; // ISO format datetime string
+}
+
+export interface Token {
+  access_token: string;
+  token_type: string;
+}
+
 export interface CrawlError {
   error_type: string;
   message: string;
@@ -28,8 +43,8 @@ export interface CrawlJob {
 export interface ApiPerformanceMetrics {
   total_calls: number;
   successful_calls: number;
-  average_response_time_ms: number | null; // Changed to number | null
-  success_rate: number | null; // Changed to number | null
+  average_response_time_ms: number | null;
+  success_rate: number | null;
   circuit_breaker_state: string; // e.g., "CLOSED", "OPEN", "HALF_OPEN"
 }
 
@@ -39,7 +54,7 @@ export interface ApiQuotaStatus {
   used: number;
   remaining: number | null;
   reset_date: string; // ISO format string
-  percentage_used: number | null; // Changed to number | null
+  percentage_used: number | null;
   status: string; // e.g., "OK", "Warning", "Critical"
   predicted_exhaustion_date: string | null;
   recommended_action: string | null;
@@ -55,8 +70,8 @@ export interface CrawlerMissionStatus {
   queue_depth: number;
   active_satellites_count: number;
   total_satellites_count: number;
-  satellite_utilization_percentage: number | null; // Changed to number | null
-  avg_job_completion_time_seconds: number | null; // Changed to number | null
+  satellite_utilization_percentage: number | null;
+  avg_job_completion_time_seconds: number | null;
   recent_job_errors: CrawlError[];
 }
 
@@ -64,7 +79,7 @@ export interface BacklinkDiscoveryMetrics {
   total_backlinks_discovered: number;
   unique_domains_discovered: number;
   new_backlinks_24h: number;
-  avg_authority_score: number | null; // Changed to number | null
+  avg_authority_score: number | null;
   top_linking_domains: string[];
   top_target_urls: string[];
   potential_spam_links_24h: number;
@@ -73,15 +88,15 @@ export interface BacklinkDiscoveryMetrics {
 export interface DomainIntelligenceMetrics {
   total_domains_analyzed: number;
   valuable_expired_domains_found: number;
-  avg_domain_value_score: number | null; // Changed to number | null
+  avg_domain_value_score: number | null;
   new_domains_added_24h: number;
   top_niches_identified: string[];
 }
 
 export interface PerformanceOptimizationMetrics {
-  avg_crawl_speed_pages_per_minute: number | null; // Changed to number | null
-  avg_success_rate_percentage: number | null; // Changed to number | null
-  avg_response_time_ms: number | null; // Changed to number | null
+  avg_crawl_speed_pages_per_minute: number | null;
+  avg_success_rate_percentage: number | null;
+  avg_response_time_ms: number | null;
   bottlenecks_detected: string[];
   top_performing_satellites: string[];
   worst_performing_satellites: string[];
