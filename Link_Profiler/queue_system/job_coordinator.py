@@ -173,13 +173,9 @@ class JobCoordinator:
                         await self.redis.lpush(self.dead_letter_queue_name, result_json)
                 
             except redis.exceptions.ConnectionError as e:
-                self.logger.error(f"Redis Connection Error in process_results: {e}. Attempting to reconnect...", exc_info=True)
-                # Attempt to re-establish connection. The redis_client is a connection pool,
-                # so simply trying to use it again might work, or we might need to
-                # explicitly disconnect/reconnect the pool if it's truly broken.
-                # For now, a short sleep and letting the loop continue will allow redis-py
-                # to handle reconnection attempts.
-                await asyncio.sleep(1) # Wait a bit before retrying
+                self.logger.error(f"Redis Connection Error in process_results: {e}. Attempting to reconnect in 5 seconds...", exc_info=True)
+                # Wait a bit longer before retrying after a connection error
+                await asyncio.sleep(5) 
             except Exception as e:
                 self.logger.error(f"Error processing results: {e}", exc_info=True)
                 # Optionally, push malformed results to dead letter queue
