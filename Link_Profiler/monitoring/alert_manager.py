@@ -11,8 +11,9 @@ import json
 from datetime import datetime
 from email.message import EmailMessage
 import aiosmtplib
+import redis.asyncio as redis # Import redis.asyncio
 
-from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.config.config_loader import ConfigLoader # Import ConfigLoader
 from Link_Profiler.monitoring.health_monitor import Alert, AlertLevel # Import Alert and AlertLevel
 
 logger = logging.getLogger(__name__)
@@ -21,15 +22,19 @@ class AlertManager:
     """
     Manages the dispatch of alerts to various configured channels.
     """
-    def __init__(self):
+    def __init__(self, redis_client: redis.Redis, config_loader: ConfigLoader):
         self.logger = logging.getLogger(__name__ + ".AlertManager")
-        self.webhook_enabled = config_loader.get("notifications.webhooks.enabled", False)
-        self.webhook_urls = config_loader.get("notifications.webhooks.urls", [])
-        self.email_enabled = config_loader.get("notifications.email.enabled", False)
-        self.slack_enabled = config_loader.get("notifications.slack.enabled", False)
-        self.slack_webhook_url = config_loader.get("notifications.slack.webhook_url")
+        self.redis = redis_client
+        self.config_loader = config_loader
+
+        self.webhook_enabled = self.config_loader.get("notifications.webhooks.enabled", False)
+        self.webhook_urls = self.config_loader.get("notifications.webhooks.urls", [])
+        self.email_enabled = self.config_loader.get("notifications.email.enabled", False)
+        self.slack_enabled = self.config_loader.get("notifications.slack.enabled", False)
+        self.slack_webhook_url = self.config_loader.get("notifications.slack.webhook_url")
 
         self._session: Optional[aiohttp.ClientSession] = None
+        self.logger.info("AlertManager initialized.")
 
     async def __aenter__(self):
         """Initializes the aiohttp ClientSession for sending notifications."""
@@ -139,11 +144,11 @@ class AlertManager:
     async def _send_email_alert(self, alert: Alert):
         """Send an email alert using an SMTP server."""
 
-        smtp_server = config_loader.get("notifications.email.smtp_server")
-        smtp_port = config_loader.get("notifications.email.smtp_port", 587)
-        smtp_username = config_loader.get("notifications.email.smtp_username")
-        smtp_password = config_loader.get("notifications.email.smtp_password")
-        sender_email = config_loader.get("notifications.email.sender_email")
+        smtp_server = self.config_loader.get("notifications.email.smtp_server")
+        smtp_port = self.config_loader.get("notifications.email.smtp_port", 587)
+        smtp_username = self.config_loader.get("notifications.email.smtp_username")
+        smtp_password = self.config_loader.get("notifications.email.smtp_password")
+        sender_email = self.config_loader.get("notifications.email.sender_email")
 
         recipients = getattr(alert, "recipients", None)
 
@@ -182,6 +187,3 @@ class AlertManager:
                 f"Unexpected error sending email alert for {alert.metric}: {e}",
                 exc_info=True,
             )
-
-# Create a singleton instance
-alert_manager = AlertManager()
