@@ -655,14 +655,9 @@ app.add_middleware(
     mission_control_subdomain=MISSION_CONTROL_SUBDOMAIN
 )
 
-templates = Jinja2Templates(directory=os.path.join(project_root, "admin-management-console"))
 
-# Mount static files for admin console (if still needed, or remove if replaced by mission-control-dashboard)
-app.mount(
-    "/static",
-    StaticFiles(directory=os.path.join(project_root, "admin-management-console", "static")),
-    name="static",
-)
+
+
 
 # Mount the mission-control-dashboard static assets
 app.mount(
