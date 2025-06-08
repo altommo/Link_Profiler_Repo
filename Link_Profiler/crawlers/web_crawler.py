@@ -21,6 +21,7 @@ from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.services.ai_service import AIService
 from Link_Profiler.utils.session_manager import SessionManager
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager
+from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue # Import SmartCrawlQueue
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class EnhancedWebCrawler:
     Includes advanced features like anti-bot detection, content validation,
     and anomaly detection.
     """
-    def __init__(self, config: CrawlConfig, db: Database, job_id: str, ai_service: AIService, playwright_browser: Optional[Browser] = None, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None):
+    def __init__(self, config: CrawlConfig, db: Database, job_id: str, ai_service: AIService, playwright_browser: Optional[Browser] = None, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, crawl_queue: Optional[SmartCrawlQueue] = None):
         self.config = config
         self.db = db
         self.job_id = job_id
@@ -47,6 +48,8 @@ class EnhancedWebCrawler:
         self.resilience_manager = resilience_manager
         if self.resilience_manager is None:
             raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+
+        self.crawl_queue = crawl_queue # Store the crawl_queue instance
 
         self.content_validator = ContentValidator()
         self.crawled_urls: Set[str] = set()
@@ -216,7 +219,7 @@ class EnhancedWebCrawler:
 
             # Use resilience manager for page navigation
             response = await self.resilience_manager.execute_with_resilience(
-                lambda: page.goto(url, wait_until="domcontentloaded", timeout=self.config.request_timeout * 1000),
+                lambda: page.goto(url, wait_until="domcontentloaded", timeout=self.config.timeout_seconds * 1000), # Use timeout_seconds
                 url=url # Use the URL for circuit breaker naming
             )
             
@@ -279,7 +282,7 @@ class EnhancedWebCrawler:
         try:
             # Use resilience manager for the actual HTTP request
             async with self.resilience_manager.execute_with_resilience(
-                lambda: self.session_manager.get(url, headers=headers, timeout=self.config.request_timeout),
+                lambda: self.session_manager.get(url, headers=headers, timeout=self.config.timeout_seconds), # Use timeout_seconds
                 url=url # Use the URL for circuit breaker naming
             ) as response:
                 final_url = str(response.url)
@@ -348,12 +351,16 @@ class EnhancedWebCrawler:
 
                     # Determine link type (simplified)
                     link_type = LinkType.DOFOLLOW # Default
-                    if 'rel="nofollow"' in match.group(0): # Check for nofollow attribute
-                        link_type = LinkType.NOFOLLOW
-                    elif 'rel="sponsored"' in match.group(0):
-                        link_type = LinkType.SPONSORED
-                    elif 'rel="ugc"' in match.group(0):
-                        link_type = LinkType.UGC
+                    # Check for rel attributes in a case-insensitive manner
+                    rel_attr_match = re.search(r'rel=["\']([^"\']*)["\']', match.group(0), re.IGNORECASE)
+                    if rel_attr_match:
+                        rel_attributes = [attr.strip() for attr in rel_attr_match.group(1).split(',')]
+                        if "nofollow" in rel_attributes:
+                            link_type = LinkType.NOFOLLOW
+                        elif "sponsored" in rel_attributes:
+                            link_type = LinkType.SPONSORED
+                        elif "ugc" in rel_attributes:
+                            link_type = LinkType.UGC
 
                     # Extract anchor text (simplified: just the URL for now)
                     anchor_text = full_url # Placeholder
