@@ -78,7 +78,7 @@ const Overview: React.FC = () => {
             <MetricDisplay label="Failed (24h)" value={crawler_mission_status.failed_jobs_24h_count ?? 0} />
             <MetricDisplay label="Pages Crawled (24h)" value={crawler_mission_status.total_pages_crawled_24h ?? 0} />
             <MetricDisplay label="Queue Depth" value={crawler_mission_status.queue_depth ?? 0} />
-            <MetricDisplay label="Active Satellites" value={`${crawler_mission_status.active_satellites_count ?? 0}/${crawler_mission_status.total_satellites_count ?? 0}`} />
+            <MetricDisplay label="Active Satellites" value={`${(crawler_mission_status.active_satellites_count ?? 0)}/${(crawler_mission_status.total_satellites_count ?? 0)}`} />
             <MetricDisplay label="Satellite Utilization" value={`${(crawler_mission_status.satellite_utilization_percentage ?? 0).toFixed(1)}%`} />
             <MetricDisplay label="Avg. Job Completion" value={`${(crawler_mission_status.avg_job_completion_time_seconds ?? 0).toFixed(1)}s`} />
           </div>
