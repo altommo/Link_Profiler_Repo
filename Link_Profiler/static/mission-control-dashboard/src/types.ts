@@ -28,8 +28,8 @@ export interface CrawlJob {
 export interface ApiPerformanceMetrics {
   total_calls: number;
   successful_calls: number;
-  average_response_time_ms: number;
-  success_rate: number;
+  average_response_time_ms: number | null; // Changed to number | null
+  success_rate: number | null; // Changed to number | null
   circuit_breaker_state: string; // e.g., "CLOSED", "OPEN", "HALF_OPEN"
 }
 
@@ -37,13 +37,13 @@ export interface ApiQuotaStatus {
   api_name: string;
   limit: number;
   used: number;
-  remaining?: number | null; // null for unlimited, made optional
+  remaining: number | null;
   reset_date: string; // ISO format string
-  percentage_used: number;
+  percentage_used: number | null; // Changed to number | null
   status: string; // e.g., "OK", "Warning", "Critical"
-  predicted_exhaustion_date?: string | null; // ISO format string or null, made optional
-  recommended_action?: string | null; // made optional
-  performance?: ApiPerformanceMetrics; // Made optional to match potential backend omissions
+  predicted_exhaustion_date: string | null;
+  recommended_action: string | null;
+  performance: ApiPerformanceMetrics; // Nested performance metrics
 }
 
 export interface CrawlerMissionStatus {
@@ -55,8 +55,8 @@ export interface CrawlerMissionStatus {
   queue_depth: number;
   active_satellites_count: number;
   total_satellites_count: number;
-  satellite_utilization_percentage: number;
-  avg_job_completion_time_seconds: number;
+  satellite_utilization_percentage: number | null; // Changed to number | null
+  avg_job_completion_time_seconds: number | null; // Changed to number | null
   recent_job_errors: CrawlError[];
 }
 
@@ -64,7 +64,7 @@ export interface BacklinkDiscoveryMetrics {
   total_backlinks_discovered: number;
   unique_domains_discovered: number;
   new_backlinks_24h: number;
-  avg_authority_score: number;
+  avg_authority_score: number | null; // Changed to number | null
   top_linking_domains: string[];
   top_target_urls: string[];
   potential_spam_links_24h: number;
@@ -73,44 +73,44 @@ export interface BacklinkDiscoveryMetrics {
 export interface DomainIntelligenceMetrics {
   total_domains_analyzed: number;
   valuable_expired_domains_found: number;
-  avg_domain_value_score: number;
+  avg_domain_value_score: number | null; // Changed to number | null
   new_domains_added_24h: number;
   top_niches_identified: string[];
 }
 
 export interface PerformanceOptimizationMetrics {
-  avg_crawl_speed_pages_per_minute: number;
-  avg_success_rate_percentage: number;
-  avg_response_time_ms: number;
+  avg_crawl_speed_pages_per_minute: number | null; // Changed to number | null
+  avg_success_rate_percentage: number | null; // Changed to number | null
+  avg_response_time_ms: number | null; // Changed to number | null
   bottlenecks_detected: string[];
   top_performing_satellites: string[];
   worst_performing_satellites: string[];
 }
 
 export interface DashboardAlert {
-  type: string;
-  severity: string; // e.g., "CRITICAL", "WARNING", "INFO"
+  alert_id: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
   message: string;
   timestamp: string; // ISO format datetime string
-  affected_jobs?: string[];
-  recommended_action?: string;
+  source: string;
   details?: Record<string, any>;
+  is_resolved: boolean;
 }
 
 export interface SatelliteFleetStatus {
   satellite_id: string;
-  status: string; // Broadened from "active" | "idle" | "unresponsive" to string for flexibility
+  status: 'active' | 'idle' | 'unresponsive';
   last_heartbeat: string; // ISO format datetime string
   jobs_completed_24h: number;
   errors_24h: number;
-  avg_job_duration_seconds?: number;
-  current_job_id?: string;
-  current_job_type?: string;
-  current_job_progress?: number;
+  avg_job_duration_seconds: number | null;
+  current_job_id: string | null;
+  current_job_type: string | null;
+  current_job_progress: number | null; // Percentage 0-100
 }
 
 export interface DashboardRealtimeUpdates {
-  timestamp: string; // ISO format datetime string
+  timestamp: string; // ISO format string
   crawler_mission_status: CrawlerMissionStatus;
   backlink_discovery_metrics: BacklinkDiscoveryMetrics;
   api_quota_statuses: ApiQuotaStatus[];
@@ -136,19 +136,4 @@ export interface ApiKeyInfo {
   api_key_masked: string;
   monthly_limit: number;
   cost_per_unit: number;
-}
-
-export interface User {
-  id: string;
-  username: string;
-  email: string;
-  is_active: boolean;
-  is_admin: boolean;
-  created_at: string; // ISO format datetime string
-  last_updated?: string; // ISO format datetime string
-}
-
-export interface Token {
-  access_token: string;
-  token_type: string;
 }
