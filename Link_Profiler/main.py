@@ -1137,7 +1137,7 @@ async def serve_dashboard_spa(request: Request, path: str):
             raise HTTPException(status_code=500, detail="Mission Control Dashboard not built or found.")
     
     else:
-        # If no specific dashboard subdomain, redirect to customer dashboard by default
+        # If no specific subdomain, redirect to customer dashboard by default
         # This assumes the main domain (e.g., yspanel.com) should redirect to customer.yspanel.com
         host = request.headers.get('host', 'localhost')
         logger.info(f"No specific dashboard subdomain detected for host {host}. Redirecting to customer dashboard.")
