@@ -4,12 +4,12 @@ import MetricDisplay from '../shared/MetricDisplay'; // Added MetricDisplay impo
 
 interface PerformanceOptimizationProps {
   metrics: {
-    avg_crawl_speed_pages_per_minute: number | null; // Changed to number | null
-    avg_success_rate_percentage: number | null; // Changed to number | null
-    avg_response_time_ms: number | null; // Changed to number | null
-    bottlenecks_detected: string[];
-    top_performing_satellites: string[];
-    worst_performing_satellites: string[];
+    avg_crawl_speed_pages_per_minute: number | null;
+    avg_success_rate_percentage: number | null;
+    avg_response_time_ms: number | null;
+    bottlenecks_detected: string[] | null; // Changed to allow null
+    top_performing_satellites: string[] | null; // Changed to allow null
+    worst_performing_satellites: string[] | null; // Changed to allow null
   };
 }
 
@@ -30,8 +30,8 @@ const PerformanceOptimization: React.FC<PerformanceOptimizationProps> = ({ metri
 
       <h3 className="text-xl font-bold text-nasa-cyan mt-6 mb-3">Bottlenecks Detected</h3>
       <div className="max-h-24 overflow-y-auto pr-2">
-        {metrics.bottlenecks_detected.length > 0 ? (
-          metrics.bottlenecks_detected.map((bottleneck, index) => (
+        {(metrics.bottlenecks_detected ?? []).length > 0 ? ( // Safely access
+          (metrics.bottlenecks_detected ?? []).map((bottleneck, index) => (
             <p key={index} className="text-sm text-red-400 mb-1">{bottleneck}</p>
           ))
         ) : (
@@ -41,8 +41,8 @@ const PerformanceOptimization: React.FC<PerformanceOptimizationProps> = ({ metri
 
       <h3 className="text-xl font-bold text-nasa-cyan mt-6 mb-3">Top Performing Satellites</h3>
       <div className="max-h-24 overflow-y-auto pr-2">
-        {metrics.top_performing_satellites.length > 0 ? (
-          metrics.top_performing_satellites.map((satellite, index) => (
+        {(metrics.top_performing_satellites ?? []).length > 0 ? ( // Safely access
+          (metrics.top_performing_satellites ?? []).map((satellite, index) => (
             <p key={index} className="text-sm text-green-400 mb-1">{satellite}</p>
           ))
         ) : (
@@ -52,8 +52,8 @@ const PerformanceOptimization: React.FC<PerformanceOptimizationProps> = ({ metri
 
       <h3 className="text-xl font-bold text-nasa-cyan mt-6 mb-3">Worst Performing Satellites</h3>
       <div className="max-h-24 overflow-y-auto pr-2">
-        {metrics.worst_performing_satellites.length > 0 ? (
-          metrics.worst_performing_satellites.map((satellite, index) => (
+        {(metrics.worst_performing_satellites ?? []).length > 0 ? ( // Safely access
+          (metrics.worst_performing_satellites ?? []).map((satellite, index) => (
             <p key={index} className="text-sm text-red-400 mb-1">{satellite}</p>
           ))
         ) : (

@@ -10,9 +10,9 @@ interface BacklinkDiscoveryProps {
     total_backlinks_discovered: number;
     unique_domains_discovered: number;
     new_backlinks_24h: number;
-    avg_authority_score: number | null; // Changed to number | null
-    top_linking_domains: string[];
-    top_target_urls: string[];
+    avg_authority_score: number | null;
+    top_linking_domains: string[] | null; // Changed to allow null
+    top_target_urls: string[] | null; // Changed to allow null
     potential_spam_links_24h: number;
   };
 }
@@ -43,14 +43,14 @@ const BacklinkDiscovery: React.FC<BacklinkDiscoveryProps> = ({ metrics }) => {
 
       <ListDisplay
         title="Top Linking Domains"
-        items={metrics.top_linking_domains}
+        items={metrics.top_linking_domains ?? []} // Safely access
         emptyMessage="No top linking domains yet."
         maxHeight="max-h-40"
       />
 
       <ListDisplay
         title="Top Target URLs"
-        items={metrics.top_target_urls}
+        items={metrics.top_target_urls ?? []} // Safely access
         emptyMessage="No top target URLs yet."
         maxHeight="max-h-40"
       />
