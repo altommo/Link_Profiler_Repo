@@ -16,7 +16,7 @@ from urllib.parse import urlparse # Import urlparse
 
 import redis.asyncio as redis
 
-from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.config.config_loader import ConfigLoader # Import ConfigLoader
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, serialize_model # Assuming CrawlJob and CrawlStatus are defined
 
 logger = logging.getLogger(__name__)
