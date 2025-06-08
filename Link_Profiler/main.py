@@ -508,7 +508,7 @@ async def validate_redis_dependencies(redis_client: redis.Redis, services_to_val
                     logger.warning(f"⚠️ WARNING: {service_class.__name__}.__init__ 'redis_client' parameter is positional-only. Consider making it keyword-only or mixed.")
                 logger.info(f"✅ {service_class.__name__}.__init__ 'redis_client' parameter validated.")
         except Exception as e:
-            logger.critical(f"❌ CRITICAL: Error inspecting {service_class.__name__}.__init__: {e}")
+            logger.critical(f"❌ CRITICAL: Error inspecting {service_class.__name__}.__init__: {e}", exc_info=True) # Added exc_info
             all_valid = False
             
     if not all_valid:
@@ -594,10 +594,16 @@ async def lifespan(app: FastAPI):
             logger.critical("Critical Redis dependencies not met. Aborting application startup.")
             raise RuntimeError("Critical Redis dependencies not met. Aborting application startup.")
 
-        for cm in context_managers:
-            logger.info(f"Application startup: Entering {cm.__class__.__name__} context.")
-            entered_contexts.append(await cm.__aenter__())
-        
+        for i, cm in enumerate(context_managers):
+            logger.info(f"Application startup: Attempting to enter {cm.__class__.__name__} context (Index: {i})...")
+            try:
+                entered_contexts.append(await cm.__aenter__())
+                logger.info(f"Application startup: Successfully entered {cm.__class__.__name__} context (Index: {i}).")
+            except Exception as e:
+                logger.critical(f"Application startup: FAILED to enter {cm.__class__.__name__} context (Index: {i}): {e}", exc_info=True)
+                raise # Re-raise to ensure lifespan exits
+
+        logger.info("Application startup: All context managers entered successfully.")
         logger.info("Application startup: Pinging Redis.")
         if redis_client:
             try:
@@ -785,7 +791,7 @@ async def update_existing_user(user_id: str, user_update: UserCreate, current_us
         user.hashed_password = auth_service_instance.get_password_hash(user_update.password)
     
     updated_user = db.update_user(user)
-    return UserResponse.from_user(updated_user)
+    return UserResponse.from_user(new_user)
 
 @app.delete("/admin/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_existing_user(user_id: str, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
