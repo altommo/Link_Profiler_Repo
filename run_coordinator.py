@@ -48,8 +48,8 @@ def main():
 """)
         
         try:
-            # Initialize database
-            db = Database(db_url=database_url)
+            # Initialize database (singleton - no parameters needed)
+            db = Database()
             
             # Initialize Redis
             redis_pool = redis.ConnectionPool.from_url(redis_url)
