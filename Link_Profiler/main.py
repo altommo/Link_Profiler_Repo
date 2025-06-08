@@ -288,7 +288,8 @@ domain_service_instance = DomainService(
     smart_api_router_service=smart_api_router_service, # Pass the new router service
     session_manager=session_manager, # Pass session_manager
     resilience_manager=distributed_resilience_manager, # Pass resilience_manager
-    api_quota_manager=api_quota_manager # Pass api_quota_manager
+    api_quota_manager=api_quota_manager, # Pass api_quota_manager
+    redis_client=redis_client # Pass redis_client
 )
 
 # Initialize BacklinkService based on priority: GSC > OpenLinkProfiler > Real (paid) > Simulated
@@ -791,7 +792,7 @@ async def update_existing_user(user_id: str, user_update: UserCreate, current_us
         user.hashed_password = auth_service_instance.get_password_hash(user_update.password)
     
     updated_user = db.update_user(user)
-    return UserResponse.from_user(new_user)
+    return UserResponse.from_user(updated_user) # Corrected: Changed new_user to updated_user
 
 @app.delete("/admin/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_existing_user(user_id: str, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
