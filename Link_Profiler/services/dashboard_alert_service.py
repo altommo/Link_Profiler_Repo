@@ -9,6 +9,7 @@ import redis.asyncio as redis # Import the module for type hinting
 from Link_Profiler.api.schemas import DashboardAlert, AlertSeverity # Assuming this schema is correct
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import the concrete APIQuotaManager
 from Link_Profiler.monitoring.prometheus_metrics import DASHBOARD_ALERTS_GAUGE, DASHBOARD_ALERTS_TOTAL
+from Link_Profiler.core.models import CrawlStatus # Import CrawlStatus
 
 logger = logging.getLogger(__name__)
 
