@@ -1,85 +1,74 @@
 import React from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import ModuleContainer from '../shared/ModuleContainer';
 import ProgressBar from '../ui/ProgressBar';
-import ChartContainer from '../shared/ChartContainer';
-import LineChart from '../../charts/LineChart';
 import MetricDisplay from '../shared/MetricDisplay';
-import { ApiQuotaStatus as ApiQuotaStatusType, ApiPerformanceMetrics } from '../../types'; // Import types from types.ts
+import { ApiQuotaStatus as ApiQuotaStatusType } from '../../types'; // Use the imported type
 
 interface ApiQuotaStatusProps {
   statuses: ApiQuotaStatusType[]; // Use the imported type
 }
 
 const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ statuses }) => {
-  const getStatusColor = (status: string) => { // Status is now always a string from ApiQuotaStatusType
-    switch (status) {
-      case 'OK': return 'text-green-500';
-      case 'Warning': return 'text-nasa-amber';
-      case 'Critical': return 'text-red-500';
-      default: return 'text-nasa-light-gray';
-    }
-  };
-
   const getProgressBarColor = (percentage: number) => {
     if (percentage >= 90) return 'bg-red-500';
-    if (percentage >= 75) return 'bg-nasa-amber';
+    if (percentage >= 70) return 'bg-orange-500';
     return 'bg-green-500';
   };
 
-  // Prepare data for the chart
-  const apiUsageHistory = statuses.map(api => ({
+  // Prepare data for the LineChart
+  const chartData = statuses.map(api => ({
     name: api.api_name,
-    usage: api.percentage_used,
+    'Usage (%)': api.percentage_used,
+    'Avg Response Time (ms)': api.performance?.average_response_time_ms || 0, // Make performance optional
+    'Success Rate (%)': (api.performance?.success_rate || 0) * 100, // Make performance optional
   }));
 
   return (
-    <ModuleContainer title="API Quota Management">
-      <div className="space-y-4">
-        {statuses.length > 0 ? (
-          statuses.map((api) => (
-            <div key={api.api_name} className="border border-nasa-light-gray p-3 rounded-md">
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-lg font-semibold">{api.api_name}</span>
-                <span className={`text-sm ${getStatusColor(api.status)}`}>{api.status.toUpperCase()}</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-sm text-nasa-light-gray">
-                <MetricDisplay label="Used" value={`${api.used} / ${api.limit === -1 ? 'Unlimited' : api.limit}`} />
-                <MetricDisplay label="Remaining" value={api.remaining === null ? 'Unlimited' : api.remaining} />
-                <MetricDisplay label="Success Rate" value={`${(api.performance.success_rate * 100).toFixed(1)}%`} valueColorClass={api.performance.success_rate < 0.9 ? 'text-red-500' : 'text-green-500'} />
-                <MetricDisplay label="Avg. Response" value={`${api.performance.average_response_time_ms.toFixed(0)}ms`} valueColorClass={api.performance.average_response_time_ms > 1000 ? 'text-red-500' : 'text-green-500'} />
-              </div>
-              <ProgressBar percentage={api.percentage_used} colorClass={getProgressBarColor(api.percentage_used)} className="mt-2" />
-              <p className="text-xs text-nasa-light-gray mt-1">{api.percentage_used.toFixed(1)}% Used</p>
-              {api.predicted_exhaustion_date && (
-                <p className="text-xs text-nasa-light-gray mt-1">
-                  Exhaustion: {new Date(api.predicted_exhaustion_date).toLocaleDateString()}
-                </p>
-              )}
-              {api.recommended_action && (
-                <p className="text-xs text-nasa-amber mt-1">
-                  Action: {api.recommended_action}
-                </p>
-              )}
-              <p className="text-xs text-nasa-light-gray mt-1">
-                Reset: {new Date(api.reset_date).toLocaleDateString()} {/* Changed to reset_date */}
-              </p>
+    <ModuleContainer title="API Quota & Performance">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        {statuses.map((api) => (
+          <div key={api.api_name} className="bg-gray-800 p-4 rounded-lg shadow-md">
+            <h3 className="text-lg font-semibold text-white mb-2">{api.api_name}</h3>
+            <div className="flex justify-between items-center mb-2">
+              <MetricDisplay label="Used" value={`${api.used}/${api.limit}`} valueColorClass="text-blue-400" />
+              <MetricDisplay label="Remaining" value={api.remaining !== undefined ? api.remaining : 'N/A'} valueColorClass="text-purple-400" />
             </div>
-          ))
-        ) : (
-          <p className="text-nasa-light-gray text-sm">No API quota data available.</p>
-        )}
+            <ProgressBar percentage={api.percentage_used} colorClass={getProgressBarColor(api.percentage_used)} className="mt-2" />
+            <p className="text-sm text-gray-400 mt-1">Reset: {new Date(api.reset_date).toLocaleDateString()}</p>
+            {api.predicted_exhaustion_date && (
+              <p className="text-sm text-gray-400">Exhaustion: {new Date(api.predicted_exhaustion_date).toLocaleDateString()}</p>
+            )}
+            {api.performance && ( // Only render if performance data exists
+              <div className="mt-4 text-sm text-gray-300">
+                <p>Total Calls: {api.performance.total_calls}</p>
+                <p>Successful Calls: {api.performance.successful_calls}</p>
+                <p>Avg. Response Time: {api.performance.average_response_time_ms.toFixed(2)} ms</p>
+                <p>Success Rate: {(api.performance.success_rate * 100).toFixed(2)}%</p>
+                <p>Circuit Breaker: <span className={`font-semibold ${api.performance.circuit_breaker_state === 'OPEN' ? 'text-red-500' : 'text-green-500'}`}>{api.performance.circuit_breaker_state}</span></p>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
 
-      {statuses.length > 0 && (
-        <ChartContainer title="Current API Usage (%)">
-          <LineChart
-            data={apiUsageHistory}
-            dataKey="name"
-            lineKeys={[{ key: 'usage', stroke: '#00FFFF', name: 'Usage %' }]}
-            yAxisTickFormatter={(value) => `${value}%`}
+      <h3 className="text-xl font-semibold text-white mb-4">API Performance Trends</h3>
+      <ResponsiveContainer width="100%" height={300}>
+        <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+          <XAxis dataKey="name" stroke="#999" />
+          <YAxis yAxisId="left" stroke="#999" label={{ value: 'Usage (%)', angle: -90, position: 'insideLeft', fill: '#999' }} />
+          <YAxis yAxisId="right" orientation="right" stroke="#999" label={{ value: 'Time (ms) / Rate (%)', angle: 90, position: 'insideRight', fill: '#999' }} />
+          <Tooltip
+            contentStyle={{ backgroundColor: '#333', border: 'none', color: '#fff' }}
+            labelStyle={{ color: '#fff' }}
+            formatter={(value: string | number, name: string) => [`${value}${name.includes('Time') ? 'ms' : '%'}`, name]}
           />
-        </ChartContainer>
-      )}
+          <Line yAxisId="left" type="monotone" dataKey="Usage (%)" stroke="#8884d8" activeDot={{ r: 8 }} />
+          <Line yAxisId="right" type="monotone" dataKey="Avg Response Time (ms)" stroke="#82ca9d" />
+          <Line yAxisId="right" type="monotone" dataKey="Success Rate (%)" stroke="#ffc658" />
+        </LineChart>
+      </ResponsiveContainer>
     </ModuleContainer>
   );
 };

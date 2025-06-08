@@ -1,21 +1,3 @@
-// src/types.ts
-
-// --- Core Data Models (from Link_Profiler/core/models.py) ---
-export interface User {
-  user_id: string;
-  username: string;
-  email: string;
-  is_admin: boolean;
-  created_date: string; // ISO format datetime string
-  updated_date: string; // ISO format datetime string
-  last_login?: string; // ISO format datetime string
-}
-
-export interface Token {
-  access_token: string;
-  token_type: string;
-}
-
 export interface CrawlError {
   error_type: string;
   message: string;
@@ -24,7 +6,45 @@ export interface CrawlError {
   timestamp: string; // ISO format datetime string
 }
 
-// --- API Schemas (from Link_Profiler/api/schemas.py) ---
+export interface CrawlJob {
+  id: string;
+  targetUrl: string;
+  status: string; // e.g., "QUEUED", "IN_PROGRESS", "COMPLETED", "FAILED"
+  progress: number;
+  created: string; // ISO format datetime string
+  // Add other properties from your Python CrawlJob model as needed
+  job_type: string;
+  progress_percentage: number;
+  urls_crawled: number;
+  links_found: number;
+  errors_count: number;
+  error_log: CrawlError[];
+  // Assuming these are ISO strings from Python datetime
+  created_date: string;
+  started_date?: string;
+  completed_date?: string;
+}
+
+export interface ApiPerformanceMetrics {
+  total_calls: number;
+  successful_calls: number;
+  average_response_time_ms: number;
+  success_rate: number;
+  circuit_breaker_state: string; // e.g., "CLOSED", "OPEN", "HALF_OPEN"
+}
+
+export interface ApiQuotaStatus {
+  api_name: string;
+  limit: number;
+  used: number;
+  remaining?: number | null; // null for unlimited, made optional
+  reset_date: string; // ISO format string
+  percentage_used: number;
+  status: string; // e.g., "OK", "Warning", "Critical"
+  predicted_exhaustion_date?: string | null; // ISO format string or null, made optional
+  recommended_action?: string | null; // made optional
+  performance?: ApiPerformanceMetrics; // Made optional to match potential backend omissions
+}
 
 export interface CrawlerMissionStatus {
   active_jobs_count: number;
@@ -50,27 +70,6 @@ export interface BacklinkDiscoveryMetrics {
   potential_spam_links_24h: number;
 }
 
-export interface ApiPerformanceMetrics {
-  total_calls: number;
-  successful_calls: number;
-  average_response_time_ms: number;
-  success_rate: number;
-  circuit_breaker_state: string; // e.g., "CLOSED", "OPEN", "HALF_OPEN"
-}
-
-export interface ApiQuotaStatus {
-  api_name: string;
-  limit: number;
-  used: number;
-  remaining: number | null; // null for unlimited
-  reset_date: string; // ISO format datetime string
-  percentage_used: number;
-  status: string; // e.g., "OK", "Warning", "Critical"
-  predicted_exhaustion_date: string | null; // ISO format datetime string
-  recommended_action: string | null;
-  performance: ApiPerformanceMetrics;
-}
-
 export interface DomainIntelligenceMetrics {
   total_domains_analyzed: number;
   valuable_expired_domains_found: number;
@@ -89,25 +88,25 @@ export interface PerformanceOptimizationMetrics {
 }
 
 export interface DashboardAlert {
-  alert_id: string;
-  severity: 'low' | 'medium' | 'high' | 'critical';
+  type: string;
+  severity: string; // e.g., "CRITICAL", "WARNING", "INFO"
   message: string;
   timestamp: string; // ISO format datetime string
-  source: string;
+  affected_jobs?: string[];
+  recommended_action?: string;
   details?: Record<string, any>;
-  is_resolved: boolean;
 }
 
 export interface SatelliteFleetStatus {
   satellite_id: string;
-  status: 'active' | 'idle' | 'unresponsive';
+  status: string; // Broadened from "active" | "idle" | "unresponsive" to string for flexibility
   last_heartbeat: string; // ISO format datetime string
   jobs_completed_24h: number;
   errors_24h: number;
-  avg_job_duration_seconds: number | null;
-  current_job_id: string | null;
-  current_job_type: string | null;
-  current_job_progress: number | null; // Percentage 0-100
+  avg_job_duration_seconds?: number;
+  current_job_id?: string;
+  current_job_type?: string;
+  current_job_progress?: number;
 }
 
 export interface DashboardRealtimeUpdates {
@@ -119,21 +118,4 @@ export interface DashboardRealtimeUpdates {
   performance_optimization_metrics: PerformanceOptimizationMetrics;
   alerts: DashboardAlert[];
   satellite_fleet_status: SatelliteFleetStatus[];
-}
-
-export interface SystemConfig {
-  logging_level: string;
-  api_cache_enabled: boolean;
-  api_cache_ttl: number;
-  crawler_max_depth: number;
-  crawler_render_javascript: boolean;
-  // Add other relevant config items here
-}
-
-export interface ApiKeyInfo {
-  api_name: string;
-  enabled: boolean;
-  api_key_masked: string;
-  monthly_limit: number;
-  cost_per_unit: number;
 }

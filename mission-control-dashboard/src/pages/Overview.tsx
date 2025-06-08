@@ -1,30 +1,50 @@
-import React from 'react';
-import useMissionControlStore from '../stores/missionControlStore';
+import React, { useEffect, useState } from 'react';
 import ModuleContainer from '../components/shared/ModuleContainer';
 import MetricDisplay from '../components/shared/MetricDisplay';
 import ListDisplay from '../components/shared/ListDisplay';
-
-// Re-import existing modules
-import CrawlerMissionStatus from '../components/modules/CrawlerMissionStatus';
-import BacklinkDiscovery from '../components/modules/BacklinkDiscovery';
 import ApiQuotaStatus from '../components/modules/ApiQuotaStatus';
-import DomainIntelligence from '../components/modules/DomainIntelligence';
+import BacklinkDiscovery from '../components/modules/BacklinkDiscovery';
 import PerformanceOptimization from '../components/modules/PerformanceOptimization';
-import AlertsDisplay from '../components/modules/AlertsDisplay';
+import { useWebSocket } from '../hooks/useWebSocket';
+import {
+  DashboardRealtimeUpdates,
+  CrawlerMissionStatus,
+  BacklinkDiscoveryMetrics,
+  ApiQuotaStatus as ApiQuotaStatusType, // Alias to avoid conflict if needed
+  DomainIntelligenceMetrics,
+  PerformanceOptimizationMetrics,
+  DashboardAlert,
+  SatelliteFleetStatus,
+} from '../types'; // Import all necessary types
 
 const Overview: React.FC = () => {
-  const { data } = useMissionControlStore();
+  const [dashboardData, setDashboardData] = useState<DashboardRealtimeUpdates | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  if (!data) {
-    return (
-      <div className="text-center text-nasa-light-gray text-xl mt-20">
-        <p>Awaiting data streams from Mission Control...</p>
-        <p className="text-sm mt-2">Ensure backend services are running and WebSocket is connected.</p>
-      </div>
-    );
+  const handleWebSocketMessage = (data: DashboardRealtimeUpdates) => {
+    setDashboardData(data);
+    setError(null);
+  };
+
+  const handleWebSocketError = (event: Event) => {
+    console.error('WebSocket error:', event);
+    setError('WebSocket connection error. Data might be outdated.');
+  };
+
+  const { isConnected } = useWebSocket({
+    path: '/ws/dashboard',
+    onMessage: handleWebSocketMessage,
+    onError: handleWebSocketError,
+  });
+
+  if (error) {
+    return <div className="text-red-500 p-4">{error}</div>;
   }
 
-  // Destructure data for easier access
+  if (!dashboardData) {
+    return <div className="text-white p-4">Loading dashboard data...</div>;
+  }
+
   const {
     crawler_mission_status,
     backlink_discovery_metrics,
@@ -33,45 +53,102 @@ const Overview: React.FC = () => {
     performance_optimization_metrics,
     alerts,
     satellite_fleet_status,
-  } = data;
+  } = dashboardData;
 
   return (
-    <div className="space-y-8">
-      <h1 className="text-4xl font-bold text-nasa-cyan mb-4">Mission Overview</h1>
-      <p className="text-sm text-nasa-light-gray">Last Updated: {new Date(data.timestamp).toLocaleTimeString()}</p>
+    <div className="p-6 bg-gray-900 min-h-screen text-white">
+      <h1 className="text-3xl font-bold mb-6">Mission Control Overview</h1>
 
-      {/* Adjusted grid for responsiveness: 1 column on small, 2 on medium, 3 on large */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* Crawler Mission Status - Updated to use new shared components */}
-        <CrawlerMissionStatus
-          status={crawler_mission_status}
-          satelliteFleet={satellite_fleet_status}
-        />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        {/* Crawler Mission Status */}
+        <ModuleContainer title="Crawler Mission Status">
+          <div className="grid grid-cols-2 gap-4">
+            <MetricDisplay label="Active Jobs" value={crawler_mission_status.active_jobs_count} />
+            <MetricDisplay label="Queued Jobs" value={crawler_mission_status.queued_jobs_count} />
+            <MetricDisplay label="Completed (24h)" value={crawler_mission_status.completed_jobs_24h_count} />
+            <MetricDisplay label="Failed (24h)" value={crawler_mission_status.failed_jobs_24h_count} />
+            <MetricDisplay label="Pages Crawled (24h)" value={crawler_mission_status.total_pages_crawled_24h} />
+            <MetricDisplay label="Queue Depth" value={crawler_mission_status.queue_depth} />
+            <MetricDisplay label="Active Satellites" value={`${crawler_mission_status.active_satellites_count}/${crawler_mission_status.total_satellites_count}`} />
+            <MetricDisplay label="Satellite Utilization" value={`${crawler_mission_status.satellite_utilization_percentage.toFixed(1)}%`} />
+            <MetricDisplay label="Avg. Job Completion" value={`${crawler_mission_status.avg_job_completion_time_seconds.toFixed(1)}s`} />
+          </div>
+          {crawler_mission_status.recent_job_errors && crawler_mission_status.recent_job_errors.length > 0 && (
+            <ListDisplay
+              title="Recent Job Errors"
+              items={crawler_mission_status.recent_job_errors.map(err => `${err.error_type}: ${err.message.substring(0, 50)}...`)}
+              emptyMessage="No recent job errors."
+              itemColorClass="text-red-400"
+              maxHeight="max-h-32"
+            />
+          )}
+        </ModuleContainer>
 
-        {/* Backlink Discovery Operations - Updated to use new shared components */}
-        <BacklinkDiscovery
-          metrics={backlink_discovery_metrics}
-        />
+        {/* API Quota & Performance */}
+        <ApiQuotaStatus statuses={api_quota_statuses} />
 
-        {/* API Quota Management - Still uses its own internal rendering for progress bars */}
-        <ApiQuotaStatus
-          statuses={api_quota_statuses}
-        />
+        {/* Alerts & Notifications */}
+        <ModuleContainer title="Alerts & Notifications">
+          {alerts.length > 0 ? (
+            <ListDisplay
+              title="Active Alerts"
+              items={alerts.map(alert => `[${alert.severity}] ${alert.message}`)}
+              emptyMessage="No active alerts."
+              itemColorClass={(item) => {
+                if (item.includes('[CRITICAL]')) return 'text-red-500';
+                if (item.includes('[WARNING]')) return 'text-orange-400';
+                return 'text-blue-400';
+              }}
+              maxHeight="max-h-64"
+            />
+          ) : (
+            <p className="text-gray-400">No active alerts.</p>
+          )}
+        </ModuleContainer>
+      </div>
 
-        {/* Domain Intelligence Command Center - Updated to use new shared components */}
-        <DomainIntelligence
-          metrics={domain_intelligence_metrics}
-        />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Backlink Discovery Operations */}
+        <BacklinkDiscovery metrics={backlink_discovery_metrics} />
 
-        {/* Performance Optimization Center - Updated to use new shared components */}
-        <PerformanceOptimization
-          metrics={performance_optimization_metrics}
-        />
+        {/* Domain Intelligence Command Center */}
+        <ModuleContainer title="Domain Intelligence Command Center">
+          <div className="grid grid-cols-2 gap-4">
+            <MetricDisplay label="Total Domains Analyzed" value={domain_intelligence_metrics.total_domains_analyzed} />
+            <MetricDisplay label="Valuable Expired Domains Found" value={domain_intelligence_metrics.valuable_expired_domains_found} />
+            <MetricDisplay label="Avg. Domain Value Score" value={domain_intelligence_metrics.avg_domain_value_score.toFixed(1)} />
+            <MetricDisplay label="New Domains Added (24h)" value={domain_intelligence_metrics.new_domains_added_24h} />
+          </div>
+          <ListDisplay
+            title="Top Niches Identified"
+            items={domain_intelligence_metrics.top_niches_identified}
+            emptyMessage="No niches identified."
+          />
+        </ModuleContainer>
+      </div>
 
-        {/* System Alerts - Still uses its own internal rendering for alert details */}
-        <AlertsDisplay
-          alerts={alerts}
-        />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Performance Optimization Center */}
+        <PerformanceOptimization metrics={performance_optimization_metrics} />
+
+        {/* Satellite Fleet Status */}
+        <ModuleContainer title="Satellite Fleet Status">
+          {satellite_fleet_status.length > 0 ? (
+            <ListDisplay
+              title="Satellites"
+              items={satellite_fleet_status.map(sat => `${sat.satellite_id} - ${sat.status} (Last Seen: ${new Date(sat.last_heartbeat).toLocaleTimeString()})`)}
+              emptyMessage="No satellites online."
+              itemColorClass={(item) => {
+                if (item.includes('unresponsive')) return 'text-red-500';
+                if (item.includes('idle')) return 'text-orange-400';
+                return 'text-green-400';
+              }}
+              maxHeight="max-h-64"
+            />
+          ) : (
+            <p className="text-gray-400">No satellites online.</p>
+          )}
+        </ModuleContainer>
       </div>
     </div>
   );

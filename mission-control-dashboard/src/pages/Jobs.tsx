@@ -1,273 +1,222 @@
-import React from 'react';
-import useMissionControlStore from '../stores/missionControlStore';
-import DataCard from '../components/ui/DataCard';
+import React, { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
-import { useAuth } from '../hooks/useAuth';
-import { SatelliteFleetStatus, CrawlError, CrawlerMissionStatus } from '../types'; // Import types from types.ts
+import DataCard from '../components/ui/DataCard';
+import ModuleContainer from '../components/shared/ModuleContainer';
+import MetricDisplay from '../components/shared/MetricDisplay';
+import ListDisplay from '../components/shared/ListDisplay';
+import { CrawlJob, SatelliteFleetStatus } from '../types'; // Import types
 
 const Jobs: React.FC = () => {
-  const { data } = useMissionControlStore(); // Removed fetchData as it's not exposed by the store
-  const { token } = useAuth();
+  const [jobs, setJobs] = useState<CrawlJob[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [satelliteFleetStatus, setSatelliteFleetStatus] = useState<SatelliteFleetStatus[]>([]);
 
-  if (!data) {
-    return (
-      <div className="text-center text-nasa-light-gray text-xl mt-20">
-        <p>Awaiting data streams from Mission Control...</p>
-        <p className="text-sm mt-2">Ensure backend services are running and WebSocket is connected.</p>
-      </div>
-    );
-  }
-
-  const { crawler_mission_status, satellite_fleet_status } = data;
-
-  // Placeholder for a function to trigger data refresh if needed,
-  // but currently, data is updated via WebSocket in useRealTimeData.
-  const refreshData = () => {
-    console.log("Manual data refresh triggered (if implemented)");
-    // In a real scenario, you might dispatch an action to the store
-    // to refetch data from a REST API, or rely solely on WebSocket updates.
-  };
-
-  const handleJobAction = async (jobId: string, action: 'cancel') => {
-    if (!window.confirm(`Are you sure you want to ${action} job ${jobId}?`)) {
-      return;
-    }
+  const fetchJobs = async () => {
     try {
-      if (!token) throw new Error("Authentication token not found.");
-      const response = await fetch(`${API_BASE_URL}/api/monitoring/jobs/${jobId}/${action}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
+      const token = localStorage.getItem('token');
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      };
+      const response = await fetch(`${API_BASE_URL}/api/monitoring/jobs`, { headers });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || `Failed to ${action} job`);
+        throw new Error(errorData.detail || 'Failed to fetch jobs');
       }
-      alert(`Job ${jobId} ${action}led successfully.`);
-      refreshData(); // Call placeholder refresh
-    } catch (error: any) {
-      alert(`Error ${action}ing job: ${error.message}`);
-      console.error(`Error ${action}ing job ${jobId}:`, error);
+      const data: CrawlJob[] = await response.json();
+      setJobs(data);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleGlobalJobAction = async (action: 'pause_all' | 'resume_all') => {
-    if (!window.confirm(`Are you sure you want to ${action.replace('_', ' ')} jobs?`)) {
-      return;
-    }
+  const fetchSatelliteStatus = async () => {
     try {
-      if (!token) throw new Error("Authentication token not found.");
-      const response = await fetch(`${API_BASE_URL}/api/monitoring/jobs/${action}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
+      const token = localStorage.getItem('token');
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      };
+      const response = await fetch(`${API_BASE_URL}/api/monitoring/satellites`, { headers });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || `Failed to ${action.replace('_', ' ')} jobs`);
+        throw new Error(errorData.detail || 'Failed to fetch satellite status');
       }
-      alert(`Jobs ${action.replace('_', ' ')} successfully.`);
-      refreshData(); // Call placeholder refresh
-    } catch (error: any) {
-      alert(`Error ${action.replace('_', ' ')} jobs: ${error.message}`);
-      console.error(`Error ${action.replace('_', ' ')} jobs:`, error);
+      const data: SatelliteFleetStatus[] = await response.json();
+      setSatelliteFleetStatus(data);
+    } catch (err: any) {
+      setError(err.message);
     }
   };
 
-  const handleSatelliteControl = async (satelliteId: string, command: 'PAUSE' | 'RESUME' | 'SHUTDOWN' | 'RESTART') => {
-    if (!window.confirm(`Are you sure you want to ${command.toLowerCase()} satellite ${satelliteId}?`)) {
-      return;
-    }
+  useEffect(() => {
+    fetchJobs();
+    fetchSatelliteStatus();
+    const interval = setInterval(() => {
+      fetchJobs();
+      fetchSatelliteStatus();
+    }, 5000); // Refresh every 5 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleControlAction = async (endpoint: string, actionDescription: string, payload?: any) => {
     try {
-      if (!token) throw new Error("Authentication token not found.");
-      const response = await fetch(`${API_BASE_URL}/api/monitoring/satellites/control/${satelliteId}/${command}`, {
+      const token = localStorage.getItem('token');
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      };
+      const response = await fetch(`${API_BASE_URL}/api/monitoring/${endpoint}`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers,
+        body: payload ? JSON.stringify(payload) : undefined,
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || `Failed to ${command.toLowerCase()} satellite`);
+        throw new Error(errorData.detail || `Failed to ${actionDescription.toLowerCase()}`);
       }
-      alert(`Satellite ${satelliteId} ${command.toLowerCase()}ed successfully.`);
-      refreshData(); // Call placeholder refresh
-    } catch (error: any) {
-      alert(`Error ${command.toLowerCase()}ing satellite: ${error.message}`);
-      console.error(`Error ${command.toLowerCase()}ing satellite ${satelliteId}:`, error);
+      alert(`${actionDescription} successful!`);
+      fetchJobs(); // Refresh jobs after action
+      fetchSatelliteStatus(); // Refresh satellites after action
+    } catch (err: any) {
+      setError(err.message);
+      alert(`Error: ${err.message}`);
     }
   };
 
-  const handleGlobalSatelliteControl = async (command: 'PAUSE' | 'RESUME' | 'SHUTDOWN' | 'RESTART') => {
-    if (!window.confirm(`Are you sure you want to ${command.toLowerCase()} ALL satellites?`)) {
-      return;
-    }
-    try {
-      if (!token) throw new Error("Authentication token not found.");
-      const response = await fetch(`${API_BASE_URL}/api/monitoring/satellites/control/all/${command}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || `Failed to ${action.toLowerCase()} all satellites`);
-      }
-      alert(`All satellites ${command.toLowerCase()}ed successfully.`);
-      refreshData(); // Call placeholder refresh
-    } catch (error: any) {
-      alert(`Error ${command.toLowerCase()}ing all satellites: ${error.message}`);
-      console.error(`Error ${command.toLowerCase()}ing all satellites:`, error);
+  if (loading) return <div className="p-6 text-white">Loading jobs...</div>;
+  if (error) return <div className="p-6 text-red-500">Error: {error}</div>;
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'COMPLETED': return 'text-green-500';
+      case 'IN_PROGRESS': return 'text-blue-500';
+      case 'FAILED': return 'text-red-500';
+      case 'QUEUED': return 'text-yellow-500';
+      case 'PENDING': return 'text-gray-500';
+      case 'CANCELLED': return 'text-purple-500';
+      default: return 'text-white';
     }
   };
 
   return (
-    <div className="space-y-8">
-      <h1 className="text-4xl font-bold text-nasa-cyan mb-4">Job Management Console</h1>
+    <div className="p-6 bg-gray-900 min-h-screen text-white">
+      <h1 className="text-3xl font-bold mb-6">Job Management</h1>
 
-      {/* Adjusted grid for responsiveness: 1 column on small, 2 on medium, 3 on large */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-        <DataCard title="Active & Queued Jobs">
-          <div className="space-y-4">
-            <p className="text-nasa-light-gray text-lg">Active Jobs: <span className="text-nasa-amber">{crawler_mission_status.active_jobs_count}</span></p>
-            <p className="text-nasa-light-gray text-lg">Queued Jobs: <span className="text-nasa-cyan">{crawler_mission_status.queued_jobs_count}</span></p>
-            <p className="text-nasa-light-gray text-lg">Total Queue Depth: <span className="text-nasa-cyan">{crawler_mission_status.queue_depth}</span></p>
-            <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 mt-4">
-              <button className="btn-primary" onClick={() => handleGlobalJobAction('pause_all')}>Pause All Jobs</button>
-              <button className="btn-secondary" onClick={() => handleGlobalJobAction('resume_all')}>Resume All Jobs</button>
-            </div>
-          </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+        <DataCard title="Global Controls">
+          <button
+            onClick={() => handleControlAction('jobs/pause_all', 'Pause All Jobs')}
+            className="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded mr-2 mb-2"
+          >
+            Pause All Jobs
+          </button>
+          <button
+            onClick={() => handleControlAction('jobs/resume_all', 'Resume All Jobs')}
+            className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded mb-2"
+          >
+            Resume All Jobs
+          </button>
+          <button
+            onClick={() => handleControlAction('satellites/control/all/SHUTDOWN', 'Shutdown All Satellites')}
+            className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded mb-2"
+          >
+            Shutdown All Satellites
+          </button>
         </DataCard>
 
-        <DataCard title="Recent Job Activity (24h)">
-          <div className="space-y-4">
-            <p className="text-nasa-light-gray text-lg">Completed Jobs: <span className="text-green-500">{crawler_mission_status.completed_jobs_24h_count}</span></p>
-            <p className="text-nasa-light-gray text-lg">Failed Jobs: <span className="text-red-500">{crawler_mission_status.failed_jobs_24h_count}</span></p>
-            <p className="text-nasa-light-gray text-lg">Total Pages Crawled: <span className="text-nasa-cyan">{crawler_mission_status.total_pages_crawled_24h}</span></p>
-            <p className="text-nasa-light-gray text-lg">Avg. Job Completion Time: <span className="text-nasa-amber">{crawler_mission_status.avg_job_completion_time_seconds.toFixed(1)}s</span></p>
+        <ModuleContainer title="Satellite Fleet Status">
+          <div className="overflow-x-auto">
+            <table className="min-w-full bg-gray-800 rounded-lg">
+              <thead>
+                <tr className="bg-gray-700 text-left text-gray-300 uppercase text-sm leading-normal">
+                  <th className="py-3 px-6">ID</th>
+                  <th className="py-3 px-6">Status</th>
+                  <th className="py-3 px-6">Last Seen</th>
+                  <th className="py-3 px-6">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-300 text-sm font-light">
+                {satelliteFleetStatus.map((sat: SatelliteFleetStatus) => ( // Explicitly type sat
+                  <tr key={sat.satellite_id} className="border-b border-gray-700">
+                    <td className="py-3 px-6 text-left whitespace-nowrap">{sat.satellite_id}</td>
+                    <td className="py-3 px-6 text-left">
+                      <span className={`font-semibold ${getStatusColor(sat.status)}`}>
+                        {sat.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-6 text-left">{new Date(sat.last_heartbeat).toLocaleString()}</td>
+                    <td className="py-3 px-6 text-left">
+                      <button
+                        onClick={() => handleControlAction(`satellites/control/${sat.satellite_id}/PAUSE`, `Pause ${sat.satellite_id}`)}
+                        className="bg-blue-500 hover:bg-blue-700 text-white py-1 px-2 rounded text-xs mr-1"
+                      >
+                        Pause
+                      </button>
+                      <button
+                        onClick={() => handleControlAction(`satellites/control/${sat.satellite_id}/RESUME`, `Resume ${sat.satellite_id}`)}
+                        className="bg-green-500 hover:bg-green-700 text-white py-1 px-2 rounded text-xs mr-1"
+                      >
+                        Resume
+                      </button>
+                      <button
+                        onClick={() => handleControlAction(`satellites/control/${sat.satellite_id}/SHUTDOWN`, `Shutdown ${sat.satellite_id}`)}
+                        className="bg-red-500 hover:bg-red-700 text-white py-1 px-2 rounded text-xs"
+                      >
+                        Shutdown
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </DataCard>
+        </ModuleContainer>
       </div>
 
-      <DataCard title="Satellite Job Status">
-        <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 mb-4">
-          <button className="btn-primary" onClick={() => handleGlobalSatelliteControl('PAUSE')}>Pause All Satellites</button>
-          <button className="btn-secondary" onClick={() => handleGlobalSatelliteControl('RESUME')}>Resume All Satellites</button>
-          <button className="btn-danger" onClick={() => handleGlobalSatelliteControl('SHUTDOWN')}>Shutdown All Satellites</button>
-        </div>
-        <div className="max-h-96 overflow-y-auto pr-2">
-          {satellite_fleet_status.length > 0 ? (
-            <div className="overflow-x-auto"> {/* Added for horizontal scrolling on small screens */}
-              <table className="w-full text-left text-nasa-light-gray text-sm min-w-[700px]"> {/* min-width to prevent squishing */}
-                <thead>
-                  <tr className="text-nasa-cyan border-b border-nasa-light-gray">
-                    <th className="py-2 px-4">Satellite ID</th>
-                    <th className="py-2 px-4">Status</th>
-                    <th className="py-2 px-4">Current Job</th>
-                    <th className="py-2 px-4">Progress</th>
-                    <th className="py-2 px-4">Jobs (24h)</th>
-                    <th className="py-2 px-4">Errors (24h)</th>
-                    <th className="py-2 px-4">Last Heartbeat</th>
-                    <th className="py-2 px-4">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {satellite_fleet_status.map((sat: SatelliteFleetStatus) => ( // Explicitly type sat
-                    <tr key={sat.satellite_id} className="border-b border-gray-700">
-                      <td className="py-2 px-4">{sat.satellite_id}</td>
-                      <td className={`py-2 px-4 ${
-                        sat.status === 'active' ? 'text-green-500' :
-                        sat.status === 'idle' ? 'text-nasa-amber' :
-                        'text-red-500'
-                      }`}>
-                        {sat.status.toUpperCase()}
-                      </td>
-                      <td className="py-2 px-4">{sat.current_job_id ? `${sat.current_job_type || 'N/A'} (${sat.current_job_id.substring(0, 6)}...)` : 'Idle'}</td>
-                      <td className="py-2 px-4">
-                        {sat.current_job_progress !== null ? `${sat.current_job_progress.toFixed(1)}%` : 'N/A'}
-                      </td>
-                      <td className="py-2 px-4">{sat.jobs_completed_24h}</td>
-                      <td className="py-2 px-4">{sat.errors_24h}</td>
-                      <td className="py-2 px-4">{new Date(sat.last_heartbeat).toLocaleTimeString()}</td>
-                      <td className="py-2 px-4 space-x-1">
-                        <button className="btn-xs btn-secondary" onClick={() => handleSatelliteControl(sat.satellite_id, 'PAUSE')}>Pause</button>
-                        <button className="btn-xs btn-primary" onClick={() => handleSatelliteControl(sat.satellite_id, 'RESUME')}>Resume</button>
-                        <button className="btn-xs btn-danger" onClick={() => handleSatelliteControl(sat.satellite_id, 'SHUTDOWN')}>Shutdown</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="text-nasa-light-gray text-sm">No detailed satellite job data available.</p>
-          )}
-        </div>
-      </DataCard>
-
-      <DataCard title="Recent Job Errors (Last 24h)">
-        <div className="max-h-60 overflow-y-auto pr-2">
-          {crawler_mission_status.recent_job_errors.length > 0 ? (
-            crawler_mission_status.recent_job_errors.map((error: CrawlError, index: number) => ( // Explicitly type error
-              <div key={index} className="text-sm text-red-400 mb-2 p-2 border border-red-600 rounded">
-                <p><strong>Type:</strong> {error.error_type}</p>
-                <p><strong>Message:</strong> {error.message}</p>
-                <p><strong>URL:</strong> {error.url}</p>
-                <p className="text-xs text-nasa-light-gray">Timestamp: {new Date(error.timestamp).toLocaleString()}</p>
-                {error.details && (
-                  <details className="text-xs text-nasa-light-gray mt-1">
-                    <summary>Details</summary>
-                    <pre className="overflow-x-auto text-xs bg-gray-800 p-1 rounded mt-1">
-                      {JSON.stringify(error.details, null, 2)}
-                    </pre>
-                  </details>
-                )}
-              </div>
-            ))
-          ) : (
-            <p className="text-nasa-light-gray text-sm">No recent job errors to display.</p>
-          )}
-        </div>
-      </DataCard>
-
-      {/* Placeholder for All Jobs Table - This would require fetching all jobs from /api/monitoring/jobs */}
-      <DataCard title="All Crawl Jobs">
-        <p className="text-nasa-light-gray text-sm">
-          This section will display a comprehensive list of all crawl jobs with filtering and sorting options.
-          (Functionality to be implemented by fetching data from <code>/api/monitoring/jobs</code>)
-        </p>
-        {/* Example:
-        <table className="w-full text-left text-nasa-light-gray text-sm">
+      <h2 className="text-2xl font-bold mb-4">All Jobs</h2>
+      <div className="overflow-x-auto bg-gray-800 rounded-lg shadow-md">
+        <table className="min-w-full leading-normal">
           <thead>
-            <tr>
-              <th>Job ID</th>
-              <th>Target URL</th>
-              <th>Status</th>
-              <th>Actions</th>
+            <tr className="bg-gray-700 text-left text-gray-300 uppercase text-sm leading-normal">
+              <th className="py-3 px-6">Job ID</th>
+              <th className="py-3 px-6">Target URL</th>
+              <th className="py-3 px-6">Type</th>
+              <th className="py-3 px-6">Status</th>
+              <th className="py-3 px-6">Progress</th>
+              <th className="py-3 px-6">Created</th>
+              <th className="py-3 px-6">Actions</th>
             </tr>
           </thead>
-          <tbody>
-            {allJobs.map(job => (
-              <tr key={job.id}>
-                <td>{job.id}</td>
-                <td>{job.target_url}</td>
-                <td>{job.status}</td>
-                <td>
-                  <button className="btn-xs btn-danger" onClick={() => handleJobAction(job.id, 'cancel')}>Cancel</button>
+          <tbody className="text-gray-300 text-sm font-light">
+            {jobs.map((job) => (
+              <tr key={job.id} className="border-b border-gray-700 hover:bg-gray-700">
+                <td className="py-3 px-6 text-left whitespace-nowrap">{job.id}</td>
+                <td className="py-3 px-6 text-left">{job.targetUrl}</td>
+                <td className="py-3 px-6 text-left">{job.job_type}</td>
+                <td className="py-3 px-6 text-left">
+                  <span className={`font-semibold ${getStatusColor(job.status)}`}>
+                    {job.status}
+                  </span>
+                </td>
+                <td className="py-3 px-6 text-left">{job.progress_percentage.toFixed(1)}%</td>
+                <td className="py-3 px-6 text-left">{new Date(job.created_date).toLocaleString()}</td>
+                <td className="py-3 px-6 text-left">
+                  <button
+                    onClick={() => handleControlAction(`jobs/${job.id}/cancel`, `Cancel Job ${job.id}`)}
+                    className="bg-red-500 hover:bg-red-700 text-white py-1 px-2 rounded text-xs"
+                  >
+                    Cancel
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        */}
-      </DataCard>
+      </div>
     </div>
   );
 };
