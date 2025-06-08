@@ -539,15 +539,21 @@ app = FastAPI(
 )
 
 # Initialize Jinja2Templates (moved up to ensure it's defined before routes use it)
-# Dashboard templates moved to project root under 'admin-management-console'
-templates = Jinja2Templates(directory=os.path.join(project_root, "admin-management-console"))
+# Use mission-control dashboard for admin templates
+templates = Jinja2Templates(directory=os.path.join(project_root, "mission-control-dashboard", "dist"))
 
 # --- Static Files ---
-# Mount the 'static' directory to serve CSS and JS files
+# Mount static files for mission-control and customer dashboards
 app.mount(
-    "/static",
-    StaticFiles(directory=os.path.join(project_root, "admin-management-console", "static")),
-    name="static",
+    "/mission-control/assets",
+    StaticFiles(directory=os.path.join(project_root, "mission-control-dashboard", "dist", "assets")),
+    name="mission-control-assets",
+)
+
+app.mount(
+    "/customer/assets",
+    StaticFiles(directory=os.path.join(project_root, "customer-dashboard", "dist", "assets")),
+    name="customer-assets",
 )
 
 # --- CORS Middleware ---
