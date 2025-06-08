@@ -58,10 +58,8 @@ alert_service: AlertService, connection_manager: ConnectionManager):
 "scheduled_crawl_jobs")
         self.heartbeat_queue_name = self.config_loader.get("queue.heartbeat_queue_sorted_name",
 "crawler_heartbeats_sorted")
-        self.scheduler_interval = self.config_loader.get("queue.scheduler_interval", 5) # How often to check
-for scheduled jobs
-        self.crawler_timeout = self.config_loader.get("monitoring.crawler_timeout", 30) # Seconds without
-heartbeat before considering crawler dead
+        self.scheduler_interval = self.config_loader.get("queue.scheduler_interval", 5) # How often to check for scheduled jobs
+        self.crawler_timeout = self.config_loader.get("monitoring.crawler_timeout", 30) # Seconds without heartbeat before considering crawler dead
 
         self._processing_paused = False
         self._processing_lock = asyncio.Lock()
@@ -120,8 +118,7 @@ heartbeat before considering crawler dead
             # If job is in PENDING/QUEUED state, check Redis for more up-to-date status
             if job.status in [CrawlStatus.PENDING, CrawlStatus.QUEUED]:
                 # Check if it's in the main job queue
-                # Note: lpos is O(N), might be slow for large queues. Consider alternative if performance is
-an issue.
+                # Note: lpos is O(N), might be slow for large queues. Consider alternative if performance is an issue.
                 if await self.redis.lpos(self.job_queue_name, json.dumps(serialize_model(job))) is not None:
                     job.status = CrawlStatus.QUEUED
                 # Check if it's in the scheduled queue
@@ -178,17 +175,14 @@ job.progress_percentage)
 
                         self.db.update_crawl_job(job)
                         self.logger.info(f"Processed results for job {job_id}. Status: {job.status.value}")
-                        await self.connection_manager.broadcast(f"Job {job.id} finished. Status:
-{job.status.value}")
+                        await self.connection_manager.broadcast(f"Job {job.id} finished. Status: {job.status.value}")
                         await self.alert_service.evaluate_job_update(job) # Evaluate for alerts
                     else:
-                        self.logger.warning(f"Received results for unknown job {job_id}. Moving to dead
-letter queue.")
+                        self.logger.warning(f"Received results for unknown job {job_id}. Moving to dead letter queue.")
                         await self.redis.lpush(self.dead_letter_queue_name, result_json)
 
             except redis.exceptions.ConnectionError as e:
-                self.logger.error(f"Redis Connection Error in process_results: {e}. Attempting to reconnect
-in 5 seconds...", exc_info=True)
+                self.logger.error(f"Redis Connection Error in process_results: {e}. Attempting to reconnect in 5 seconds...", exc_info=True)
                 # Wait a bit longer before retrying after a connection error
                 await asyncio.sleep(5)
             except Exception as e:
@@ -257,8 +251,7 @@ withscores=False)
                             job.status = CrawlStatus.QUEUED
                             self.db.update_crawl_job(job)
                             self.logger.info(f"Moved scheduled job {job_id} to main queue.")
-                            await self.connection_manager.broadcast(f"Scheduled job {job_id} moved to
-queue.")
+                            await self.connection_manager.broadcast(f"Scheduled job {job_id} moved to queue.")
                             await self.alert_service.evaluate_job_update(job) # Evaluate for alerts
                         else:
                             self.logger.warning(f"Scheduled job {job_id} found in Redis but not in DB.")
@@ -360,8 +353,7 @@ withscores=True)
 
         return True
 
-    async def send_control_command(self, crawler_id: str, command: str, payload: Optional[Dict] = None) ->
-bool:
+    async def send_control_command(self, crawler_id: str, command: str, payload: Optional[Dict] = None) -> bool:
         """
         Sends a control command to a specific satellite crawler via Redis Pub/Sub.
         """
