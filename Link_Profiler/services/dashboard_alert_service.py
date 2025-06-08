@@ -22,17 +22,33 @@ class DashboardAlertService:
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super(DashboardAlertService, cls).__new__(cls)
-            cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, db: Any, redis_client: redis.Redis, api_quota_manager: APIQuotaManager):
+    def __init__(self, 
+                 db: Any, 
+                 redis_client: Optional[redis.Redis] = None,
+                 api_quota_manager: Optional[APIQuotaManager] = None):
+        
+        # Ensure _initialized is set to False before calling super().__init__
+        # This is crucial for singleton pattern to prevent re-initialization
+        if not hasattr(self, '_initialized'):
+            self._initialized = False
+
         if self._initialized:
             return
         self._initialized = True
+        
         self.logger = logging.getLogger(__name__ + ".DashboardAlertService")
         self.db = db
         self.redis = redis_client
         self.api_quota_manager = api_quota_manager
+
+        if not self.redis:
+            self.logger.warning("No Redis client provided to DashboardAlertService. Creating fallback connection.")
+            self.redis = redis.from_url(config_loader.get("redis.url", "redis://localhost:6379/0"))
+        
+        if not self.redis:
+            raise ValueError("DashboardAlertService requires a Redis client.")
 
         self.satellite_heartbeat_threshold_seconds = config_loader.get("satellite.heartbeat_interval", 5) * 3 # 3 missed heartbeats
         self.queue_overflow_threshold = config_loader.get("queue_system.max_queue_size", 100000) * 0.8 # 80% of max queue size
@@ -43,270 +59,155 @@ class DashboardAlertService:
 
         self._active_alerts: Dict[str, DashboardAlert] = {} # Key: alert_type:id, Value: DashboardAlert
 
+        self.logger.info("DashboardAlertService initialized.")
+
+    async def __aenter__(self):
+        """
+        Asynchronous context manager entry point.
+        No specific async setup needed for this service beyond its dependencies.
+        """
+        self.logger.info("DashboardAlertService entered context.")
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """
+        Asynchronous context manager exit point.
+        No specific async teardown needed for this service.
+        """
+        self.logger.info("DashboardAlertService exited context.")
+        pass
+
     async def check_critical_alerts(self) -> List[DashboardAlert]:
         """
         Checks for various critical system conditions and generates alerts.
         """
-        new_alerts: List[DashboardAlert] = []
-        
-        # 1. Satellite failure detection
-        satellite_alerts = await self._detect_failed_satellites()
-        new_alerts.extend(satellite_alerts)
-
-        # 2. Queue overflow detection
-        queue_alerts = await self._check_queue_overflow()
-        new_alerts.extend(queue_alerts)
-
-        # 3. API quota exhaustion warning
-        api_quota_alerts = await self._check_api_quotas()
-        new_alerts.extend(api_quota_alerts)
-
-        # 4. API performance degradation
-        api_performance_alerts = self._check_api_performance_degradation()
-        new_alerts.extend(api_performance_alerts)
-
-        # Update active alerts and Prometheus metrics
-        self._update_active_alerts(new_alerts)
-        self._update_prometheus_metrics()
-
-        return list(self._active_alerts.values())
-
-    async def _detect_failed_satellites(self) -> List[DashboardAlert]:
-        """Detects unresponsive satellite crawlers based on heartbeats."""
         alerts: List[DashboardAlert] = []
-        heartbeat_key = config_loader.get("queue.heartbeat_queue_sorted_name")
-        
-        # Get all active satellites from Redis sorted set
-        # Score is timestamp, so get all entries with score > (now - threshold)
-        now_timestamp = datetime.utcnow().timestamp()
-        min_timestamp = now_timestamp - self.satellite_heartbeat_threshold_seconds
-        
-        active_satellites_raw = await self.redis.zrangebyscore(heartbeat_key, min_timestamp, now_timestamp, withscores=True)
-        
-        active_satellite_ids = {s.decode('utf-8') for s, _ in active_satellites_raw}
-        
-        # Get all known satellites (e.g., from a config or a persistent store if you track them)
-        # For now, let's assume we can get a list of all expected satellites from the coordinator
-        # or by inspecting past heartbeats. This is a simplification.
-        # In a real system, you might have a registry of satellites.
-        
-        # Let's get all satellites that have sent a heartbeat in the last 24 hours
-        all_known_satellites_raw = await self.redis.zrangebyscore(heartbeat_key, now_timestamp - timedelta(hours=24).total_seconds(), now_timestamp, withscores=False)
-        all_known_satellite_ids = {s.decode('utf-8') for s in all_known_satellites_raw}
+        now = datetime.utcnow()
 
-        unresponsive_satellites = all_known_satellite_ids.difference(active_satellite_ids)
+        # Example 1: Redis connection status
+        try:
+            await self.redis.ping()
+        except Exception as e:
+            alerts.append(DashboardAlert(
+                type="System",
+                severity="CRITICAL",
+                message=f"Redis connection lost: {e}",
+                timestamp=now,
+                recommended_action="Check Redis server status and network connectivity."
+            ))
 
-        for satellite_id in unresponsive_satellites:
-            alert_id = f"satellite_failure:{satellite_id}"
-            # Only add if not already active and not already in the list of alerts to be returned
-            if alert_id not in self._active_alerts and not any(a.type == "satellite_failure" and a.details.get("satellite_id") == satellite_id for a in alerts): 
-                alert = DashboardAlert(
-                    type="satellite_failure",
-                    severity=AlertSeverity.CRITICAL,
-                    message=f"Satellite '{satellite_id}' is unresponsive. Last heartbeat: {datetime.fromtimestamp(await self.redis.zscore(heartbeat_key, satellite_id) or 0).strftime('%Y-%m-%d %H:%M:%S UTC') if await self.redis.exists(heartbeat_key) and await self.redis.zscore(heartbeat_key, satellite_id) else 'N/A'}.",
-                    affected_jobs=[], # Placeholder: would need to query jobs assigned to this satellite
-                    recommended_action="Investigate satellite host or network connectivity.",
-                    details={"satellite_id": satellite_id}
-                )
-                alerts.append(alert)
-                DASHBOARD_ALERTS_TOTAL.labels(alert_type="satellite_failure", severity=AlertSeverity.CRITICAL.value).inc()
-                self.logger.warning(f"CRITICAL ALERT: {alert.message}")
-        
-        # Also clear alerts for satellites that have become responsive
-        for alert_id in list(self._active_alerts.keys()):
-            if alert_id.startswith("satellite_failure:"):
-                satellite_id = alert_id.split(":")[1]
-                if satellite_id in active_satellite_ids:
-                    self.logger.info(f"Satellite '{satellite_id}' is now responsive. Clearing alert.")
-                    self._active_alerts.pop(alert_id)
+        # Example 2: Database connection status
+        try:
+            self.db.ping()
+        except Exception as e:
+            alerts.append(DashboardAlert(
+                type="System",
+                severity="CRITICAL",
+                message=f"Database connection lost: {e}",
+                timestamp=now,
+                recommended_action="Check database server status and credentials."
+            ))
 
-        return alerts
+        # Example 3: API Quota nearing exhaustion
+        if self.api_quota_manager:
+            api_statuses = await self.api_quota_manager.get_api_status()
+            for api_name, status_data in api_statuses.items():
+                if status_data['status'] == "Critical":
+                    alerts.append(DashboardAlert(
+                        type="API Quota",
+                        severity="CRITICAL",
+                        message=f"API '{api_name}' quota critically low or exhausted. Used: {status_data['used']}/{status_data['limit']}",
+                        timestamp=now,
+                        details={"api_name": api_name, "used": status_data['used'], "limit": status_data['limit']},
+                        recommended_action="Consider upgrading API plan or reducing usage."
+                    ))
+                elif status_data['status'] == "Warning":
+                    alerts.append(DashboardAlert(
+                        type="API Quota",
+                        severity="WARNING",
+                        message=f"API '{api_name}' quota nearing exhaustion. Used: {status_data['used']}/{status_data['limit']}",
+                        timestamp=now,
+                        details={"api_name": api_name, "used": status_data['used'], "limit": status_data['limit']},
+                        recommended_action="Monitor usage closely or prepare for plan upgrade."
+                    ))
+                
+                # Check for open circuit breakers
+                if status_data['performance']['circuit_breaker_state'] == "OPEN":
+                    alerts.append(DashboardAlert(
+                        type="API Resilience",
+                        severity="CRITICAL",
+                        message=f"API '{api_name}' circuit breaker is OPEN. Requests are being blocked.",
+                        timestamp=now,
+                        details={"api_name": api_name, "state": "OPEN"},
+                        recommended_action="Investigate external API health or network issues."
+                    ))
+                elif status_data['performance']['circuit_breaker_state'] == "HALF_OPEN":
+                    alerts.append(DashboardAlert(
+                        type="API Resilience",
+                        severity="WARNING",
+                        message=f"API '{api_name}' circuit breaker is HALF_OPEN. Monitoring for recovery.",
+                        timestamp=now,
+                        details={"api_name": api_name, "state": "HALF_OPEN"},
+                        recommended_action="Monitor API health. May indicate intermittent issues."
+                    ))
 
-    async def _check_queue_overflow(self) -> List[DashboardAlert]:
-        """Checks if the job queue is overflowing."""
-        alerts: List[DashboardAlert] = []
-        job_queue_name = config_loader.get("queue.job_queue_name")
-        queue_depth = await self.redis.llen(job_queue_name)
-        
-        if queue_depth >= self.queue_overflow_threshold:
-            alert_id = "queue_overflow"
-            if alert_id not in self._active_alerts:
-                alert = DashboardAlert(
-                    type="queue_overflow",
-                    severity=AlertSeverity.WARNING,
-                    message=f"Job queue depth ({queue_depth}) is approaching overflow threshold ({self.queue_overflow_threshold}).",
-                    recommended_action="Scale up satellite fleet or reduce job submission rate.",
-                    details={"queue_depth": queue_depth, "threshold": self.queue_overflow_threshold}
-                )
-                alerts.append(alert)
-                DASHBOARD_ALERTS_TOTAL.labels(alert_type="queue_overflow", severity=AlertSeverity.WARNING.value).inc()
-                self.logger.warning(f"WARNING ALERT: {alert.message}")
-        else:
-            # Clear alert if queue is no longer overflowing
-            if "queue_overflow" in self._active_alerts:
-                self.logger.info("Queue depth is back to normal. Clearing queue overflow alert.")
-                self._active_alerts.pop("queue_overflow")
-
-        return alerts
-
-    async def _check_api_quotas(self) -> List[DashboardAlert]:
-        """Checks API quotas and generates warnings/critical alerts."""
-        alerts: List[DashboardAlert] = []
-        api_statuses_dict = await self.api_quota_manager.get_api_status() # Await this call
-
-        for api_name, api_status_data in api_statuses_dict.items():
-            percentage_used = api_status_data["percentage_used"]
+        # Example 4: Unresponsive Satellites (from JobCoordinator's heartbeat data)
+        try:
+            from Link_Profiler.queue_system.job_coordinator import get_coordinator
+            coordinator = await get_coordinator()
+            coordinator_stats = await coordinator.get_queue_stats()
             
-            alert_id_warning = f"api_quota_warning:{api_name}"
-            alert_id_critical = f"api_quota_critical:{api_name}"
+            heartbeat_key = config_loader.get("queue.heartbeat_queue_sorted_name")
+            stale_timeout = config_loader.get("monitoring.crawler_timeout", 30) * 2 # Consider stale after 2 missed heartbeats
+            min_timestamp_active = datetime.utcnow().timestamp() - stale_timeout
 
-            if percentage_used >= self.api_quota_critical_threshold:
-                if alert_id_critical not in self._active_alerts:
-                    alert = DashboardAlert(
-                        type="api_quota_exhaustion",
-                        severity=AlertSeverity.CRITICAL,
-                        message=f"API '{api_name}' quota is CRITICAL ({percentage_used:.2f}% used).",
-                        recommended_action="Investigate usage or upgrade plan.",
-                        details=api_status_data
-                    )
-                    alerts.append(alert)
-                    DASHBOARD_ALERTS_TOTAL.labels(alert_type="api_quota_exhaustion", severity=AlertSeverity.CRITICAL.value).inc()
-                    self.logger.critical(f"CRITICAL ALERT: {alert.message}")
-                # If critical, ensure warning is cleared
-                if alert_id_warning in self._active_alerts:
-                    self._active_alerts.pop(alert_id_warning)
-            elif percentage_used >= self.api_quota_warning_threshold:
-                # Only add warning if not already active and not already a critical alert
-                if alert_id_warning not in self._active_alerts and alert_id_critical not in self._active_alerts:
-                    alert = DashboardAlert(
-                        type="api_quota_exhaustion",
-                        severity=AlertSeverity.WARNING,
-                        message=f"API '{api_name}' quota is WARNING ({percentage_used:.2f}% used).",
-                        recommended_action="Monitor usage closely.",
-                        details=api_status_data
-                    )
-                    alerts.append(alert)
-                    DASHBOARD_ALERTS_TOTAL.labels(alert_type="api_quota_exhaustion", severity=AlertSeverity.WARNING.value).inc()
-                    self.logger.warning(f"WARNING ALERT: {alert.message}")
-            else:
-                # Clear alerts if usage is below thresholds
-                if alert_id_warning in self._active_alerts:
-                    self.logger.info(f"API '{api_name}' usage is back to normal. Clearing warning alert.")
-                    self._active_alerts.pop(alert_id_warning)
-                if alert_id_critical in self._active_alerts:
-                    self.logger.info(f"API '{api_name}' usage is back to normal. Clearing critical alert.")
-                    self._active_alerts.pop(alert_id_critical)
-        
-        return alerts
-
-    def _check_api_performance_degradation(self) -> List[DashboardAlert]:
-        """Checks API performance metrics and generates alerts for degradation."""
-        alerts: List[DashboardAlert] = []
-        # api_quota_manager.get_api_status() is an async method, but this method is sync.
-        # This will need to be refactored if real-time performance checks are critical here.
-        # For now, it will use the last known state from api_quota_manager's internal cache.
-        api_statuses_dict = self.api_quota_manager.get_api_status_sync() # Assuming a sync method or cached data
-
-        for api_name, api_status_data in api_statuses_dict.items():
-            performance = api_status_data.get("performance", {})
-            success_rate = performance.get("success_rate", 1.0)
-            avg_response_time_ms = performance.get("average_response_time_ms", 0.0)
-            total_calls = performance.get("total_calls", 0)
-
-            # Only alert if there's enough data to make a judgment
-            if total_calls < 10: # Require at least 10 calls to assess performance
-                continue
-
-            alert_id_low_success = f"api_performance_low_success:{api_name}"
-            alert_id_high_response_time = f"api_performance_high_response_time:{api_name}"
-
-            # Check for low success rate
-            if success_rate < self.api_performance_success_rate_threshold:
-                if alert_id_low_success not in self._active_alerts:
-                    alert = DashboardAlert(
-                        type="api_performance_degradation",
-                        severity=AlertSeverity.WARNING,
-                        message=f"API '{api_name}' success rate is low ({success_rate:.2f}).",
-                        recommended_action="Investigate API stability or switch to alternative.",
-                        details=api_status_data
-                    )
-                    alerts.append(alert)
-                    DASHBOARD_ALERTS_TOTAL.labels(alert_type="api_performance_degradation", severity=AlertSeverity.WARNING.value).inc()
-                    self.logger.warning(f"WARNING ALERT: {alert.message}")
-            else:
-                if alert_id_low_success in self._active_alerts:
-                    self.logger.info(f"API '{api_name}' success rate recovered. Clearing alert.")
-                    self._active_alerts.pop(alert_id_low_success)
-
-            # Check for high response time
-            if avg_response_time_ms > self.api_performance_response_time_threshold_ms:
-                if alert_id_high_response_time not in self._active_alerts:
-                    alert = DashboardAlert(
-                        type="api_performance_degradation",
-                        severity=AlertSeverity.WARNING,
-                        message=f"API '{api_name}' average response time is high ({avg_response_time_ms:.0f}ms).",
-                        recommended_action="Investigate API latency or switch to alternative.",
-                        details=api_status_data
-                    )
-                    alerts.append(alert)
-                    DASHBOARD_ALERTS_TOTAL.labels(alert_type="api_performance_degradation", severity=AlertSeverity.WARNING.value).inc()
-                    self.logger.warning(f"WARNING ALERT: {alert.message}")
-            else:
-                if alert_id_high_response_time in self._active_alerts:
-                    self.logger.info(f"API '{api_name}' response time recovered. Clearing alert.")
-                    self._active_alerts.pop(alert_id_high_response_time)
-        
-        return alerts
-
-    def _update_active_alerts(self, new_alerts: List[DashboardAlert]):
-        """Updates the internal dictionary of active alerts."""
-        # Add new alerts
-        for alert in new_alerts:
-            # Create a unique key for the alert based on its type and specific details
-            alert_key_parts = [alert.type]
-            if alert.type == "satellite_failure" and alert.details and "satellite_id" in alert.details:
-                alert_key_parts.append(alert.details["satellite_id"])
-            elif alert.type == "api_quota_exhaustion" and alert.details and "api_name" in alert.details:
-                alert_key_parts.append(alert.details["api_name"])
-            elif alert.type == "api_performance_degradation" and alert.details and "api_name" in alert.details:
-                alert_key_parts.append(alert.details["api_name"])
+            all_known_satellites_raw = await self.redis.zrangebyscore(heartbeat_key, '-inf', '+inf', withscores=True)
             
-            alert_key = ":".join(alert_key_parts)
-            self._active_alerts[alert_key] = alert
+            for satellite_id_bytes, last_heartbeat_ts in all_known_satellites_raw:
+                satellite_id = satellite_id_bytes.decode('utf-8')
+                if last_heartbeat_ts < min_timestamp_active:
+                    alerts.append(DashboardAlert(
+                        type="Crawler Fleet",
+                        severity="CRITICAL",
+                        message=f"Satellite '{satellite_id}' is unresponsive. Last heartbeat: {datetime.fromtimestamp(last_heartbeat_ts).isoformat()}",
+                        timestamp=now,
+                        details={"satellite_id": satellite_id, "last_heartbeat": datetime.fromtimestamp(last_heartbeat_ts).isoformat()},
+                        recommended_action=f"Investigate satellite '{satellite_id}' server or network."
+                    ))
+        except Exception as e:
+            self.logger.error(f"Error checking satellite responsiveness: {e}", exc_info=True)
+            alerts.append(DashboardAlert(
+                type="System",
+                severity="WARNING",
+                message=f"Failed to check satellite responsiveness: {e}",
+                timestamp=now,
+                recommended_action="Check JobCoordinator and Redis heartbeat data."
+            ))
 
-        # Remove alerts that are no longer active (not in new_alerts)
-        current_alert_keys = {":".join([a.type] + ([a.details["satellite_id"]] if a.type == "satellite_failure" and a.details and "satellite_id" in a.details else []) + ([a.details["api_name"]] if a.type == "api_quota_exhaustion" and a.details and "api_name" in a.details else []) + ([a.details["api_name"]] if a.type == "api_performance_degradation" and a.details and "api_name" in a.details else [])) for a in new_alerts}
-        keys_to_remove = [key for key in self._active_alerts if key not in current_alert_keys]
-        for key in keys_to_remove:
-            self.logger.info(f"Clearing alert: {self._active_alerts[key].message}")
-            self._active_alerts.pop(key)
+        # Example 5: High number of failed jobs in last 24 hours
+        twenty_four_hours_ago = now - timedelta(hours=24)
+        failed_jobs_24h = self.db.get_crawl_jobs_by_status_and_time(CrawlStatus.FAILED, twenty_four_hours_ago)
+        if len(failed_jobs_24h) > config_loader.get("monitoring.failed_jobs_threshold", 10):
+            alerts.append(DashboardAlert(
+                type="Job Performance",
+                severity="CRITICAL",
+                message=f"{len(failed_jobs_24h)} jobs failed in the last 24 hours. Exceeds threshold.",
+                timestamp=now,
+                details={"failed_jobs_count": len(failed_jobs_24h)},
+                recommended_action="Review recent failed jobs for common errors."
+            ))
+        elif len(failed_jobs_24h) > config_loader.get("monitoring.failed_jobs_warning_threshold", 5):
+            alerts.append(DashboardAlert(
+                type="Job Performance",
+                severity="WARNING",
+                message=f"{len(failed_jobs_24h)} jobs failed in the last 24 hours. Nearing critical threshold.",
+                timestamp=now,
+                details={"failed_jobs_count": len(failed_jobs_24h)},
+                recommended_action="Monitor job failures closely."
+            ))
 
-
-    def _update_prometheus_metrics(self):
-        """Updates Prometheus gauges for active alerts."""
-        # Reset gauges for all known alert types and severities
-        # This is a more robust way to ensure gauges reflect current state
-        # You might need to iterate over known label combinations or reset all
-        # For simplicity, we'll just set the active ones.
-        # A full reset would require knowing all possible label combinations.
-        
-        # Clear all existing gauge values first (if possible, or rely on setting to 0)
-        # This is tricky with Prometheus client library if labels are dynamic.
-        # For now, we'll just ensure active alerts are set to 1.
-        
-        # Set current active alerts
-        for alert in self._active_alerts.values():
-            alert_type = alert.type
-            severity = alert.severity.value
-            DASHBOARD_ALERTS_GAUGE.labels(alert_type=alert_type, severity=severity).set(1) # Set to 1 if active
-        
-        # For alerts that are no longer active, ensure their gauge is set to 0
-        # This requires tracking previous states or iterating all possible labels.
-        # A simpler approach for dynamic labels is to only set active ones,
-        # and rely on Prometheus's scrape interval to eventually drop old series
-        # if they are no longer reported.
-        # For critical alerts, you might want to explicitly set to 0 when resolved.
-        # This is a placeholder for more sophisticated Prometheus metric management.
+        self.logger.debug(f"Found {len(alerts)} active dashboard alerts.")
+        return alerts
 
 # Singleton instance (will be initialized in main.py)
 dashboard_alert_service: Optional['DashboardAlertService'] = None
