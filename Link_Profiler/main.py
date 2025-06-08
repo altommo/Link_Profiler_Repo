@@ -130,7 +130,8 @@ distributed_resilience_manager = DistributedResilienceManager(redis_client=redis
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import the class only
 
 # New: Import SmartAPIRouterService (Initialize after APIQuotaManager and all clients)
-from Link_Profiler.services.smart_api_router_service import SmartAPIRouterService, smart_api_router_service # Import both class and singleton
+from Link_Profiler.services.smart_api_router_service import SmartAPIRouterService # Removed smart_api_router_service from import
+# Import both class and singleton
 
 # New: Import API Clients (Instantiate all of them)
 from Link_Profiler.clients.google_search_console_client import GoogleSearchConsoleClient # Renamed GSCClient to GoogleSearchConsoleClient
@@ -150,7 +151,7 @@ from Link_Profiler.clients.security_trails_client import SecurityTrailsClient # 
 
 
 # Initialize API Quota Manager (requires resilience_manager)
-api_quota_manager = APIQuotaManager(config_loader._config_data, resilience_manager=distributed_resilience_manager)
+api_quota_manager = APIQuotaManager(config_loader._config_data, resilience_manager=distributed_resilience_manager, redis_client=redis_client)
 
 # Initialize all individual API clients, passing all required dependencies
 gsc_client_instance = GoogleSearchConsoleClient(session_manager=session_manager, resilience_manager=distributed_resilience_manager, api_quota_manager=api_quota_manager)
@@ -175,6 +176,7 @@ smart_api_router_service = SmartAPIRouterService(
     session_manager=session_manager,
     resilience_manager=distributed_resilience_manager,
     api_quota_manager=api_quota_manager,
+    redis_client=redis_client, # Pass redis_client
     google_search_console_client=gsc_client_instance,
     google_pagespeed_client=pagespeed_client_instance,
     google_trends_client=google_trends_client_instance,
@@ -240,7 +242,7 @@ from Link_Profiler.utils.api_cache import api_cache
 from Link_Profiler.api.schemas import (
     UserCreate, UserResponse, Token, CrawlJobResponse, LinkProfileResponse, DomainResponse, 
     ReportJobResponse, QueueStatsResponse, SERPResultResponse, KeywordSuggestionResponse, 
-    LinkIntersectResponse, CompetitiveKeywordAnalysisResponse, AlertRuleResponse, 
+    LinkIntersectResponse, CompetitiveKeywordAnalysisResultResponse, AlertRuleResponse, 
     ContentGapAnalysisResultResponse, LinkProspectResponse, OutreachCampaignResponse, 
     OutreachEventResponse, SEOMetricsResponse, QueueCrawlRequest, SystemConfigResponse, SystemConfigUpdate # Added QueueCrawlRequest, SystemConfig schemas
 )
@@ -335,7 +337,8 @@ keyword_service_instance = KeywordService(
     keyword_scraper=keyword_scraper_instance,
     google_trends_client=google_trends_client_instance,
     session_manager=session_manager,
-    resilience_manager=distributed_resilience_manager
+    resilience_manager=distributed_resilience_manager,
+    redis_client=redis_client # Pass redis_client
 )
 
 # New: Initialize LinkHealthService
@@ -350,7 +353,8 @@ technical_auditor_instance = TechnicalAuditor(
 ai_service_instance = AIService(
     database=db,
     session_manager=session_manager,
-    resilience_manager=distributed_resilience_manager
+    resilience_manager=distributed_resilience_manager,
+    redis_client=redis_client # Pass redis_client
 )
 
 # New: Initialize Report Service
@@ -375,7 +379,8 @@ social_media_service_instance = SocialMediaService(
     reddit_client=reddit_client_instance,
     youtube_client=youtube_client_instance,
     news_api_client=news_api_client_instance,
-    resilience_manager=distributed_resilience_manager
+    resilience_manager=distributed_resilience_manager,
+    redis_client=redis_client # Pass redis_client
 )
 
 # New: Initialize Web3 Service
