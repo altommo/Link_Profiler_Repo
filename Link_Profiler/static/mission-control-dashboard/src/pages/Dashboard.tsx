@@ -42,7 +42,14 @@ const Dashboard: React.FC = () => {
   }
 
   if (!dashboardData) {
-    return <div className="text-white p-4">Loading dashboard data...</div>;
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-nasa-cyan mx-auto"></div>
+          <p className="mt-4 text-nasa-light-gray">Loading dashboard data...</p>
+        </div>
+      </div>
+    );
   }
 
   const {
@@ -70,8 +77,8 @@ const Dashboard: React.FC = () => {
             <MetricDisplay label="Pages Crawled (24h)" value={crawler_mission_status.total_pages_crawled_24h} />
             <MetricDisplay label="Queue Depth" value={crawler_mission_status.queue_depth} />
             <MetricDisplay label="Active Satellites" value={`${crawler_mission_status.active_satellites_count}/${crawler_mission_status.total_satellites_count}`} />
-            <MetricDisplay label="Satellite Utilization" value={`${crawler_mission_status.satellite_utilization_percentage.toFixed(1)}%`} />
-            <MetricDisplay label="Avg. Job Completion" value={`${crawler_mission_status.avg_job_completion_time_seconds.toFixed(1)}s`} />
+            <MetricDisplay label="Satellite Utilization" value={`${(crawler_mission_status.satellite_utilization_percentage ?? 0).toFixed(1)}%`} />
+            <MetricDisplay label="Avg. Job Completion" value={`${(crawler_mission_status.avg_job_completion_time_seconds ?? 0).toFixed(1)}s`} />
           </div>
           {crawler_mission_status.recent_job_errors && crawler_mission_status.recent_job_errors.length > 0 && (
             <ListDisplay
@@ -120,7 +127,7 @@ const Dashboard: React.FC = () => {
           <div className="grid grid-cols-2 gap-4">
             <MetricDisplay label="Total Domains Analyzed" value={domain_intelligence_metrics.total_domains_analyzed} />
             <MetricDisplay label="Valuable Expired Domains Found" value={domain_intelligence_metrics.valuable_expired_domains_found} />
-            <MetricDisplay label="Avg. Domain Value Score" value={domain_intelligence_metrics.avg_domain_value_score.toFixed(1)} />
+            <MetricDisplay label="Avg. Domain Value Score" value={(domain_intelligence_metrics.avg_domain_value_score ?? 0).toFixed(1)} />
             <MetricDisplay label="New Domains Added (24h)" value={domain_intelligence_metrics.new_domains_added_24h} />
           </div>
           <ListDisplay

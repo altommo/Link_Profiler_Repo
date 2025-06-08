@@ -19,9 +19,9 @@ const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ statuses }) => {
   // Prepare data for the LineChart
   const chartData = statuses.map(api => ({
     name: api.api_name,
-    'Usage (%)': api.percentage_used,
-    'Avg Response Time (ms)': api.performance?.average_response_time_ms || 0, // Make performance optional
-    'Success Rate (%)': (api.performance?.success_rate || 0) * 100, // Make performance optional
+    'Usage (%)': api.percentage_used ?? 0, // Safely handle null
+    'Avg Response Time (ms)': api.performance?.average_response_time_ms ?? 0, // Safely handle null
+    'Success Rate (%)': (api.performance?.success_rate ?? 0) * 100, // Safely handle null
   }));
 
   return (
@@ -32,9 +32,9 @@ const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ statuses }) => {
             <h3 className="text-lg font-semibold text-white mb-2">{api.api_name}</h3>
             <div className="flex justify-between items-center mb-2">
               <MetricDisplay label="Used" value={`${api.used}/${api.limit}`} valueColorClass="text-blue-400" />
-              <MetricDisplay label="Remaining" value={api.remaining !== undefined ? api.remaining : 'N/A'} valueColorClass="text-purple-400" />
+              <MetricDisplay label="Remaining" value={api.remaining !== undefined && api.remaining !== null ? api.remaining : 'N/A'} valueColorClass="text-purple-400" />
             </div>
-            <ProgressBar percentage={api.percentage_used} colorClass={getProgressBarColor(api.percentage_used)} className="mt-2" />
+            <ProgressBar percentage={api.percentage_used ?? 0} colorClass={getProgressBarColor(api.percentage_used ?? 0)} className="mt-2" />
             <p className="text-sm text-gray-400 mt-1">Reset: {new Date(api.reset_date).toLocaleDateString()}</p>
             {api.predicted_exhaustion_date && (
               <p className="text-sm text-gray-400">Exhaustion: {new Date(api.predicted_exhaustion_date).toLocaleDateString()}</p>
@@ -43,8 +43,8 @@ const ApiQuotaStatus: React.FC<ApiQuotaStatusProps> = ({ statuses }) => {
               <div className="mt-4 text-sm text-gray-300">
                 <p>Total Calls: {api.performance.total_calls}</p>
                 <p>Successful Calls: {api.performance.successful_calls}</p>
-                <p>Avg. Response Time: {api.performance.average_response_time_ms.toFixed(2)} ms</p>
-                <p>Success Rate: {(api.performance.success_rate * 100).toFixed(2)}%</p>
+                <p>Avg. Response Time: {(api.performance.average_response_time_ms ?? 0).toFixed(2)} ms</p>
+                <p>Success Rate: {((api.performance.success_rate ?? 0) * 100).toFixed(2)}%</p>
                 <p>Circuit Breaker: <span className={`font-semibold ${api.performance.circuit_breaker_state === 'OPEN' ? 'text-red-500' : 'text-green-500'}`}>{api.performance.circuit_breaker_state}</span></p>
               </div>
             )}
