@@ -1,4 +1,4 @@
-import React, { useEffect, useState } => 'react';
+import React, { useEffect, useState } from 'react';
 import ModuleContainer from '../components/shared/ModuleContainer';
 import MetricDisplay from '../components/shared/MetricDisplay';
 import ListDisplay from '../components/shared/ListDisplay';
@@ -86,10 +86,10 @@ const Overview: React.FC = () => {
             items={crawler_mission_status.recent_job_errors?.map(err => `${err.error_type}: ${err.message.substring(0, 50)}...`) ?? []}
             emptyMessage="No recent job errors."
             itemColorClass={(item: string) => { // Explicitly type item
-                if (item.includes('[CRITICAL]')) return 'text-red-500';
-                if (item.includes('[WARNING]')) return 'text-orange-400';
-                return 'text-blue-400';
-              }}
+              if (item.includes('[CRITICAL]')) return 'text-red-500';
+              if (item.includes('[WARNING]')) return 'text-orange-400';
+              return 'text-blue-400';
+            }}
             maxHeight="max-h-32"
           />
         </ModuleContainer>
