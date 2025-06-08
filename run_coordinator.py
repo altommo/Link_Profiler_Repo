@@ -33,12 +33,8 @@ def main():
     )
     
     async def run_coordinator():
-        # Initialize config loader
+        # Initialize config loader (it auto-loads config in __init__)
         config_loader = ConfigLoader()
-        config_loader.load_config(
-            config_dir=os.path.join(project_root, "Link_Profiler", "config"), 
-            env_var_prefix="LP_"
-        )
         
         # Get configuration
         redis_url = config_loader.get("redis.url")
