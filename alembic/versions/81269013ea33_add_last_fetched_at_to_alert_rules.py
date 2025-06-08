@@ -56,7 +56,14 @@ def upgrade() -> None:
     op.add_column('serp_results', sa.Column('last_fetched_at', sa.DateTime(), nullable=True))
     op.add_column('social_mentions', sa.Column('last_fetched_at', sa.DateTime(), nullable=True))
     op.add_column('urls', sa.Column('last_fetched_at', sa.DateTime(), nullable=True))
-    op.add_column('users', sa.Column('role', sa.String(), nullable=False))
+
+    # Add 'role' column as nullable first
+    op.add_column('users', sa.Column('role', sa.String(), nullable=True))
+    # Update existing users to set a default 'admin' role
+    op.execute("UPDATE users SET role = 'admin' WHERE role IS NULL")
+    # Then alter the 'role' column to be non-nullable
+    op.alter_column('users', 'role', existing_type=sa.String(), nullable=False, existing_nullable=True)
+
     op.add_column('users', sa.Column('organization_id', sa.String(), nullable=True))
     op.add_column('users', sa.Column('last_fetched_at', sa.DateTime(), nullable=True))
     # ### end Alembic commands ###
