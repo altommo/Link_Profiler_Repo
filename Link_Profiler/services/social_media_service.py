@@ -30,13 +30,14 @@ class SocialMediaService:
     """
     def __init__(self, database: Database, session_manager: SessionManager, social_media_crawler: Optional[SocialMediaCrawler] = None,
                  reddit_client: Optional[RedditClient] = None, youtube_client: Optional[YouTubeClient] = None, news_api_client: Optional[NewsAPIClient] = None,
-                 resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept resilience_manager
+                 resilience_manager: Optional[DistributedResilienceManager] = None, redis_client: Optional[redis.Redis] = None): # Added redis_client
         self.logger = logging.getLogger(__name__)
         self.db = database # Store database instance
         self.session_manager = session_manager # Store session manager instance
         self.resilience_manager = resilience_manager # Store resilience manager
         if self.resilience_manager is None:
             raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+        self.redis_client = redis_client # Stored redis_client
 
         # Pass resilience_manager to clients
         # Note: SocialMediaCrawler, RedditClient, YouTubeClient, NewsAPIClient need to be updated

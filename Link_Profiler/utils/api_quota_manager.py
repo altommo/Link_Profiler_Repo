@@ -5,6 +5,7 @@ import time # Import time for monotonic clock
 import asyncio # Import asyncio
 import random # For simulating ML model output
 from collections import deque # For tracking recent performance
+import redis.asyncio as redis # Import redis.asyncio
 
 from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager, CircuitBreakerState # Import CircuitBreakerState
 from Link_Profiler.utils.ml_cost_optimizer import MLCostOptimizer # Import the new ML model
@@ -26,7 +27,7 @@ class APIQuotaManager:
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, config: Dict[str, Any], resilience_manager: DistributedResilienceManager):
+    def __init__(self, config: Dict[str, Any], resilience_manager: DistributedResilienceManager, redis_client: redis.Redis): # Added redis_client
         if self._initialized:
             return
         self._initialized = True
@@ -34,6 +35,7 @@ class APIQuotaManager:
         self.quotas: Dict[str, Dict[str, Any]] = {}
         self._api_performance: Dict[str, Dict[str, Any]] = {} # Stores performance metrics
         self.resilience_manager = resilience_manager # Store the resilience manager
+        self.redis_client = redis_client # Stored redis_client
         self._load_api_configs(config)
 
         # Configurable weights and thresholds for API selection logic
@@ -458,6 +460,3 @@ class APIQuotaManager:
                 'predicted_exhaustion_date': predicted_exhaustion.isoformat() if predicted_exhaustion else None
             }
         return status
-
-# Create a singleton instance for global use (will be properly initialized in main.py)
-api_quota_manager: Optional[APIQuotaManager] = None

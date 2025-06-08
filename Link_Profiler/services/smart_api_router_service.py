@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any, Optional, Type, List
 from datetime import datetime
 import asyncio
+import redis.asyncio as redis # Import redis.asyncio
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager
@@ -45,6 +46,7 @@ class SmartAPIRouterService:
                  session_manager: SessionManager,
                  resilience_manager: DistributedResilienceManager,
                  api_quota_manager: APIQuotaManager,
+                 redis_client: redis.Redis, # Added redis_client
                  # Pass all specific client instances here
                  google_search_console_client: GoogleSearchConsoleClient,
                  google_pagespeed_client: PageSpeedClient,
@@ -69,6 +71,7 @@ class SmartAPIRouterService:
         self.session_manager = session_manager
         self.resilience_manager = resilience_manager
         self.api_quota_manager = api_quota_manager
+        self.redis_client = redis_client # Stored redis_client
 
         # Store references to all managed API clients
         self.clients: Dict[str, Any] = {
@@ -110,7 +113,7 @@ class SmartAPIRouterService:
         Selects the best API client for a given API type and query type
         using the APIQuotaManager.
         """
-        # Filter available APIs by the requested api_type (e.g., "serpstack", "valueserp" for "serp" type)
+        # Filter available APIs by the requested api_type (e.g., "serp", "valueserp" for "serp" type)
         # This requires a mapping from a generic 'api_type' (e.g., 'serp') to specific client names.
         # For now, assume api_type directly maps to client name or is a prefix.
         
@@ -198,6 +201,3 @@ class SmartAPIRouterService:
             self.logger.error(f"Request via {selected_client.__class__.__name__} failed: {e}")
             # Potentially re-attempt with another client if configured for retry
             raise # Re-raise the exception for upstream handling
-
-# Singleton instance
-smart_api_router_service: Optional['SmartAPIRouterService'] = None

@@ -32,7 +32,7 @@ class OpenRouterClient:
     Client for interacting with the OpenRouter API.
     Uses the OpenAI Python client library.
     """
-    def __init__(self, api_key: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
+    def __init__(self, api_key: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, redis_client: Optional[redis.Redis] = None): # Added redis_client
         self.api_key = api_key
         self.base_url = "https://openrouter.ai/api/v1"
         self.session_manager = session_manager # Use the injected session manager
@@ -47,6 +47,7 @@ class OpenRouterClient:
             from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
             self.resilience_manager = global_resilience_manager
             logger.warning("No DistributedResilienceManager provided to OpenRouterClient. Falling back to global instance.")
+        self.redis_client = redis_client # Stored redis_client
 
 
         # OpenAI client can be initialized with a custom httpx client
@@ -68,16 +69,18 @@ class OpenRouterClient:
     async def __aenter__(self):
         """Ensure session manager is entered."""
         await self.session_manager.__aenter__()
-        if self.openrouter_client:
-            await self.openrouter_client.__aenter__()
+        # self.openrouter_client is not defined in OpenRouterClient, it's self.http_client
+        # if self.openrouter_client:
+        #     await self.openrouter_client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close Redis connection and ensure session manager and OpenRouter client are exited."""
         if self.redis_client:
             await self.redis_client.close() # Corrected: Use self.redis_client.close()
-        if self.openrouter_client:
-            await self.openrouter_client.__aexit__(exc_type, exc_val, exc_tb)
+        # self.openrouter_client is not defined in OpenRouterClient, it's self.http_client
+        # if self.openrouter_client:
+        #     await self.openrouter_client.__aexit__(exc_type, exc_val, exc_tb)
         await self.session_manager.__aexit__(exc_type, exc_val, exc_tb)
 
     async def complete(self, model: str, prompt: str, temperature: float = 0.7, max_tokens: int = 1000) -> Optional[str]:
@@ -120,7 +123,7 @@ class AIService:
     Service for providing various AI-powered functionalities using OpenRouter.
     Includes caching for expensive AI calls.
     """
-    def __init__(self, database: Database, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept ResilienceManager
+    def __init__(self, database: Database, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, redis_client: Optional[redis.Redis] = None): # Added redis_client
         self.logger = logging.getLogger(__name__)
         self.db = database # Store database instance
         self.enabled = config_loader.get("ai.enabled", False)
@@ -138,6 +141,7 @@ class AIService:
             from Link_Profiler.utils.distributed_circuit_breaker import distributed_resilience_manager as global_resilience_manager
             self.resilience_manager = global_resilience_manager
             logger.warning("No DistributedResilienceManager provided to AIService. Falling back to global instance.")
+        self.redis_client = redis_client # Stored redis_client
 
 
         if self.enabled and not self.openrouter_api_key:
@@ -145,10 +149,8 @@ class AIService:
             self.enabled = False
 
         if self.enabled:
-            self.openrouter_client = OpenRouterClient(api_key=self.openrouter_api_key, session_manager=self.session_manager, resilience_manager=self.resilience_manager)
-            self.redis_client = redis.Redis(
-                connection_pool=redis.ConnectionPool.from_url(config_loader.get("redis.url"))
-            )
+            self.openrouter_client = OpenRouterClient(api_key=self.openrouter_api_key, session_manager=self.session_manager, resilience_manager=self.resilience_manager, redis_client=self.redis_client)
+            # Removed: self.redis_client = redis.Redis(connection_pool=redis.ConnectionPool.from_url(config_loader.get("redis.url")))
             self.logger.info("AI Service initialized and enabled.")
         else:
             self.logger.info("AI Service is disabled by configuration.")
@@ -212,7 +214,7 @@ class AIService:
         Returns a dictionary with seo_score, keyword_density_score, readability_score,
         semantic_keywords, and improvement_suggestions.
         """
-        cache_key = f"ai_content_score:{target_keyword}:{hash(content)}" # Simple hash for content
+        cache_key = f"ai_content_score:{target_keyword}:{hash(content)}"
         
         # For AI services, we'll primarily use the internal Redis cache for "cache" source.
         # Live calls will bypass this cache and update it.
@@ -409,7 +411,7 @@ class AIService:
         Perform topic clustering on the following list of texts.
         Group them into {num_clusters} distinct topics.
         Provide a JSON response where keys are the topic names (e.g., "SEO Strategies", "Link Building")
-        and values are lists of the original texts that belong to that topic.
+        and values are lists of the original texts that belong to that cluster.
         
         Texts:
         {json.dumps(texts)}

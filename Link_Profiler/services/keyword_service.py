@@ -47,7 +47,7 @@ class SimulatedKeywordAPIClient(BaseKeywordAPIClient):
     A simulated client for Keyword Research APIs.
     Generates dummy keyword suggestion data.
     """
-    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
+    def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, redis_client: Optional[redis.Redis] = None): # Added redis_client
         self.logger = logging.getLogger(__name__ + ".SimulatedKeywordAPIClient")
         self.session_manager = session_manager # Use the injected session manager
         if self.session_manager is None:
@@ -59,6 +59,7 @@ class SimulatedKeywordAPIClient(BaseKeywordAPIClient):
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
         if self.resilience_manager is None:
             raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+        self.redis_client = redis_client # Stored redis_client
 
 
     async def __aenter__(self):
@@ -118,7 +119,7 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
     Requires an API key.
     This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
+    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, redis_client: Optional[redis.Redis] = None): # Added redis_client
         self.logger = logging.getLogger(__name__ + ".RealKeywordAPIClient")
         self.api_key = api_key
         self.base_url = base_url
@@ -132,6 +133,7 @@ class RealKeywordAPIClient(BaseKeywordAPIClient):
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
         if self.resilience_manager is None:
             raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+        self.redis_client = redis_client # Stored redis_client
 
 
     async def __aenter__(self):
@@ -197,7 +199,7 @@ class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
     This client would fetch search volume, CPC, and competition level.
     This implementation demonstrates where actual API calls would go.
     """
-    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
+    def __init__(self, api_key: str, base_url: str, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, redis_client: Optional[redis.Redis] = None): # Added redis_client
         self.logger = logging.getLogger(__name__ + ".RealKeywordMetricsAPIClient")
         self.api_key = api_key
         self.base_url = base_url
@@ -211,6 +213,7 @@ class RealKeywordMetricsAPIClient(BaseKeywordAPIClient):
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
         if self.resilience_manager is None:
             raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+        self.redis_client = redis_client # Stored redis_client
 
 
     async def __aenter__(self):
@@ -264,7 +267,7 @@ class KeywordService:
     """
     Service for fetching Keyword Research data.
     """
-    def __init__(self, database: Optional[Database] = None, api_client: Optional[BaseKeywordAPIClient] = None, keyword_scraper: Optional[KeywordScraper] = None, google_trends_client: Optional[GoogleTrendsClient] = None, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None): # New: Accept SessionManager and ResilienceManager
+    def __init__(self, database: Optional[Database] = None, api_client: Optional[BaseKeywordAPIClient] = None, keyword_scraper: Optional[KeywordScraper] = None, google_trends_client: Optional[GoogleTrendsClient] = None, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, redis_client: Optional[redis.Redis] = None): # Added redis_client
         self.logger = logging.getLogger(__name__)
         self.db = database # Store database instance
         self.session_manager = session_manager # Store the injected session manager
@@ -277,6 +280,7 @@ class KeywordService:
         self.resilience_manager = resilience_manager # New: Store ResilienceManager
         if self.resilience_manager is None:
             raise ValueError(f"{self.__class__.__name__} is enabled but no DistributedResilienceManager was provided.")
+        self.redis_client = redis_client # Stored redis_client
 
         # Determine which API client to use based on config_loader priority
         if config_loader.get("keyword_api.real_api.enabled"):
@@ -284,13 +288,13 @@ class KeywordService:
             real_api_base_url = config_loader.get("keyword_api.real_api.base_url")
             if not real_api_key or not real_api_base_url:
                 self.logger.error("Real Keyword API enabled but API key or base_url not found in config. Falling back to simulated Keyword API.")
-                self.api_client = SimulatedKeywordAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+                self.api_client = SimulatedKeywordAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager, redis_client=self.redis_client)
             else:
                 self.logger.info("Using RealKeywordAPIClient for keyword lookups.")
-                self.api_client = RealKeywordAPIClient(api_key=real_api_key, base_url=real_api_base_url, session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+                self.api_client = RealKeywordAPIClient(api_key=real_api_key, base_url=real_api_base_url, session_manager=self.session_manager, resilience_manager=self.resilience_manager, redis_client=self.redis_client)
         else:
             self.logger.info("Using SimulatedKeywordAPIClient for keyword lookups.")
-            self.api_client = SimulatedKeywordAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+            self.api_client = SimulatedKeywordAPIClient(session_manager=self.session_manager, resilience_manager=self.resilience_manager, redis_client=self.redis_client)
             
         self.keyword_scraper = keyword_scraper # Store the KeywordScraper instance
         self.google_trends_client = google_trends_client # New: Store GoogleTrendsClient instance
@@ -304,7 +308,7 @@ class KeywordService:
                 self.logger.error("Real Keyword Metrics API enabled but API key or base_url not found in config. Metrics will be simulated.")
             else:
                 self.logger.info("Using RealKeywordMetricsAPIClient for keyword metrics.")
-                self.metrics_api_client = RealKeywordMetricsAPIClient(api_key=metrics_api_key, base_url=metrics_api_base_url, session_manager=self.session_manager, resilience_manager=self.resilience_manager)
+                self.metrics_api_client = RealKeywordMetricsAPIClient(api_key=metrics_api_key, base_url=metrics_api_base_url, session_manager=self.session_manager, resilience_manager=self.resilience_manager, redis_client=self.redis_client)
 
         self.allow_live = config_loader.get("keyword_api.keyword_service.allow_live", False)
         self.staleness_threshold = timedelta(hours=config_loader.get("keyword_api.keyword_service.staleness_threshold_hours", 24))
