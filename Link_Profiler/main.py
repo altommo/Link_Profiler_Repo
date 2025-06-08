@@ -304,7 +304,9 @@ if config_loader.get("serp_crawler.playwright.enabled"):
     logger.info("Initialising Playwright SERPCrawler.")
     serp_crawler_instance = SERPCrawler(
         headless=config_loader.get("serp_crawler.playwright.headless"),
-        browser_type=config_loader.get("serp_crawler.playwright.browser_type")
+        browser_type=config_loader.get("serp_crawler.playwright.browser_type"),
+        session_manager=session_manager,
+        resilience_manager=distributed_resilience_manager
     )
 # SERPService constructor signature: (api_client=None, serp_crawler=None, pagespeed_client=None, redis_client=None, cache_ttl=3600, session_manager=None, resilience_manager=None, api_quota_manager=None, api_routing_service=None)
 serp_service_instance = SERPService(
@@ -322,7 +324,10 @@ serp_service_instance = SERPService(
 keyword_scraper_instance = None
 if config_loader.get("keyword_scraper.enabled"): # Assuming a config for keyword_scraper.enabled
     logger.info("Initialising KeywordScraper.")
-    keyword_scraper_instance = KeywordScraper(session_manager=session_manager)
+    keyword_scraper_instance = KeywordScraper(
+        session_manager=session_manager,
+        resilience_manager=distributed_resilience_manager
+    )
 # KeywordService constructor signature: (database=None, api_client=None, keyword_scraper=None, google_trends_client=None, session_manager=None, resilience_manager=None)
 keyword_service_instance = KeywordService(
     database=db,
@@ -357,7 +362,10 @@ competitive_analysis_service_instance = CompetitiveAnalysisService(db, backlink_
 social_media_crawler_instance = None
 if config_loader.get("social_media_crawler.enabled"):
     logger.info("Initialising SocialMediaCrawler.")
-    social_media_crawler_instance = SocialMediaCrawler(session_manager=session_manager)
+    social_media_crawler_instance = SocialMediaCrawler(
+        session_manager=session_manager,
+        resilience_manager=distributed_resilience_manager
+    )
 # SocialMediaService constructor signature: (database, session_manager, social_media_crawler=None, reddit_client=None, youtube_client=None, news_api_client=None, resilience_manager=None)
 social_media_service_instance = SocialMediaService(
     database=db,
