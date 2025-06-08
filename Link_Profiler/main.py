@@ -464,7 +464,7 @@ mission_control_service = MissionControlService(
 )
 
 # Create WebCrawler instance, passing the SmartCrawlQueue
-main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, browser=playwright_browser_instance, resilience_manager=distributed_resilience_manager, session_manager=session_manager) # Changed to EnhancedWebCrawler
+main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, playwright_browser=playwright_browser_instance, resilience_manager=distributed_resilience_manager, session_manager=session_manager) # Changed to EnhancedWebCrawler
 # --- End New Instantiation ---
 
 # Initialize AlertService instance after its dependencies are available
