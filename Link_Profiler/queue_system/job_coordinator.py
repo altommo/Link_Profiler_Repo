@@ -39,7 +39,7 @@ class JobCoordinator:
         return cls._instance
 
     def __init__(self, redis_client: redis.Redis, config_loader: ConfigLoader, database: Database,
-alert_service: AlertService, connection_manager: ConnectionManager):
+                 alert_service: AlertService, connection_manager: ConnectionManager):
         if self._initialized:
             return
         self._initialized = True
@@ -53,11 +53,11 @@ alert_service: AlertService, connection_manager: ConnectionManager):
         self.job_queue_name = self.config_loader.get("queue.job_queue_name", "crawl_jobs")
         self.result_queue_name = self.config_loader.get("queue.result_queue_name", "crawl_results")
         self.dead_letter_queue_name = self.config_loader.get("queue.dead_letter_queue_name",
-"dead_letter_queue")
+                                                              "dead_letter_queue")
         self.scheduled_jobs_queue_name = self.config_loader.get("queue.scheduled_jobs_queue",
-"scheduled_crawl_jobs")
+                                                                 "scheduled_crawl_jobs")
         self.heartbeat_queue_name = self.config_loader.get("queue.heartbeat_queue_sorted_name",
-"crawler_heartbeats_sorted")
+                                                            "crawler_heartbeats_sorted")
         self.scheduler_interval = self.config_loader.get("queue.scheduler_interval", 5) # How often to check for scheduled jobs
         self.crawler_timeout = self.config_loader.get("monitoring.crawler_timeout", 30) # Seconds without heartbeat before considering crawler dead
 
@@ -123,7 +123,7 @@ alert_service: AlertService, connection_manager: ConnectionManager):
                     job.status = CrawlStatus.QUEUED
                 # Check if it's in the scheduled queue
                 elif await self.redis.zscore(self.scheduled_jobs_queue_name,
-json.dumps(serialize_model(job))) is not None:
+                                              json.dumps(serialize_model(job))) is not None:
                     job.status = CrawlStatus.PENDING # Still pending if in scheduled queue
                 # If not found in Redis queues, but DB says PENDING/QUEUED, it might be picked up or lost.
                 # For now, trust DB status if not found in Redis.
@@ -161,7 +161,7 @@ json.dumps(serialize_model(job))) is not None:
                         job.urls_crawled = result_data.get("urls_crawled", job.urls_crawled)
                         job.links_found = result_data.get("links_found", job.links_found)
                         job.progress_percentage = result_data.get("progress_percentage",
-job.progress_percentage)
+                                                                   job.progress_percentage)
 
                         # Handle errors reported by crawler
                         crawler_errors = result_data.get("errors", [])
@@ -202,7 +202,7 @@ job.progress_percentage)
                 # Get all active crawlers (those that sent a heartbeat recently)
                 min_score = (datetime.now() - timedelta(seconds=self.crawler_timeout)).timestamp()
                 active_crawlers = await self.redis.zrangebyscore(self.heartbeat_queue_name, min_score,
-'+inf', withscores=True)
+                                                                 '+inf', withscores=True)
 
                 current_active_ids = {crawler_id.decode('utf-8') for crawler_id, _ in active_crawlers}
 
@@ -231,7 +231,7 @@ job.progress_percentage)
                 now = datetime.now().timestamp()
                 # Get all jobs whose scheduled_at is in the past or now
                 ready_jobs = await self.redis.zrangebyscore(self.scheduled_jobs_queue_name, '-inf', now,
-withscores=False)
+                                                             withscores=False)
 
                 if ready_jobs:
                     self.logger.info(f"Found {len(ready_jobs)} scheduled jobs ready for processing.")
@@ -272,7 +272,7 @@ withscores=False)
         # Get active crawlers and their last heartbeat
         min_score = (datetime.now() - timedelta(seconds=self.crawler_timeout)).timestamp()
         active_crawlers_raw = await self.redis.zrangebyscore(self.heartbeat_queue_name, min_score, '+inf',
-withscores=True)
+                                                              withscores=True)
 
         active_crawlers_info = {}
         for crawler_id_bytes, timestamp_float in active_crawlers_raw:
