@@ -387,7 +387,7 @@ satellite:
           propagate: False
         # Add other loggers specific to satellite if needed
       root:
-        handlers: [console, file]
+        handlers: [console]
         level: INFO
 
 # Authentication settings
@@ -469,7 +469,7 @@ external_apis:
     supported_query_types: ["company_info", "person_info"]
   securitytrails:
     enabled: false
-    api_key: "${LP_SECURITYTRAILS_API_KEY}"
+    api_key: "${LP_SECURITY_TRAILS_API_KEY}"
     monthly_limit: 50
     reset_day_of_month: 1
     cost_per_unit: 0.015

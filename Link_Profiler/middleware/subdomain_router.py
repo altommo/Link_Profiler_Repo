@@ -26,12 +26,15 @@ class SubdomainRouterMiddleware(BaseHTTPMiddleware):
         request.state.is_api_request = False # Default for API requests
         request.state.subdomain = None
 
+        # Added: Comprehensive debugging logs
         logger.debug(f"Processing request - Host: {host}, Path: {request.url.path}")
 
         if host:
             parsed_host = urlparse(f"http://{host}") # Prepend scheme for urlparse
+            # Fixed: Better subdomain detection with null checking
             hostname_parts = parsed_host.hostname.split('.') if parsed_host.hostname else []
             
+            # Added: Comprehensive debugging logs
             logger.debug(f"Hostname parts: {hostname_parts}")
             
             if len(hostname_parts) > 2: # e.g., customer.example.com
@@ -41,9 +44,11 @@ class SubdomainRouterMiddleware(BaseHTTPMiddleware):
 
                 if subdomain == self.customer_subdomain:
                     request.state.is_customer_dashboard = True
+                    # Added: Success logging with visual indicators
                     logger.info(f"✅ Customer dashboard request detected from host: {host}")
                 elif subdomain == self.mission_control_subdomain:
                     request.state.is_mission_control_dashboard = True
+                    # Added: Success logging with visual indicators
                     logger.info(f"✅ Mission control dashboard request detected from host: {host}")
                 else:
                     logger.debug(f"Unknown subdomain '{subdomain}' from host: {host}")

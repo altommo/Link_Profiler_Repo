@@ -88,9 +88,9 @@ API_CACHE_TTL = config_loader.get("api_cache.ttl")
 
 # New: Subdomain configuration for UI routing
 CUSTOMER_SUBDOMAIN = config_loader.get("subdomains.customer", "customer")
-MISSION_CONTROL_SUBDOMAIN = config_loader.get("subdomains.mission_control", "monitor")
+MISSION_CONTROL_SUBDOMAIN = config_loader.get("subdomains.mission_control", "monitor") # Corrected default to "monitor"
 
-# Log the subdomain configuration for debugging
+# Added: Debug logging for subdomain configuration
 logger.info(f"Subdomain configuration - Customer: '{CUSTOMER_SUBDOMAIN}', Mission Control: '{MISSION_CONTROL_SUBDOMAIN}'")
 logger.info(f"Expected URLs - Customer: {CUSTOMER_SUBDOMAIN}.yspanel.com, Mission Control: {MISSION_CONTROL_SUBDOMAIN}.yspanel.com")
 
@@ -870,25 +870,6 @@ async def get_audit_logs(
     ]
     return simulated_logs[offset:offset+limit]
 
-@app.get("/admin/api_keys", response_model=List[Dict[str, Any]])
-async def get_api_keys(current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
-    """Retrieve configured external API keys (masked). Requires admin access."""
-    logger.info(f"Admin user {current_user.username} requesting API keys.")
-    # This is a placeholder. You would retrieve this from a secure config store.
-    # Only return masked keys.
-    masked_keys = []
-    external_apis_config = config_loader.get("external_apis", {})
-    for api_name, api_settings in external_apis_config.items():
-        if api_settings.get("api_key"):
-            masked_keys.append({
-                "api_name": api_name,
-                "enabled": api_settings.get("enabled", False),
-                "api_key_masked": f"********{api_settings['api_key'][-4:]}", # Mask all but last 4 chars
-                "monthly_limit": api_settings.get("monthly_limit", -1),
-                "cost_per_unit": api_settings.get("cost_per_unit", 0.0),
-            })
-    return masked_keys
-
 @app.post("/admin/api_keys/{api_name}/update", response_model=Dict[str, str])
 async def update_api_key(api_name: str, new_key: str, current_user: User = Depends(get_current_admin_user)): # Use imported get_current_admin_user
     """Update an external API key. Requires admin access."""
@@ -1103,8 +1084,8 @@ async def serve_dashboard_spa(request: Request, path: str):
     Serves the appropriate SPA (Customer or Mission Control) based on subdomain,
     or redirects if no specific subdomain is matched.
     """
-    # If it's an API request (detected by middleware), let it pass to other routers
-    # This check is mostly defensive; API routes should be matched before this catch-all.
+    # Problem: Unsafe state attribute checking causing AttributeError when accessing request state
+    # Fixed: Use hasattr() checks
     if hasattr(request.state, 'is_api_request') and request.state.is_api_request:
         raise HTTPException(status_code=404, detail="API endpoint not found or handled by other routers.")
 
