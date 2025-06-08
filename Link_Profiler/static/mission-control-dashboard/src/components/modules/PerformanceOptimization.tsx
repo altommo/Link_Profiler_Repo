@@ -1,10 +1,12 @@
 import React from 'react';
+import ModuleContainer from '../shared/ModuleContainer'; // Added ModuleContainer import
+import MetricDisplay from '../shared/MetricDisplay'; // Added MetricDisplay import
 
 interface PerformanceOptimizationProps {
   metrics: {
-    avg_crawl_speed_pages_per_minute: number;
-    avg_success_rate_percentage: number;
-    avg_response_time_ms: number;
+    avg_crawl_speed_pages_per_minute: number | null; // Changed to number | null
+    avg_success_rate_percentage: number | null; // Changed to number | null
+    avg_response_time_ms: number | null; // Changed to number | null
     bottlenecks_detected: string[];
     top_performing_satellites: string[];
     worst_performing_satellites: string[];
@@ -13,20 +15,16 @@ interface PerformanceOptimizationProps {
 
 const PerformanceOptimization: React.FC<PerformanceOptimizationProps> = ({ metrics }) => {
   return (
-    <div className="bg-nasa-gray p-6 rounded-lg shadow-lg border border-nasa-cyan">
-      <h2 className="text-2xl font-bold text-nasa-cyan mb-4">Performance Optimization Center</h2>
+    <ModuleContainer title="Performance Optimization Center">
       <div className="grid grid-cols-2 gap-4 text-lg">
         <div>
-          <p className="text-nasa-light-gray">Avg. Crawl Speed:</p>
-          <p className="text-nasa-amber text-3xl">{metrics.avg_crawl_speed_pages_per_minute.toFixed(1)} <span className="text-base">pages/min</span></p>
+          <MetricDisplay label="Avg. Crawl Speed" value={(metrics.avg_crawl_speed_pages_per_minute ?? 0).toFixed(1)} unit="pages/min" valueColorClass="text-nasa-amber" />
         </div>
         <div>
-          <p className="text-nasa-light-gray">Avg. Success Rate:</p>
-          <p className="text-nasa-cyan text-3xl">{metrics.avg_success_rate_percentage.toFixed(1)}%</p>
+          <MetricDisplay label="Avg. Success Rate" value={(metrics.avg_success_rate_percentage ?? 0).toFixed(1)} unit="%" valueColorClass="text-nasa-cyan" />
         </div>
-        <div>
-          <p className="text-nasa-light-gray">Avg. Response Time:</p>
-          <p className="text-nasa-amber text-3xl">{metrics.avg_response_time_ms.toFixed(0)} <span className="text-base">ms</span></p>
+        <div className="col-span-2"> {/* Ensure this takes full width if needed */}
+          <MetricDisplay label="Avg. Response Time" value={(metrics.avg_response_time_ms ?? 0).toFixed(0)} unit="ms" valueColorClass="text-nasa-amber" />
         </div>
       </div>
 
@@ -62,7 +60,7 @@ const PerformanceOptimization: React.FC<PerformanceOptimizationProps> = ({ metri
           <p className="text-nasa-light-gray text-sm">N/A</p>
         )}
       </div>
-    </div>
+    </ModuleContainer>
   );
 };
 

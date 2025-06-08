@@ -10,7 +10,7 @@ interface BacklinkDiscoveryProps {
     total_backlinks_discovered: number;
     unique_domains_discovered: number;
     new_backlinks_24h: number;
-    avg_authority_score: number;
+    avg_authority_score: number | null; // Changed to number | null
     top_linking_domains: string[];
     top_target_urls: string[];
     potential_spam_links_24h: number;
@@ -35,7 +35,7 @@ const BacklinkDiscovery: React.FC<BacklinkDiscoveryProps> = ({ metrics }) => {
         <MetricDisplay label="Total Backlinks" value={metrics.total_backlinks_discovered} valueColorClass="text-nasa-amber" />
         <MetricDisplay label="Unique Domains" value={metrics.unique_domains_discovered} valueColorClass="text-nasa-cyan" />
         <MetricDisplay label="New (24h)" value={metrics.new_backlinks_24h} valueColorClass="text-nasa-cyan" />
-        <MetricDisplay label="Avg. Authority Score" value={metrics.avg_authority_score.toFixed(1)} valueColorClass="text-nasa-amber" />
+        <MetricDisplay label="Avg. Authority Score" value={(metrics.avg_authority_score ?? 0).toFixed(1)} valueColorClass="text-nasa-amber" />
         <div className="col-span-2">
           <MetricDisplay label="Potential Spam (24h)" value={metrics.potential_spam_links_24h} valueColorClass="text-red-500" />
         </div>
