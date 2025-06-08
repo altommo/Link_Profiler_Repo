@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Float, Text
+from sqlalchemy import Column, String, Boolean, DateTime, Float, Text, Integer, JSON # Added Integer, JSON
 from sqlalchemy.dialects.postgresql import ARRAY # For ARRAY type
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime # Import datetime
