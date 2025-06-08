@@ -80,19 +80,18 @@ const Dashboard: React.FC = () => {
             <MetricDisplay label="Satellite Utilization" value={`${(crawler_mission_status.satellite_utilization_percentage ?? 0).toFixed(1)}%`} />
             <MetricDisplay label="Avg. Job Completion" value={`${(crawler_mission_status.avg_job_completion_time_seconds ?? 0).toFixed(1)}s`} />
           </div>
-          {crawler_mission_status.recent_job_errors && crawler_mission_status.recent_job_errors.length > 0 && (
-            <ListDisplay
-              title="Recent Job Errors"
-              items={crawler_mission_status.recent_job_errors.map(err => `${err.error_type}: ${err.message.substring(0, 50)}...`)}
-              emptyMessage="No recent job errors."
-              itemColorClass={(item: string) => { // Explicitly type item
-                if (item.includes('[CRITICAL]')) return 'text-red-500';
-                if (item.includes('[WARNING]')) return 'text-orange-400';
-                return 'text-blue-400';
-              }}
-              maxHeight="max-h-32"
-            />
-          )}
+          {/* Safely access recent_job_errors */}
+          <ListDisplay
+            title="Recent Job Errors"
+            items={crawler_mission_status.recent_job_errors?.map(err => `${err.error_type}: ${err.message.substring(0, 50)}...`) ?? []}
+            emptyMessage="No recent job errors."
+            itemColorClass={(item: string) => { // Explicitly type item
+              if (item.includes('[CRITICAL]')) return 'text-red-500';
+              if (item.includes('[WARNING]')) return 'text-orange-400';
+              return 'text-blue-400';
+            }}
+            maxHeight="max-h-32"
+          />
         </ModuleContainer>
 
         {/* API Quota & Performance */}
@@ -130,9 +129,10 @@ const Dashboard: React.FC = () => {
             <MetricDisplay label="Avg. Domain Value Score" value={(domain_intelligence_metrics.avg_domain_value_score ?? 0).toFixed(1)} />
             <MetricDisplay label="New Domains Added (24h)" value={domain_intelligence_metrics.new_domains_added_24h} />
           </div>
+          {/* Safely access top_niches_identified */}
           <ListDisplay
             title="Top Niches Identified"
-            items={domain_intelligence_metrics.top_niches_identified}
+            items={domain_intelligence_metrics.top_niches_identified ?? []}
             emptyMessage="No niches identified."
           />
         </ModuleContainer>
@@ -144,7 +144,8 @@ const Dashboard: React.FC = () => {
 
         {/* Satellite Fleet Status */}
         <ModuleContainer title="Satellite Fleet Status">
-          {satellite_fleet_status.length > 0 ? (
+          {/* Safely access satellite_fleet_status */}
+          {satellite_fleet_status && satellite_fleet_status.length > 0 ? (
             <ListDisplay
               title="Satellites"
               items={satellite_fleet_status.map(sat => `${sat.satellite_id} - ${sat.status} (Last Seen: ${new Date(sat.last_heartbeat).toLocaleTimeString()})`)}

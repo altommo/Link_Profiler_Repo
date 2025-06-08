@@ -72,7 +72,7 @@ export interface CrawlerMissionStatus {
   total_satellites_count: number;
   satellite_utilization_percentage: number | null;
   avg_job_completion_time_seconds: number | null;
-  recent_job_errors: CrawlError[];
+  recent_job_errors: CrawlError[] | null; // Changed to allow null
 }
 
 export interface BacklinkDiscoveryMetrics {
@@ -80,8 +80,8 @@ export interface BacklinkDiscoveryMetrics {
   unique_domains_discovered: number;
   new_backlinks_24h: number;
   avg_authority_score: number | null;
-  top_linking_domains: string[];
-  top_target_urls: string[];
+  top_linking_domains: string[] | null; // Changed to allow null
+  top_target_urls: string[] | null; // Changed to allow null
   potential_spam_links_24h: number;
 }
 
@@ -90,16 +90,16 @@ export interface DomainIntelligenceMetrics {
   valuable_expired_domains_found: number;
   avg_domain_value_score: number | null;
   new_domains_added_24h: number;
-  top_niches_identified: string[];
+  top_niches_identified: string[] | null; // Changed to allow null
 }
 
 export interface PerformanceOptimizationMetrics {
   avg_crawl_speed_pages_per_minute: number | null;
   avg_success_rate_percentage: number | null;
   avg_response_time_ms: number | null;
-  bottlenecks_detected: string[];
-  top_performing_satellites: string[];
-  worst_performing_satellites: string[];
+  bottlenecks_detected: string[] | null; // Changed to allow null
+  top_performing_satellites: string[] | null; // Changed to allow null
+  worst_performing_satellites: string[] | null; // Changed to allow null
 }
 
 export interface DashboardAlert {
@@ -125,14 +125,14 @@ export interface SatelliteFleetStatus {
 }
 
 export interface DashboardRealtimeUpdates {
-  timestamp: string; // ISO format string
+  timestamp: string; // ISO format datetime string
   crawler_mission_status: CrawlerMissionStatus;
   backlink_discovery_metrics: BacklinkDiscoveryMetrics;
   api_quota_statuses: ApiQuotaStatus[];
   domain_intelligence_metrics: DomainIntelligenceMetrics;
   performance_optimization_metrics: PerformanceOptimizationMetrics;
   alerts: DashboardAlert[];
-  satellite_fleet_status: SatelliteFleetStatus[];
+  satellite_fleet_status: SatelliteFleetStatus[] | null; // Changed to allow null
 }
 
 // New interfaces for Settings.tsx
