@@ -1,6 +1,7 @@
+import React from 'react'; // Added React import
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { useAuth } from './contexts/AuthContext'; // Corrected import path for useAuth
 import Layout from './components/layout/Layout';
-import { useAuth } from './hooks/useAuth';
 
 // Page components
 import Dashboard from './components/Dashboard';

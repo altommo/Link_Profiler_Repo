@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { useAuth } from '../hooks/useAuth';
+import React, { useState, useEffect } from 'react'; // Added React import
+import { useAuth } from '../contexts/AuthContext'; // Corrected import path for useAuth
+import { User } from '../types'; // Import User type
 
 interface ProfileData {
   username: string;

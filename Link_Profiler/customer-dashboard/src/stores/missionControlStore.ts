@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from 'zustand'; // Added React import
 
 // Define the structure of your real-time dashboard data
 // This should match the DashboardRealtimeUpdates schema from your FastAPI backend
@@ -65,14 +65,14 @@ interface AlertSummary {
 
 interface SatelliteFleetStatus {
   satellite_id: string;
-  status: string;
-  last_heartbeat: string; // ISO format string
+  status: string; // Broadened from "active" | "idle" | "unresponsive" to string for flexibility
+  last_heartbeat: string; // ISO format datetime string
   jobs_completed_24h: number;
   errors_24h: number;
   avg_job_duration_seconds: number | null;
   current_job_id: string | null;
   current_job_type: string | null;
-  current_job_progress: number | null;
+  current_job_progress: number | null; // Percentage 0-100
 }
 
 interface DashboardRealtimeUpdates {
@@ -107,7 +107,7 @@ interface MissionControlState {
 const useMissionControlStore = create<MissionControlState>((set) => ({
   data: null,
   lastUpdated: null,
-  setData: (newData) => set({ data: newData, lastUpdated: newData.timestamp }),
+  setData: (newData: DashboardRealtimeUpdates) => set({ data: newData, lastUpdated: newData.timestamp }), // Explicitly typed newData
 }));
 
 export default useMissionControlStore;

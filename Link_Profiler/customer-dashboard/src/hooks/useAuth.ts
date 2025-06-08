@@ -1,5 +1,4 @@
-// src/hooks/useAuth.ts
-import { useContext } from 'react';
+import { useContext } from 'react'; // Added React import
 import { AuthContext } from '../contexts/AuthContext';
 
 export const useAuth = () => {

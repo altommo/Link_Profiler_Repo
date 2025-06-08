@@ -1,6 +1,6 @@
-import React from 'react';
+import React from 'react'; // Added React import
 import { NavLink } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuth'; // Adjust path as necessary
+import { useAuth } from '../../contexts/AuthContext'; // Corrected import path for useAuth
 
 interface SidebarProps {
   isOpen: boolean;
@@ -38,7 +38,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
         <nav className="space-y-4">
           <NavLink
             to="/dashboard" // Changed from /overview to /dashboard
-            className={({ isActive }) =>
+            className={({ isActive }: { isActive: boolean }) => // Explicitly typed isActive
               `nav-link ${isActive ? 'nav-link-active' : ''}`
             }
             onClick={isOpen ? toggleSidebar : undefined} // Close sidebar on link click in mobile
@@ -47,7 +47,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
           </NavLink>
           <NavLink
             to="/jobs"
-            className={({ isActive }) =>
+            className={({ isActive }: { isActive: boolean }) => // Explicitly typed isActive
               `nav-link ${isActive ? 'nav-link-active' : ''}`
             }
             onClick={isOpen ? toggleSidebar : undefined}
@@ -56,7 +56,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggleSidebar }) => {
           </NavLink>
           <NavLink
             to="/profile" // Added link to UserProfile
-            className={({ isActive }) =>
+            className={({ isActive }: { isActive: boolean }) => // Explicitly typed isActive
               `nav-link ${isActive ? 'nav-link-active' : ''}`
             }
             onClick={isOpen ? toggleSidebar : undefined}

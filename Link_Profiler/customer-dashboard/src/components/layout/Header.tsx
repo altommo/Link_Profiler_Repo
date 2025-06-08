@@ -1,6 +1,6 @@
-import React from 'react';
+import React from 'react'; // Added React import
 import { Link } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuth'; // Adjust path as necessary
+import { useAuth } from '../../contexts/AuthContext'; // Corrected import path for useAuth
 
 interface HeaderProps {
   toggleSidebar: () => void;

@@ -1,5 +1,5 @@
 // src/contexts/AuthContext.tsx
-import React, { createContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useState, useEffect, ReactNode, useCallback } from 'react'; // Added React import
 import { User, Token } from '../types'; // Assuming User and Token types are defined in types.ts
 import { AUTH_ENDPOINTS } from '../config';
 

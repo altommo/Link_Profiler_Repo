@@ -1,9 +1,9 @@
-import { useEffect } from 'react';
+import React, { useEffect } from 'react'; // Added React import
 import useWebSocket from './useWebSocket';
 import useMissionControlStore from '../stores/missionControlStore';
 
 const useRealTimeData = () => {
-  const setData = useMissionControlStore((state) => state.setData);
+  const setData = useMissionControlStore((state: any) => state.setData); // Explicitly typed state
 
   const handleMessage = (message: any) => {
     try {
@@ -21,7 +21,7 @@ const useRealTimeData = () => {
     onMessage: handleMessage,
     onConnect: () => console.log('Connected to Mission Control WebSocket'),
     onDisconnect: () => console.log('Disconnected from Mission Control WebSocket'),
-    onError: (error) => console.error('Mission Control WebSocket Error:', error),
+    onError: (error: Event) => console.error('Mission Control WebSocket Error:', error), // Explicitly typed error
   });
 
   useEffect(() => {

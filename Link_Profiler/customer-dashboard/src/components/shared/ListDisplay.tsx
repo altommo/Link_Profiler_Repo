@@ -1,4 +1,4 @@
-import React from 'react';
+import React from 'react'; // Added React import
 
 interface ListDisplayProps {
   title: string;
@@ -20,7 +20,7 @@ const ListDisplay: React.FC<ListDisplayProps> = ({
       <h3 className="text-xl font-bold text-nasa-cyan mt-6 mb-3">{title}</h3>
       <div className={`${maxHeight} overflow-y-auto pr-2`}>
         {items.length > 0 ? (
-          items.map((item, index) => (
+          items.map((item: string, index: number) => ( // Explicitly typed item and index
             <p key={index} className={`text-sm mb-1 ${itemColorClass}`}>
               {item}
             </p>

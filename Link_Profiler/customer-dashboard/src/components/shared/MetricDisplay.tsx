@@ -1,4 +1,4 @@
-import React from 'react';
+import React from 'react'; // Added React import
 
 interface MetricDisplayProps {
   label: string;

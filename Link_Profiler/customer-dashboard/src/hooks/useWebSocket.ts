@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react'; // Added React import
 import { WS_BASE_URL } from '../config'; // Import WS_BASE_URL from config
 
 interface UseWebSocketOptions {
@@ -50,7 +50,7 @@ const useWebSocket = (options: UseWebSocketOptions) => {
     }
 
     if (retryCount.current >= maxRetries) {
-      console.warn(`Max WebSocket reconnection retries (${maxRetries}) reached. Aborting.`);
+      console.warn(`WebSocket: Max reconnect attempts (${maxRetries}) reached for ${path}. Aborting.`);
       return;
     }
 
@@ -70,13 +70,13 @@ const useWebSocket = (options: UseWebSocketOptions) => {
       }
     };
 
-    ws.current.onmessage = (event) => {
+    ws.current.onmessage = (event: MessageEvent) => { // Explicitly typed event
       if (isMounted.current) { // Only process message if component is mounted
         onMessage(event.data);
       }
     };
 
-    ws.current.onclose = (event) => {
+    ws.current.onclose = (event: CloseEvent) => { // Explicitly typed event
       if (isMounted.current) { // Only update state if component is mounted
         console.log('WebSocket disconnected:', event.code, event.reason);
         setIsConnected(false);
@@ -94,7 +94,7 @@ const useWebSocket = (options: UseWebSocketOptions) => {
       }
     };
 
-    ws.current.onerror = (event) => {
+    ws.current.onerror = (event: Event) => { // Explicitly typed event
       if (isMounted.current) { // Only update state if component is mounted
         console.error('WebSocket error:', event);
         onError?.(event);
