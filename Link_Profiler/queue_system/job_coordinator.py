@@ -271,7 +271,7 @@ withscores=False)
 
         # Get active crawlers and their last heartbeat
         min_score = (datetime.now() - timedelta(seconds=self.crawler_timeout)).timestamp()
-        active_crawlers = await self.redis.zrangebyscore(self.heartbeat_queue_name, min_score, '+inf',
+        active_crawlers_raw = await self.redis.zrangebyscore(self.heartbeat_queue_name, min_score, '+inf',
 withscores=True)
 
         active_crawlers_info = {}
