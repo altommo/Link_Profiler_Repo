@@ -6,36 +6,25 @@ import { AUTH_ENDPOINTS } from '../config';
 const Login: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const { login, loading } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
+    setLoading(true);
+    setError('');
 
     try {
-      const response = await fetch(AUTH_ENDPOINTS.login, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          username: username,
-          password: password,
-        }).toString(),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Login failed');
-      }
-
-      const data = await response.json();
-      await login(data.access_token); // Use the login function from AuthContext
+      // The login function in AuthContext now handles the API call directly
+      await login(username, password); 
       navigate('/'); // Redirect to dashboard on successful login
     } catch (err: any) {
       setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
