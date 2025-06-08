@@ -29,13 +29,17 @@ class JobCoordinator:
     """
     _instance = None
 
-    def __new__(cls, redis_client: redis.Redis, config_loader: ConfigLoader, database: Database, alert_service: AlertService, connection_manager: ConnectionManager):
+    # Corrected __new__ signature to accept *args and **kwargs
+    def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super(JobCoordinator, cls).__new__(cls)
+            # _initialized flag should be set in __init__ to ensure it's only set once
+            # even if __new__ is called multiple times (e.g., by get_coordinator)
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, redis_client: redis.Redis, config_loader: ConfigLoader, database: Database, alert_service: AlertService, connection_manager: ConnectionManager):
+    def __init__(self, redis_client: redis.Redis, config_loader: ConfigLoader, database: Database,
+alert_service: AlertService, connection_manager: ConnectionManager):
         if self._initialized:
             return
         self._initialized = True
@@ -48,11 +52,16 @@ class JobCoordinator:
 
         self.job_queue_name = self.config_loader.get("queue.job_queue_name", "crawl_jobs")
         self.result_queue_name = self.config_loader.get("queue.result_queue_name", "crawl_results")
-        self.dead_letter_queue_name = self.config_loader.get("queue.dead_letter_queue_name", "dead_letter_queue")
-        self.scheduled_jobs_queue_name = self.config_loader.get("queue.scheduled_jobs_queue", "scheduled_crawl_jobs")
-        self.heartbeat_queue_name = self.config_loader.get("queue.heartbeat_queue_sorted_name", "crawler_heartbeats_sorted")
-        self.scheduler_interval = self.config_loader.get("queue.scheduler_interval", 5) # How often to check for scheduled jobs
-        self.crawler_timeout = self.config_loader.get("monitoring.crawler_timeout", 30) # Seconds without heartbeat before considering crawler dead
+        self.dead_letter_queue_name = self.config_loader.get("queue.dead_letter_queue_name",
+"dead_letter_queue")
+        self.scheduled_jobs_queue_name = self.config_loader.get("queue.scheduled_jobs_queue",
+"scheduled_crawl_jobs")
+        self.heartbeat_queue_name = self.config_loader.get("queue.heartbeat_queue_sorted_name",
+"crawler_heartbeats_sorted")
+        self.scheduler_interval = self.config_loader.get("queue.scheduler_interval", 5) # How often to check
+for scheduled jobs
+        self.crawler_timeout = self.config_loader.get("monitoring.crawler_timeout", 30) # Seconds without
+heartbeat before considering crawler dead
 
         self._processing_paused = False
         self._processing_lock = asyncio.Lock()
@@ -98,7 +107,7 @@ class JobCoordinator:
             job.status = CrawlStatus.QUEUED # New status for jobs in Redis queue
             self.db.add_crawl_job(job) # Save to DB immediately
             self.logger.info(f"Submitted job {job.id} to queue.")
-        
+
         # Notify via WebSocket
         await self.connection_manager.broadcast(f"Job {job.id} submitted. Status: {job.status.value}")
         await self.alert_service.evaluate_job_update(job) # Evaluate for alerts
@@ -111,19 +120,21 @@ class JobCoordinator:
             # If job is in PENDING/QUEUED state, check Redis for more up-to-date status
             if job.status in [CrawlStatus.PENDING, CrawlStatus.QUEUED]:
                 # Check if it's in the main job queue
-                # Note: lpos is O(N), might be slow for large queues. Consider alternative if performance is an issue.
+                # Note: lpos is O(N), might be slow for large queues. Consider alternative if performance is
+an issue.
                 if await self.redis.lpos(self.job_queue_name, json.dumps(serialize_model(job))) is not None:
                     job.status = CrawlStatus.QUEUED
                 # Check if it's in the scheduled queue
-                elif await self.redis.zscore(self.scheduled_jobs_queue_name, json.dumps(serialize_model(job))) is not None:
+                elif await self.redis.zscore(self.scheduled_jobs_queue_name,
+json.dumps(serialize_model(job))) is not None:
                     job.status = CrawlStatus.PENDING # Still pending if in scheduled queue
                 # If not found in Redis queues, but DB says PENDING/QUEUED, it might be picked up or lost.
                 # For now, trust DB status if not found in Redis.
-            
+
             # Check if it's currently being processed by a satellite
             # This would require a more complex mechanism, e.g., a hash map of active jobs
             # For now, rely on DB status for IN_PROGRESS.
-            
+
             return job
         return None
 
@@ -137,23 +148,24 @@ class JobCoordinator:
                 # Blocking pop from the result queue
                 # timeout=0 means block indefinitely until an item is available
                 result = await self.redis.brpop(self.result_queue_name, timeout=5)
-                
+
                 if result:
                     _, result_json = result
                     result_data = json.loads(result_json)
-                    
+
                     job_id = result_data.get("job_id")
                     # Fetch job from DB to ensure we have the latest authoritative state
                     job = self.db.get_crawl_job(job_id)
-                    
+
                     if job:
                         job.status = CrawlStatus(result_data.get("status")) # Update status from result
                         job.completed_date = datetime.now()
                         job.results = result_data.get("results", {})
                         job.urls_crawled = result_data.get("urls_crawled", job.urls_crawled)
                         job.links_found = result_data.get("links_found", job.links_found)
-                        job.progress_percentage = result_data.get("progress_percentage", job.progress_percentage)
-                        
+                        job.progress_percentage = result_data.get("progress_percentage",
+job.progress_percentage)
+
                         # Handle errors reported by crawler
                         crawler_errors = result_data.get("errors", [])
                         for err_data in crawler_errors:
@@ -163,19 +175,22 @@ class JobCoordinator:
                                 message=err_data.get("message", "No message"),
                                 details=err_data.get("details")
                             )
-                        
+
                         self.db.update_crawl_job(job)
                         self.logger.info(f"Processed results for job {job_id}. Status: {job.status.value}")
-                        await self.connection_manager.broadcast(f"Job {job_id} finished. Status: {job.status.value}")
+                        await self.connection_manager.broadcast(f"Job {job.id} finished. Status:
+{job.status.value}")
                         await self.alert_service.evaluate_job_update(job) # Evaluate for alerts
                     else:
-                        self.logger.warning(f"Received results for unknown job {job_id}. Moving to dead letter queue.")
+                        self.logger.warning(f"Received results for unknown job {job_id}. Moving to dead
+letter queue.")
                         await self.redis.lpush(self.dead_letter_queue_name, result_json)
-                
+
             except redis.exceptions.ConnectionError as e:
-                self.logger.error(f"Redis Connection Error in process_results: {e}. Attempting to reconnect in 5 seconds...", exc_info=True)
+                self.logger.error(f"Redis Connection Error in process_results: {e}. Attempting to reconnect
+in 5 seconds...", exc_info=True)
                 # Wait a bit longer before retrying after a connection error
-                await asyncio.sleep(5) 
+                await asyncio.sleep(5)
             except Exception as e:
                 self.logger.error(f"Error processing results: {e}", exc_info=True)
                 # Optionally, push malformed results to dead letter queue
@@ -192,23 +207,24 @@ class JobCoordinator:
             try:
                 # Get all active crawlers (those that sent a heartbeat recently)
                 min_score = (datetime.now() - timedelta(seconds=self.crawler_timeout)).timestamp()
-                active_crawlers = await self.redis.zrangebyscore(self.heartbeat_queue_name, min_score, '+inf', withscores=True)
-                
+                active_crawlers = await self.redis.zrangebyscore(self.heartbeat_queue_name, min_score,
+'+inf', withscores=True)
+
                 current_active_ids = {crawler_id.decode('utf-8') for crawler_id, _ in active_crawlers}
-                
+
                 # Optionally, check for crawlers that were active but are now missing
                 # This would require storing a list of previously active crawlers.
                 # For simplicity, we'll just report current active ones.
 
                 self.logger.debug(f"Active crawlers: {current_active_ids}")
-                
+
                 # Update Prometheus metrics for active crawlers
                 # This would require a Gauge metric for active crawlers, updated here.
                 # For now, just logging.
 
             except Exception as e:
                 self.logger.error(f"Error monitoring satellites: {e}", exc_info=True)
-            
+
             await asyncio.sleep(self.scheduler_interval) # Check every few seconds
 
     async def _process_scheduled_jobs(self):
@@ -220,14 +236,15 @@ class JobCoordinator:
             try:
                 now = datetime.now().timestamp()
                 # Get all jobs whose scheduled_at is in the past or now
-                ready_jobs = await self.redis.zrangebyscore(self.scheduled_jobs_queue_name, '-inf', now, withscores=False)
-                
+                ready_jobs = await self.redis.zrangebyscore(self.scheduled_jobs_queue_name, '-inf', now,
+withscores=False)
+
                 if ready_jobs:
                     self.logger.info(f"Found {len(ready_jobs)} scheduled jobs ready for processing.")
                     for job_json in ready_jobs:
                         job_data = json.loads(job_json)
                         job_id = job_data.get("id")
-                        
+
                         # Atomically remove from scheduled queue and add to main queue
                         pipe = self.redis.pipeline()
                         pipe.zrem(self.scheduled_jobs_queue_name, job_json)
@@ -240,14 +257,15 @@ class JobCoordinator:
                             job.status = CrawlStatus.QUEUED
                             self.db.update_crawl_job(job)
                             self.logger.info(f"Moved scheduled job {job_id} to main queue.")
-                            await self.connection_manager.broadcast(f"Scheduled job {job_id} moved to queue.")
+                            await self.connection_manager.broadcast(f"Scheduled job {job_id} moved to
+queue.")
                             await self.alert_service.evaluate_job_update(job) # Evaluate for alerts
                         else:
                             self.logger.warning(f"Scheduled job {job_id} found in Redis but not in DB.")
-                
+
             except Exception as e:
                 self.logger.error(f"Error processing scheduled jobs: {e}", exc_info=True)
-            
+
             await asyncio.sleep(self.scheduler_interval)
 
     async def get_queue_stats(self) -> Dict:
@@ -260,8 +278,9 @@ class JobCoordinator:
 
         # Get active crawlers and their last heartbeat
         min_score = (datetime.now() - timedelta(seconds=self.crawler_timeout)).timestamp()
-        active_crawlers_raw = await self.redis.zrangebyscore(self.heartbeat_queue_name, min_score, '+inf', withscores=True)
-        
+        active_crawlers = await self.redis.zrangebyscore(self.heartbeat_queue_name, min_score, '+inf',
+withscores=True)
+
         active_crawlers_info = {}
         for crawler_id_bytes, timestamp_float in active_crawlers_raw:
             crawler_id = crawler_id_bytes.decode('utf-8')
@@ -317,7 +336,7 @@ class JobCoordinator:
         removed_count = await self.redis.lrem(self.job_queue_name, 0, job_json)
         if removed_count > 0:
             self.logger.info(f"Removed job {job_id} from job queue.")
-        
+
         # Remove from scheduled queue
         removed_count += await self.redis.zrem(self.scheduled_jobs_queue_name, job_json)
         if removed_count > 0:
@@ -341,7 +360,8 @@ class JobCoordinator:
 
         return True
 
-    async def send_control_command(self, crawler_id: str, command: str, payload: Optional[Dict] = None) -> bool:
+    async def send_control_command(self, crawler_id: str, command: str, payload: Optional[Dict] = None) ->
+bool:
         """
         Sends a control command to a specific satellite crawler via Redis Pub/Sub.
         """
