@@ -28,7 +28,7 @@ const Overview: React.FC = () => {
 
   if (error) {
     return (
-      <div className="text-red-500 p-4">
+      <div className="text-nasa-red p-4">
         <p>Error: {error}</p>
         <p className="text-sm mt-2">Please ensure the backend API is running and accessible.</p>
       </div>
@@ -37,7 +37,7 @@ const Overview: React.FC = () => {
 
   if (!dashboardData) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white">
+      <div className="flex items-center justify-center min-h-screen bg-nasa-dark-blue text-nasa-light-gray">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-nasa-cyan mx-auto"></div>
           <p className="mt-4 text-nasa-light-gray">Loading dashboard data...</p>
@@ -58,7 +58,7 @@ const Overview: React.FC = () => {
   } = dashboardData;
 
   return (
-    <div className="p-6 bg-gray-900 min-h-screen text-white">
+    <div className="p-6 bg-nasa-dark-blue min-h-screen text-nasa-light-gray">
       <h1 className="text-3xl font-bold mb-6">Mission Control Overview</h1>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
@@ -81,9 +81,9 @@ const Overview: React.FC = () => {
             items={crawler_mission_status.recent_job_errors?.map(err => `${err.error_type}: ${err.message?.substring(0, 50) ?? ''}...`) ?? []}
             emptyMessage="No recent job errors."
             itemColorClass={(item: string) => { // Explicitly type item
-              if (item.includes('[CRITICAL]')) return 'text-red-500';
-              if (item.includes('[WARNING]')) return 'text-orange-400';
-              return 'text-blue-400';
+              if (item.includes('[CRITICAL]')) return 'text-nasa-red';
+              if (item.includes('[WARNING]')) return 'text-nasa-amber';
+              return 'text-nasa-cyan';
             }}
             maxHeight="max-h-32"
           />
@@ -100,14 +100,14 @@ const Overview: React.FC = () => {
               items={alerts.map(alert => `[${alert.severity}] ${alert.message}`)}
               emptyMessage="No active alerts."
               itemColorClass={(item: string) => { // Explicitly type item
-                if (item.includes('[CRITICAL]')) return 'text-red-500';
-                if (item.includes('[WARNING]')) return 'text-orange-400';
-                return 'text-blue-400';
+                if (item.includes('[CRITICAL]')) return 'text-nasa-red';
+                if (item.includes('[WARNING]')) return 'text-nasa-amber';
+                return 'text-nasa-cyan';
               }}
               maxHeight="max-h-64"
             />
           ) : (
-            <p className="text-gray-400">No active alerts.</p>
+            <p className="text-nasa-light-gray">No active alerts.</p>
           )}
         </ModuleContainer>
       </div>
@@ -146,14 +146,14 @@ const Overview: React.FC = () => {
               items={satellite_fleet_status.map(sat => `${sat.satellite_id} - ${sat.status} (Last Seen: ${new Date(sat.last_heartbeat).toLocaleTimeString()})`)}
               emptyMessage="No satellites online."
               itemColorClass={(item: string) => { // Explicitly type item
-                if (item.includes('unresponsive')) return 'text-red-500';
-                if (item.includes('idle')) return 'text-orange-400';
-                return 'text-green-400';
+                if (item.includes('unresponsive')) return 'text-nasa-red';
+                if (item.includes('idle')) return 'text-nasa-amber';
+                return 'text-nasa-green';
               }}
               maxHeight="max-h-64"
             />
           ) : (
-            <p className="text-gray-400">No satellites online.</p>
+            <p className="text-nasa-light-gray">No satellites online.</p>
           )}
         </ModuleContainer>
       </div>

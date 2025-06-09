@@ -1,38 +1,41 @@
 import React from 'react';
+import { DashboardAlert } from '../../types'; // Import DashboardAlert type
 
 interface AlertsDisplayProps {
-  alerts: {
-    type: string;
-    severity: string;
-    message: string;
-    timestamp: string;
-    affected_jobs: string[] | null;
-    recommended_action: string | null;
-    details: any | null;
-  }[];
+  alerts: DashboardAlert[]; // Use the imported DashboardAlert type
 }
 
 const AlertsDisplay: React.FC<AlertsDisplayProps> = ({ alerts }) => {
   const getSeverityColor = (severity: string) => {
     switch (severity.toLowerCase()) {
-      case 'critical': return 'text-red-500';
-      case 'high': return 'text-red-400';
+      case 'critical': return 'text-nasa-red';
+      case 'high': return 'text-nasa-red'; // High also red
       case 'warning': return 'text-nasa-amber';
       case 'low': return 'text-nasa-cyan';
       default: return 'text-nasa-light-gray';
     }
   };
 
+  const getSeverityBorderColor = (severity: string) => {
+    switch (severity.toLowerCase()) {
+      case 'critical': return 'border-nasa-red';
+      case 'high': return 'border-nasa-red';
+      case 'warning': return 'border-nasa-amber';
+      case 'low': return 'border-nasa-cyan';
+      default: return 'border-nasa-light-gray';
+    }
+  };
+
   return (
-    <div className="bg-nasa-gray p-6 rounded-lg shadow-lg border border-nasa-cyan col-span-full">
+    <div className="bg-nasa-medium-blue p-6 rounded-lg shadow-lg border border-nasa-cyan col-span-full">
       <h2 className="text-2xl font-bold text-nasa-cyan mb-4">System Alerts</h2>
       <div className="max-h-60 overflow-y-auto pr-2 space-y-3">
         {alerts.length > 0 ? (
           alerts.map((alert, index) => (
-            <div key={index} className={`p-3 rounded-md border ${getSeverityColor(alert.severity).replace('text-', 'border-')}`}>
+            <div key={index} className={`p-3 rounded-md border ${getSeverityBorderColor(alert.severity)}`}>
               <div className="flex justify-between items-center mb-1">
                 <span className={`font-semibold ${getSeverityColor(alert.severity)}`}>
-                  {alert.type.toUpperCase()} ({alert.severity.toUpperCase()})
+                  {alert.source.toUpperCase()} ({alert.severity.toUpperCase()})
                 </span>
                 <span className="text-xs text-nasa-light-gray">
                   {new Date(alert.timestamp).toLocaleTimeString()}
@@ -44,15 +47,10 @@ const AlertsDisplay: React.FC<AlertsDisplayProps> = ({ alerts }) => {
                   Action: {alert.recommended_action}
                 </p>
               )}
-              {alert.affected_jobs && alert.affected_jobs.length > 0 && (
-                <p className="text-xs text-nasa-light-gray mt-1">
-                  Affected Jobs: {alert.affected_jobs.join(', ')}
-                </p>
-              )}
               {alert.details && (
                 <details className="text-xs text-nasa-light-gray mt-1">
                   <summary>Details</summary>
-                  <pre className="overflow-x-auto text-xs bg-gray-800 p-1 rounded mt-1">
+                  <pre className="overflow-x-auto text-xs bg-nasa-dark-blue p-1 rounded mt-1">
                     {JSON.stringify(alert.details, null, 2)}
                   </pre>
                 </details>

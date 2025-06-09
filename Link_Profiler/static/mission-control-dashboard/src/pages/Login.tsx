@@ -29,37 +29,37 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="login-container min-h-screen flex items-center justify-center bg-gray-900">
-      <div className="login-card bg-gray-800 p-8 rounded-lg shadow-lg w-full max-w-md">
-        <h1 className="login-title text-3xl font-bold text-white text-center mb-2">Link Profiler Mission Control</h1>
-        <p className="login-subtitle text-gray-400 text-center mb-6">Admin Login</p>
+    <div className="login-container min-h-screen flex items-center justify-center bg-nasa-dark-blue">
+      <div className="login-card bg-nasa-medium-blue p-8 rounded-lg shadow-lg w-full max-w-md">
+        <h1 className="login-title text-3xl font-bold text-nasa-cyan text-center mb-2">Link Profiler Mission Control</h1>
+        <p className="login-subtitle text-nasa-light-gray text-center mb-6">Admin Login</p>
         <form onSubmit={handleSubmit} className="login-form">
           <div className="form-group mb-4">
-            <label htmlFor="username" className="block text-gray-300 text-sm font-bold mb-2">Username:</label>
+            <label htmlFor="username" className="block text-nasa-light-gray text-sm font-bold mb-2">Username:</label>
             <input
               type="text"
               id="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
-              className="form-input shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline bg-gray-700 border-gray-600"
+              className="form-input shadow appearance-none border rounded w-full py-2 px-3 text-nasa-dark-blue leading-tight focus:outline-none focus:shadow-outline bg-nasa-light-gray border-nasa-light-gray"
             />
           </div>
           <div className="form-group mb-6">
-            <label htmlFor="password" className="block text-gray-300 text-sm font-bold mb-2">Password:</label>
+            <label htmlFor="password" className="block text-nasa-light-gray text-sm font-bold mb-2">Password:</label>
             <input
               type="password"
               id="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="form-input shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline bg-gray-700 border-gray-600"
+              className="form-input shadow appearance-none border rounded w-full py-2 px-3 text-nasa-dark-blue leading-tight focus:outline-none focus:shadow-outline bg-nasa-light-gray border-nasa-light-gray"
             />
           </div>
-          {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
+          {error && <p className="text-nasa-red text-sm mb-4">{error}</p>}
           <button
             type="submit"
-            className="login-button bg-nasa-blue hover:bg-nasa-dark-blue text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline w-full"
+            className="login-button bg-nasa-cyan hover:bg-nasa-blue text-nasa-dark-blue font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline w-full"
             disabled={loading}
           >
             {loading ? 'Logging in...' : 'Login'}

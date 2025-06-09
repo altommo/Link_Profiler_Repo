@@ -4,6 +4,7 @@ import MetricDisplay from '../shared/MetricDisplay';
 import ListDisplay from '../shared/ListDisplay';
 import ChartContainer from '../shared/ChartContainer'; // New import
 import LineChart from '../charts/LineChart'; // New import
+import { CrawlError, SatelliteFleetStatus } from '../../types'; // Import specific types
 
 interface CrawlerMissionStatusProps {
   status: {
@@ -15,21 +16,11 @@ interface CrawlerMissionStatusProps {
     queue_depth: number;
     active_satellites_count: number;
     total_satellites_count: number;
-    satellite_utilization_percentage: number;
-    avg_job_completion_time_seconds: number;
-    recent_job_errors: any[];
+    satellite_utilization_percentage: number | null; // Updated type
+    avg_job_completion_time_seconds: number | null; // Updated type
+    recent_job_errors: CrawlError[]; // Updated type
   };
-  satelliteFleet: {
-    satellite_id: string;
-    status: string;
-    last_heartbeat: string;
-    jobs_completed_24h: number;
-    errors_24h: number;
-    avg_job_duration_seconds: number | null;
-    current_job_id: string | null;
-    current_job_type: string | null;
-    current_job_progress: number | null;
-  }[];
+  satelliteFleet: SatelliteFleetStatus[]; // Updated type
 }
 
 const CrawlerMissionStatus: React.FC<CrawlerMissionStatusProps> = ({ status, satelliteFleet }) => {
@@ -44,13 +35,13 @@ const CrawlerMissionStatus: React.FC<CrawlerMissionStatusProps> = ({ status, sat
         <MetricDisplay label="Queue Depth" value={status.queue_depth} valueColorClass="text-nasa-cyan" />
         <MetricDisplay label="Active Satellites" value={`${status.active_satellites_count}/${status.total_satellites_count}`} valueColorClass="text-nasa-amber" />
         <div className="col-span-2">
-          <MetricDisplay label="Satellite Utilization" value={status.satellite_utilization_percentage.toFixed(1)} unit="%" valueColorClass="text-nasa-cyan" />
+          <MetricDisplay label="Satellite Utilization" value={(status.satellite_utilization_percentage ?? 0).toFixed(1)} unit="%" valueColorClass="text-nasa-cyan" />
         </div>
         <div className="col-span-2">
-          <MetricDisplay label="Completed (24h)" value={status.completed_jobs_24h_count} valueColorClass="text-green-500" />
+          <MetricDisplay label="Completed (24h)" value={status.completed_jobs_24h_count} valueColorClass="text-nasa-green" />
         </div>
         <div className="col-span-2">
-          <MetricDisplay label="Failed (24h)" value={status.failed_jobs_24h_count} valueColorClass="text-red-500" />
+          <MetricDisplay label="Failed (24h)" value={status.failed_jobs_24h_count} valueColorClass="text-nasa-red" />
         </div>
       </div>
 
@@ -59,13 +50,18 @@ const CrawlerMissionStatus: React.FC<CrawlerMissionStatusProps> = ({ status, sat
         items={satelliteFleet.map(sat => `${sat.satellite_id} - ${sat.status.toUpperCase()} (${new Date(sat.last_heartbeat).toLocaleTimeString()})`)}
         emptyMessage="No satellite data available."
         maxHeight="max-h-40"
+        itemColorClass={(item: string) => { // Explicitly type item
+          if (item.includes('UNRESPONSIVE')) return 'text-nasa-red';
+          if (item.includes('IDLE')) return 'text-nasa-amber';
+          return 'text-nasa-green';
+        }}
       />
 
       <ListDisplay
         title="Recent Job Errors"
         items={status.recent_job_errors.map(err => `${err.error_type}: ${err.message} (URL: ${err.url})`)}
         emptyMessage="No recent job errors."
-        itemColorClass="text-red-400"
+        itemColorClass="text-nasa-red" // Errors are red
         maxHeight="max-h-40"
       />
 
