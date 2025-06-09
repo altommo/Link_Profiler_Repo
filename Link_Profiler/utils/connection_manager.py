@@ -21,6 +21,22 @@ class ConnectionManager:
         self.logger = logging.getLogger(__name__ + ".ConnectionManager")
         self.logger.info("ConnectionManager initialized.")
 
+    async def __aenter__(self):
+        """
+        Asynchronous context manager entry point.
+        No specific async setup needed for this service.
+        """
+        self.logger.info("ConnectionManager entered context.")
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """
+        Asynchronous context manager exit point.
+        No specific async teardown needed for this service.
+        """
+        self.logger.info("ConnectionManager exited context.")
+        pass
+
     async def connect(self, websocket: WebSocket):
         """Adds a new WebSocket connection to the manager."""
         self.active_connections.append(websocket)
