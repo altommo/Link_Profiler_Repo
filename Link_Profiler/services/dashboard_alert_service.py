@@ -155,7 +155,7 @@ class DashboardAlertService:
         # Example 4: Unresponsive Satellites (from JobCoordinator's heartbeat data)
         try:
             from Link_Profiler.queue_system.job_coordinator import get_coordinator
-            coordinator = await get_coordinator()
+            coordinator = get_coordinator()  # Remove await since get_coordinator is not async
             coordinator_stats = await coordinator.get_queue_stats()
             
             heartbeat_key = config_loader.get("queue.heartbeat_queue_sorted_name")

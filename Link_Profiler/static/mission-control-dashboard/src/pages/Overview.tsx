@@ -5,7 +5,8 @@ import ListDisplay from '../components/shared/ListDisplay';
 import ApiQuotaStatus from '../components/modules/ApiQuotaStatus';
 import BacklinkDiscovery from '../components/modules/BacklinkDiscovery';
 import PerformanceOptimization from '../components/modules/PerformanceOptimization';
-import useWebSocket from '../hooks/useWebSocket'; // Corrected import
+import useRealTimeData from '../hooks/useRealTimeData'; // Use the unified hook instead
+import useMissionControlStore from '../stores/missionControlStore'; // Import the store
 import {
   DashboardRealtimeUpdates,
   CrawlerMissionStatus,
@@ -18,25 +19,12 @@ import {
 } from '../types'; // Import all necessary types
 
 const Overview: React.FC = () => {
-  const [dashboardData, setDashboardData] = useState<DashboardRealtimeUpdates | null>(null);
+  // Get data from the store (WebSocket is now initialized at layout level)
+  const dashboardData = useMissionControlStore((state) => state.data);
   const [error, setError] = useState<string | null>(null);
 
-  const handleWebSocketMessage = (data: DashboardRealtimeUpdates) => {
-    console.log("Received WebSocket data:", data); // Log incoming data
-    setDashboardData(data);
-    setError(null);
-  };
-
-  const handleWebSocketError = (event: Event) => {
-    console.error('WebSocket error:', event);
-    setError('WebSocket connection error. Data might be outdated.');
-  };
-
-  const { isConnected } = useWebSocket({
-    path: '/ws/mission-control',
-    onMessage: handleWebSocketMessage,
-    onError: handleWebSocketError,
-  });
+  // Remove the useRealTimeData call since it's now in Layout
+  // The connection status can be checked via the store if needed
 
   if (error) {
     return (
