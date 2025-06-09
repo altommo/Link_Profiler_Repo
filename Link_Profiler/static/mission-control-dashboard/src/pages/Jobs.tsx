@@ -4,13 +4,16 @@ import DataCard from '../components/ui/DataCard';
 import ModuleContainer from '../components/shared/ModuleContainer';
 import MetricDisplay from '../components/shared/MetricDisplay';
 import ListDisplay from '../components/shared/ListDisplay';
-import { CrawlJob, SatelliteFleetStatus } from '../types'; // Import types
+import { CrawlJob } from '../types'; // Import CrawlJob type
+import useMissionControlStore from '../stores/missionControlStore'; // Import the store
 
 const Jobs: React.FC = () => {
   const [jobs, setJobs] = useState<CrawlJob[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [satelliteFleetStatus, setSatelliteFleetStatus] = useState<SatelliteFleetStatus[]>([]);
+  
+  // Get satelliteFleetStatus from the central store
+  const satelliteFleetStatus = useMissionControlStore((state) => state.data?.satellite_fleet_status || []);
 
   const fetchJobs = async () => {
     try {
@@ -33,32 +36,13 @@ const Jobs: React.FC = () => {
     }
   };
 
-  const fetchSatelliteStatus = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const headers = {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      };
-      const response = await fetch(`${API_BASE_URL}/api/monitoring/satellites`, { headers });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to fetch satellite status');
-      }
-      const data: SatelliteFleetStatus[] = await response.json();
-      setSatelliteFleetStatus(data);
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
+  // Removed fetchSatelliteStatus as it's now sourced from the store
 
   useEffect(() => {
     fetchJobs();
-    fetchSatelliteStatus();
     const interval = setInterval(() => {
       fetchJobs();
-      fetchSatelliteStatus();
-    }, 5000); // Refresh every 5 seconds
+    }, 5000); // Refresh jobs every 5 seconds
     return () => clearInterval(interval);
   }, []);
 
@@ -80,7 +64,7 @@ const Jobs: React.FC = () => {
       }
       alert(`${actionDescription} successful!`);
       fetchJobs(); // Refresh jobs after action
-      fetchSatelliteStatus(); // Refresh satellites after action
+      // No need to fetchSatelliteStatus here, as the store will update it via WebSocket
     } catch (err: any) {
       setError(err.message);
       alert(`Error: ${err.message}`);
@@ -98,6 +82,9 @@ const Jobs: React.FC = () => {
       case 'QUEUED': return 'text-yellow-500';
       case 'PENDING': return 'text-gray-500';
       case 'CANCELLED': return 'text-purple-500';
+      case 'active': return 'text-green-400'; // For satellite status
+      case 'idle': return 'text-orange-400'; // For satellite status
+      case 'unresponsive': return 'text-red-500'; // For satellite status
       default: return 'text-white';
     }
   };
@@ -140,7 +127,7 @@ const Jobs: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="text-gray-300 text-sm font-light">
-                {satelliteFleetStatus.map((sat: SatelliteFleetStatus) => ( // Explicitly type sat
+                {satelliteFleetStatus.map((sat) => ( // Use sat directly from store
                   <tr key={sat.satellite_id} className="border-b border-gray-700">
                     <td className="py-3 px-6 text-left whitespace-nowrap">{sat.satellite_id}</td>
                     <td className="py-3 px-6 text-left">
@@ -195,15 +182,15 @@ const Jobs: React.FC = () => {
             {jobs.map((job) => (
               <tr key={job.id} className="border-b border-gray-700 hover:bg-gray-700">
                 <td className="py-3 px-6 text-left whitespace-nowrap">{job.id}</td>
-                <td className="py-3 px-6 text-left">{job.targetUrl}</td>
+                <td className="py-3 px-6 text-left">{job.target_url}</td> {/* Corrected to target_url */}
                 <td className="py-3 px-6 text-left">{job.job_type}</td>
                 <td className="py-3 px-6 text-left">
                   <span className={`font-semibold ${getStatusColor(job.status)}`}>
                     {job.status}
                   </span>
                 </td>
-                <td className="py-3 px-6 text-left">{job.progress_percentage.toFixed(1)}%</td>
-                <td className="py-3 px-6 text-left">{new Date(job.created_date).toLocaleString()}</td>
+                <td className="py-3 px-6 text-left">{job.progress_percentage.toFixed(1)}%</td> {/* Corrected to progress_percentage */}
+                <td className="py-3 px-6 text-left">{new Date(job.created_at).toLocaleString()}</td> {/* Corrected to created_at */}
                 <td className="py-3 px-6 text-left">
                   <button
                     onClick={() => handleControlAction(`jobs/${job.id}/cancel`, `Cancel Job ${job.id}`)}

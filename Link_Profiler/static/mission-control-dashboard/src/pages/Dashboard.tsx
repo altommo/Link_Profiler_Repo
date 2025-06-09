@@ -1,79 +1,26 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import ModuleContainer from '../components/shared/ModuleContainer';
 import MetricDisplay from '../components/shared/MetricDisplay';
 import ListDisplay from '../components/shared/ListDisplay';
 import ApiQuotaStatus from '../components/modules/ApiQuotaStatus';
 import BacklinkDiscovery from '../components/modules/BacklinkDiscovery';
 import PerformanceOptimization from '../components/modules/PerformanceOptimization';
-import useWebSocket from '../hooks/useWebSocket'; // Corrected import
+import useMissionControlStore from '../stores/missionControlStore'; // Use the unified store
 import {
   DashboardRealtimeUpdates,
   CrawlerMissionStatus,
   BacklinkDiscoveryMetrics,
-  ApiQuotaStatus as ApiQuotaStatusType, // Alias to avoid conflict if needed
   DomainIntelligenceMetrics,
   PerformanceOptimizationMetrics,
-  DashboardAlert,
-  SatelliteFleetStatus,
 } from '../types'; // Import all necessary types
 
 const Dashboard: React.FC = () => {
-  const [dashboardData, setDashboardData] = useState<DashboardRealtimeUpdates | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Get data from the store (WebSocket is now initialized at layout level)
+  const dashboardData = useMissionControlStore((state) => state.data);
 
-  const handleWebSocketMessage = (data: any) => {
-    console.log("Received WebSocket data:", data); // Log incoming data
-    
-    try {
-      // Handle different message types
-      if (typeof data === 'object') {
-        if (data.type === 'connection_established') {
-          console.log('WebSocket connection confirmed');
-          return; // Don't process connection messages as dashboard data
-        }
-        
-        if (data.type === 'error') {
-          console.error('WebSocket error message:', data.message);
-          setError(`WebSocket error: ${data.message}`);
-          return;
-        }
-        
-        // If it's dashboard data, it should have the required fields
-        if (data.timestamp && data.crawler_mission_status) {
-          console.log('Processing dashboard update');
-          setDashboardData(data as DashboardRealtimeUpdates);
-          setError(null);
-        } else {
-          console.log('Received unknown data structure:', data);
-        }
-      } else {
-        console.log('Received non-object data:', data);
-      }
-    } catch (e) {
-      console.error('Error processing WebSocket message:', e);
-      setError('Error processing dashboard data');
-    }
-  };
-
-  const handleWebSocketError = (event: Event) => {
-    console.error('WebSocket error:', event);
-    setError('WebSocket connection error. Data might be outdated.');
-  };
-
-  const { isConnected } = useWebSocket({
-    path: '/ws/mission-control',
-    onMessage: handleWebSocketMessage,
-    onError: handleWebSocketError,
-  });
-
-  if (error) {
-    return (
-      <div className="text-red-500 p-4">
-        <p>Error: {error}</p>
-        <p className="text-sm mt-2">Please ensure the backend API is running and accessible.</p>
-      </div>
-    );
-  }
+  // No need for local error state or handleWebSocketMessage/Error here,
+  // as useRealTimeData and useMissionControlStore handle it centrally.
+  // The loading state is also managed by the presence of dashboardData.
 
   if (!dashboardData) {
     return (

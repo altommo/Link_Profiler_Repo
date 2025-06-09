@@ -13,8 +13,8 @@ body {
   font-family: 'Space Mono', monospace; /* Use a monospace font for a techy feel */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #0a0a1a; /* Deep dark blue/purple for space theme */
-  color: #e0e0e0; /* Light gray for text */
+  background-color: theme('colors.nasa-dark-blue'); /* Deep dark blue/purple for space theme */
+  color: theme('colors.nasa-light-gray'); /* Light gray for text */
   overflow-y: scroll; /* Always show scrollbar to prevent layout shifts */
 }
 
@@ -25,17 +25,17 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #1a1a3a; /* Darker track */
+  background: theme('colors.nasa-medium-blue'); /* Darker track */
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #007bff; /* Blue thumb */
+  background: theme('colors.nasa-blue'); /* Blue thumb */
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #0056b3; /* Darker blue on hover */
+  background: theme('colors.nasa-cyan'); /* Darker blue on hover */
 }
 
 /* --- Login Page Specific Styles --- */
@@ -45,7 +45,7 @@ body {
 
 .login-card {
   @apply bg-nasa-medium-blue p-8 rounded-lg shadow-lg text-center w-full max-w-md;
-  border: 1px solid #007bff; /* Blue border */
+  border: 1px solid theme('colors.nasa-blue'); /* Blue border */
   box-shadow: 0 0 15px rgba(0, 123, 255, 0.5); /* Subtle blue glow */
 }
 
@@ -80,7 +80,7 @@ body {
 }
 
 .error-message {
-  @apply text-red-500 text-sm mt-2 mb-4;
+  @apply text-nasa-red text-sm mt-2 mb-4;
 }
 
 /* --- General UI Components (from previous steps, ensuring consistency) --- */
@@ -93,7 +93,7 @@ body {
 }
 
 .btn-danger {
-  @apply bg-red-600 text-white font-bold py-2 px-4 rounded transition-colors duration-200 hover:bg-red-700;
+  @apply bg-nasa-red text-white font-bold py-2 px-4 rounded transition-colors duration-200 hover:bg-red-700;
 }
 
 .btn-xs {
@@ -117,18 +117,3 @@ body {
   @apply bg-nasa-dark-blue text-nasa-cyan font-semibold;
   box-shadow: 0 0 8px rgba(0, 255, 255, 0.2); /* Subtle glow for active link */
 }
-
-/* Tailwind custom colours (defined in tailwind.config.js) */
-/* Ensure these are correctly picked up by Tailwind */
-/*
-  colors: {
-    'nasa-dark-blue': '#0A0A1A',
-    'nasa-medium-blue': '#1A1A3A',
-    'nasa-light-gray': '#E0E0E0',
-    'nasa-cyan': '#00FFFF',
-    'nasa-amber': '#FFBF00',
-    'nasa-red': '#FF0000',
-    'nasa-green': '#00FF00',
-    'nasa-blue': '#007BFF',
-  },
-*/
