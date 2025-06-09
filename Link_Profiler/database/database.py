@@ -93,6 +93,18 @@ class Database:
                 Base.metadata.create_all(self.engine)
                 self.logger.info("Tables created successfully via Base.metadata.create_all.")
 
+                # --- NEW: Verify table creation ---
+                inspector = inspect(self.engine)
+                existing_tables = inspector.get_table_names()
+                self.logger.info(f"Tables found in database after create_all: {existing_tables}")
+                
+                required_tables = ["crawl_jobs", "domains", "backlinks", "satellite_performance_logs"] # Add all tables needed for MVs
+                missing_tables = [t for t in required_tables if t not in existing_tables]
+                if missing_tables:
+                    self.logger.error(f"CRITICAL: Following required tables are missing after create_all: {missing_tables}")
+                    # This indicates a deeper issue with Base.metadata.create_all()
+                # --- END NEW ---
+
             self._create_materialized_views() # New: Create materialized views after migrations
         except SQLAlchemyError as e:
             self.logger.critical(f"Failed to connect to database: {e}", exc_info=True)
