@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import DataCard from '../components/ui/DataCard'; // Added import for DataCard
 
 const Settings: React.FC = () => {
-  const { token, user } = useAuth();
+  const { token, user } = useAuth(); // Get token from useAuth hook
   const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
   const [apiKeys, setApiKeys] = useState<ApiKeyInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,14 +52,17 @@ const Settings: React.FC = () => {
     };
 
     fetchSettings();
-  }, [token]);
+  }, [token]); // Add token to dependency array to re-fetch if token changes
 
   const handleConfigChange = (key: keyof SystemConfig, value: any) => {
     setSystemConfig(prev => prev ? { ...prev, [key]: value } : null);
   };
 
   const handleUpdateConfig = async () => {
-    if (!systemConfig || !token) return;
+    if (!systemConfig || !token) {
+      alert('Authentication token not found or system config not loaded.');
+      return;
+    }
 
     try {
       const headers = {
@@ -84,7 +87,10 @@ const Settings: React.FC = () => {
   };
 
   const handleApiKeyUpdate = async (apiName: string, newKey: string) => {
-    if (!token) return;
+    if (!token) {
+      alert('Authentication token not found. Please log in again.');
+      return;
+    }
 
     try {
       const headers = {

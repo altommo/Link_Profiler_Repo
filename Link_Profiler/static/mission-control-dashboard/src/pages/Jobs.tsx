@@ -6,18 +6,24 @@ import MetricDisplay from '../components/shared/MetricDisplay';
 import ListDisplay from '../components/shared/ListDisplay';
 import { CrawlJob } from '../types'; // Import CrawlJob type
 import useMissionControlStore from '../stores/missionControlStore'; // Import the store
+import { useAuth } from '../contexts/AuthContext'; // Import useAuth
 
 const Jobs: React.FC = () => {
   const [jobs, setJobs] = useState<CrawlJob[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   
+  const { token } = useAuth(); // Get token from useAuth hook
   // Get satelliteFleetStatus from the central store
   const satelliteFleetStatus = useMissionControlStore((state) => state.data?.satellite_fleet_status || []);
 
   const fetchJobs = async () => {
+    if (!token) {
+      setError('Authentication token not found.');
+      setLoading(false);
+      return;
+    }
     try {
-      const token = localStorage.getItem('token');
       const headers = {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -36,19 +42,20 @@ const Jobs: React.FC = () => {
     }
   };
 
-  // Removed fetchSatelliteStatus as it's now sourced from the store
-
   useEffect(() => {
     fetchJobs();
     const interval = setInterval(() => {
       fetchJobs();
     }, 5000); // Refresh jobs every 5 seconds
     return () => clearInterval(interval);
-  }, []);
+  }, [token]); // Add token to dependency array to re-fetch if token changes
 
   const handleControlAction = async (endpoint: string, actionDescription: string, payload?: any) => {
+    if (!token) {
+      alert('Authentication token not found. Please log in again.');
+      return;
+    }
     try {
-      const token = localStorage.getItem('token');
       const headers = {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -64,7 +71,6 @@ const Jobs: React.FC = () => {
       }
       alert(`${actionDescription} successful!`);
       fetchJobs(); // Refresh jobs after action
-      // No need to fetchSatelliteStatus here, as the store will update it via WebSocket
     } catch (err: any) {
       setError(err.message);
       alert(`Error: ${err.message}`);

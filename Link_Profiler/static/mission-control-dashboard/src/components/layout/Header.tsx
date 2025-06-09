@@ -10,7 +10,7 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar }) => {
   const { user, logout } = useAuth();
 
   return (
-    <header className="bg-nasa-medium-blue text-white p-4 flex justify-between items-center shadow-md">
+    <header className="bg-nasa-medium-blue text-white p-4 flex justify-between items-center shadow-md lg:ml-64">
       <div className="flex items-center">
         <button onClick={toggleSidebar} className="text-white focus:outline-none lg:hidden mr-4">
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
