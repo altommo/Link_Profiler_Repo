@@ -3,6 +3,11 @@ import { WS_BASE_URL, RECONNECT_INTERVAL_MS, MAX_RECONNECT_ATTEMPTS } from '../c
 
 interface UseWebSocketOptions {
   path: string;
+  /**
+   * Callback function to handle incoming messages.
+   * This function will receive the message data already parsed as a JavaScript object.
+   * It should NOT attempt to call JSON.parse() on the received data.
+   */
   onMessage: (data: any) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
@@ -72,28 +77,36 @@ const useWebSocket = ({
     };
 
     socket.onmessage = (event) => {
+      let parsedData: any;
       try {
         // Debug: Log the raw event data
         console.log('WebSocket: Raw message received:', typeof event.data, event.data);
         
         // Always try to parse as JSON since WebSocket sends strings
-        const data = JSON.parse(event.data);
-        console.log('WebSocket: Parsed JSON successfully:', data);
+        parsedData = JSON.parse(event.data);
+        console.log('WebSocket: Parsed JSON successfully:', parsedData);
 
         // Handle heartbeat messages separately
-        if (data && data.type === 'heartbeat') {
+        if (parsedData && parsedData.type === 'heartbeat') {
           console.log('WebSocket: Received heartbeat.');
           // Do not pass heartbeat to onMessage as it's for connection maintenance
         } else {
-          onMessageRef.current(data); // Use ref for callback for actual data
+          // Call the consumer's onMessage callback with the parsed data
+          try {
+            onMessageRef.current(parsedData);
+          } catch (callbackError) {
+            console.error('WebSocket: Error in onMessage callback:', callbackError);
+            console.error('WebSocket: Data passed to callback was:', parsedData);
+            // Re-throw or handle as appropriate, but for now, just log.
+          }
         }
       } catch (e) {
-        console.error('WebSocket: Failed to parse message data:', e);
-        console.error('WebSocket: Raw data was:', event.data);
+        // This catch block handles errors from JSON.parse(event.data)
+        console.error('WebSocket: Failed to parse incoming message data as JSON:', e);
+        console.error('WebSocket: Raw data that caused parse error was:', event.data);
         console.error('WebSocket: Data type was:', typeof event.data);
-        // Try to pass the raw string if JSON parsing fails, but only if it's not a heartbeat
-        // If it's a non-JSON heartbeat, it will still be passed. This is acceptable for now.
-        onMessageRef.current(event.data); // Use ref for callback
+        // If JSON parsing failed, we do not pass the raw string to onMessage by default,
+        // as onMessage is expected to receive parsed data.
       }
     };
 
