@@ -1,6 +1,5 @@
 import logging
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
 
 from Link_Profiler.core.models import User
 from Link_Profiler.services.auth_service import auth_service_instance
@@ -14,14 +13,32 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     Retrieves the current authenticated user based on the JWT token.
     Raises HTTPException if authentication fails.
     """
-    user = await auth_service_instance.get_current_user(token)
-    if not user:
+    try:
+        user = await auth_service_instance.get_current_user(token)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
+    except HTTPException:
+        # Re-raise FastAPI's own HTTPExceptions (e.g., 401 from auth_service_instance.get_current_user)
+        raise
+    except ValueError as ve:
+        logger.error(f"Authentication service configuration error: {ve}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service misconfigured or unavailable.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return user
+    except Exception as e:
+        logger.error(f"Unexpected error during user authentication: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during authentication.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 async def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
     """

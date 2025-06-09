@@ -42,6 +42,9 @@ class AuthService:
         else:
             self.secret_key = None # No valid secret key found
             logger.error("AUTH_SECRET_KEY is not configured in environment (LP_AUTH_SECRET_KEY) or config.yaml, or is using the default placeholder. Authentication will not work securely.")
+            # Raise ValueError immediately if secret_key is not properly configured
+            raise ValueError("Authentication secret key (LP_AUTH_SECRET_KEY) is not configured or is using the default placeholder. Please set it securely.")
+
 
         self.algorithm = config_loader.get("auth.algorithm", "HS256")
         self.access_token_expire_minutes = config_loader.get("auth.access_token_expire_minutes", 30)
@@ -59,11 +62,10 @@ class AuthService:
 
     def _check_secret_key(self):
         """Internal helper to check if the secret key is configured."""
+        # This method is now redundant for initial setup check due to __init__ check,
+        # but can remain for defensive programming if needed in other contexts.
         if self.secret_key is None or self.secret_key == "PLACEHOLDER_MUST_SET_LP_AUTH_SECRET_KEY":
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Authentication service is not configured. Missing or placeholder secret key."
-            )
+            raise ValueError("Authentication secret key is not configured. Cannot perform cryptographic operations.")
 
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Verifies a plain password against a hashed password."""
@@ -103,7 +105,7 @@ class AuthService:
         Decodes and validates a JWT access token.
         Extracts 'username', 'role', and 'organization_id'.
         """
-        self._check_secret_key()
+        self._check_secret_key() # Ensure secret key is present before decoding
         try:
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
             username: str = payload.get("sub")
@@ -113,7 +115,8 @@ class AuthService:
             if username is None:
                 return None
             token_data = TokenData(username=username, role=role, organization_id=organization_id)
-        except JWTError:
+        except JWTError as e:
+            self.logger.warning(f"JWT decoding failed: {e}")
             return None
         except Exception as e:
             self.logger.error(f"Error decoding access token: {e}", exc_info=True)
@@ -160,7 +163,7 @@ class AuthService:
 
     async def get_current_user(self, token: str) -> User:
         """Retrieves the current authenticated user from a JWT token."""
-        self._check_secret_key()
+        self._check_secret_key() # Ensure secret key is present before decoding
         token_data = self.decode_access_token(token)
         if token_data is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
