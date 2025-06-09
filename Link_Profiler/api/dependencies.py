@@ -1,5 +1,6 @@
 import logging
 from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer # Import OAuth2PasswordBearer
 
 from Link_Profiler.core.models import User
 from Link_Profiler.services.auth_service import auth_service_instance
