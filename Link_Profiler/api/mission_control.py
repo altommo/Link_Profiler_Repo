@@ -22,7 +22,8 @@ def get_mission_control_service():
 @mission_control_router.post("/api/mission-control/token")
 async def mission_control_login(request: Request):
     """Token endpoint for mission control dashboard."""
-    logger.info(f"Mission control login attempt from {request.client.host if request.client else 'unknown client'}")
+    client_info = f"{request.client.host}:{request.client.port}" if request.client else 'unknown client'
+    logger.info(f"Mission control login attempt from {client_info}")
     try:
         content_type = request.headers.get("content-type", "")
         
@@ -195,8 +196,87 @@ async def mission_control_websocket(websocket: WebSocket):
         logger.warning(f"Max WebSocket connections ({mission_control_service.max_websocket_connections}) reached. Rejecting new connection from {client_info}.")
         error_message = {
             "type": "error",
-            "message": "Maximum WebSocket connections reached"
+            "message": "Maximum WebSocket connections reached", # Added missing comma
             "timestamp": datetime.now().isoformat()
         }
         await websocket.send_text(json.dumps(error_message))
-        await websocket.close(code=1013, reason="Max connections
+        await websocket.close(code=1013, reason="Max connections reached") # Closed string literal
+        return
+
+    # Add to connection manager
+    connection_manager.connect(websocket)
+    logger.info(f"Mission control websocket connected: {client_info}. Total active connections: {len(connection_manager.active_connections)}")
+    
+    try:
+        # Send connection confirmation
+        connection_message = {
+            "type": "connection_established",
+            "message": "WebSocket connected successfully",
+            "timestamp": datetime.now().isoformat()
+        }
+        await websocket.send_text(json.dumps(connection_message))
+        logger.info("Sent connection confirmation")
+        
+        # Start the real-time data loop
+        while True:
+            try:
+                # Check if WebSocket is still connected before sending
+                if websocket.client_state != WebSocketState.CONNECTED:
+                    logger.info("WebSocket no longer connected, breaking loop")
+                    break
+                    
+                logger.debug("Fetching dashboard data...")
+                
+                # Get real dashboard data from mission control service
+                dashboard_updates = await mission_control_service.get_realtime_updates()
+                
+                # Convert to JSON-serializable format
+                dashboard_json = dashboard_updates.model_dump_json()
+                
+                # Debug: Log what we're about to send
+                logger.debug(f"Sending dashboard update: {len(dashboard_json)} characters")
+                logger.debug(f"Dashboard JSON type: {type(dashboard_json)}")
+                logger.debug(f"Dashboard JSON preview: {dashboard_json[:100]}...")
+                
+                # Ensure we're sending a string, not an object
+                if isinstance(dashboard_json, str):
+                    await websocket.send_text(dashboard_json)
+                    logger.debug("Sent JSON string successfully")
+                else:
+                    # Fallback: convert to JSON string
+                    json_string = json.dumps(dashboard_json)
+                    logger.debug(f"Converted to JSON string: {type(json_string)}")
+                    await websocket.send_text(json_string)
+                logger.debug("Successfully sent dashboard data")
+                
+                # Wait before sending next update (use configured refresh rate)
+                refresh_rate_ms = mission_control_service.dashboard_refresh_rate_seconds * 1000
+                await asyncio.sleep(refresh_rate_ms / 1000)
+                
+            except WebSocketDisconnect:
+                logger.info("WebSocket disconnected during data loop")
+                break
+            except Exception as e:
+                logger.error(f"Error in dashboard update loop: {e}", exc_info=True)
+                # Check if we can still send error messages
+                try:
+                    if websocket.client_state == WebSocketState.CONNECTED:
+                        error_message = {
+                            "type": "error",
+                            "message": f"Dashboard update error: {str(e)}",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        await websocket.send_text(json.dumps(error_message))
+                except:
+                    logger.error("Could not send error message, WebSocket likely closed")
+                    break
+                await asyncio.sleep(5)  # Wait before retrying
+            
+    except WebSocketDisconnect:
+        logger.info(f"Mission control websocket disconnected gracefully for {client_info}.")
+    except Exception as e:
+        logger.error(f"Mission control websocket error for {client_info}: {e}", exc_info=True)
+    finally:
+        # Ensure connection is removed from manager on exit
+        connection_manager.disconnect(websocket)
+        logger.info(f"Mission control websocket cleanup complete for {client_info}. Total active connections: {len(connection_manager.active_connections)}")
