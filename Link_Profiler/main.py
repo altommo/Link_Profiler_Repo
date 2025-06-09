@@ -105,7 +105,6 @@ from Link_Profiler.utils.session_manager import session_manager # Use the single
 
 # Now import other FastAPI and application modules
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, WebSocket, WebSocketDisconnect, Depends, status, Query
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse # Import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -226,7 +225,7 @@ from Link_Profiler.monitoring.prometheus_metrics import (
 )
 # Removed submit_crawl_to_queue, get_coordinator, set_coordinator_dependencies from job_submission_service
 # as they are now in queue_endpoints.py
-from Link_Profiler.api.queue_endpoints import set_coordinator_dependencies, get_coordinator # Import from queue_endpoints
+from Link_Profiler.queue_system.job_coordinator import get_coordinator # Import canonical get_coordinator
 from Link_Profiler.api.monitoring_debug import health_check_internal, _get_aggregated_stats_for_api, _get_satellites_data_internal, verify_admin_access # Import monitoring debug functions
 
 # New: Import WebCrawler and SmartCrawlQueue
@@ -269,6 +268,10 @@ from Link_Profiler.api.customer_routes import customer_router
 # New: Import authentication dependencies
 from Link_Profiler.api.dependencies import get_current_user, get_current_admin_user, get_current_customer_user # Import specific dependency functions
 from fastapi.security import OAuth2PasswordRequestForm # Only import this specific class needed for /token endpoint
+
+# --- RESTORED: Import CORSMiddleware ---
+from fastapi.middleware.cors import CORSMiddleware
+# --- END RESTORED ---
 
 
 # Initialize ClickHouse Loader conditionally
@@ -623,25 +626,38 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("Redis client not initialized. Skipping Redis ping.")
         
-        set_coordinator_dependencies(
-            redis_client=redis_client,
-            config_loader=config_loader,
-            db=db,
-            alert_service=alert_service_instance,
-            connection_manager=connection_manager
-        )
+        # Removed set_coordinator_dependencies as it's now handled by get_coordinator in queue_system
+        # Removed explicit asyncio.create_task calls for JobCoordinator as they are handled by get_coordinator in queue_system
 
-        # Removed the explicit starting of JobCoordinator background tasks here.
-        # These tasks are now managed by the standalone job_coordinator.py process.
-        # The get_coordinator() call will still initialize the singleton instance
-        # if it hasn't been already, and call its __aenter__ method.
         try:
-            await get_coordinator()
-            logger.info("JobCoordinator instance successfully retrieved/initialized (background tasks are managed externally).")
+            await get_coordinator() # This will initialize the JobCoordinator and start its tasks
+            logger.info("JobCoordinator instance successfully retrieved/initialized (background tasks are managed internally).")
         except Exception as e:
             logger.error(f"Failed to retrieve/initialize JobCoordinator during lifespan startup: {e}", exc_info=True)
 
         asyncio.create_task(alert_service_instance.refresh_rules())
+
+        # --- NEW: Create default admin user if not exists ---
+        default_admin_username = "monitor_user"
+        default_admin_password = "monitor_password" # This should ideally be loaded from a secure config/env var
+        
+        existing_admin_user = db.get_user_by_username(default_admin_username)
+        if not existing_admin_user:
+            logger.info(f"Default admin user '{default_admin_username}' not found. Creating...")
+            try:
+                await auth_service_instance.register_user(
+                    username=default_admin_username,
+                    email="admin@linkprofiler.com", # Use a default admin email
+                    password=default_admin_password,
+                    is_admin=True,
+                    role="admin"
+                )
+                logger.info(f"Default admin user '{default_admin_username}' created successfully.")
+            except Exception as e:
+                logger.error(f"Failed to create default admin user '{default_admin_username}': {e}", exc_info=True)
+        else:
+            logger.info(f"Default admin user '{default_admin_username}' already exists.")
+        # --- END NEW ---
 
         yield
 
@@ -676,7 +692,26 @@ app.add_middleware(
 )
 
 
+# --- RESTORED: CORS Middleware ---
+origins = [
+    "https://monitor.yspanel.com",
+    "https://api.yspanel.com",
+    "https://linkprofiler.yspanel.com",
+    "https://yspanel.com",
+    "https://www.yspanel.com",
+    "http://localhost:8001",
+    "http://localhost:8000",
+    "null" # For local development with file:// or some dev servers
+]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins, # Restrict to specific origins in production
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
+)
+# --- END RESTORED ---
 
 
 # Mount the mission-control-dashboard static assets
@@ -694,24 +729,8 @@ app.mount(
 )
 
 
-origins = [
-    "https://monitor.yspanel.com",
-    "https://api.yspanel.com",
-    "https://linkprofiler.yspanel.com",
-    "https://yspanel.com",
-    "https://www.yspanel.com",
-    "http://localhost:8001",
-    "http://localhost:8000",
-    "null"
-]
+# Removed: origins and app.add_middleware(CORSMiddleware, ...) block from here
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], # For development, allow all origins. Restrict in production.
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
-)
 
 # Removed: oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 # Removed: async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:

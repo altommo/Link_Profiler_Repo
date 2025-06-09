@@ -271,8 +271,8 @@ class JobCoordinator:
 
         # Get active crawlers and their last heartbeat
         min_score = (datetime.now() - timedelta(seconds=self.crawler_timeout)).timestamp()
-        active_crawlers_raw = await self.redis.zrangebyscore(self.heartbeat_queue_name, min_score, '+inf',
-                                                              withscores=True)
+        active_crawlers_raw = await self.redis.zrangebyscore(self.heartbeat_queue_name, min_score,
+                                                                 '+inf', withscores=True)
 
         active_crawlers_info = {}
         for crawler_id_bytes, timestamp_float in active_crawlers_raw:
@@ -314,6 +314,11 @@ class JobCoordinator:
             await self.connection_manager.broadcast("Job processing resumed.")
             return True
 
+    async def is_processing_paused(self) -> bool:
+        """Checks if job processing is currently paused."""
+        paused_state = await self.redis.get("job_processing_paused")
+        return paused_state is not None and paused_state.decode('utf-8').lower() == 'true'
+
     async def cancel_job(self, job_id: str) -> bool:
         """
         Cancels a job by removing it from queues and updating its status in DB.
@@ -340,7 +345,7 @@ class JobCoordinator:
         job.completed_date = datetime.now()
         self.db.update_crawl_job(job)
         self.logger.info(f"Job {job_id} cancelled and status updated in DB.")
-        await self.connection_manager.broadcast(f"Job {job_id} cancelled.")
+        await self.connection_manager.broadcast(f"Job {job.id} cancelled.")
         await self.alert_service.evaluate_job_update(job) # Evaluate for alerts
 
         # If job might be currently processed by a crawler, broadcast a cancel command.
@@ -383,18 +388,19 @@ class JobCoordinator:
 
 
 # Global coordinator instance
-_coordinator_instance = None
+_job_coordinator_instance = None
 
 
-def get_coordinator():
+def get_coordinator() -> JobCoordinator:
     """
     Get or create the global job coordinator instance.
+    This function is responsible for initializing the JobCoordinator and starting its background tasks.
     Returns a simple mock coordinator if the full coordinator cannot be initialized.
     """
-    global _coordinator_instance
+    global _job_coordinator_instance
     
-    if _coordinator_instance is not None:
-        return _coordinator_instance
+    if _job_coordinator_instance is not None:
+        return _job_coordinator_instance
     
     try:
         # Try to import and initialize the full coordinator
@@ -408,7 +414,7 @@ def get_coordinator():
         redis_url = config_loader.get("redis.url")
         if redis_url:
             redis_client = redis.from_url(redis_url)
-            _coordinator_instance = JobCoordinator(
+            _job_coordinator_instance = JobCoordinator(
                 redis_client=redis_client,
                 config_loader=config_loader,
                 database=db,
@@ -416,15 +422,21 @@ def get_coordinator():
                 connection_manager=connection_manager
             )
             logger.info("Full JobCoordinator instance created successfully.")
+            # Start background tasks here, as this is the first time coordinator is accessed
+            # This ensures tasks are started only once when the coordinator is first retrieved.
+            asyncio.create_task(_job_coordinator_instance.process_results())
+            asyncio.create_task(_job_coordinator_instance.monitor_satellites())
+            asyncio.create_task(_job_coordinator_instance._process_scheduled_jobs())
+            logger.info("JobCoordinator background tasks started.")
         else:
             logger.warning("Redis URL not configured, creating mock coordinator.")
-            _coordinator_instance = _create_mock_coordinator()
+            _job_coordinator_instance = _create_mock_coordinator()
             
     except Exception as e:
         logger.warning(f"Failed to create full JobCoordinator: {e}. Creating mock coordinator.")
-        _coordinator_instance = _create_mock_coordinator()
+        _job_coordinator_instance = _create_mock_coordinator()
     
-    return _coordinator_instance
+    return _job_coordinator_instance
 
 
 async def get_coordinator_async():
@@ -474,5 +486,9 @@ def _create_mock_coordinator():
         async def resume_job_processing(self):
             """Mock resume"""
             return True
+
+        async def is_processing_paused(self) -> bool:
+            """Mock check if processing is paused"""
+            return False # Always return False for mock
     
     return MockJobCoordinator()
