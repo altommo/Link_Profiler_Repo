@@ -6,6 +6,7 @@ import time # For performance timing
 import random # For simulation
 
 import redis.asyncio as redis # Import the module for type hinting
+from sqlalchemy import text  # Import text function for raw SQL queries
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.database.database import db # Access db singleton directly
@@ -67,10 +68,18 @@ class MissionControlService:
         if not self.redis:
             raise ValueError("MissionControlService requires a Redis client.")
 
-        self.dashboard_refresh_rate_seconds = config_loader.get("mission_control.dashboard_refresh_rate", 1000) / 1000
-        self.websocket_enabled = config_loader.get("mission_control.websocket_enabled", False)
-        self.max_websocket_connections = config_loader.get("mission_control.max_websocket_connections", 100)
-        self.cache_ttl_seconds = config_loader.get("mission_control.cache_ttl", 60)
+        # Convert string values to appropriate types with defaults
+        refresh_rate = config_loader.get("mission_control.dashboard_refresh_rate", "1000")
+        self.dashboard_refresh_rate_seconds = float(refresh_rate) / 1000 if isinstance(refresh_rate, (str, int, float)) else 1.0
+        
+        websocket_enabled = config_loader.get("mission_control.websocket_enabled", "true")
+        self.websocket_enabled = str(websocket_enabled).lower() in ('true', '1', 'yes', 'on')
+        
+        max_connections = config_loader.get("mission_control.max_websocket_connections", "100")
+        self.max_websocket_connections = int(max_connections) if isinstance(max_connections, (str, int)) else 100
+        
+        cache_ttl = config_loader.get("mission_control.cache_ttl", "60")
+        self.cache_ttl_seconds = int(cache_ttl) if isinstance(cache_ttl, (str, int)) else 60
         self.history_retention_days = config_loader.get("mission_control.history_retention_days", 30)
         self.satellite_heartbeat_threshold_seconds = config_loader.get("satellite.heartbeat_interval", 5) * 2 # 2 missed heartbeats for 'idle' status
 
@@ -105,46 +114,114 @@ class MissionControlService:
         # Refresh materialized views before querying for fresh data
         self.db.refresh_materialized_views()
 
-        # Fetch all data concurrently
-        (
-            crawler_mission_status_data,
-            backlink_discovery_metrics_data,
-            api_quota_statuses_data_raw, # Renamed to avoid conflict with converted list
-            domain_intelligence_metrics_data,
-            performance_optimization_metrics_data,
-            alerts_data,
-            satellite_fleet_status_data,
-        ) = await asyncio.gather(
-            self._get_crawler_mission_status(),
-            self._get_backlink_discovery_metrics(),
-            self.api_quota_manager.get_api_status(), # This returns a dict, needs conversion to list of Pydantic models
-            self._get_domain_intelligence_metrics(),
-            self._get_performance_optimization_metrics(),
-            self.dashboard_alert_service.check_critical_alerts(), # This returns list of DashboardAlert
-            self._get_satellite_fleet_status(),
-        )
+        # Fetch all data concurrently with individual error handling
+        try:
+            (
+                crawler_mission_status_data,
+                backlink_discovery_metrics_data,
+                api_quota_statuses_data_raw,
+                domain_intelligence_metrics_data,
+                performance_optimization_metrics_data,
+                alerts_data,
+                satellite_fleet_status_data,
+            ) = await asyncio.gather(
+                self._get_crawler_mission_status(),
+                self._get_backlink_discovery_metrics(),
+                self._safe_get_api_status(),
+                self._get_domain_intelligence_metrics(),
+                self._get_performance_optimization_metrics(),
+                self._safe_get_alerts(),
+                self._get_satellite_fleet_status(),
+                return_exceptions=True
+            )
+            
+            # Handle exception objects returned by gather
+            if isinstance(crawler_mission_status_data, Exception):
+                self.logger.error(f"Crawler mission status error: {crawler_mission_status_data}")
+                crawler_mission_status_data = self._get_fallback_crawler_status()
+            
+            if isinstance(backlink_discovery_metrics_data, Exception):
+                self.logger.error(f"Backlink discovery metrics error: {backlink_discovery_metrics_data}")
+                backlink_discovery_metrics_data = self._get_fallback_backlink_metrics()
+            
+            if isinstance(api_quota_statuses_data_raw, Exception):
+                self.logger.error(f"API quota status error: {api_quota_statuses_data_raw}")
+                api_quota_statuses_data_raw = {}
+            
+            if isinstance(domain_intelligence_metrics_data, Exception):
+                self.logger.error(f"Domain intelligence metrics error: {domain_intelligence_metrics_data}")
+                domain_intelligence_metrics_data = self._get_fallback_domain_metrics()
+            
+            if isinstance(performance_optimization_metrics_data, Exception):
+                self.logger.error(f"Performance optimization metrics error: {performance_optimization_metrics_data}")
+                performance_optimization_metrics_data = self._get_fallback_performance_metrics()
+            
+            if isinstance(alerts_data, Exception):
+                self.logger.error(f"Alerts data error: {alerts_data}")
+                alerts_data = []
+            
+            if isinstance(satellite_fleet_status_data, Exception):
+                self.logger.error(f"Satellite fleet status error: {satellite_fleet_status_data}")
+                satellite_fleet_status_data = []
+                
+        except Exception as e:
+            self.logger.error(f"Error gathering dashboard data: {e}. Using fallback values.")
+            # Provide fallback values
+            crawler_mission_status_data = self._get_fallback_crawler_status()
+            backlink_discovery_metrics_data = self._get_fallback_backlink_metrics()
+            api_quota_statuses_data_raw = {}
+            domain_intelligence_metrics_data = self._get_fallback_domain_metrics()
+            performance_optimization_metrics_data = self._get_fallback_performance_metrics()
+            alerts_data = []
+            satellite_fleet_status_data = []
 
         # Convert raw API status dict to list of ApiQuotaStatus Pydantic models
         api_quota_statuses_converted: List[ApiQuotaStatus] = []
         for api_name, status_data in api_quota_statuses_data_raw.items():
-            api_quota_statuses_converted.append(ApiQuotaStatus(
-                api_name=api_name,
-                limit=status_data['limit'],
-                used=status_data['used'],
-                remaining=status_data['remaining'],
-                reset_date=status_data['last_reset_date'], # Already ISO format from manager
-                percentage_used=(status_data['used'] / status_data['limit'] * 100) if status_data['limit'] > 0 else 0,
-                status="OK" if status_data['remaining'] is None or status_data['remaining'] > status_data['limit'] * 0.2 else "Warning" if status_data['remaining'] > 0 else "Critical",
-                predicted_exhaustion_date=status_data['predicted_exhaustion_date'], # Now directly from manager
-                recommended_action=None, # Placeholder for recommendation logic
-                performance=ApiPerformanceMetrics( # Populate performance metrics
-                    total_calls=status_data['performance']['total_calls'],
-                    successful_calls=status_data['performance']['successful_calls'],
-                    average_response_time_ms=status_data['performance']['average_response_time_ms'],
-                    success_rate=status_data['performance']['success_rate'],
-                    circuit_breaker_state=status_data['performance']['circuit_breaker_state']
+            try:
+                # Ensure performance data has all required fields with defaults
+                performance_data = status_data.get('performance', {})
+                performance_metrics = ApiPerformanceMetrics(
+                    total_calls=performance_data.get('total_calls', 0),
+                    successful_calls=performance_data.get('successful_calls', 0),
+                    average_response_time_ms=performance_data.get('average_response_time_ms', 0.0),
+                    success_rate=performance_data.get('success_rate', 0.0),
+                    circuit_breaker_state=performance_data.get('circuit_breaker_state', 'CLOSED')
                 )
-            ))
+                
+                api_quota_statuses_converted.append(ApiQuotaStatus(
+                    api_name=api_name,
+                    limit=status_data.get('limit', 0),
+                    used=status_data.get('used', 0),
+                    remaining=status_data.get('remaining', 0),
+                    reset_date=status_data.get('last_reset_date', datetime.utcnow().isoformat()),
+                    percentage_used=(status_data.get('used', 0) / status_data.get('limit', 1) * 100) if status_data.get('limit', 1) > 0 else 0,
+                    status="OK" if status_data.get('remaining') is None or status_data.get('remaining', 0) > status_data.get('limit', 1) * 0.2 else "Warning" if status_data.get('remaining', 0) > 0 else "Critical",
+                    predicted_exhaustion_date=status_data.get('predicted_exhaustion_date'),
+                    recommended_action=None,  # Placeholder for recommendation logic
+                    performance=performance_metrics
+                ))
+            except Exception as e:
+                self.logger.error(f"Error creating ApiQuotaStatus for {api_name}: {e}")
+                # Create a minimal valid entry so the dashboard doesn't crash
+                api_quota_statuses_converted.append(ApiQuotaStatus(
+                    api_name=api_name,
+                    limit=0,
+                    used=0,
+                    remaining=0,
+                    reset_date=datetime.utcnow().isoformat(),
+                    percentage_used=0.0,
+                    status="Unknown",
+                    predicted_exhaustion_date=None,
+                    recommended_action="Check API configuration",
+                    performance=ApiPerformanceMetrics(
+                        total_calls=0,
+                        successful_calls=0,
+                        average_response_time_ms=0.0,
+                        success_rate=0.0,
+                        circuit_breaker_state='UNKNOWN'
+                    )
+                ))
 
         updates = DashboardRealtimeUpdates(
             timestamp=now.isoformat(),
@@ -168,7 +245,13 @@ class MissionControlService:
         Gathers metrics for the Crawler Mission Status module.
         """
         start_time = time.monotonic()
-        all_jobs = self.db.get_all_crawl_jobs()
+        
+        # Get jobs with error handling for database issues
+        try:
+            all_jobs = self.db.get_all_crawl_jobs()
+        except Exception as e:
+            self.logger.warning(f"Could not fetch crawl jobs: {e}. Using empty list.")
+            all_jobs = []
         
         active_jobs_count = 0
         queued_jobs_count = 0
@@ -201,12 +284,18 @@ class MissionControlService:
                 total_pages_crawled_24h += job.urls_crawled
             
             # Collect recent errors from job.errors (list of CrawlError dataclasses)
-            for error in job.errors: # Assuming job.errors is a list of CrawlError dataclasses
-                if error.timestamp >= twenty_four_hours_ago:
-                    recent_job_errors.append(CrawlErrorResponse.from_crawl_error(error)) # Convert to Pydantic model
+            if job.errors:  # Check if job.errors is not None
+                for error in job.errors: # Assuming job.errors is a list of CrawlError dataclasses
+                    if error.timestamp >= twenty_four_hours_ago:
+                        recent_job_errors.append(CrawlErrorResponse.from_crawl_error(error)) # Convert to Pydantic model
 
-        queue_stats = await self.smart_crawl_queue.get_queue_stats()
-        queue_depth = queue_stats.get("total_tasks_overall", 0)
+        # Get queue stats with error handling
+        try:
+            queue_stats = await self.smart_crawl_queue.get_queue_stats()
+            queue_depth = queue_stats.get("total_tasks_overall", 0)
+        except Exception as e:
+            self.logger.warning(f"Could not get queue stats: {e}. Using default values.")
+            queue_depth = 0
         
         # Get satellite status for utilization calculation
         # This will be fetched by _get_satellite_fleet_status and passed to the main aggregation
@@ -219,7 +308,7 @@ class MissionControlService:
         # Attempt to get from JobCoordinator if available
         try:
             from Link_Profiler.queue_system.job_coordinator import get_coordinator
-            coordinator = await get_coordinator()
+            coordinator = get_coordinator()  # Remove await since get_coordinator is not async
             coordinator_stats = await coordinator.get_queue_stats()
             active_satellites_count = coordinator_stats.get("active_crawlers", 0)
             total_satellites_count = len(coordinator_stats.get("satellite_crawlers", {}))
@@ -313,16 +402,23 @@ class MissionControlService:
         Gathers metrics for the Backlink Discovery Operations module.
         """
         start_time = time.monotonic()
-        # Query the materialized view for daily backlink stats
-        daily_backlink_stats_orm = self.db.get_session().execute(
-            self.db.text("SELECT * FROM mv_daily_backlink_stats ORDER BY day DESC LIMIT 1")
-        ).fetchone()
         
-        total_backlinks_discovered = daily_backlink_stats_orm.total_backlinks_discovered if daily_backlink_stats_orm else 0
-        # Corrected: Use daily_backlink_stats_orm for unique_domains_discovered
-        unique_domains_discovered = daily_backlink_stats_orm.unique_domains_discovered if daily_backlink_stats_orm else 0
-        potential_spam_links_24h = daily_backlink_stats_orm.potential_spam_links if daily_backlink_stats_orm else 0
-        avg_authority_score = daily_backlink_stats_orm.avg_authority_passed if daily_backlink_stats_orm else 0
+        # Try to query materialized view, fallback to defaults if it doesn't exist
+        try:
+            daily_backlink_stats_orm = self.db.get_session().execute(
+                text("SELECT * FROM mv_daily_backlink_stats ORDER BY day DESC LIMIT 1")
+            ).fetchone()
+            
+            total_backlinks_discovered = daily_backlink_stats_orm.total_backlinks_discovered if daily_backlink_stats_orm else 0
+            unique_domains_discovered = daily_backlink_stats_orm.unique_domains_discovered if daily_backlink_stats_orm else 0
+            potential_spam_links_24h = daily_backlink_stats_orm.potential_spam_links if daily_backlink_stats_orm else 0
+            avg_authority_score = daily_backlink_stats_orm.avg_authority_passed if daily_backlink_stats_orm else 0
+        except Exception as e:
+            self.logger.warning(f"Could not query mv_daily_backlink_stats: {e}. Using default values.")
+            total_backlinks_discovered = 0
+            unique_domains_discovered = 0
+            potential_spam_links_24h = 0
+            avg_authority_score = 0
 
         # Placeholder for top linking domains and target URLs (would need more complex queries)
         # For now, simulate or fetch from a pre-aggregated source if available
@@ -348,14 +444,22 @@ class MissionControlService:
         Gathers metrics for the Domain Intelligence Command Center module.
         """
         start_time = time.monotonic()
-        # Query the materialized view for daily domain stats
-        daily_domain_stats_orm = self.db.get_session().execute(
-            self.db.text("SELECT * FROM mv_daily_domain_stats ORDER BY day DESC LIMIT 1")
-        ).fetchone()
+        
+        # Try to query materialized view, fallback to defaults if it doesn't exist
+        try:
+            daily_domain_stats_orm = self.db.get_session().execute(
+                text("SELECT * FROM mv_daily_domain_stats ORDER BY day DESC LIMIT 1")
+            ).fetchone()
 
-        total_domains_analyzed = daily_domain_stats_orm.total_domains_analyzed if daily_domain_stats_orm else 0
-        valuable_expired_domains_found = daily_domain_stats_orm.valuable_domains_found if daily_domain_stats_orm else 0
-        avg_domain_value_score = daily_domain_stats_orm.avg_domain_authority_score if daily_domain_stats_orm else 0
+            total_domains_analyzed = daily_domain_stats_orm.total_domains_analyzed if daily_domain_stats_orm else 0
+            valuable_expired_domains_found = daily_domain_stats_orm.valuable_domains_found if daily_domain_stats_orm else 0
+            avg_domain_value_score = daily_domain_stats_orm.avg_domain_authority_score if daily_domain_stats_orm else 0
+        except Exception as e:
+            self.logger.warning(f"Could not query mv_daily_domain_stats: {e}. Using default values.")
+            total_domains_analyzed = 0
+            valuable_expired_domains_found = 0
+            avg_domain_value_score = 0
+            
         new_domains_added_24h = random.randint(1, 20) # Simulate new domains
         top_niches_identified = ["SEO Tools", "Digital Marketing", "Link Building", "Content Creation"] # Simulate
 
@@ -375,14 +479,22 @@ class MissionControlService:
         Gathers metrics for the Performance Optimization Center module.
         """
         start_time = time.monotonic()
-        # Query the materialized view for daily satellite performance
-        daily_satellite_performance_orm = self.db.get_session().execute(
-            self.db.text("SELECT * FROM mv_daily_satellite_performance ORDER BY day DESC LIMIT 1")
-        ).fetchone()
+        
+        # Try to query materialized view, fallback to defaults if it doesn't exist
+        try:
+            daily_satellite_performance_orm = self.db.get_session().execute(
+                text("SELECT * FROM mv_daily_satellite_performance ORDER BY day DESC LIMIT 1")
+            ).fetchone()
 
-        avg_crawl_speed_pages_per_minute = daily_satellite_performance_orm.avg_crawl_speed_ppm if daily_satellite_performance_orm else 0
-        avg_success_rate_percentage = daily_satellite_performance_orm.avg_success_rate if daily_satellite_performance_orm else 0
-        avg_response_time_ms = daily_satellite_performance_orm.avg_response_time_ms if daily_satellite_performance_orm else 0
+            avg_crawl_speed_pages_per_minute = daily_satellite_performance_orm.avg_crawl_speed_ppm if daily_satellite_performance_orm else 0
+            avg_success_rate_percentage = daily_satellite_performance_orm.avg_success_rate if daily_satellite_performance_orm else 0
+            avg_response_time_ms = daily_satellite_performance_orm.avg_response_time_ms if daily_satellite_performance_orm else 0
+        except Exception as e:
+            self.logger.warning(f"Could not query mv_daily_satellite_performance: {e}. Using default values.")
+            avg_crawl_speed_pages_per_minute = 0
+            avg_success_rate_percentage = 0
+            avg_response_time_ms = 0
+            
         bottlenecks_detected = ["High Redis latency (simulated)", "Frequent API 429s (simulated)"] # Simulate
         top_performing_satellites = ["satellite-us-east-1", "satellite-eu-west-1"] # Placeholder
         worst_performing_satellites = ["satellite-us-west-1"] # Placeholder
@@ -399,5 +511,91 @@ class MissionControlService:
         DASHBOARD_MODULE_REFRESH_DURATION_SECONDS.labels(module_name="performance_optimization_metrics").observe(duration)
         return metrics
 
+    async def _safe_get_api_status(self) -> Dict[str, Any]:
+        """Safely get API status with error handling"""
+        try:
+            if self.api_quota_manager:
+                return await self.api_quota_manager.get_api_status()
+            else:
+                return {}
+        except Exception as e:
+            self.logger.warning(f"Could not get API quota status: {e}. Using empty dict.")
+            return {}
+    
+    async def _safe_get_alerts(self) -> List[DashboardAlert]:
+        """Safely get alerts with error handling"""
+        try:
+            if self.dashboard_alert_service:
+                return await self.dashboard_alert_service.check_critical_alerts()
+            else:
+                return []
+        except Exception as e:
+            self.logger.warning(f"Could not get alerts: {e}. Using empty list.")
+            return []
+    
+    def _get_fallback_crawler_status(self) -> CrawlerMissionStatus:
+        """Fallback crawler mission status"""
+        return CrawlerMissionStatus(
+            active_jobs_count=0,
+            queued_jobs_count=0,
+            completed_jobs_24h_count=0,
+            failed_jobs_24h_count=0,
+            total_pages_crawled_24h=0,
+            queue_depth=0,
+            active_satellites_count=0,
+            total_satellites_count=0,
+            satellite_utilization_percentage=0.0,
+            avg_job_completion_time_seconds=0.0,
+            recent_job_errors=[]
+        )
+    
+    def _get_fallback_backlink_metrics(self) -> BacklinkDiscoveryMetrics:
+        """Fallback backlink discovery metrics"""
+        return BacklinkDiscoveryMetrics(
+            total_backlinks_discovered=0,
+            unique_domains_discovered=0,
+            new_backlinks_24h=0,
+            avg_authority_score=0.0,
+            top_linking_domains=[],
+            top_target_urls=[],
+            potential_spam_links_24h=0
+        )
+    
+    def _get_fallback_domain_metrics(self) -> DomainIntelligenceMetrics:
+        """Fallback domain intelligence metrics"""
+        return DomainIntelligenceMetrics(
+            total_domains_analyzed=0,
+            valuable_expired_domains_found=0,
+            avg_domain_value_score=0.0,
+            new_domains_added_24h=0,
+            top_niches_identified=[]
+        )
+    
+    def _get_fallback_performance_metrics(self) -> PerformanceOptimizationMetrics:
+        """Fallback performance optimization metrics"""
+        return PerformanceOptimizationMetrics(
+            avg_crawl_speed_pages_per_minute=0.0,
+            avg_success_rate_percentage=0.0,
+            avg_response_time_ms=0.0,
+            bottlenecks_detected=[],
+            top_performing_satellites=[],
+            worst_performing_satellites=[]
+        )
+
 # Singleton instance (will be initialized in main.py)
 mission_control_service: Optional['MissionControlService'] = None
+
+def initialize_mission_control_service(redis_client, smart_crawl_queue, api_quota_manager, dashboard_alert_service):
+    """Initialize the global mission control service instance."""
+    global mission_control_service
+    mission_control_service = MissionControlService(
+        redis_client=redis_client,
+        smart_crawl_queue=smart_crawl_queue,
+        api_quota_manager=api_quota_manager,
+        dashboard_alert_service=dashboard_alert_service
+    )
+    return mission_control_service
+
+def get_mission_control_service():
+    """Get the global mission control service instance."""
+    return mission_control_service
