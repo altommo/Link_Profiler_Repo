@@ -47,11 +47,19 @@ const useWebSocket = ({
 
     socket.onmessage = (event) => {
       try {
+        // Debug: Log the raw event data
+        console.log('WebSocket: Raw message received:', typeof event.data, event.data);
+        
+        // Always try to parse as JSON since WebSocket sends strings
         const data = JSON.parse(event.data);
+        console.log('WebSocket: Parsed JSON successfully:', data);
         onMessage(data);
       } catch (e) {
         console.error('WebSocket: Failed to parse message data:', e);
-        onMessage(event.data); // Pass raw data if parsing fails
+        console.error('WebSocket: Raw data was:', event.data);
+        console.error('WebSocket: Data type was:', typeof event.data);
+        // Try to pass the raw string if JSON parsing fails
+        onMessage(event.data);
       }
     };
 
