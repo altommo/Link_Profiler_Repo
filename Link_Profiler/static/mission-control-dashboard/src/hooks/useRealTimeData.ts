@@ -7,12 +7,11 @@ const useRealTimeData = () => {
 
   const handleMessage = (message: any) => {
     try {
-      // The message from FastAPI's model_dump_json() is already a stringified JSON.
-      // We need to parse it once more here.
-      const parsedData = JSON.parse(message);
-      setData(parsedData);
+      // The message from useWebSocket is already a parsed JavaScript object.
+      // No need to call JSON.parse() here.
+      setData(message); // Directly use the message as it's already parsed
     } catch (error) {
-      console.error('Failed to parse WebSocket message:', error);
+      console.error('Failed to process WebSocket message in useRealTimeData:', error);
     }
   };
 
