@@ -30,10 +30,20 @@ class ConnectionManager:
         self.active_connections.remove(websocket)
         self.logger.info(f"WebSocket disconnected: {websocket.client.host}:{websocket.client.port}. Total active connections: {len(self.active_connections)}")
 
-    async def send_personal_message(self, message: str, websocket: WebSocket):
+    async def send_personal_message(self, message: Union[str, Dict[str, Any]], websocket: WebSocket):
         """Sends a text message to a specific WebSocket client."""
         try:
-            await websocket.send_text(message)
+            if isinstance(message, (dict, list)):
+                message_str = json.dumps(message)
+                self.logger.debug(f"Converting dict/list to JSON: {type(message)} -> {message_str[:100]}...")
+            else:
+                message_str = str(message)
+                self.logger.debug(f"Using string message: {message_str[:100]}...")
+            
+            self.logger.debug(f"Sending message to WebSocket: type={type(message_str)}, length={len(message_str)}")
+            await websocket.send_text(message_str)
+            self.logger.debug("Successfully sent message to WebSocket")
+            
         except WebSocketDisconnect:
             self.logger.warning(f"Attempted to send message to disconnected WebSocket: {websocket.client.host}:{websocket.client.port}")
             self.disconnect(websocket)
