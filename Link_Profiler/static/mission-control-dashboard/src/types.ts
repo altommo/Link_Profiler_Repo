@@ -109,6 +109,7 @@ export interface DashboardAlert {
   source: string;
   details?: Record<string, any>;
   is_resolved: boolean;
+  recommended_action?: string; // Added this property
 }
 
 export interface SatelliteFleetStatus {

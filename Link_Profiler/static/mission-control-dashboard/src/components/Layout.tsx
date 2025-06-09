@@ -1,20 +1,36 @@
-import React from 'react';
-import Header from './Header';
+import React, { useState, ReactNode } from 'react';
+import Header from './layout/Header'; // Corrected import path
+import Sidebar from './layout/Sidebar'; // Corrected import path
+import useRealTimeData from '../../hooks/useRealTimeData'; // Initialize WebSocket at layout level
 
 interface LayoutProps {
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  
+  // Initialize WebSocket connection once at the layout level
+  useRealTimeData();
+
+  const toggleSidebar = () => {
+    setIsSidebarOpen(!isSidebarOpen);
+  };
+
   return (
-    <div className="flex flex-col min-h-screen bg-nasa-blue text-nasa-cyan font-mono">
-      <Header />
-      <main className="flex-grow p-8">
-        <div className="container mx-auto">
+    <div className="flex flex-col min-h-screen bg-nasa-dark-blue text-nasa-light-gray">
+      {/* Mobile Header */}
+      <Header toggleSidebar={toggleSidebar} />
+
+      <div className="flex flex-1">
+        {/* Sidebar */}
+        <Sidebar isOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
+
+        {/* Main Content Area */}
+        <main className="flex-1 p-6 md:p-8 overflow-y-auto">
           {children}
-        </div>
-      </main>
-      {/* Optional: Footer component can go here */}
+        </main>
+      </div>
     </div>
   );
 };
