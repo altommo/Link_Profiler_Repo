@@ -89,9 +89,9 @@ class Database:
                 self._run_migrations()
             else:
                 self.logger.warning("Alembic not available. Attempting to create tables directly.")
-                # Fallback for development/testing without Alembic setup
+                self.logger.info("Attempting to create tables via Base.metadata.create_all...")
                 Base.metadata.create_all(self.engine)
-                self.logger.info("Tables created directly via SQLAlchemy metadata.")
+                self.logger.info("Tables created successfully via Base.metadata.create_all.")
 
             self._create_materialized_views() # New: Create materialized views after migrations
         except SQLAlchemyError as e:
@@ -191,9 +191,10 @@ class Database:
         with self.engine.connect() as connection:
             for view_name, sql in views_sql.items():
                 try:
+                    self.logger.info(f"Attempting to create materialized view '{view_name}'...")
                     connection.execute(text(sql))
                     connection.commit()
-                    self.logger.info(f"Materialized view '{view_name}' created or already exists.")
+                    self.logger.info(f"Materialized view '{view_name}' created/refreshed successfully.")
                     # Create index on the 'day' column for faster queries
                     connection.execute(text(f"CREATE INDEX IF NOT EXISTS idx_{view_name}_day ON {view_name} (day);"))
                     connection.commit()
@@ -599,7 +600,7 @@ class Database:
             cutoff_time = datetime.utcnow() - time_ago
             result = session.query(
                 func.avg(
-                    (CrawlJobORM.completed_date - CrawlJobORM.started_date).cast(Float)
+                    func.extract('epoch', CrawlJobORM.completed_date - CrawlJobORM.started_date)
                 )
             ).filter(
                 CrawlJobORM.completed_date >= cutoff_time,
