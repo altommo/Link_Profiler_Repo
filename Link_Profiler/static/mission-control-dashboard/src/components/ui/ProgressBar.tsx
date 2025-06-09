@@ -7,9 +7,9 @@ interface ProgressBarProps {
   className?: string; // Added className prop
 }
 
-const ProgressBar: React.FC<ProgressBarProps> = ({ percentage, colorClass = 'bg-blue-500', height = 'h-2.5', className = '' }) => {
+const ProgressBar: React.FC<ProgressBarProps> = ({ percentage, colorClass = 'bg-nasa-blue', height = 'h-2.5', className = '' }) => {
   return (
-    <div className={`w-full bg-gray-700 rounded-full ${height} ${className}`}>
+    <div className={`w-full bg-nasa-medium-blue rounded-full ${height} ${className}`}>
       <div
         className={`${colorClass} ${height} rounded-full transition-all duration-500 ease-out`}
         style={{ width: `${Math.max(0, Math.min(100, percentage))}%` }} // Ensure percentage is between 0 and 100

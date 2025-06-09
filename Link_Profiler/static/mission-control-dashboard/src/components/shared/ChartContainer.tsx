@@ -8,7 +8,7 @@ interface ChartContainerProps {
 
 const ChartContainer: React.FC<ChartContainerProps> = ({ title, children, className }) => {
   return (
-    <div className={`bg-nasa-gray p-6 rounded-lg shadow-lg border border-nasa-cyan ${className || ''}`}>
+    <div className={`bg-nasa-medium-blue p-6 rounded-lg shadow-lg border border-nasa-cyan ${className || ''}`}>
       <h3 className="text-xl font-bold text-nasa-cyan mb-4">{title}</h3>
       <div className="w-full h-64"> {/* Fixed height for charts */}
         {children}

@@ -17,11 +17,11 @@ const ListDisplay: React.FC<ListDisplayProps> = ({
   maxHeight = 'max-h-64', // Default max height
 }) => {
   return (
-    <div className="bg-gray-800 p-4 rounded-lg shadow-md">
-      <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
+    <div className="bg-nasa-medium-blue p-4 rounded-lg shadow-md">
+      <h3 className="text-lg font-semibold text-nasa-light-gray mb-2">{title}</h3>
       <div className={`overflow-y-auto ${maxHeight}`}>
         {items.length > 0 ? (
-          <ul className="list-disc list-inside text-gray-300">
+          <ul className="list-disc list-inside text-nasa-light-gray">
             {items.map((item, index) => (
               <li key={index} className={typeof itemColorClass === 'function' ? itemColorClass(item) : itemColorClass || ''}>
                 {item}
@@ -29,7 +29,7 @@ const ListDisplay: React.FC<ListDisplayProps> = ({
             ))}
           </ul>
         ) : (
-          <p className="text-gray-400">{emptyMessage}</p>
+          <p className="text-nasa-light-gray">{emptyMessage}</p>
         )}
       </div>
     </div>
