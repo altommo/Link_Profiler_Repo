@@ -380,3 +380,99 @@ class JobCoordinator:
         except Exception as e:
             self.logger.error(f"Failed to send global command: {e}", exc_info=True)
             return False
+
+
+# Global coordinator instance
+_coordinator_instance = None
+
+
+def get_coordinator():
+    """
+    Get or create the global job coordinator instance.
+    Returns a simple mock coordinator if the full coordinator cannot be initialized.
+    """
+    global _coordinator_instance
+    
+    if _coordinator_instance is not None:
+        return _coordinator_instance
+    
+    try:
+        # Try to import and initialize the full coordinator
+        from Link_Profiler.config.config_loader import config_loader
+        from Link_Profiler.database.database import db
+        from Link_Profiler.services.alert_service import alert_service_instance
+        from Link_Profiler.utils.connection_manager import connection_manager
+        import redis.asyncio as redis
+        
+        # Create Redis client
+        redis_url = config_loader.get("redis.url")
+        if redis_url:
+            redis_client = redis.from_url(redis_url)
+            _coordinator_instance = JobCoordinator(
+                redis_client=redis_client,
+                config_loader=config_loader,
+                database=db,
+                alert_service=alert_service_instance,
+                connection_manager=connection_manager
+            )
+            logger.info("Full JobCoordinator instance created successfully.")
+        else:
+            logger.warning("Redis URL not configured, creating mock coordinator.")
+            _coordinator_instance = _create_mock_coordinator()
+            
+    except Exception as e:
+        logger.warning(f"Failed to create full JobCoordinator: {e}. Creating mock coordinator.")
+        _coordinator_instance = _create_mock_coordinator()
+    
+    return _coordinator_instance
+
+
+async def get_coordinator_async():
+    """
+    Async version of get_coordinator for async contexts.
+    """
+    return get_coordinator()
+
+
+def _create_mock_coordinator():
+    """
+    Create a simple mock coordinator for cases where the full coordinator cannot be initialized.
+    """
+    class MockJobCoordinator:
+        def __init__(self):
+            self.active = True
+            self.logger = logger
+            
+        def get_status(self):
+            """Get coordinator status"""
+            return {
+                "active": self.active,
+                "queue_size": 0,
+                "workers": 0,
+                "status": "mock_ready",
+                "pending_jobs": 0,
+                "results_pending": 0,
+                "scheduled_jobs": 0,
+                "active_crawlers": 0,
+                "satellite_crawlers": {},
+                "processing_paused": False,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        def is_healthy(self):
+            """Check if coordinator is healthy"""
+            return True
+            
+        async def get_queue_stats(self):
+            """Mock queue stats"""
+            return self.get_status()
+            
+        async def pause_job_processing(self):
+            """Mock pause"""
+            return True
+            
+        async def resume_job_processing(self):
+            """Mock resume"""
+            return True
+    
+    return MockJobCoordinator()

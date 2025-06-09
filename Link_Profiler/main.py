@@ -237,7 +237,8 @@ from Link_Profiler.queue_system.smart_crawler_queue import SmartCrawlQueue, Prio
 from Link_Profiler.services.dashboard_alert_service import DashboardAlertService, dashboard_alert_service # Import both class and singleton
 
 # New: Import Mission Control Service
-from Link_Profiler.services.mission_control_service import MissionControlService, mission_control_service # Import both class and singleton
+from Link_Profiler.services import mission_control_service as mission_control_module
+from Link_Profiler.services.mission_control_service import MissionControlService
 
 # Import api_cache singleton
 from Link_Profiler.utils.api_cache import api_cache
@@ -465,13 +466,16 @@ dashboard_alert_service = DashboardAlertService(
     api_quota_manager=api_quota_manager # Pass the api_quota_manager singleton
 )
 
-# Initialize MissionControlService
+# Initialize MissionControlService and set the global singleton
 mission_control_service = MissionControlService(
     redis_client=redis_client,  # Pass the redis_client singleton
     smart_crawl_queue=smart_crawl_queue,
     api_quota_manager=api_quota_manager,
     dashboard_alert_service=dashboard_alert_service
 )
+
+# Update the global singleton in the module
+mission_control_module.mission_control_service = mission_control_service
 
 # Create WebCrawler instance, passing the SmartCrawlQueue
 main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smart_crawl_queue, ai_service=ai_service_instance, playwright_browser=playwright_browser_instance, resilience_manager=distributed_resilience_manager, session_manager=session_manager)
