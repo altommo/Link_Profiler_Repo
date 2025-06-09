@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request, HTTPException # Added HTTPException
 from Link_Profiler.utils.connection_manager import connection_manager
 from Link_Profiler.api.schemas import DashboardRealtimeUpdates # Import the new schema
 import asyncio # Import asyncio
