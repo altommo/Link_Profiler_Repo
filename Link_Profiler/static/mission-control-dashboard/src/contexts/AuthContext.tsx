@@ -92,9 +92,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (response.ok) {
         const data: Token = await response.json();
         localStorage.setItem('access_token', data.access_token);
-        setToken(data.access_token);
-        console.log("AuthContext - Login successful, token set.");
-        // verifyToken will be called by useEffect due to token change
+        setToken(data.access_token); // This triggers the useEffect below
+
+        // IMPORTANT: Wait for the token verification to complete
+        // This ensures 'user' state is updated before login() resolves
+        await verifyToken(data.access_token); 
+
+        console.log("AuthContext - Login successful, token and user set.");
       } else {
         const errorData = await response.json();
         console.error("AuthContext - Login failed:", errorData.detail || response.statusText);
@@ -104,7 +108,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.error('AuthContext - Login error:', error);
       throw error; // Re-throw to be caught by the login component
     } finally {
-      setLoading(false);
+      // Removed setLoading(false) from here.
+      // The setLoading(false) in verifyToken's finally block will handle it,
+      // ensuring loading is false only after the full authentication flow.
     }
   };
 
