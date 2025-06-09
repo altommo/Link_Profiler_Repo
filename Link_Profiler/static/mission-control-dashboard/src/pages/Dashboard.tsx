@@ -21,10 +21,38 @@ const Dashboard: React.FC = () => {
   const [dashboardData, setDashboardData] = useState<DashboardRealtimeUpdates | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const handleWebSocketMessage = (data: DashboardRealtimeUpdates) => {
+  const handleWebSocketMessage = (data: any) => {
     console.log("Received WebSocket data:", data); // Log incoming data
-    setDashboardData(data);
-    setError(null);
+    
+    try {
+      // Handle different message types
+      if (typeof data === 'object') {
+        if (data.type === 'connection_established') {
+          console.log('WebSocket connection confirmed');
+          return; // Don't process connection messages as dashboard data
+        }
+        
+        if (data.type === 'error') {
+          console.error('WebSocket error message:', data.message);
+          setError(`WebSocket error: ${data.message}`);
+          return;
+        }
+        
+        // If it's dashboard data, it should have the required fields
+        if (data.timestamp && data.crawler_mission_status) {
+          console.log('Processing dashboard update');
+          setDashboardData(data as DashboardRealtimeUpdates);
+          setError(null);
+        } else {
+          console.log('Received unknown data structure:', data);
+        }
+      } else {
+        console.log('Received non-object data:', data);
+      }
+    } catch (e) {
+      console.error('Error processing WebSocket message:', e);
+      setError('Error processing dashboard data');
+    }
   };
 
   const handleWebSocketError = (event: Event) => {

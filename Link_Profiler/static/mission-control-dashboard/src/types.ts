@@ -58,7 +58,7 @@ export interface ApiQuotaStatus {
   status: string; // e.g., "OK", "Warning", "Critical"
   predicted_exhaustion_date: string | null;
   recommended_action: string | null;
-  performance: ApiPerformanceMetrics; // Nested performance metrics
+  performance?: ApiPerformanceMetrics; // Made optional to handle missing data
 }
 
 export interface CrawlerMissionStatus {
