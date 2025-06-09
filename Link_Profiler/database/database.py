@@ -7,7 +7,7 @@ import logging
 import os
 from typing import List, Optional, Any, Dict, Set, Callable
 from datetime import datetime, timedelta # Import timedelta
-from sqlalchemy import create_engine, text, inspect, func # Import func
+from sqlalchemy import create_engine, text, inspect, func, Float # Import func and Float
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
 try:
