@@ -6,8 +6,8 @@ File: Link_Profiler/database/database.py
 import logging
 import os
 from typing import List, Optional, Any, Dict, Set, Callable
-from datetime import datetime
-from sqlalchemy import create_engine, text, inspect
+from datetime import datetime, timedelta # Import timedelta
+from sqlalchemy import create_engine, text, inspect, func # Import func
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
 try:
@@ -83,10 +83,23 @@ class Database:
                 sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
             )
             self.logger.info("Database connection established.")
-            self._run_migrations()
+
+            # Check if Alembic is available and run migrations
+            if ALEMBIC_AVAILABLE:
+                self._run_migrations()
+            else:
+                self.logger.warning("Alembic not available. Attempting to create tables directly.")
+                # Fallback for development/testing without Alembic setup
+                Base.metadata.create_all(self.engine)
+                self.logger.info("Tables created directly via SQLAlchemy metadata.")
+
             self._create_materialized_views() # New: Create materialized views after migrations
         except SQLAlchemyError as e:
             self.logger.critical(f"Failed to connect to database: {e}", exc_info=True)
+            self.engine = None
+            self.Session = None
+        except Exception as e:
+            self.logger.critical(f"An unexpected error occurred during database connection or setup: {e}", exc_info=True)
             self.engine = None
             self.Session = None
 
@@ -390,7 +403,9 @@ class Database:
         start_time = datetime.now()
         try:
             result = func(session)
-            session.commit()
+            # Only commit for operations that modify data
+            if operation_type in ['insert', 'update', 'delete', 'upsert']:
+                session.commit()
             DB_OPERATIONS_TOTAL.labels(operation_type=operation_type, table_name=table_name, status='success').inc()
             return result
         except IntegrityError as e:
@@ -504,6 +519,95 @@ class Database:
                 raise ValueError(f"CrawlJob with ID {job.id} not found for update.")
         self._execute_operation('update', 'crawl_jobs', _update)
         self.logger.info(f"Updated crawl job {job.id}.")
+
+    # --- New CrawlJob Query Methods for Dashboard ---
+    def get_crawl_jobs_by_status_and_time(self, status: CrawlStatus, time_ago: timedelta) -> List[CrawlJob]:
+        """Retrieves crawl jobs by status completed within a given time period."""
+        def _get(session):
+            cutoff_time = datetime.utcnow() - time_ago
+            return session.query(CrawlJobORM).filter(
+                CrawlJobORM.status == status.value,
+                CrawlJobORM.completed_date >= cutoff_time
+            ).all()
+        orm_jobs = self._execute_operation('select', 'crawl_jobs', _get)
+        return [self._from_orm(job) for job in orm_jobs]
+
+    def get_active_jobs_count(self) -> int:
+        """Returns the count of jobs currently in progress."""
+        def _get(session):
+            return session.query(CrawlJobORM).filter(CrawlJobORM.status == CrawlStatus.IN_PROGRESS.value).count()
+        return self._execute_operation('select_count', 'crawl_jobs', _get)
+
+    def get_queued_jobs_count(self) -> int:
+        """Returns the count of jobs currently queued or pending."""
+        def _get(session):
+            return session.query(CrawlJobORM).filter(
+                (CrawlJobORM.status == CrawlStatus.QUEUED.value) |
+                (CrawlJobORM.status == CrawlStatus.PENDING.value)
+            ).count()
+        return self._execute_operation('select_count', 'crawl_jobs', _get)
+
+    def get_total_pages_crawled_in_time_period(self, time_ago: timedelta) -> int:
+        """Returns the total pages crawled for jobs completed within a given time period."""
+        def _get(session):
+            cutoff_time = datetime.utcnow() - time_ago
+            result = session.query(
+                func.sum(CrawlJobORM.urls_crawled)
+            ).filter(
+                CrawlJobORM.completed_date >= cutoff_time,
+                CrawlJobORM.status == CrawlStatus.COMPLETED.value # Only count completed jobs
+            ).scalar()
+            return result if result is not None else 0
+        return self._execute_operation('select_sum', 'crawl_jobs', _get)
+
+    def get_recent_job_errors(self, time_ago: timedelta, limit: int = 10) -> List[CrawlError]:
+        """Retrieves recent job errors within a given time period."""
+        def _get(session):
+            cutoff_time = datetime.utcnow() - time_ago
+            # Filter jobs that have errors and whose errors occurred recently
+            # This query might be inefficient for large error JSONB fields.
+            # A dedicated error table would be better for complex queries.
+            # For now, we'll fetch jobs with errors and filter in Python.
+            jobs_with_errors = session.query(CrawlJobORM).filter(
+                CrawlJobORM.errors.isnot(None),
+                CrawlJobORM.errors != '[]', # Check for non-empty JSONB array
+                CrawlJobORM.completed_date >= cutoff_time # Assuming errors are logged when job completes
+            ).order_by(CrawlJobORM.completed_date.desc()).all()
+
+            all_recent_errors = []
+            for job_orm in jobs_with_errors:
+                if job_orm.errors:
+                    for error_dict in job_orm.errors:
+                        # Ensure error_dict has a timestamp and convert it to datetime
+                        error_timestamp_str = error_dict.get('timestamp')
+                        if error_timestamp_str:
+                            try:
+                                error_timestamp = datetime.fromisoformat(error_timestamp_str)
+                                if error_timestamp >= cutoff_time:
+                                    all_recent_errors.append(CrawlError.from_dict(error_dict))
+                            except ValueError:
+                                self.logger.warning(f"Invalid timestamp format in job error: {error_timestamp_str}")
+            # Sort by timestamp and limit
+            all_recent_errors.sort(key=lambda x: x.timestamp, reverse=True)
+            return all_recent_errors[:limit]
+
+        return self._execute_operation('select', 'crawl_jobs_errors', _get)
+
+    def get_avg_job_completion_time_in_time_period(self, time_ago: timedelta) -> float:
+        """Returns the average completion time for jobs completed within a given time period."""
+        def _get(session):
+            cutoff_time = datetime.utcnow() - time_ago
+            result = session.query(
+                func.avg(
+                    (CrawlJobORM.completed_date - CrawlJobORM.started_date).cast(Float)
+                )
+            ).filter(
+                CrawlJobORM.completed_date >= cutoff_time,
+                CrawlJobORM.status == CrawlStatus.COMPLETED.value,
+                CrawlJobORM.started_date.isnot(None)
+            ).scalar()
+            return result if result is not None else 0.0
+        return self._execute_operation('select_avg', 'crawl_jobs', _get)
 
     # --- Domain Operations ---
     def save_domain(self, domain: Domain) -> None:

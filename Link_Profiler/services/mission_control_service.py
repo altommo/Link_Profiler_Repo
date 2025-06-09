@@ -246,48 +246,21 @@ class MissionControlService:
         """
         start_time = time.monotonic()
         
-        # Get jobs with error handling for database issues
-        try:
-            all_jobs = self.db.get_all_crawl_jobs()
-        except Exception as e:
-            self.logger.warning(f"Could not fetch crawl jobs: {e}. Using empty list.")
-            all_jobs = []
-        
-        active_jobs_count = 0
-        queued_jobs_count = 0
-        completed_jobs_24h_count = 0
-        failed_jobs_24h_count = 0
-        total_pages_crawled_24h = 0
-        total_job_completion_time = 0
-        completed_job_count = 0
-        recent_job_errors: List[CrawlErrorResponse] = [] # Changed type hint to CrawlErrorResponse
-
         now = datetime.utcnow()
-        twenty_four_hours_ago = now - timedelta(hours=24)
+        twenty_four_hours_ago = timedelta(hours=24)
 
-        for job in all_jobs:
-            if job.status == CrawlStatus.IN_PROGRESS:
-                active_jobs_count += 1
-            elif job.status == CrawlStatus.PENDING or job.status == CrawlStatus.QUEUED: # Include QUEUED for dashboard
-                queued_jobs_count += 1
-            
-            if job.completed_date and job.completed_date >= twenty_four_hours_ago:
-                if job.status == CrawlStatus.COMPLETED:
-                    completed_jobs_24h_count += 1
-                    if job.started_date:
-                        duration = (job.completed_date - job.started_date).total_seconds()
-                        total_job_completion_time += duration
-                        completed_job_count += 1
-                elif job.status == CrawlStatus.FAILED:
-                    failed_jobs_24h_count += 1
-                
-                total_pages_crawled_24h += job.urls_crawled
-            
-            # Collect recent errors from job.errors (list of CrawlError dataclasses)
-            if job.errors:  # Check if job.errors is not None
-                for error in job.errors: # Assuming job.errors is a list of CrawlError dataclasses
-                    if error.timestamp >= twenty_four_hours_ago:
-                        recent_job_errors.append(CrawlErrorResponse.from_crawl_error(error)) # Convert to Pydantic model
+        # Use new database methods for efficiency
+        active_jobs_count = self.db.get_active_jobs_count()
+        queued_jobs_count = self.db.get_queued_jobs_count()
+        
+        completed_jobs_24h_count = len(self.db.get_crawl_jobs_by_status_and_time(CrawlStatus.COMPLETED, twenty_four_hours_ago))
+        failed_jobs_24h_count = len(self.db.get_crawl_jobs_by_status_and_time(CrawlStatus.FAILED, twenty_four_hours_ago))
+        
+        total_pages_crawled_24h = self.db.get_total_pages_crawled_in_time_period(twenty_four_hours_ago)
+        avg_job_completion_time_seconds = self.db.get_avg_job_completion_time_in_time_period(twenty_four_hours_ago)
+        
+        recent_job_errors_dataclasses = self.db.get_recent_job_errors(twenty_four_hours_ago, limit=10)
+        recent_job_errors_pydantic = [CrawlErrorResponse.from_crawl_error(err) for err in recent_job_errors_dataclasses]
 
         # Get queue stats with error handling
         try:
@@ -298,12 +271,8 @@ class MissionControlService:
             queue_depth = 0
         
         # Get satellite status for utilization calculation
-        # This will be fetched by _get_satellite_fleet_status and passed to the main aggregation
-        # For this specific function, we can get a quick count
-        # These counts should come from JobCoordinator's stats, not SmartCrawlQueue directly
-        # For now, use placeholders or integrate with JobCoordinator.get_queue_stats()
-        active_satellites_count = 0 # Placeholder
-        total_satellites_count = 0 # Placeholder
+        active_satellites_count = 0
+        total_satellites_count = 0
         
         # Attempt to get from JobCoordinator if available
         try:
@@ -315,10 +284,7 @@ class MissionControlService:
         except Exception as e:
             self.logger.warning(f"Could not get active satellite count from JobCoordinator: {e}. Using 0.")
 
-
         satellite_utilization_percentage = (active_satellites_count / total_satellites_count * 100) if total_satellites_count > 0 else 0
-
-        avg_job_completion_time_seconds = (total_job_completion_time / completed_job_count) if completed_job_count > 0 else 0
 
         status = CrawlerMissionStatus(
             active_jobs_count=active_jobs_count,
@@ -331,7 +297,7 @@ class MissionControlService:
             total_satellites_count=total_satellites_count,
             satellite_utilization_percentage=round(satellite_utilization_percentage, 2),
             avg_job_completion_time_seconds=round(avg_job_completion_time_seconds, 2),
-            recent_job_errors=recent_job_errors[:10] # Limit to 10 recent errors
+            recent_job_errors=recent_job_errors_pydantic
         )
         duration = time.monotonic() - start_time
         DASHBOARD_MODULE_REFRESH_DURATION_SECONDS.labels(module_name="crawler_mission_status").observe(duration)
@@ -364,7 +330,7 @@ class MissionControlService:
 
             # Fetch latest performance log for this satellite
             # Ensure db.get_latest_satellite_performance_logs can filter by satellite_id
-            latest_log_for_satellite = self.db.get_latest_satellite_performance_logs(satellite_id=satellite_id, limit=1)
+            latest_log_for_satellite = db.get_latest_satellite_performance_logs(satellite_id=satellite_id, limit=1)
             
             jobs_completed_24h = latest_log_for_satellite[0].pages_crawled if latest_log_for_satellite else 0
             errors_24h = latest_log_for_satellite[0].errors_logged if latest_log_for_satellite else 0
@@ -405,7 +371,7 @@ class MissionControlService:
         
         # Try to query materialized view, fallback to defaults if it doesn't exist
         try:
-            daily_backlink_stats_orm = self.db.get_session().execute(
+            daily_backlink_stats_orm = db.get_session().execute(
                 text("SELECT * FROM mv_daily_backlink_stats ORDER BY day DESC LIMIT 1")
             ).fetchone()
             
@@ -447,7 +413,7 @@ class MissionControlService:
         
         # Try to query materialized view, fallback to defaults if it doesn't exist
         try:
-            daily_domain_stats_orm = self.db.get_session().execute(
+            daily_domain_stats_orm = db.get_session().execute(
                 text("SELECT * FROM mv_daily_domain_stats ORDER BY day DESC LIMIT 1")
             ).fetchone()
 
@@ -482,7 +448,7 @@ class MissionControlService:
         
         # Try to query materialized view, fallback to defaults if it doesn't exist
         try:
-            daily_satellite_performance_orm = self.db.get_session().execute(
+            daily_satellite_performance_orm = db.get_session().execute(
                 text("SELECT * FROM mv_daily_satellite_performance ORDER BY day DESC LIMIT 1")
             ).fetchone()
 
