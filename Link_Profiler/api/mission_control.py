@@ -1,11 +1,11 @@
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request, HTTPException # Added HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Request, HTTPException
 from Link_Profiler.utils.connection_manager import connection_manager
-from Link_Profiler.api.schemas import DashboardRealtimeUpdates # Import the new schema
-import asyncio # Import asyncio
+from Link_Profiler.api.schemas import DashboardRealtimeUpdates
+import asyncio
 import json
 from datetime import datetime
-from starlette.websockets import WebSocketState # Import WebSocketState
+from starlette.websockets import WebSocketState
 
 mission_control_router = APIRouter(tags=["Mission Control"])
 logger = logging.getLogger(__name__)
@@ -196,11 +196,11 @@ async def mission_control_websocket(websocket: WebSocket):
         logger.warning(f"Max WebSocket connections ({mission_control_service.max_websocket_connections}) reached. Rejecting new connection from {client_info}.")
         error_message = {
             "type": "error",
-            "message": "Maximum WebSocket connections reached", # Added missing comma
+            "message": "Maximum WebSocket connections reached",
             "timestamp": datetime.now().isoformat()
         }
         await websocket.send_text(json.dumps(error_message))
-        await websocket.close(code=1013, reason="Max connections reached") # Closed string literal
+        await websocket.close(code=1013, reason="Max connections reached")
         return
 
     # Add to connection manager
@@ -215,17 +215,17 @@ async def mission_control_websocket(websocket: WebSocket):
             "timestamp": datetime.now().isoformat()
         }
         await websocket.send_text(json.dumps(connection_message))
-        logger.info("Sent connection confirmation")
+        logger.info(f"Sent connection confirmation to {client_info}")
         
         # Start the real-time data loop
         while True:
             try:
-                # Check if WebSocket is still connected before sending
+                # Check if WebSocket is still connected before fetching/sending
                 if websocket.client_state != WebSocketState.CONNECTED:
-                    logger.info("WebSocket no longer connected, breaking loop")
+                    logger.info(f"WebSocket for {client_info} no longer connected (state: {websocket.client_state}), breaking loop.")
                     break
                     
-                logger.debug("Fetching dashboard data...")
+                logger.debug(f"Fetching dashboard data for {client_info}...")
                 
                 # Get real dashboard data from mission control service
                 dashboard_updates = await mission_control_service.get_realtime_updates()
@@ -234,30 +234,33 @@ async def mission_control_websocket(websocket: WebSocket):
                 dashboard_json = dashboard_updates.model_dump_json()
                 
                 # Debug: Log what we're about to send
-                logger.debug(f"Sending dashboard update: {len(dashboard_json)} characters")
+                logger.debug(f"Sending dashboard update to {client_info}: {len(dashboard_json)} characters")
                 logger.debug(f"Dashboard JSON type: {type(dashboard_json)}")
                 logger.debug(f"Dashboard JSON preview: {dashboard_json[:100]}...")
                 
                 # Ensure we're sending a string, not an object
-                if isinstance(dashboard_json, str):
-                    await websocket.send_text(dashboard_json)
-                    logger.debug("Sent JSON string successfully")
-                else:
-                    # Fallback: convert to JSON string
-                    json_string = json.dumps(dashboard_json)
-                    logger.debug(f"Converted to JSON string: {type(json_string)}")
-                    await websocket.send_text(json_string)
-                logger.debug("Successfully sent dashboard data")
+                if not isinstance(dashboard_json, str):
+                    dashboard_json = json.dumps(dashboard_json)
+                    logger.debug(f"Converted to JSON string for sending to {client_info}: {type(dashboard_json)}")
                 
+                await websocket.send_text(dashboard_json)
+                logger.debug(f"Successfully sent dashboard data to {client_info}.")
+                
+                # Check state again after sending, before sleeping
+                if websocket.client_state != WebSocketState.CONNECTED:
+                    logger.info(f"WebSocket for {client_info} disconnected immediately after sending (state: {websocket.client_state}), breaking loop.")
+                    break
+
                 # Wait before sending next update (use configured refresh rate)
-                refresh_rate_ms = mission_control_service.dashboard_refresh_rate_seconds * 1000
-                await asyncio.sleep(refresh_rate_ms / 1000)
+                refresh_rate_seconds = mission_control_service.dashboard_refresh_rate_seconds
+                await asyncio.sleep(refresh_rate_seconds)
                 
             except WebSocketDisconnect:
-                logger.info("WebSocket disconnected during data loop")
+                # This catches disconnects that happen during send_text or during the sleep
+                logger.info(f"WebSocket for {client_info} disconnected during data loop (exception caught).")
                 break
             except Exception as e:
-                logger.error(f"Error in dashboard update loop: {e}", exc_info=True)
+                logger.error(f"Error in dashboard update loop for {client_info}: {e}", exc_info=True)
                 # Check if we can still send error messages
                 try:
                     if websocket.client_state == WebSocketState.CONNECTED:
@@ -267,10 +270,11 @@ async def mission_control_websocket(websocket: WebSocket):
                             "timestamp": datetime.now().isoformat()
                         }
                         await websocket.send_text(json.dumps(error_message))
-                except:
-                    logger.error("Could not send error message, WebSocket likely closed")
-                    break
-                await asyncio.sleep(5)  # Wait before retrying
+                except WebSocketDisconnect:
+                    logger.error(f"Could not send error message to {client_info}, WebSocket already closed.")
+                except Exception as send_error:
+                    logger.error(f"Unexpected error sending error message to {client_info}: {send_error}", exc_info=True)
+                break # Break on any other exception to prevent infinite loops
             
     except WebSocketDisconnect:
         logger.info(f"Mission control websocket disconnected gracefully for {client_info}.")
