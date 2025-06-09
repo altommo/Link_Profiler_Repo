@@ -117,7 +117,6 @@ class JobCoordinator:
         if job:
             # If job is in PENDING/QUEUED state, check Redis for more up-to-date status
             if job.status in [CrawlStatus.PENDING, CrawlStatus.QUEUED]:
-                # Check if it's in the main job queue
                 # Note: lpos is O(N), might be slow for large queues. Consider alternative if performance is an issue.
                 if await self.redis.lpos(self.job_queue_name, json.dumps(serialize_model(job))) is not None:
                     job.status = CrawlStatus.QUEUED
@@ -251,7 +250,7 @@ class JobCoordinator:
                             job.status = CrawlStatus.QUEUED
                             self.db.update_crawl_job(job)
                             self.logger.info(f"Moved scheduled job {job_id} to main queue.")
-                            await self.connection_manager.broadcast(f"Scheduled job {job_id} moved to queue.")
+                            await self.connection_manager.broadcast(f"Scheduled job {job.id} moved to queue.")
                             await self.alert_service.evaluate_job_update(job) # Evaluate for alerts
                         else:
                             self.logger.warning(f"Scheduled job {job_id} found in Redis but not in DB.")
@@ -391,7 +390,7 @@ class JobCoordinator:
 _job_coordinator_instance = None
 
 
-def get_coordinator() -> JobCoordinator:
+async def get_coordinator() -> JobCoordinator: # Changed to async def
     """
     Get or create the global job coordinator instance.
     This function is responsible for initializing the JobCoordinator and starting its background tasks.
