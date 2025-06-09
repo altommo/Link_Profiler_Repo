@@ -6,7 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Jobs from './pages/Jobs';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
-import Overview from './pages/Overview'; // Import the new Overview page
+import Overview from './pages/Overview';
 
 const App: React.FC = () => {
   const { isAuthenticated, isAdmin, loading } = useAuth();
@@ -26,24 +26,21 @@ const App: React.FC = () => {
     <Router>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route
-          path="/"
-          element={
-            isAuthenticated ? (
-              <Layout>
-                <Routes>
-                  <Route path="/" element={<Overview />} /> {/* Default route to Overview */}
-                  <Route path="/dashboard" element={<Dashboard />} />
-                  <Route path="/jobs" element={<Jobs />} />
-                  {isAdmin && <Route path="/settings" element={<Settings />} />}
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
-              </Layout>
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
+        {isAuthenticated ? (
+          <Route path="/*" element={
+            <Layout>
+              <Routes>
+                <Route path="/" element={<Overview />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/jobs" element={<Jobs />} />
+                {isAdmin && <Route path="/settings" element={<Settings />} />}
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Layout>
+          } />
+        ) : (
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        )}
       </Routes>
     </Router>
   );
