@@ -6,7 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Jobs from './pages/Jobs';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
-import Overview from './pages/Overview';
+import Overview from './pages/Overview'; // Import the new Overview page
 
 const App: React.FC = () => {
   const { isAuthenticated, isAdmin, loading } = useAuth();
@@ -30,7 +30,7 @@ const App: React.FC = () => {
           <Route path="/*" element={
             <Layout>
               <Routes>
-                <Route path="/" element={<Overview />} />
+                <Route path="/" element={<Overview />} /> {/* Default route to Overview */}
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/jobs" element={<Jobs />} />
                 {isAdmin && <Route path="/settings" element={<Settings />} />}

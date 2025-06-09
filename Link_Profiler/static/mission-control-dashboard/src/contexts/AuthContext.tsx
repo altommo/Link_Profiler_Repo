@@ -56,6 +56,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setToken(null);
       setUser(null);
       return false;
+    } finally {
+      setLoading(false); // Ensure loading is set to false after verification attempt
     }
   }, []);
 
@@ -64,13 +66,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const initializeAuth = async () => {
       if (token) {
         await verifyToken(token);
+      } else {
+        setLoading(false); // No token, so not loading auth state
       }
-      setLoading(false); // Always set loading to false after initialization
     };
     initializeAuth();
   }, [token, verifyToken]);
 
   const login = async (username: string, password: string) => {
+    setLoading(true);
     console.log("AuthContext - Attempting login for:", username);
     try {
       const formData = new URLSearchParams();
@@ -90,7 +94,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         localStorage.setItem('access_token', data.access_token);
         setToken(data.access_token);
         console.log("AuthContext - Login successful, token set.");
-        // Don't set loading here - let useEffect handle it
+        // verifyToken will be called by useEffect due to token change
       } else {
         const errorData = await response.json();
         console.error("AuthContext - Login failed:", errorData.detail || response.statusText);
@@ -99,6 +103,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } catch (error) {
       console.error('AuthContext - Login error:', error);
       throw error; // Re-throw to be caught by the login component
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -107,7 +113,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     localStorage.removeItem('access_token');
     setToken(null);
     setUser(null);
-    setLoading(false);
+    setLoading(false); // Ensure loading is false after logout
   };
 
   const contextValue = {
