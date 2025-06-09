@@ -33,16 +33,8 @@ interface CrawlerMissionStatusProps {
 }
 
 const CrawlerMissionStatus: React.FC<CrawlerMissionStatusProps> = ({ status, satelliteFleet }) => {
-  // Dummy data for chart demonstration
-  const jobCompletionData = [
-    { name: '00:00', completed: 10, failed: 2 },
-    { name: '04:00', completed: 15, failed: 3 },
-    { name: '08:00', completed: 20, failed: 5 },
-    { name: '12:00', completed: 25, failed: 6 },
-    { name: '16:00', completed: 30, failed: 7 },
-    { name: '20:00', completed: 35, failed: 8 },
-    { name: '24:00', completed: status.completed_jobs_24h_count, failed: status.failed_jobs_24h_count },
-  ];
+  // Removed dummy data for chart demonstration as historical data is not yet available from backend.
+  // The LineChart component is also removed from the JSX for now.
 
   return (
     <ModuleContainer title="Crawler Mission Status">
@@ -77,6 +69,8 @@ const CrawlerMissionStatus: React.FC<CrawlerMissionStatusProps> = ({ status, sat
         maxHeight="max-h-40"
       />
 
+      {/* Chart removed as historical data is not yet available from backend */}
+      {/*
       <ChartContainer title="Job Completion (24h)">
         <LineChart
           data={jobCompletionData}
@@ -87,6 +81,7 @@ const CrawlerMissionStatus: React.FC<CrawlerMissionStatusProps> = ({ status, sat
           ]}
         />
       </ChartContainer>
+      */}
     </ModuleContainer>
   );
 };

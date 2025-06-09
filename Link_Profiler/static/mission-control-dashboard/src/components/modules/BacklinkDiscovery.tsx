@@ -18,16 +18,8 @@ interface BacklinkDiscoveryProps {
 }
 
 const BacklinkDiscovery: React.FC<BacklinkDiscoveryProps> = ({ metrics }) => {
-  // Dummy data for chart demonstration
-  const discoveryRateData = [
-    { name: 'Day 1', discovered: 50, spam: 5 },
-    { name: 'Day 2', discovered: 70, spam: 8 },
-    { name: 'Day 3', discovered: 60, spam: 6 },
-    { name: 'Day 4', discovered: 80, spam: 10 },
-    { name: 'Day 5', discovered: 75, spam: 7 },
-    { name: 'Day 6', discovered: 90, spam: 9 },
-    { name: 'Day 7', discovered: metrics.new_backlinks_24h, spam: metrics.potential_spam_links_24h },
-  ];
+  // Removed dummy data for chart demonstration as historical data is not yet available from backend.
+  // The LineChart component is also removed from the JSX for now.
 
   return (
     <ModuleContainer title="Backlink Discovery Operations">
@@ -55,6 +47,8 @@ const BacklinkDiscovery: React.FC<BacklinkDiscoveryProps> = ({ metrics }) => {
         maxHeight="max-h-40"
       />
 
+      {/* Chart removed as historical data is not yet available from backend */}
+      {/*
       <ChartContainer title="Discovery Rate (Last 7 Days)">
         <LineChart
           data={discoveryRateData}
@@ -65,6 +59,7 @@ const BacklinkDiscovery: React.FC<BacklinkDiscoveryProps> = ({ metrics }) => {
           ]}
         />
       </ChartContainer>
+      */}
     </ModuleContainer>
   );
 };
