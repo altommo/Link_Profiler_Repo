@@ -218,42 +218,45 @@ async def mission_control_websocket(websocket: WebSocket):
         logger.info(f"Sent connection confirmation to {client_info}")
         
         # Start the real-time data loop
+        last_full_data_sent_time = datetime.now()
+        last_heartbeat_sent_time = datetime.now()
+        HEARTBEAT_INTERVAL_SECONDS = 5 # Define a heartbeat interval, e.g., every 5 seconds
+        
         while True:
             try:
                 # Check if WebSocket is still connected before fetching/sending
                 if websocket.client_state != WebSocketState.CONNECTED:
                     logger.info(f"WebSocket for {client_info} no longer connected (state: {websocket.client_state}), breaking loop.")
                     break
-                    
-                logger.debug(f"Fetching dashboard data for {client_info}...")
                 
-                # Get real dashboard data from mission control service
-                dashboard_updates = await mission_control_service.get_realtime_updates()
+                current_time = datetime.now()
                 
-                # Convert to JSON-serializable format
-                dashboard_json = dashboard_updates.model_dump_json()
-                
-                # Debug: Log what we're about to send
-                logger.debug(f"Sending dashboard update to {client_info}: {len(dashboard_json)} characters")
-                logger.debug(f"Dashboard JSON type: {type(dashboard_json)}")
-                logger.debug(f"Dashboard JSON preview: {dashboard_json[:100]}...")
-                
-                # Ensure we're sending a string, not an object
-                if not isinstance(dashboard_json, str):
-                    dashboard_json = json.dumps(dashboard_json)
-                    logger.debug(f"Converted to JSON string for sending to {client_info}: {type(dashboard_json)}")
-                
-                await websocket.send_text(dashboard_json)
-                logger.debug(f"Successfully sent dashboard data to {client_info}.")
-                
-                # Check state again after sending, before sleeping
-                if websocket.client_state != WebSocketState.CONNECTED:
-                    logger.info(f"WebSocket for {client_info} disconnected immediately after sending (state: {websocket.client_state}), breaking loop.")
-                    break
-
-                # Wait before sending next update (use configured refresh rate)
                 refresh_rate_seconds = mission_control_service.dashboard_refresh_rate_seconds
-                await asyncio.sleep(refresh_rate_seconds)
+
+                # Check if it's time to send a full dashboard update
+                if (current_time - last_full_data_sent_time).total_seconds() >= refresh_rate_seconds:
+                    logger.debug(f"Fetching dashboard data for {client_info} (full refresh)...")
+                    dashboard_updates = await mission_control_service.get_realtime_updates()
+                    dashboard_json = dashboard_updates.model_dump_json()
+                    
+                    logger.debug(f"Sending dashboard update to {client_info}: {len(dashboard_json)} characters")
+                    await websocket.send_text(dashboard_json)
+                    logger.debug(f"Successfully sent dashboard data to {client_info}.")
+                    last_full_data_sent_time = current_time # Reset timer for full data
+                    last_heartbeat_sent_time = current_time # Also reset heartbeat timer, as full data acts as heartbeat
+                
+                # If not time for full data, check if it's time for a heartbeat
+                elif (current_time - last_heartbeat_sent_time).total_seconds() >= HEARTBEAT_INTERVAL_SECONDS:
+                    heartbeat_message = {
+                        "type": "heartbeat",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    await websocket.send_text(json.dumps(heartbeat_message))
+                    logger.debug(f"Sent heartbeat to {client_info}.")
+                    last_heartbeat_sent_time = current_time # Reset timer for heartbeat
+                
+                # Sleep for a short duration to prevent busy-waiting
+                await asyncio.sleep(1) # Sleep for 1 second, then re-evaluate
                 
             except WebSocketDisconnect:
                 # This catches disconnects that happen during send_text or during the sleep

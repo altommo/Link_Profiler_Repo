@@ -79,12 +79,20 @@ const useWebSocket = ({
         // Always try to parse as JSON since WebSocket sends strings
         const data = JSON.parse(event.data);
         console.log('WebSocket: Parsed JSON successfully:', data);
-        onMessageRef.current(data); // Use ref for callback
+
+        // Handle heartbeat messages separately
+        if (data && data.type === 'heartbeat') {
+          console.log('WebSocket: Received heartbeat.');
+          // Do not pass heartbeat to onMessage as it's for connection maintenance
+        } else {
+          onMessageRef.current(data); // Use ref for callback for actual data
+        }
       } catch (e) {
         console.error('WebSocket: Failed to parse message data:', e);
         console.error('WebSocket: Raw data was:', event.data);
         console.error('WebSocket: Data type was:', typeof event.data);
-        // Try to pass the raw string if JSON parsing fails
+        // Try to pass the raw string if JSON parsing fails, but only if it's not a heartbeat
+        // If it's a non-JSON heartbeat, it will still be passed. This is acceptable for now.
         onMessageRef.current(event.data); // Use ref for callback
       }
     };
