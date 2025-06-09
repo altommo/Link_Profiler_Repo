@@ -124,7 +124,7 @@ const Settings: React.FC = () => {
 
   if (error) {
     return (
-      <div className="text-center text-red-500 text-xl mt-20">
+      <div className="text-center text-nasa-red text-xl mt-20">
         <p>Error: {error}</p>
         <p className="text-sm text-nasa-light-gray mt-2">Please ensure you are logged in as an administrator.</p>
       </div>
@@ -191,7 +191,7 @@ const Settings: React.FC = () => {
             </div>
             <button
               onClick={handleUpdateConfig}
-              className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+              className="btn-primary mt-4"
             >
               Update Configuration
             </button>
@@ -218,8 +218,8 @@ const Settings: React.FC = () => {
               <thead>
                 <tr className="text-nasa-cyan border-b border-nasa-light-gray">
                   <th className="py-2 px-4">API Name</th>
-                  <th className="py-2 px-4">Key (Masked)</th>
                   <th className="py-2 px-4">Enabled</th>
+                  <th className="py-2 px-4">Key (Masked)</th>
                   <th className="py-2 px-4">Monthly Limit</th>
                   <th className="py-2 px-4">Cost/Unit</th>
                   <th className="py-2 px-4">Actions</th>

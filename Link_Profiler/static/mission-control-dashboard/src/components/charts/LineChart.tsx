@@ -40,17 +40,17 @@ const LineChart: React.FC<LineChartProps> = ({
           bottom: 5,
         }}
       >
-        <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-        <XAxis dataKey={dataKey} stroke="#00FFFF" tickFormatter={xAxisTickFormatter} />
-        <YAxis stroke="#00FFFF" tickFormatter={yAxisTickFormatter} />
+        <CartesianGrid strokeDasharray="3 3" stroke="theme('colors.nasa-medium-blue')" />
+        <XAxis dataKey={dataKey} stroke="theme('colors.nasa-cyan')" tickFormatter={xAxisTickFormatter} />
+        <YAxis stroke="theme('colors.nasa-cyan')" tickFormatter={yAxisTickFormatter} />
         <Tooltip
-          contentStyle={{ backgroundColor: '#333', border: '1px solid #00FFFF', color: '#00FFFF' }}
-          labelStyle={{ color: '#FFBF00' }}
-          itemStyle={{ color: '#00FFFF' }}
+          contentStyle={{ backgroundColor: 'theme('colors.nasa-dark-blue')', border: '1px solid theme('colors.nasa-cyan')', color: 'theme('colors.nasa-cyan')' }}
+          labelStyle={{ color: 'theme('colors.nasa-amber')' }}
+          itemStyle={{ color: 'theme('colors.nasa-cyan')' }}
           labelFormatter={tooltipLabelFormatter}
           formatter={tooltipValueFormatter}
         />
-        <Legend wrapperStyle={{ color: '#00FFFF' }} />
+        <Legend wrapperStyle={{ color: 'theme('colors.nasa-cyan')' }} />
         {lineKeys.map((line, index) => (
           <Line
             key={index}

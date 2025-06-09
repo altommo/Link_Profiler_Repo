@@ -71,45 +71,45 @@ const Jobs: React.FC = () => {
     }
   };
 
-  if (loading) return <div className="p-6 text-white">Loading jobs...</div>;
-  if (error) return <div className="p-6 text-red-500">Error: {error}</div>;
+  if (loading) return <div className="p-6 text-nasa-light-gray">Loading jobs...</div>;
+  if (error) return <div className="p-6 text-nasa-red">Error: {error}</div>;
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'COMPLETED': return 'text-green-500';
-      case 'IN_PROGRESS': return 'text-blue-500';
-      case 'FAILED': return 'text-red-500';
-      case 'QUEUED': return 'text-yellow-500';
-      case 'PENDING': return 'text-gray-500';
-      case 'CANCELLED': return 'text-purple-500';
-      case 'active': return 'text-green-400'; // For satellite status
-      case 'idle': return 'text-orange-400'; // For satellite status
-      case 'unresponsive': return 'text-red-500'; // For satellite status
-      default: return 'text-white';
+      case 'COMPLETED': return 'text-nasa-green';
+      case 'IN_PROGRESS': return 'text-nasa-blue';
+      case 'FAILED': return 'text-nasa-red';
+      case 'QUEUED': return 'text-nasa-amber';
+      case 'PENDING': return 'text-nasa-light-gray';
+      case 'CANCELLED': return 'text-purple-500'; // Keep purple for now, not in NASA palette
+      case 'active': return 'text-nasa-green'; // For satellite status
+      case 'idle': return 'text-nasa-amber'; // For satellite status
+      case 'unresponsive': return 'text-nasa-red'; // For satellite status
+      default: return 'text-nasa-light-gray';
     }
   };
 
   return (
-    <div className="p-6 bg-gray-900 min-h-screen text-white">
+    <div className="p-6 bg-nasa-dark-blue min-h-screen text-nasa-light-gray">
       <h1 className="text-3xl font-bold mb-6">Job Management</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
         <DataCard title="Global Controls">
           <button
             onClick={() => handleControlAction('jobs/pause_all', 'Pause All Jobs')}
-            className="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded mr-2 mb-2"
+            className="bg-nasa-amber hover:bg-orange-700 text-white font-bold py-2 px-4 rounded mr-2 mb-2"
           >
             Pause All Jobs
           </button>
           <button
             onClick={() => handleControlAction('jobs/resume_all', 'Resume All Jobs')}
-            className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded mb-2"
+            className="bg-nasa-green hover:bg-green-700 text-white font-bold py-2 px-4 rounded mb-2"
           >
             Resume All Jobs
           </button>
           <button
             onClick={() => handleControlAction('satellites/control/all/SHUTDOWN', 'Shutdown All Satellites')}
-            className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded mb-2"
+            className="bg-nasa-red hover:bg-red-700 text-white font-bold py-2 px-4 rounded mb-2"
           >
             Shutdown All Satellites
           </button>
@@ -117,16 +117,16 @@ const Jobs: React.FC = () => {
 
         <ModuleContainer title="Satellite Fleet Status">
           <div className="overflow-x-auto">
-            <table className="min-w-full bg-gray-800 rounded-lg">
+            <table className="min-w-full bg-nasa-medium-blue rounded-lg">
               <thead>
-                <tr className="bg-gray-700 text-left text-gray-300 uppercase text-sm leading-normal">
+                <tr className="bg-nasa-dark-blue text-left text-nasa-light-gray uppercase text-sm leading-normal">
                   <th className="py-3 px-6">ID</th>
                   <th className="py-3 px-6">Status</th>
                   <th className="py-3 px-6">Last Seen</th>
                   <th className="py-3 px-6">Actions</th>
                 </tr>
               </thead>
-              <tbody className="text-gray-300 text-sm font-light">
+              <tbody className="text-nasa-light-gray text-sm font-light">
                 {satelliteFleetStatus.map((sat) => ( // Use sat directly from store
                   <tr key={sat.satellite_id} className="border-b border-gray-700">
                     <td className="py-3 px-6 text-left whitespace-nowrap">{sat.satellite_id}</td>
@@ -139,19 +139,19 @@ const Jobs: React.FC = () => {
                     <td className="py-3 px-6 text-left">
                       <button
                         onClick={() => handleControlAction(`satellites/control/${sat.satellite_id}/PAUSE`, `Pause ${sat.satellite_id}`)}
-                        className="bg-blue-500 hover:bg-blue-700 text-white py-1 px-2 rounded text-xs mr-1"
+                        className="bg-nasa-blue hover:bg-blue-700 text-white py-1 px-2 rounded text-xs mr-1"
                       >
                         Pause
                       </button>
                       <button
                         onClick={() => handleControlAction(`satellites/control/${sat.satellite_id}/RESUME`, `Resume ${sat.satellite_id}`)}
-                        className="bg-green-500 hover:bg-green-700 text-white py-1 px-2 rounded text-xs mr-1"
+                        className="bg-nasa-green hover:bg-green-700 text-white py-1 px-2 rounded text-xs mr-1"
                       >
                         Resume
                       </button>
                       <button
                         onClick={() => handleControlAction(`satellites/control/${sat.satellite_id}/SHUTDOWN`, `Shutdown ${sat.satellite_id}`)}
-                        className="bg-red-500 hover:bg-red-700 text-white py-1 px-2 rounded text-xs"
+                        className="bg-nasa-red hover:bg-red-700 text-white py-1 px-2 rounded text-xs"
                       >
                         Shutdown
                       </button>
@@ -165,10 +165,10 @@ const Jobs: React.FC = () => {
       </div>
 
       <h2 className="text-2xl font-bold mb-4">All Jobs</h2>
-      <div className="overflow-x-auto bg-gray-800 rounded-lg shadow-md">
+      <div className="overflow-x-auto bg-nasa-medium-blue rounded-lg shadow-md">
         <table className="min-w-full leading-normal">
           <thead>
-            <tr className="bg-gray-700 text-left text-gray-300 uppercase text-sm leading-normal">
+            <tr className="bg-nasa-dark-blue text-left text-nasa-light-gray uppercase text-sm leading-normal">
               <th className="py-3 px-6">Job ID</th>
               <th className="py-3 px-6">Target URL</th>
               <th className="py-3 px-6">Type</th>
@@ -178,9 +178,9 @@ const Jobs: React.FC = () => {
               <th className="py-3 px-6">Actions</th>
             </tr>
           </thead>
-          <tbody className="text-gray-300 text-sm font-light">
+          <tbody className="text-nasa-light-gray text-sm font-light">
             {jobs.map((job) => (
-              <tr key={job.id} className="border-b border-gray-700 hover:bg-gray-700">
+              <tr key={job.id} className="border-b border-gray-700 hover:bg-nasa-dark-blue">
                 <td className="py-3 px-6 text-left whitespace-nowrap">{job.id}</td>
                 <td className="py-3 px-6 text-left">{job.target_url}</td> {/* Corrected to target_url */}
                 <td className="py-3 px-6 text-left">{job.job_type}</td>
@@ -194,7 +194,7 @@ const Jobs: React.FC = () => {
                 <td className="py-3 px-6 text-left">
                   <button
                     onClick={() => handleControlAction(`jobs/${job.id}/cancel`, `Cancel Job ${job.id}`)}
-                    className="bg-red-500 hover:bg-red-700 text-white py-1 px-2 rounded text-xs"
+                    className="bg-nasa-red hover:bg-red-700 text-white py-1 px-2 rounded text-xs"
                   >
                     Cancel
                   </button>
