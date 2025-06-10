@@ -10,7 +10,7 @@ from Link_Profiler.database.database import db, clickhouse_client
 from Link_Profiler.utils.api_cache import APICache
 from Link_Profiler.core.models import (
     Domain, Backlink, SEOMetrics, SERPResult, KeywordSuggestion,
-    GSCBacklink, KeywordTrend, User # Import User for tier checking
+    GSCBacklink, KeywordTrend, User, CrawlJob, ReportJob # Import User, CrawlJob, ReportJob for tier checking
 )
 from Link_Profiler.utils.auth_utils import get_user_tier # Import get_user_tier
 
@@ -78,7 +78,7 @@ class DataService:
         
         # Define which tiers can access live data for which features
         # This is a simplified example; you might have a more granular configuration
-        PREMIUM_LIVE_FEATURES = ["backlinks", "gsc_backlinks_analytical", "keyword_trends_analytical"] # Example features requiring premium
+        PREMIUM_LIVE_FEATURES = ["backlinks", "gsc_backlinks_analytical", "keyword_trends_analytical", "single_job_status", "single_report_status"] # Example features requiring premium
         
         if user_tier == "free":
             self.logger.warning(f"Live data access denied for user {user.username} (tier: {user_tier}) for feature '{feature}'.")
@@ -119,6 +119,23 @@ class DataService:
             return [job.to_dict() for job in jobs]
         
         return await self._fetch_and_cache(f"{feature}_all", fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+
+    async def get_crawl_job_by_id(self, job_id: str, source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves a single crawl job by ID, cache-first.
+        """
+        feature = "single_job_status"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{job_id}"
+
+        async def fetch_live():
+            job = self.db.get_crawl_job(job_id)
+            return job.to_dict() if job else None
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=60, force_live=force_live) # Cache for 1 minute
 
     async def get_all_link_profiles(self, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
         """
@@ -203,6 +220,23 @@ class DataService:
             return [] # Placeholder for actual ClickHouse query results
         
         return await self._fetch_and_cache(f"{feature}_all", fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+
+    async def get_report_job_by_id(self, job_id: str, source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves a single report job by ID, cache-first.
+        """
+        feature = "single_report_status"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{job_id}"
+
+        async def fetch_live():
+            report_job = self.db.get_report_job(job_id)
+            return report_job.to_dict() if report_job else None
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=60, force_live=force_live) # Cache for 1 minute
 
 # Initialize the service with the singleton database clients
 data_service = DataService(database_client=db, ch_client=clickhouse_client, cache_client=APICache())

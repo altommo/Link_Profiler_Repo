@@ -2,12 +2,12 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Annotated
 import asyncio
 
 import redis.asyncio as redis
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 
 # Import core models
 from Link_Profiler.core.models import CrawlJob, CrawlStatus, CrawlConfig, serialize_model, User
@@ -19,7 +19,10 @@ from Link_Profiler.config.config_loader import ConfigLoader # Import ConfigLoade
 from Link_Profiler.database.database import Database # Import Database
 from Link_Profiler.services.alert_service import AlertService # Import AlertService
 from Link_Profiler.utils.connection_manager import ConnectionManager # Import ConnectionManager
-from Link_Profiler.api.dependencies import get_current_user # Import for authentication
+
+# Import decorators and data_service
+from Link_Profiler.api.decorators import require_auth, cache_first_route
+from Link_Profiler.services.data_service import data_service
 
 
 logger = logging.getLogger(__name__)
@@ -95,7 +98,7 @@ async def get_coordinator() -> JobCoordinator:
     return _job_coordinator
 
 # --- Queue Submission Function ---
-async def submit_crawl_to_queue(request: QueueCrawlRequest) -> Dict[str, str]:
+async def submit_crawl_to_queue(request: QueueCrawlRequest, user: User) -> Dict[str, str]:
     """
     Submits a crawl job to the Redis queue.
     """
@@ -117,12 +120,14 @@ async def submit_crawl_to_queue(request: QueueCrawlRequest) -> Dict[str, str]:
         # If needed in CrawlJob, it should be added to its definition or stored in config/results
         priority=request.priority,
         scheduled_at=request.scheduled_at,
-        cron_schedule=request.cron_schedule
+        cron_schedule=request.cron_schedule,
+        user_id=user.id, # Set user_id from authenticated user
+        organization_id=user.organization_id # Set organization_id from authenticated user
     )
 
     job_coordinator = await get_coordinator()
     await job_coordinator.submit_crawl_job(job)
-    logger.info(f"Job {job_id} ({job.job_type}) submitted to queue for {request.target_url}.")
+    logger.info(f"Job {job_id} ({job.job_type}) submitted to queue for {request.target_url} by user {user.username}.")
     return {"job_id": job_id, "status": "Job submitted to queue."}
 
 
@@ -130,26 +135,31 @@ async def submit_crawl_to_queue(request: QueueCrawlRequest) -> Dict[str, str]:
 queue_router = APIRouter(prefix="/api/queue", tags=["Queue Management"])
 
 @queue_router.post("/submit_crawl", response_model=Dict[str, str], status_code=status.HTTP_202_ACCEPTED)
-async def submit_crawl_job_endpoint(request: QueueCrawlRequest, current_user: User = Depends(get_current_user)):
+@require_auth
+async def submit_crawl_job_endpoint(request: QueueCrawlRequest, current_user: User):
     """
     Submits a new crawl job to the queue. Requires authentication.
     """
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required to submit jobs.")
+    # Admin check is handled by the route in monitoring_debug.py for now,
+    # but for customer-facing APIs, this would be based on user roles/permissions.
+    # For this refactor, we assume any authenticated user can submit.
     
-    logger.info(f"Admin user {current_user.username} submitting new crawl job for {request.target_url}.")
+    logger.info(f"User {current_user.username} submitting new crawl job for {request.target_url}.")
     try:
-        response = await submit_crawl_to_queue(request)
+        response = await submit_crawl_to_queue(request, current_user)
         return response
     except Exception as e:
         logger.error(f"Error submitting crawl job: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to submit crawl job: {e}")
 
 @queue_router.get("/stats", response_model=QueueStatsResponse)
-async def get_queue_stats_endpoint(current_user: User = Depends(get_current_user)):
+@require_auth
+async def get_queue_stats_endpoint(current_user: User):
     """
     Retrieves statistics about the job queues. Requires authentication.
     """
+    # This endpoint is typically for admin/monitoring, so keeping direct coordinator call.
+    # If customer-facing, it would need filtering by user_id/organization_id.
     if not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required to view queue stats.")
     
@@ -164,20 +174,36 @@ async def get_queue_stats_endpoint(current_user: User = Depends(get_current_user
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve queue stats: {e}")
 
 @queue_router.get("/job_status/{job_id}", response_model=CrawlJobResponse)
-async def get_job_status_endpoint(job_id: str, current_user: User = Depends(get_current_user)):
+@require_auth
+@cache_first_route
+async def get_job_status_endpoint(
+    job_id: str, 
+    current_user: User, # Injected by @require_auth
+    source: Annotated[Optional[str], Query(
+        "cache", 
+        description="""Data source for the request:
+        - `cache`: Returns cached data (default, fastest response)
+        - `live`: Returns real-time data (slower, requires appropriate user tier)""",
+        enum=["cache", "live"],
+        example="cache"
+    )] = "cache"
+):
     """
     Retrieves the status of a specific crawl job. Requires authentication.
+    By default, data is served from cache. Use `?source=live` to fetch the latest data,
+    subject to user permissions and configuration.
     """
-    if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required to view job status.")
-    
-    logger.info(f"Admin user {current_user.username} requesting status for job ID: {job_id}.")
+    logger.info(f"User {current_user.username} requesting status for job ID: {job_id} (source: {source}).")
     try:
-        coordinator = await get_coordinator()
-        job = await coordinator.get_job_status(job_id)
-        if not job:
+        job_data = await data_service.get_crawl_job_by_id(job_id, source=source, current_user=current_user)
+        if not job_data:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
-        return CrawlJobResponse.from_crawl_job(job)
+        
+        # Optional: Add authorization check here if jobs are user-specific
+        # if job_data.get("user_id") != current_user.id and not current_user.is_admin:
+        #     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to view this job.")
+
+        return CrawlJobResponse(**job_data) # Use **job_data to unpack dict
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -185,7 +211,8 @@ async def get_job_status_endpoint(job_id: str, current_user: User = Depends(get_
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve job status: {e}")
 
 @queue_router.post("/pause_processing", response_model=Dict[str, str])
-async def pause_job_processing_endpoint(current_user: User = Depends(get_current_user)):
+@require_auth
+async def pause_job_processing_endpoint(current_user: User):
     """
     Pauses job processing across all crawlers. Requires admin privileges.
     """
@@ -204,7 +231,8 @@ async def pause_job_processing_endpoint(current_user: User = Depends(get_current
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to pause job processing: {e}")
 
 @queue_router.post("/resume_processing", response_model=Dict[str, str])
-async def resume_job_processing_endpoint(current_user: User = Depends(get_current_user)):
+@require_auth
+async def resume_job_processing_endpoint(current_user: User):
     """
     Resumes job processing across all crawlers. Requires admin privileges.
     """
@@ -223,7 +251,8 @@ async def resume_job_processing_endpoint(current_user: User = Depends(get_curren
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to resume job processing: {e}")
 
 @queue_router.post("/cancel_job/{job_id}", response_model=Dict[str, str])
-async def cancel_job_endpoint(job_id: str, current_user: User = Depends(get_current_user)):
+@require_auth
+async def cancel_job_endpoint(job_id: str, current_user: User):
     """
     Cancels a specific job. Requires admin privileges.
     """
@@ -242,7 +271,8 @@ async def cancel_job_endpoint(job_id: str, current_user: User = Depends(get_curr
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to cancel job {job_id}: {e}")
 
 @queue_router.get("/processing_status", response_model=Dict[str, bool])
-async def get_processing_status_endpoint(current_user: User = Depends(get_current_user)):
+@require_auth
+async def get_processing_status_endpoint(current_user: User):
     """
     Retrieves the current global job processing pause status. Requires authentication.
     """
