@@ -1,6 +1,7 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Float, Text, Integer, JSON, Index # Added Index
+from sqlalchemy import Column, String, Boolean, DateTime, Float, Text, Integer, JSON, Index, ForeignKey # Added Index, ForeignKey
 from sqlalchemy.dialects.postgresql import ARRAY # For ARRAY type
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship # Added relationship
 from datetime import datetime # Import datetime
 import uuid # Import uuid for default values if needed
 
@@ -10,6 +11,19 @@ from Link_Profiler.core.models import AlertSeverity as AlertSeverityEnum, AlertC
 from Link_Profiler.core.models import LinkType as LinkTypeEnum, ContentType as ContentTypeEnum, CrawlStatus as CrawlStatusEnum, SpamLevel as SpamLevelEnum # Import other enums
 
 Base = declarative_base()
+
+class RoleORM(Base):
+    __tablename__ = 'roles'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, unique=True, nullable=False)
+    description = Column(Text, nullable=True)
+    permissions = Column(ARRAY(String), default=[])
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index('ix_roles_name', 'name'),
+    )
 
 class AlertRuleORM(Base):
     __tablename__ = 'alert_rules'
@@ -119,6 +133,24 @@ class BacklinkORM(Base):
         Index('ix_backlinks_first_seen', 'first_seen'), # For time-based queries
         Index('ix_backlinks_target_url_first_seen', 'target_url', 'first_seen'), # Composite for common queries
         Index('ix_backlinks_target_domain_first_seen', 'target_domain_name', 'first_seen'), # Composite for common queries
+    )
+
+class GSCBacklinkORM(Base):
+    __tablename__ = 'gsc_backlinks'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    domain = Column(String, nullable=False) # The verified GSC property domain
+    source_url = Column(String, nullable=False) # The linking URL (or domain if GSC only provides domain)
+    target_url = Column(String, nullable=False) # The linked URL on your site
+    anchor_text = Column(String, nullable=True) # Anchor text (often "N/A" for GSC API)
+    fetch_date = Column(DateTime, default=datetime.now)
+    last_fetched_at = Column(DateTime, default=datetime.utcnow)
+    user_id = Column(String, nullable=True)
+    organization_id = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index('ix_gsc_backlinks_domain', 'domain'),
+        Index('ix_gsc_backlinks_source_target', 'source_url', 'target_url'), # Composite for uniqueness
+        Index('ix_gsc_backlinks_fetch_date', 'fetch_date'),
     )
 
 class LinkProfileORM(Base):
@@ -276,6 +308,23 @@ class KeywordSuggestionORM(Base):
         Index('ix_keyword_suggestions_seed_keyword_data_timestamp', 'seed_keyword', 'data_timestamp'), # Composite
     )
 
+class KeywordTrendORM(Base):
+    __tablename__ = 'keyword_trends'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    keyword = Column(String, nullable=False)
+    date = Column(DateTime, nullable=False) # The date for which the trend_index is recorded
+    trend_index = Column(Float, nullable=False) # A numerical index representing popularity/interest
+    source = Column(String, nullable=True) # e.g., "Google Trends"
+    last_updated = Column(DateTime, default=datetime.now)
+    user_id = Column(String, nullable=True)
+    organization_id = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index('ix_keyword_trends_keyword', 'keyword'),
+        Index('ix_keyword_trends_date', 'date'),
+        Index('ix_keyword_trends_keyword_date', 'keyword', 'date'), # Composite for uniqueness and lookup
+    )
+
 class UserORM(Base):
     __tablename__ = 'users'
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -284,7 +333,9 @@ class UserORM(Base):
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
-    role = Column(String, default="user")
+    # role = Column(String, default="user") # Removed, replaced by role_id and relationship
+    role_id = Column(String, ForeignKey('roles.id'), nullable=True) # Foreign key to roles table
+    role = relationship("RoleORM", backref="users") # Relationship to RoleORM
     organization_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     last_updated = Column(DateTime, default=datetime.utcnow)
@@ -294,6 +345,7 @@ class UserORM(Base):
         Index('ix_users_username', 'username'),
         Index('ix_users_email', 'email'),
         Index('ix_users_organization_id', 'organization_id'),
+        Index('ix_users_role_id', 'role_id'),
     )
 
 class ContentGapAnalysisResultORM(Base):
@@ -447,6 +499,20 @@ class SocialMentionORM(Base):
         Index('ix_social_mentions_query', 'query'),
         Index('ix_social_mentions_platform', 'platform'),
         Index('ix_social_mentions_published_date', 'published_date'),
+    )
+
+class TelemetryEventORM(Base):
+    __tablename__ = 'telemetry_events'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=True) # Can be null if event is not user-specific
+    event_type = Column(String, nullable=False)
+    payload = Column(JSON, default={})
+    timestamp = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index('ix_telemetry_events_user_id', 'user_id'),
+        Index('ix_telemetry_events_event_type', 'event_type'),
+        Index('ix_telemetry_events_timestamp', 'timestamp'),
     )
 
 class SatellitePerformanceLogORM(Base):

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from urllib.parse import urlparse # Import urlparse
 
 # Import from core.models for shared data structures and serialization
-from Link_Profiler.core.models import User, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, Token, TokenData, LinkIntersectResult, CompetitiveKeywordAnalysisResult # Added Token, TokenData, LinkIntersectResult, CompetitiveAnalysisResult
+from Link_Profiler.core.models import User, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, Token, TokenData, GSCBacklink, KeywordTrend, Role, TelemetryEvent # Added new models
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -19,12 +19,30 @@ class UserCreate(BaseModel):
     email: str = Field(..., pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
     password: str = Field(..., min_length=8)
 
+class RoleResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    permissions: List[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+    @classmethod
+    def from_role(cls, role: Role):
+        return cls(**role.to_dict())
+
 class UserResponse(BaseModel):
     id: str
     username: str
     email: str
     is_active: bool
     is_admin: bool
+    role_id: Optional[str] = None
+    role: Optional[RoleResponse] = None # Nested RoleResponse
     created_at: datetime
     last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
@@ -36,7 +54,8 @@ class UserResponse(BaseModel):
     @classmethod
     def from_user(cls, user: User):
         user_dict = user.to_dict() # Use to_dict() method
-        # Pydantic handles datetime conversion from ISO format string if type hint is datetime
+        if user.role: # Convert nested Role dataclass to RoleResponse
+            user_dict['role'] = RoleResponse.from_role(user.role)
         return cls(**user_dict)
 
 # Token model is already defined in core.models, so we can just import it.
@@ -253,8 +272,8 @@ class BacklinkResponse(BaseModel):
     is_image_link: bool # Added
     alt_text: Optional[str] # Added
     authority_passed: Optional[float] # Made optional
-    is_active: Optional[bool] # Added
-    spam_level: Optional[SpamLevel] # Added
+    is_active: Optional[bool] = None # Added
+    spam_level: Optional[SpamLevel] = None # Added
     http_status: Optional[int] = None
     crawl_timestamp: Optional[datetime] = None
     source_domain_metrics: Dict[str, Any] = Field(default_factory=dict)
@@ -269,6 +288,24 @@ class BacklinkResponse(BaseModel):
         backlink_dict = backlink.to_dict() # Use to_dict() method
         # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**backlink_dict)
+
+class GSCBacklinkResponse(BaseModel):
+    domain: str
+    source_url: str
+    target_url: str
+    anchor_text: Optional[str] = None
+    fetch_date: datetime
+    last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+    @classmethod
+    def from_gsc_backlink(cls, gsc_backlink: GSCBacklink):
+        gsc_backlink_dict = gsc_backlink.to_dict()
+        gsc_backlink_dict['last_updated'] = gsc_backlink_dict.pop('last_fetched_at', None)
+        return cls(**gsc_backlink_dict)
 
 class DomainResponse(BaseModel):
     name: str
@@ -321,6 +358,7 @@ class FindExpiredDomainsRequest(BaseModel):
 class FindExpiredDomainsResponse(BaseModel):
     found_domains: List[DomainAnalysisResponse]
     total_candidates_processed: int
+
     valuable_domains_found: int
 
 class SERPSearchRequest(BaseModel):
@@ -373,6 +411,21 @@ class KeywordSuggestionResponse(BaseModel):
         suggestion_dict = suggestion.to_dict() # Use to_dict() method
         # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**suggestion_dict)
+
+class KeywordTrendResponse(BaseModel):
+    keyword: str
+    date: datetime
+    trend_index: float
+    source: Optional[str] = None
+    last_updated: datetime
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+    @classmethod
+    def from_keyword_trend(cls, keyword_trend: KeywordTrend):
+        return cls(**keyword_trend.to_dict())
 
 class LinkIntersectRequest(BaseModel):
     primary_domain: str = Field(..., description="The primary domain for analysis (e.g., 'https://example.com').")
@@ -524,6 +577,7 @@ class OutreachCampaignResponse(BaseModel):
     id: str
 
     name: str
+
     target_domain: str
     status: str
     created_date: datetime = Field(..., alias="created_at") # Use created_at from core.models.OutreachCampaign
@@ -588,7 +642,7 @@ class ReportScheduleRequest(BaseModel):
     target_identifier: str = Field(..., description="Identifier for the report target (e.g., URL, 'all').")
     format: str = Field(..., description="Format of the report (e.g., 'pdf', 'excel').")
     scheduled_at: Optional[datetime] = Field(None, description="Specific UTC datetime to run the report (ISO format).")
-    cron_schedule: Optional[str] = Field(None, description="Cron string for recurring reports (e.g., '0 0 * * *').")
+    cron_schedule: Optional[str] = Field(None, description="Optional: Cron string for recurring jobs.")
     config: Optional[Dict] = Field(None, description="Optional configuration for report generation.")
 
 class ReportJobResponse(BaseModel):
@@ -735,6 +789,21 @@ class SEOMetricsResponse(BaseModel): # New Pydantic model for SEOMetrics
         metrics_dict = metrics.to_dict() # Use to_dict() method
         # Pydantic handles datetime conversion from ISO format string if type hint is datetime
         return cls(**metrics_dict)
+
+class TelemetryEventResponse(BaseModel):
+    id: str
+    user_id: Optional[str] = None
+    event_type: str
+    payload: Dict[str, Any]
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+    @classmethod
+    def from_telemetry_event(cls, telemetry_event: TelemetryEvent):
+        return cls(**telemetry_event.to_dict())
 
 # --- Dashboard Specific Schemas ---
 class CrawlerMissionStatus(BaseModel):

@@ -11,7 +11,7 @@ from collections import defaultdict # Added missing import
 def serialize_model(obj: Any) -> Any:
     """
     Recursively converts dataclass instances and Enums to dictionaries/strings.
-    Handles datetime objects by converting them to ISO format strings.
+    Handles datetime objects by converting them to ISO format.
     """
     if isinstance(obj, (datetime)):
         return obj.isoformat()
@@ -385,6 +385,29 @@ class Backlink:
         return cls(**data)
 
 @dataclass
+class GSCBacklink:
+    """Represents a backlink as reported by Google Search Console."""
+    domain: str # The verified GSC property domain
+    source_url: str # The linking URL (or domain if GSC only provides domain)
+    target_url: str # The linked URL on your site
+    anchor_text: Optional[str] = None # Anchor text (often "N/A" for GSC API)
+    fetch_date: datetime = field(default_factory=datetime.now)
+    last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None
+    organization_id: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'GSCBacklink':
+        if 'fetch_date' in data and isinstance(data['fetch_date'], str):
+            data['fetch_date'] = datetime.fromisoformat(data['fetch_date'])
+        if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
+            data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
+        return cls(**data)
+
+@dataclass
 class CrawlResult:
     """Result of a single page crawl"""
     url: str
@@ -615,6 +638,28 @@ class KeywordSuggestion:
         return cls(**data)
 
 @dataclass
+class KeywordTrend:
+    """Represents historical trend data for a specific keyword."""
+    keyword: str
+    date: datetime # The date for which the trend_index is recorded (e.g., start of month)
+    trend_index: float # A numerical index representing popularity/interest (e.g., 0-100)
+    source: Optional[str] = None # e.g., "Google Trends"
+    last_updated: datetime = field(default_factory=datetime.now)
+    user_id: Optional[str] = None
+    organization_id: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'KeywordTrend':
+        if 'date' in data and isinstance(data['date'], str):
+            data['date'] = datetime.fromisoformat(data['date'])
+        if 'last_updated' in data and isinstance(data['last_updated'], str):
+            data['last_updated'] = datetime.fromisoformat(data['last_updated'])
+        return cls(**data)
+
+@dataclass
 class LinkIntersectResult:
     """Result of a link intersect analysis."""
     primary_domain: str
@@ -708,6 +753,27 @@ class AlertRule:
         return cls(**data)
 
 @dataclass
+class Role:
+    """Represents a user role in the system."""
+    id: str
+    name: str # e.g., "customer", "admin", "analyst"
+    description: Optional[str] = None
+    permissions: List[str] = field(default_factory=list) # List of permission strings
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'Role':
+        if 'created_at' in data and isinstance(data['created_at'], str):
+            data['created_at'] = datetime.fromisoformat(data['created_at'])
+        if 'updated_at' in data and isinstance(data['updated_at'], str):
+            data['updated_at'] = datetime.fromisoformat(data['updated_at'])
+        return cls(**data)
+
+@dataclass
 class User:
     """Represents a user in the system."""
     id: str
@@ -716,7 +782,8 @@ class User:
     hashed_password: str
     is_active: bool = True
     is_admin: bool = False
-    role: str = "customer" # New: Role field (e.g., "customer", "admin", "analyst")
+    role_id: Optional[str] = None # Foreign key to Role
+    role: Optional[Role] = None # Relationship to Role dataclass
     organization_id: Optional[str] = None # New: For multi-tenancy
     created_at: datetime = field(default_factory=datetime.now) # Reverted: database actually uses created_at
     updated_at: datetime = field(default_factory=datetime.now)
@@ -725,7 +792,11 @@ class User:
 
     def to_dict(self) -> Dict[str, Any]:
         # Exclude hashed_password for security when converting to dict for API responses
-        return {k: serialize_model(v) for k, v in self.__dict__.items() if k != 'hashed_password'}
+        data = {k: serialize_model(v) for k, v in self.__dict__.items() if k != 'hashed_password'}
+        # Handle nested Role object
+        if 'role' in data and isinstance(data['role'], Role):
+            data['role'] = data['role'].to_dict()
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'User':
@@ -737,6 +808,9 @@ class User:
             data['last_updated'] = datetime.fromisoformat(data['last_updated'])
         if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
             data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
+        # Handle nested Role object
+        if 'role' in data and isinstance(data['role'], dict):
+            data['role'] = Role.from_dict(data['role'])
         return cls(**data)
 
 @dataclass
@@ -1016,6 +1090,23 @@ class SocialMention:
             data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
         return cls(**data)
 
+@dataclass
+class TelemetryEvent:
+    """Represents a telemetry event for system monitoring."""
+    id: str
+    user_id: Optional[str] = None
+    event_type: str # e.g., "job_submission", "report_download", "login"
+    payload: Dict[str, Any] = field(default_factory=dict) # Event-specific data
+    timestamp: datetime = field(default_factory=datetime.now)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'TelemetryEvent':
+        if 'timestamp' in data and isinstance(data['timestamp'], str):
+            data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        return cls(**data)
 
 @dataclass
 class SatellitePerformanceLog:
