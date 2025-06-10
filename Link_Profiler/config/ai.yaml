@@ -1,0 +1,21 @@
+# Link_Profiler/config/ai.yaml
+
+ai:
+  enabled: true # Set to true to enable AI features (will use simulated/cached if no API key)
+  openrouter_api_key: "" # Your OpenRouter API key. Leave empty to avoid real API calls.
+  models: # Specify models to use for different tasks (check OpenRouter for available free models)
+    content_scoring: "google/gemma-7b-it"
+    content_classification: "google/gemma-7b-it"
+    content_gap_analysis: "google/gemma-7b-it"
+    topic_clustering: "google/gemma-7b-it"
+    keyword_research: "google/gemma-7b-it"
+    technical_seo_analysis: "google/gemma-7b-it"
+    competitor_analysis: "google/gemma-7b-it"
+    content_generation: "google/gemma-7b-it"
+    domain_value_analysis: "google/gemma-7b-it"
+    content_nlp_analysis: "google/gemma-7b-it"
+    video_frame_analysis: "google/gemma-7b-it" # Note: Video analysis might still incur costs if it uses external services
+    content_quality_assessment: "google/gemma-7b-it"
+  ai_service:
+    allow_live: false # Set to false to force simulated/cached AI results and avoid costs
+    staleness_threshold_hours: 24 # How old cached data can be before attempting live fetch

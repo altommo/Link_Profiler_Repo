@@ -1,146 +1,157 @@
-# External API Integrations
+# Link_Profiler/config/external_apis.yaml
+
+# --- Backlink APIs ---
+backlink_api:
+  # Google Search Console API (requires OAuth setup and verified property)
+  gsc_api:
+    enabled: false # Set to true if you have GSC setup and want to use it
+    credentials_file: "credentials.json" # Path to your GSC credentials.json
+    token_file: "token.json" # Path to your GSC token.json
+
+  # OpenLinkProfiler API (free with usage limits)
+  openlinkprofiler_api:
+    enabled: true # Enable this for free backlink data
+    base_url: "http://www.openlinkprofiler.org/api/index.php"
+
+  # Real Backlink API (e.g., Ahrefs, Moz, SEMrush - PAID)
+  real_api:
+    enabled: false # Keep this false to avoid costs
+    api_key: "YOUR_PAID_BACKLINK_API_KEY"
+    base_url: "https://api.ahrefs.com/v2" # Example for Ahrefs
+
+# --- Domain APIs ---
 domain_api:
+  # AbstractAPI (PAID - often has a free tier, but can incur costs)
   abstract_api:
-    enabled: false
-    api_key: "${LP_DOMAIN_ABSTRACT_API_KEY}"
+    enabled: false # Keep this false to avoid costs
+    api_key: "YOUR_ABSTRACT_API_KEY"
     base_url: "https://domain-validation.abstractapi.com/v1/"
     whois_base_url: "https://whois.abstractapi.com/v1/"
-  real_api:
-    enabled: false
-    api_key: "${LP_DOMAIN_REAL_API_KEY}"
-    base_url: "https://api.whoisxmlapi.com/v1"
+
+  # WHOIS-JSON.com API (free with usage limits, optional API key for higher limits)
   whois_json_api:
-    enabled: false
+    enabled: true # Enable this for free WHOIS data
+    api_key: "" # Leave empty for free tier, or add if you have one
     base_url: "https://www.whois-json.com/api/v1/whois"
-    api_key: "${LP_WHOIS_JSON_API_KEY}"
+
+  # SecurityTrails API (PAID)
+  securitytrails:
+    enabled: false # Keep this false to avoid costs
+    api_key: "YOUR_SECURITYTRAILS_API_KEY"
+    base_url: "https://api.securitytrails.com/v1"
+
+  # BuiltWith API (PAID)
+  builtwith:
+    enabled: false # Keep this false to avoid costs
+    api_key: "YOUR_BUILTWITH_API_KEY"
+    base_url: "https://api.builtwith.com/v19/api.json"
+
+  # Hunter.io API (PAID - often has a free tier, but can incur costs)
+  hunter_io:
+    enabled: false # Keep this false to avoid costs
+    api_key: "YOUR_HUNTER_IO_API_KEY"
+    base_url: "https://api.hunter.io/v2"
+
+  # Domain Service specific settings (for direct DNS/IP lookups)
+  domain_service:
+    allow_live: true # Set to true to allow direct DNS/IP lookups (free)
+  
+  # DNS over HTTPS (DOH) APIs (free public services)
   dns_over_https_api:
-    enabled: false
+    enabled: true # Enable for more reliable DNS lookups
     cloudflare_url: "https://cloudflare-dns.com/dns-query"
     google_url: "https://dns.google/resolve"
-  domain_service:
-    allow_live: true
-    staleness_threshold_hours: 24
 
-backlink_api:
-  gsc_api:
-    enabled: false
-    credentials_file: "credentials.json"
-    token_file: "token.json"
-  openlinkprofiler_api:
-    enabled: false
-    base_url: "http://www.openlinkprofiler.org/api/index.php"
-  real_api:
-    enabled: false
-    api_key: "${LP_BACKLINK_REAL_API_KEY}"
-    base_url: "https://api.ahrefs.com/v3"
-  backlink_service:
-    allow_live: true
-    staleness_threshold_hours: 24
+  # SEO Metrics API (e.g., Open PageRank - often free, but check terms)
+  seo_metrics_api:
+    enabled: false # Enable if you want to use a free SEO metrics API (e.g., Open PageRank)
+    api_key: "" # Add API key if required
+    base_url: "https://openpagerank.com/api/v1.0/getPageRank"
 
+  # IP Info API (e.g., ip-api.com - often free, but check terms)
+  ip_info_api:
+    enabled: true # Enable for free IP info lookups
+    api_key: "" # Add API key if required (some free tiers don't need one)
+    base_url: "http://ip-api.com/json"
+
+# --- SERP APIs ---
 serp_api:
-  real_api:
-    enabled: false
-    api_key: "${LP_SERP_REAL_API_KEY}"
-    base_url: "https://serpapi.com/search"
-  pagespeed_insights_api:
-    enabled: false
-    api_key: "${LP_PAGESPEED_API_KEY}"
-    base_url: "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
-  serp_service:
-    allow_live: true
-    staleness_threshold_hours: 12
-
-keyword_api:
-  real_api:
-    enabled: false
-    api_key: "${LP_KEYWORD_REAL_API_KEY}"
-    base_url: "https://api.ahrefs.com/v3"
-  metrics_api:
-    enabled: false
-    api_key: "${LP_KEYWORD_METRICS_API_KEY}"
-    base_url: "https://googleads.googleapis.com/v16"
-  google_trends_api:
-    enabled: false
-  keyword_service:
-    allow_live: true
-    staleness_threshold_hours: 24
-
-# AI Service Integration
-ai:
-  enabled: false
-  openrouter_api_key: "${LP_AI_OPENROUTER_API_KEY}"
-  models:
-    content_scoring: "anthropic/claude-3-haiku"
-    content_classification: "anthropic/claude-3-haiku"
-    content_gap_analysis: "openai/gpt-4-turbo"
-    keyword_research: "google/gemini-pro"
-    technical_seo_analysis: "anthropic/claude-3-5-sonnet"
-    competitor_analysis: "openai/gpt-4"
-    content_generation: "anthropic/claude-3-5-sonnet"
-    domain_value_analysis: "mistralai/mistral-7b-instruct"
-    content_nlp_analysis: "anthropic/claude-3-haiku"
-    topic_clustering: "mistralai/mistral-7b-instruct"
-    content_quality_assessment: "anthropic/claude-3-haiku"
-    video_frame_analysis: "openai/gpt-4o"
-  ai_service:
-    allow_live: true
-    staleness_threshold_hours: 24
-
-# External API Quota Manager specific configurations
-external_apis:
+  # Serpstack API (PAID - often has a free tier, but can incur costs)
   serpstack:
-    enabled: false
-    api_key: "${LP_SERPSTACK_API_KEY}"
-    monthly_limit: 1000
-    reset_day_of_month: 1
-    cost_per_unit: 0.001
-    quality_score: 5
-    supported_query_types: ["serp_search"]
+    enabled: false # Keep this false to avoid costs
+    api_key: "YOUR_SERPSTACK_API_KEY"
+    base_url: "http://api.serpstack.com/api/"
+
+  # ValueSERP API (PAID - often has a free tier, but can incur costs)
   valueserp:
-    enabled: false
-    api_key: "${LP_VALUESERP_API_KEY}"
-    monthly_limit: 100
-    reset_day_of_month: 1
-    cost_per_unit: 0.005
-    quality_score: 4
-    supported_query_types: ["serp_search"]
-  webscraping_ai:
-    enabled: false
-    api_key: "${LP_WEBSCRAPING_AI_API_KEY}"
-    monthly_limit: 1000
-    reset_day_of_month: 1
-    cost_per_unit: 0.002
-    quality_score: 4
-    supported_query_types: ["web_scrape"]
-  hunter_io:
-    enabled: false
-    api_key: "${LP_HUNTER_IO_API_KEY}"
-    monthly_limit: 50
-    reset_day_of_month: 1
-    cost_per_unit: 0.01
-    quality_score: 3
-    supported_query_types: ["email_lookup"]
-  builtwith:
-    enabled: false
-    api_key: "${LP_BUILTWITH_API_KEY}"
-    monthly_limit: 200
-    reset_day_of_month: 1
-    cost_per_unit: 0.008
-    quality_score: 4
-    supported_query_types: ["tech_stack"]
-  clearbit:
-    enabled: false
-    api_key: "${LP_CLEARBIT_API_KEY}"
-    monthly_limit: 50
-    reset_day_of_month: 1
-    cost_per_unit: 0.02
-    quality_score: 5
-    supported_query_types: ["company_info", "person_info"]
-  securitytrails:
-    enabled: false
-    api_key: "${LP_SECURITY_TRAILS_API_KEY}"
-    monthly_limit: 50
-    reset_day_of_month: 1
-    cost_per_unit: 0.015
-    quality_score: 5
-    supported_query_types: ["domain_data", "dns_history"]
+    enabled: false # Keep this false to avoid costs
+    api_key: "YOUR_VALUESERP_API_KEY"
+    base_url: "https://api.valueserp.com/search"
+
+# --- Keyword APIs ---
+keyword_api:
+  # Real Keyword API (e.g., Ahrefs, SEMrush - PAID)
+  real_api:
+    enabled: false # Keep this false to avoid costs
+    api_key: "YOUR_PAID_KEYWORD_API_KEY"
+    base_url: "https://api.example.com/keyword" # Example
+
+  # Real Keyword Metrics API (e.g., Ahrefs, SEMrush - PAID)
+  metrics_api:
+    enabled: false # Keep this false to avoid costs
+    api_key: "YOUR_PAID_KEYWORD_METRICS_API_KEY"
+    base_url: "https://api.example.com/keyword_metrics" # Example
+
+  # Keyword Service specific settings
+  keyword_service:
+    allow_live: false # Set to false to force simulated/cached keyword data
+    staleness_threshold_hours: 24 # How old cached data can be before attempting live fetch
+
+# --- Web Scraping AI API (PAID - often has a free tier, but can incur costs) ---
+webscraping_ai:
+  enabled: false # Keep this false to avoid costs
+  api_key: "YOUR_WEBSCRAPING_AI_API_KEY"
+  base_url: "https://api.webscraping.ai/html"
+
+# --- Wayback Machine API (FREE) ---
+historical_data:
+  wayback_machine_api:
+    enabled: true # Enable this for free historical data
+    base_url: "http://web.archive.org/cdx/search/cdx"
+
+# --- Social Media APIs (PAID - often has free tiers, but can incur costs) ---
+social_media_api:
+  reddit:
+    enabled: false # Keep this false to avoid costs
+    client_id: "YOUR_REDDIT_CLIENT_ID"
+    client_secret: "YOUR_REDDIT_CLIENT_SECRET"
+    user_agent: "LinkProfilerApp/1.0"
+  youtube:
+    enabled: false # Keep this false to avoid costs
+    api_key: "YOUR_YOUTUBE_API_KEY"
+  news_api:
+    enabled: false # Keep this false to avoid costs
+    api_key: "YOUR_NEWS_API_KEY"
+
+# --- AI Service (OpenRouter - can be free for some models, but check usage) ---
+# It's recommended to disable live AI calls for cost control during initial aggregation.
+# The AI service will then use simulated/cached results.
+ai:
+  enabled: true # Keep enabled to use simulated AI features
+  openrouter_api_key: "" # Leave empty to avoid real API calls
+  models:
+    content_scoring: "google/gemma-7b-it" # Example free model on OpenRouter
+    content_classification: "google/gemma-7b-it"
+    content_gap_analysis: "google/gemma-7b-it"
+    topic_clustering: "google/gemma-7b-it"
+    keyword_research: "google/gemma-7b-it"
+    technical_seo_analysis: "google/gemma-7b-it"
+    competitor_analysis: "google/gemma-7b-it"
+    content_generation: "google/gemma-7b-it"
+    domain_value_analysis: "google/gemma-7b-it"
+    content_nlp_analysis: "google/gemma-7b-it"
+    video_frame_analysis: "google/gemma-7b-it"
+    content_quality_assessment: "google/gemma-7b-it"
+  ai_service:
+    allow_live: false # Set to false to force simulated/cached AI results
+    staleness_threshold_hours: 24 # How old cached data can be before attempting live fetch

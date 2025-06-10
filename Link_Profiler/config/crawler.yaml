@@ -1,76 +1,64 @@
-# Crawler settings
+# Link_Profiler/config/crawler.yaml
+
 crawler:
-  max_depth: 3
-  max_pages: 1000
-  user_agent: "LinkProfilerBot/1.0 (+http://linkprofiler.com/bot.html)"
-  respect_robots_txt: true
-  follow_redirects: true
-  extract_images: true
-  extract_pdfs: false
-  max_file_size_mb: 10
-  max_retries: 3
-  retry_delay_seconds: 5.0
+  max_depth: 3 # Maximum depth to crawl from seed URLs
+  max_pages: 1000 # Maximum number of pages to crawl per job
+  delay_seconds: 1.0 # Delay between requests to the same domain (seconds)
+  timeout_seconds: 30 # Timeout for HTTP requests (seconds)
+  user_agent: "LinkProfilerBot/1.0" # Default User-Agent string
+  respect_robots_txt: true # Always respect robots.txt rules for ethical crawling
+  follow_redirects: true # Whether to follow HTTP redirects
+  extract_images: true # Whether to extract image links
+  extract_pdfs: false # Whether to extract links from PDF documents
+  max_file_size_mb: 10 # Maximum file size to download in MB
+  max_retries: 3 # Maximum number of retries for failed URL fetches
+  retry_delay_seconds: 5.0 # Delay between retries in seconds
 
-# Anti-detection & Quality Assurance settings
+# Anti-detection settings (can be enabled for more stealthy crawling)
 anti_detection:
-  user_agent_rotation: true
-  consistent_ua_per_domain: true
-  request_header_randomization: true
-  human_like_delays: true
-  random_delay_range: [0.5, 2.0]
-  stealth_mode: true
-  browser_fingerprint_randomization: false
-  captcha_solving_enabled: false
+  user_agent_rotation: true # Rotate user agents from a pool
+  request_header_randomization: true # Randomize other request headers (Accept, Accept-Language, etc.)
+  human_like_delays: true # Add small random delays to mimic human browsing behavior
+  stealth_mode: true # Enable Playwright stealth mode for browser-based crawling
+  browser_fingerprint_randomization: false # Randomize browser fingerprint properties
+  captcha_solving_enabled: false # Enable CAPTCHA solving (requires external service)
+  anomaly_detection_enabled: true # Enable real-time anomaly detection
 
-quality_assurance:
-  spam_filtering: true
-  data_quality_scoring: true
-
-# Proxy management settings
+# Proxy settings
 proxy:
-  use_proxies: false
-  proxy_list: []
-  proxy_retry_delay_seconds: 300
+  use_proxies: false # Set to true if you have proxies configured in proxy_list
+  proxy_list: [] # List of proxy configurations (e.g., [{'url': 'http://user:pass@ip:port', 'region': 'us-east'}])
+  proxy_retry_delay_seconds: 300 # How long to wait before retrying a failed proxy
+  max_failures_before_ban: 5 # How many failures before a proxy is temporarily banned
 
-# Browser-based crawling settings
+# Browser-based crawling settings (for JavaScript rendering)
 browser_crawler:
-  enabled: true
-  browser_type: "chromium"
-  headless: true
+  enabled: true # Set to true to enable headless browser crawling
+  browser_type: "chromium" # Browser type (chromium, firefox, webkit)
+  headless: true # Whether the browser should run in headless mode
 
-# SERP crawler settings
+# Keyword Scraper settings (for direct web scraping of keyword data)
+keyword_scraper:
+  enabled: false # Set to true to enable keyword scraping (can be resource intensive)
+
+# SERP Crawler settings (for direct web scraping of SERP data)
 serp_crawler:
   playwright:
-    enabled: true
-    headless: true
-    browser_type: "chromium"
+    enabled: true # Set to true to enable Playwright-based SERP crawling
+    headless: true # Whether the browser should run in headless mode
+    browser_type: "chromium" # Browser type (chromium, firefox, webkit)
 
-# Social Media Integration
+# Social Media Crawler settings
 social_media_crawler:
-  enabled: false
-  platforms: ["twitter", "facebook", "linkedin", "reddit", "youtube"]
+  enabled: false # Set to true to enable social media crawling (requires API keys/setup)
+  platforms: ["reddit"] # Specific platforms to crawl (e.g., "twitter", "facebook", "reddit")
 
-# Web3 Integration
-web3_crawler:
-  enabled: false
-  ipfs_gateway_url: "https://ipfs.io/ipfs/"
+# Quality Assurance settings
+quality_assurance:
+  spam_filtering: true # Enable spam filtering for backlinks
+  data_quality_scoring: true # Enable data quality scoring for various metrics
+  anomaly_detection_enabled: true # Enable anomaly detection for crawl jobs
 
-# Queue system settings
-queue:
-  job_queue_name: "crawl_jobs"
-  result_queue_name: "crawl_results"
-  dead_letter_queue_name: "dead_letter_queue"
-  scheduler_interval: 5
-  heartbeat_queue_sorted_name: "crawler_heartbeats_sorted"
-
-# Queue System settings
-queue_system:
-  redis_url: "${LP_REDIS_URL}"
-  max_queue_size: 100000
-  domain_max_concurrent: 2
-  scheduled_jobs_queue: "scheduled_crawl_jobs"
-
-# Satellite Crawler settings
-satellite:
-  id: "default-satellite-1"
-  heartbeat_interval: 5
+# Rate Limiting settings (for internal control of requests)
+rate_limiting:
+  ml_enhanced: false # Enable ML-enhanced rate limiting (adaptive delays)
