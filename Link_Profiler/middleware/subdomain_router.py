@@ -39,8 +39,9 @@ class SubdomainRouterMiddleware(BaseHTTPMiddleware):
             
             # FIXED: Check for API requests FIRST, regardless of subdomain
             # API requests should be handled by FastAPI routers, not served as dashboard
-            if (request.url.path.startswith("/api") or 
-                request.url.path.startswith("/ws") or 
+            if (request.url.path.startswith("/api/") or # Changed from /api to /api/
+                request.url.path.startswith("/admin/") or # Added /admin/
+                request.url.path.startswith("/ws/") or # Changed from /ws to /ws/
                 request.url.path.startswith("/health") or 
                 request.url.path.startswith("/metrics") or
                 request.url.path.startswith("/token") or
@@ -65,8 +66,6 @@ class SubdomainRouterMiddleware(BaseHTTPMiddleware):
                     logger.debug(f"Unknown subdomain '{subdomain}' from host: {host}")
             else:
                 logger.debug(f"No subdomain detected in host: {host} (parts: {hostname_parts})")
-        else:
-            logger.warning("No host header found in request")
 
         # Log final state
         logger.debug(f"Request routing state - Customer: {request.state.is_customer_dashboard}, Mission Control: {request.state.is_mission_control_dashboard}, API: {request.state.is_api_request}")
