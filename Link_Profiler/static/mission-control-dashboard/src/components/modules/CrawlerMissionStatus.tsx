@@ -2,7 +2,7 @@ import React from 'react';
 import ModuleContainer from '../shared/ModuleContainer';
 import MetricDisplay from '../shared/MetricDisplay';
 import ListDisplay from '../shared/ListDisplay';
-import ChartContainer from '../shared/ChartContainer'; // New import
+import ChartContainer from '../charts/LineChart'; // New import
 import LineChart from '../charts/LineChart'; // New import
 import { CrawlError, SatelliteFleetStatus } from '../../types'; // Import specific types
 
