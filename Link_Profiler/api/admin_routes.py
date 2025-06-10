@@ -152,7 +152,7 @@ async def update_api_key(api_name: str, new_key: str, current_user: User = Depen
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"API {api_name} not found in configuration.")
 
 # --- Re-exposed Monitoring Endpoints from dashboard_server.py ---
-# These endpoints are now part of the main API for Mission Control to consume.
+# These endpoints are now part of the admin router for Mission Control to consume.
 
 @admin_router.get("/monitoring/health")
 async def health_check_main_endpoint(current_user: User = Depends(get_current_admin_user)): # Added admin dependency

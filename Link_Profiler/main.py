@@ -268,7 +268,6 @@ from Link_Profiler.api.customer_routes import customer_router
 from Link_Profiler.api.admin_routes import admin_router # Import the new admin router
 
 # New: Import authentication dependencies
-from Link_Profiler.api.dependencies import get_current_user, get_current_admin_user, get_current_customer_user # Import specific dependency functions
 from fastapi.security import OAuth2PasswordRequestForm # Only import this specific class needed for /token endpoint
 
 # --- RESTORED: Import CORSMiddleware ---
