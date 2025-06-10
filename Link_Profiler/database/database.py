@@ -232,7 +232,7 @@ class Database:
             
             missing_source_tables = [t for t in source_tables if t not in existing_tables]
             if missing_source_tables:
-                self.logger.warning(f"Skipping materialized view '{view_name}': Missing source tables: {missing_tables}. Ensure these tables are created first.")
+                self.logger.warning(f"Skipping materialized view '{view_name}': Missing source tables: {missing_source_tables}. Ensure these tables are created first.")
                 continue # Skip to next view if source tables are missing
 
             with self.engine.connect() as connection: # New connection for each MV
