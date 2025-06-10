@@ -11,7 +11,7 @@ from Link_Profiler.utils.api_cache import APICache
 from Link_Profiler.core.models import (
     Domain, Backlink, SEOMetrics, SERPResult, KeywordSuggestion,
     GSCBacklink, KeywordTrend, User, CrawlJob, ReportJob, ContentGapAnalysisResult,
-    CompetitiveKeywordAnalysisResult # Import ContentGapAnalysisResult and CompetitiveKeywordAnalysisResult
+    CompetitiveKeywordAnalysisResult, LinkProspect # Import LinkProspect
 )
 from Link_Profiler.utils.auth_utils import get_user_tier # Import get_user_tier
 
@@ -20,7 +20,7 @@ from Link_Profiler.utils.auth_utils import get_user_tier # Import get_user_tier
 try:
     from Link_Profiler.main import (
         domain_service_instance, backlink_service_instance, serp_service_instance,
-        keyword_service_instance, ai_service_instance # Import AI service for content gaps
+        keyword_service_instance, ai_service_instance, link_prospecting_service_instance # Import LinkProspectingService
     )
 except ImportError:
     # Fallback for testing or if main.py is not fully initialized
@@ -54,12 +54,21 @@ except ImportError:
         async def analyze_content_gap(self, target_url: str, competitor_urls: List[str]) -> Optional[ContentGapAnalysisResult]:
             logging.getLogger(__name__).warning(f"Simulating live content gap analysis for {target_url}")
             return ContentGapAnalysisResult(target_url=target_url, competitor_urls=competitor_urls, missing_topics=["topic1", "topic2"])
+    class DummyLinkProspectingService:
+        async def find_prospects(self, target_domain: str, **kwargs) -> List[LinkProspect]:
+            logging.getLogger(__name__).warning(f"Simulating live link prospects for {target_domain}")
+            return [LinkProspect(id=f"lp{i}", target_domain=target_domain, prospect_url=f"http://blog.example.com/post-{i}") for i in range(3)]
+        async def perform_custom_analysis(self, domain: str, analysis_type: str, config: Dict[str, Any]) -> Dict[str, Any]:
+            logging.getLogger(__name__).warning(f"Simulating custom analysis for {domain} ({analysis_type})")
+            return {"domain": domain, "analysis_type": analysis_type, "result": "simulated_success", "config": config}
+
 
     domain_service_instance = DummyDomainService()
     backlink_service_instance = DummyBacklinkService()
     serp_service_instance = DummySerpService()
     keyword_service_instance = DummyKeywordService()
     ai_service_instance = DummyAIService()
+    link_prospecting_service_instance = DummyLinkProspectingService()
 
 
 logger = logging.getLogger(__name__)
@@ -130,7 +139,8 @@ class DataService:
             "backlinks", "gsc_backlinks_analytical", "keyword_trends_analytical",
             "single_job_status", "single_report_status",
             "domain_overview", "domain_backlinks", "domain_metrics", "domain_competitors",
-            "domain_seo_audit", "domain_content_gaps", "keyword_analysis", "keyword_competitors" # Added new features
+            "domain_seo_audit", "domain_content_gaps", "keyword_analysis", "keyword_competitors",
+            "domain_link_prospects", "custom_analysis" # Added new features
         ]
         
         if user_tier == "free":
@@ -437,6 +447,39 @@ class DataService:
             return [{"domain": d} for d in unique_domains[:5]] # Return top 5 unique domains
         
         return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+
+    async def get_domain_link_prospects(self, domain: str, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
+        """
+        Retrieves link prospects for a given domain.
+        """
+        feature = "domain_link_prospects"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{domain}"
+
+        async def fetch_live():
+            # This calls the underlying link_prospecting_service to get live data
+            prospects = await link_prospecting_service_instance.find_prospects(domain) # Assuming this method exists
+            return [p.to_dict() for p in prospects]
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+
+    async def perform_custom_analysis(self, domain: str, analysis_type: str, config: Dict[str, Any], current_user: Optional[User] = None) -> Dict[str, Any]:
+        """
+        Performs a custom analysis for a domain. This will always be a 'live' operation
+        as it triggers a new job.
+        """
+        feature = "custom_analysis"
+        # Custom analysis is inherently a live operation, so we always validate access
+        if current_user:
+            self.validate_live_access(current_user, feature)
+        
+        # This will trigger a job submission via the link_prospecting_service or a dedicated analysis service
+        # For now, we'll use link_prospecting_service_instance as a placeholder for a service that can trigger jobs.
+        result = await link_prospecting_service_instance.perform_custom_analysis(domain, analysis_type, config)
+        return result
 
 
 # Initialize the service with the singleton database clients

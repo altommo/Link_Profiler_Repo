@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Body
 
 # Import core models
 from Link_Profiler.core.models import User
-from Link_Profiler.api.schemas import BacklinkResponse, SEOMetricsResponse, ContentGapAnalysisResultResponse # Import new schemas
+from Link_Profiler.api.schemas import BacklinkResponse, SEOMetricsResponse, ContentGapAnalysisResultResponse, LinkProspectResponse # Import new schemas
 
 # Import decorators and data_service
 from Link_Profiler.api.decorators import require_auth, cache_first_route
@@ -206,3 +206,59 @@ async def perform_content_gap_analysis_api(
     except Exception as e:
         logger.error(f"Error performing content gap analysis for {domain}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform content gap analysis: {e}")
+
+@domain_router.get("/{domain}/link-prospects", response_model=List[LinkProspectResponse], summary="Get link prospects for a domain (cache-first)")
+@require_auth
+@cache_first_route
+async def get_domain_link_prospects_api(
+    domain: Annotated[str, Path(..., description="Domain to find link prospects for", example="example.com")],
+    current_user: User, # Injected by @require_auth
+    source: Annotated[Optional[str], Query(
+        "cache", 
+        description="""Data source for the request:
+        - `cache`: Returns cached data (default, fastest response)
+        - `live`: Returns real-time data (slower, requires appropriate user tier)""",
+        enum=["cache", "live"],
+        example="cache"
+    )] = "cache"
+) -> List[LinkProspectResponse]:
+    """
+    Retrieves a list of potential link building prospects for the specified domain.
+    By default, data is served from cache. Use `?source=live` to fetch the latest data,
+    subject to user permissions and configuration.
+    """
+    logger.info(f"User {current_user.username} requesting link prospects for {domain} (source: {source}).")
+    try:
+        prospects_data = await data_service.get_domain_link_prospects(domain, source=source, current_user=current_user)
+        if not prospects_data:
+            return [] # Return empty list if no prospects found
+        return [LinkProspectResponse(**p) for p in prospects_data]
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving link prospects for {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve link prospects: {e}")
+
+@domain_router.post("/{domain}/custom-analysis", response_model=Dict[str, Any], summary="Perform custom analysis for a domain (live only)")
+@require_auth
+async def perform_custom_analysis_api(
+    domain: Annotated[str, Path(..., description="Domain to perform custom analysis on", example="example.com")],
+    analysis_type: Annotated[str, Body(..., description="Type of custom analysis to perform", example="deep_crawl_and_audit")],
+    config: Annotated[Dict[str, Any], Body(..., description="Configuration for the custom analysis", example={"max_depth": 5, "render_js": True})],
+    current_user: User # Injected by @require_auth
+) -> Dict[str, Any]:
+    """
+    Triggers a custom analysis job for the specified domain. This is always a live operation
+    and will consume live data credits if applicable.
+    """
+    logger.info(f"User {current_user.username} requesting custom analysis '{analysis_type}' for {domain}.")
+    try:
+        # Custom analysis is inherently a live operation, so we don't need a 'source' parameter.
+        # The data_service.perform_custom_analysis method will handle live access validation.
+        result = await data_service.perform_custom_analysis(domain, analysis_type, config, current_user=current_user)
+        return result
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error performing custom analysis for {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform custom analysis: {e}")
