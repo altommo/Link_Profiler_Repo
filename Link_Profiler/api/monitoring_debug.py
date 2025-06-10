@@ -418,6 +418,7 @@ async def _get_satellites_data_internal() -> Dict[str, Any]:
 
 @monitoring_debug_router.get("/api/stats", summary="Get aggregated system statistics (cache-first)")
 async def get_api_stats(
+    current_user: Annotated[User, Depends(get_current_user)], # Protect this endpoint
     source: Annotated[Optional[str], Query(
         "cache", 
         description="""Data source for the request:
@@ -425,8 +426,7 @@ async def get_api_stats(
         - `live`: Returns real-time data (slower, requires appropriate user tier)""",
         enum=["cache", "live"],
         example="cache"
-    )] = "cache",
-    current_user: Annotated[User, Depends(get_current_user)] # Protect this endpoint
+    )] = "cache"
 ):
     """
     Retrieves aggregated statistics for the Link Profiler system.
@@ -440,6 +440,7 @@ async def get_api_stats(
 
 @monitoring_debug_router.get("/api/jobs/all", response_model=List[CrawlJobResponse], summary="Get all crawl jobs (cache-first)")
 async def get_all_jobs_api(
+    current_user: Annotated[User, Depends(get_current_user)], # Protect this endpoint
     status_filter: Annotated[Optional[str], Query(description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED').")] = None,
     source: Annotated[Optional[str], Query(
         "cache", 
@@ -448,8 +449,7 @@ async def get_all_jobs_api(
         - `live`: Returns real-time data (slower, requires appropriate user tier)""",
         enum=["cache", "live"],
         example="cache"
-    )] = "cache",
-    current_user: Annotated[User, Depends(get_current_user)] # Protect this endpoint
+    )] = "cache"
 ):
     """
     Retrieves a list of all crawl jobs. By default, data is served from cache.
