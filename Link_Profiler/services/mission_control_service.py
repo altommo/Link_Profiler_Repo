@@ -277,7 +277,7 @@ class MissionControlService:
         # Attempt to get from JobCoordinator if available
         try:
             from Link_Profiler.queue_system.job_coordinator import get_coordinator
-            coordinator = get_coordinator()  # Remove await since get_coordinator is not async
+            coordinator = await get_coordinator() # AWAIT THE COROUTINE
             coordinator_stats = await coordinator.get_queue_stats()
             active_satellites_count = coordinator_stats.get("active_crawlers", 0)
             total_satellites_count = len(coordinator_stats.get("satellite_crawlers", {}))

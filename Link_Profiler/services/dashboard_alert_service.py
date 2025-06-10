@@ -91,7 +91,7 @@ class DashboardAlertService:
         except Exception as e:
             alerts.append(DashboardAlert(
                 type="System",
-                severity="CRITICAL",
+                severity=AlertSeverity.CRITICAL.value, # Pass value
                 message=f"Redis connection lost: {e}",
                 timestamp=now,
                 recommended_action="Check Redis server status and network connectivity."
@@ -103,7 +103,7 @@ class DashboardAlertService:
         except Exception as e:
             alerts.append(DashboardAlert(
                 type="System",
-                severity="CRITICAL",
+                severity=AlertSeverity.CRITICAL.value, # Pass value
                 message=f"Database connection lost: {e}",
                 timestamp=now,
                 recommended_action="Check database server status and credentials."
@@ -116,7 +116,7 @@ class DashboardAlertService:
                 if status_data['status'] == "Critical":
                     alerts.append(DashboardAlert(
                         type="API Quota",
-                        severity="CRITICAL",
+                        severity=AlertSeverity.CRITICAL.value, # Pass value
                         message=f"API '{api_name}' quota critically low or exhausted. Used: {status_data['used']}/{status_data['limit']}",
                         timestamp=now,
                         details={"api_name": api_name, "used": status_data['used'], "limit": status_data['limit']},
@@ -125,7 +125,7 @@ class DashboardAlertService:
                 elif status_data['status'] == "Warning":
                     alerts.append(DashboardAlert(
                         type="API Quota",
-                        severity="WARNING",
+                        severity=AlertSeverity.WARNING.value, # Pass value
                         message=f"API '{api_name}' quota nearing exhaustion. Used: {status_data['used']}/{status_data['limit']}",
                         timestamp=now,
                         details={"api_name": api_name, "used": status_data['used'], "limit": status_data['limit']},
@@ -136,7 +136,7 @@ class DashboardAlertService:
                 if status_data['performance']['circuit_breaker_state'] == "OPEN":
                     alerts.append(DashboardAlert(
                         type="API Resilience",
-                        severity="CRITICAL",
+                        severity=AlertSeverity.CRITICAL.value, # Pass value
                         message=f"API '{api_name}' circuit breaker is OPEN. Requests are being blocked.",
                         timestamp=now,
                         details={"api_name": api_name, "state": "OPEN"},
@@ -145,7 +145,7 @@ class DashboardAlertService:
                 elif status_data['performance']['circuit_breaker_state'] == "HALF_OPEN":
                     alerts.append(DashboardAlert(
                         type="API Resilience",
-                        severity="WARNING",
+                        severity=AlertSeverity.WARNING.value, # Pass value
                         message=f"API '{api_name}' circuit breaker is HALF_OPEN. Monitoring for recovery.",
                         timestamp=now,
                         details={"api_name": api_name, "state": "HALF_OPEN"},
@@ -155,7 +155,7 @@ class DashboardAlertService:
         # Example 4: Unresponsive Satellites (from JobCoordinator's heartbeat data)
         try:
             from Link_Profiler.queue_system.job_coordinator import get_coordinator
-            coordinator = get_coordinator()  # Remove await since get_coordinator is not async
+            coordinator = await get_coordinator() # AWAIT THE COROUTINE
             coordinator_stats = await coordinator.get_queue_stats()
             
             heartbeat_key = config_loader.get("queue.heartbeat_queue_sorted_name")
@@ -169,7 +169,7 @@ class DashboardAlertService:
                 if last_heartbeat_ts < min_timestamp_active:
                     alerts.append(DashboardAlert(
                         type="Crawler Fleet",
-                        severity="CRITICAL",
+                        severity=AlertSeverity.CRITICAL.value, # Pass value
                         message=f"Satellite '{satellite_id}' is unresponsive. Last heartbeat: {datetime.fromtimestamp(last_heartbeat_ts).isoformat()}",
                         timestamp=now,
                         details={"satellite_id": satellite_id, "last_heartbeat": datetime.fromtimestamp(last_heartbeat_ts).isoformat()},
@@ -179,7 +179,7 @@ class DashboardAlertService:
             self.logger.error(f"Error checking satellite responsiveness: {e}", exc_info=True)
             alerts.append(DashboardAlert(
                 type="System",
-                severity="WARNING",
+                severity=AlertSeverity.WARNING.value, # Pass value
                 message=f"Failed to check satellite responsiveness: {e}",
                 timestamp=now,
                 recommended_action="Check JobCoordinator and Redis heartbeat data."
@@ -191,7 +191,7 @@ class DashboardAlertService:
         if len(failed_jobs_24h) > config_loader.get("monitoring.failed_jobs_threshold", 10):
             alerts.append(DashboardAlert(
                 type="Job Performance",
-                severity="CRITICAL",
+                severity=AlertSeverity.CRITICAL.value, # Pass value
                 message=f"{len(failed_jobs_24h)} jobs failed in the last 24 hours. Exceeds threshold.",
                 timestamp=now,
                 details={"failed_jobs_count": len(failed_jobs_24h)},
@@ -200,7 +200,7 @@ class DashboardAlertService:
         elif len(failed_jobs_24h) > config_loader.get("monitoring.failed_jobs_warning_threshold", 5):
             alerts.append(DashboardAlert(
                 type="Job Performance",
-                severity="WARNING",
+                severity=AlertSeverity.WARNING.value, # Pass value
                 message=f"{len(failed_jobs_24h)} jobs failed in the last 24 hours. Nearing critical threshold.",
                 timestamp=now,
                 details={"failed_jobs_count": len(failed_jobs_24h)},
