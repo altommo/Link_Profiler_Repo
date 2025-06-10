@@ -1,10 +1,10 @@
 import logging
 from typing import Annotated, Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Body
 
 # Import core models
 from Link_Profiler.core.models import User
-from Link_Profiler.api.schemas import BacklinkResponse # Assuming this schema exists for backlinks
+from Link_Profiler.api.schemas import BacklinkResponse, SEOMetricsResponse, ContentGapAnalysisResultResponse # Import new schemas
 
 # Import decorators and data_service
 from Link_Profiler.api.decorators import require_auth, cache_first_route
@@ -141,3 +141,68 @@ async def get_domain_competitors_api(
     except Exception as e:
         logger.error(f"Error retrieving competitors for {domain}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve competitors: {e}")
+
+@domain_router.get("/{domain}/seo-audit", response_model=SEOMetricsResponse, summary="Get SEO audit results for a domain (cache-first)")
+@require_auth
+@cache_first_route
+async def get_domain_seo_audit_api(
+    domain: Annotated[str, Path(..., description="Domain to audit", example="example.com")],
+    current_user: User, # Injected by @require_auth
+    source: Annotated[Optional[str], Query(
+        "cache", 
+        description="""Data source for the request:
+        - `cache`: Returns cached data (default, fastest response)
+        - `live`: Returns real-time data (slower, requires appropriate user tier)""",
+        enum=["cache", "live"],
+        example="cache"
+    )] = "cache"
+) -> SEOMetricsResponse:
+    """
+    Retrieves SEO audit results for a given domain.
+    By default, data is served from cache. Use `?source=live` to fetch the latest data,
+    subject to user permissions and configuration.
+    """
+    logger.info(f"User {current_user.username} requesting SEO audit for {domain} (source: {source}).")
+    try:
+        seo_audit_data = await data_service.get_domain_seo_audit(domain, source=source, current_user=current_user)
+        if not seo_audit_data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SEO audit results not found for this domain.")
+        return SEOMetricsResponse(**seo_audit_data)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving SEO audit for {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve SEO audit: {e}")
+
+@domain_router.post("/{domain}/content-gaps", response_model=ContentGapAnalysisResultResponse, summary="Perform content gap analysis for a domain (cache-first)")
+@require_auth
+@cache_first_route
+async def perform_content_gap_analysis_api(
+    domain: Annotated[str, Path(..., description="Target domain for content gap analysis", example="example.com")],
+    competitor_domains: Annotated[List[str], Body(..., description="List of competitor domains to compare against", example=["competitor1.com", "competitor2.com"])],
+    current_user: User, # Injected by @require_auth
+    source: Annotated[Optional[str], Query(
+        "cache", 
+        description="""Data source for the request:
+        - `cache`: Returns cached data (default, fastest response)
+        - `live`: Returns real-time data (slower, requires appropriate user tier)""",
+        enum=["cache", "live"],
+        example="cache"
+    )] = "cache"
+) -> ContentGapAnalysisResultResponse:
+    """
+    Performs a content gap analysis for the target domain against specified competitor domains.
+    By default, data is served from cache. Use `?source=live` to fetch the latest data,
+    subject to user permissions and configuration.
+    """
+    logger.info(f"User {current_user.username} requesting content gap analysis for {domain} against {competitor_domains} (source: {source}).")
+    try:
+        content_gap_data = await data_service.get_domain_content_gaps(domain, competitor_domains, source=source, current_user=current_user)
+        if not content_gap_data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content gap analysis results not found.")
+        return ContentGapAnalysisResultResponse(**content_gap_data)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error performing content gap analysis for {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to perform content gap analysis: {e}")

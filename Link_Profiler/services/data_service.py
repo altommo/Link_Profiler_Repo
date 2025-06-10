@@ -10,7 +10,8 @@ from Link_Profiler.database.database import db, clickhouse_client
 from Link_Profiler.utils.api_cache import APICache
 from Link_Profiler.core.models import (
     Domain, Backlink, SEOMetrics, SERPResult, KeywordSuggestion,
-    GSCBacklink, KeywordTrend, User, CrawlJob, ReportJob # Import User, CrawlJob, ReportJob for tier checking
+    GSCBacklink, KeywordTrend, User, CrawlJob, ReportJob, ContentGapAnalysisResult,
+    CompetitiveKeywordAnalysisResult # Import ContentGapAnalysisResult and CompetitiveKeywordAnalysisResult
 )
 from Link_Profiler.utils.auth_utils import get_user_tier # Import get_user_tier
 
@@ -19,7 +20,7 @@ from Link_Profiler.utils.auth_utils import get_user_tier # Import get_user_tier
 try:
     from Link_Profiler.main import (
         domain_service_instance, backlink_service_instance, serp_service_instance,
-        keyword_service_instance
+        keyword_service_instance, ai_service_instance # Import AI service for content gaps
     )
 except ImportError:
     # Fallback for testing or if main.py is not fully initialized
@@ -31,6 +32,9 @@ except ImportError:
         async def get_domain_metrics(self, domain_name: str) -> Optional[Dict[str, Any]]:
             logging.getLogger(__name__).warning(f"Simulating live domain metrics for {domain_name}")
             return {"domain_authority": 50, "page_authority": 60, "last_fetched_at": datetime.utcnow().isoformat()}
+        async def get_seo_audit(self, domain_name: str) -> Optional[SEOMetrics]:
+            logging.getLogger(__name__).warning(f"Simulating live SEO audit for {domain_name}")
+            return SEOMetrics(url=f"https://{domain_name}", seo_score=75, audit_timestamp=datetime.now())
     class DummyBacklinkService:
         async def get_backlinks(self, domain_name: str) -> List[Backlink]:
             logging.getLogger(__name__).warning(f"Simulating live backlinks for {domain_name}")
@@ -39,13 +43,23 @@ except ImportError:
         async def get_competitors(self, domain_name: str) -> List[Dict[str, Any]]:
             logging.getLogger(__name__).warning(f"Simulating live competitors for {domain_name}")
             return [{"domain": f"competitor{i}.com", "common_keywords": 100} for i in range(3)]
+        async def get_serp_results(self, keyword: str) -> List[SERPResult]:
+            logging.getLogger(__name__).warning(f"Simulating live SERP results for {keyword}")
+            return [SERPResult(keyword=keyword, rank=i+1, url=f"http://example.com/{i}", title=f"Title {i}", snippet=f"Snippet {i}", domain=f"example{i}.com", timestamp=datetime.now()) for i in range(3)]
     class DummyKeywordService:
-        pass # Not directly used for these endpoints
+        async def get_keyword_suggestions(self, keyword: str) -> List[KeywordSuggestion]:
+            logging.getLogger(__name__).warning(f"Simulating live keyword suggestions for {keyword}")
+            return [KeywordSuggestion(keyword=f"{keyword} long tail {i}", search_volume=100-i, difficulty=50+i) for i in range(3)]
+    class DummyAIService:
+        async def analyze_content_gap(self, target_url: str, competitor_urls: List[str]) -> Optional[ContentGapAnalysisResult]:
+            logging.getLogger(__name__).warning(f"Simulating live content gap analysis for {target_url}")
+            return ContentGapAnalysisResult(target_url=target_url, competitor_urls=competitor_urls, missing_topics=["topic1", "topic2"])
 
     domain_service_instance = DummyDomainService()
     backlink_service_instance = DummyBacklinkService()
     serp_service_instance = DummySerpService()
     keyword_service_instance = DummyKeywordService()
+    ai_service_instance = DummyAIService()
 
 
 logger = logging.getLogger(__name__)
@@ -115,7 +129,8 @@ class DataService:
         PREMIUM_LIVE_FEATURES = [
             "backlinks", "gsc_backlinks_analytical", "keyword_trends_analytical",
             "single_job_status", "single_report_status",
-            "domain_overview", "domain_backlinks", "domain_metrics", "domain_competitors" # Added new features
+            "domain_overview", "domain_backlinks", "domain_metrics", "domain_competitors",
+            "domain_seo_audit", "domain_content_gaps", "keyword_analysis", "keyword_competitors" # Added new features
         ]
         
         if user_tier == "free":
@@ -345,6 +360,81 @@ class DataService:
             # This calls the underlying serp_service (or keyword_service) to get live data
             competitors = await serp_service_instance.get_competitors(domain) # Assuming serp_service has this method
             return competitors # Assuming it returns a list of dicts
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+
+    async def get_domain_seo_audit(self, domain: str, source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves SEO audit results for a domain.
+        """
+        feature = "domain_seo_audit"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{domain}"
+
+        async def fetch_live():
+            # This calls the underlying domain_service (or technical_auditor_service) to get live data
+            seo_metrics = await domain_service_instance.get_seo_audit(domain) # Assuming domain_service has this method
+            return seo_metrics.to_dict() if seo_metrics else None
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+
+    async def get_domain_content_gaps(self, domain: str, competitor_domains: List[str], source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves content gap analysis results for a domain against competitors.
+        """
+        feature = "domain_content_gaps"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        # Cache key should include competitor domains for uniqueness
+        cache_key = f"{feature}_{domain}_{'_'.join(sorted(competitor_domains))}"
+
+        async def fetch_live():
+            # This calls the underlying AI service to perform content gap analysis
+            content_gap_result = await ai_service_instance.analyze_content_gap(domain, competitor_domains) # Assuming AI service has this method
+            return content_gap_result.to_dict() if content_gap_result else None
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+
+    async def get_keyword_analysis(self, keyword: str, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
+        """
+        Retrieves keyword analysis (suggestions, trends, etc.) for a given keyword.
+        """
+        feature = "keyword_analysis"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{keyword}"
+
+        async def fetch_live():
+            # This calls the underlying keyword_service to get live data
+            suggestions = await keyword_service_instance.get_keyword_suggestions(keyword) # Assuming keyword_service has this method
+            return [s.to_dict() for s in suggestions]
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+
+    async def get_keyword_competitors(self, keyword: str, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
+        """
+        Retrieves top competitors for a keyword.
+        """
+        feature = "keyword_competitors"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{keyword}"
+
+        async def fetch_live():
+            # This calls the underlying serp_service to get live data
+            competitors = await serp_service_instance.get_serp_results(keyword) # Assuming serp_service can derive competitors from SERP
+            # For simplicity, let's just return the top domains from SERP results as competitors
+            unique_domains = list(set([res.domain for res in competitors if res.domain]))
+            return [{"domain": d} for d in unique_domains[:5]] # Return top 5 unique domains
         
         return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
 
