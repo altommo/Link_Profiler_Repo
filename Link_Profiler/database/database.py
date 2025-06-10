@@ -131,8 +131,7 @@ class Database:
     def _create_materialized_views(self):
         """
         Creates or refreshes materialized views for dashboard performance.
-        This is a simplified approach; in a production environment, these
-        would typically be managed via Alembic migrations.
+        Each operation is wrapped in its own transaction to prevent cascading failures.
         """
         if not self.engine:
             self.logger.error("Cannot create materialized views: Database engine not initialized.")
@@ -200,8 +199,8 @@ class Database:
             """
         }
 
-        with self.engine.connect() as connection:
-            for view_name, sql in views_sql.items():
+        for view_name, sql in views_sql.items():
+            with self.engine.connect() as connection: # New connection for each MV
                 try:
                     self.logger.info(f"Attempting to create materialized view '{view_name}'...")
                     connection.execute(text(sql))
@@ -213,20 +212,23 @@ class Database:
                     self.logger.info(f"Index on '{view_name}.day' created or already exists.")
                 except SQLAlchemyError as e:
                     self.logger.error(f"Error creating materialized view '{view_name}': {e}", exc_info=True)
-                    connection.rollback()
+                    connection.rollback() # Rollback this specific transaction
                 except Exception as e:
                     self.logger.error(f"Unexpected error during materialized view creation for '{view_name}': {e}", exc_info=True)
-                    connection.rollback()
+                    connection.rollback() # Rollback this specific transaction
 
     def refresh_materialized_views(self):
-        """Refreshes all materialized views."""
+        """
+        Refreshes all materialized views.
+        Each refresh operation is wrapped in its own transaction to prevent cascading failures.
+        """
         if not self.engine:
             self.logger.error("Cannot refresh materialized views: Database engine not initialized.")
             return
 
         view_names = ["mv_daily_job_stats", "mv_daily_backlink_stats", "mv_daily_domain_stats", "mv_daily_satellite_performance"] # New: Add satellite performance view
-        with self.engine.connect() as connection:
-            for view_name in view_names:
+        for view_name in view_names:
+            with self.engine.connect() as connection: # New connection for each MV
                 try:
                     self.logger.info(f"Refreshing materialized view: {view_name}")
                     connection.execute(text(f"REFRESH MATERIALIZED VIEW {view_name};"))
@@ -234,10 +236,10 @@ class Database:
                     self.logger.info(f"Materialized view '{view_name}' refreshed successfully.")
                 except SQLAlchemyError as e:
                     self.logger.error(f"Error refreshing materialized view '{view_name}': {e}", exc_info=True)
-                    connection.rollback()
+                    connection.rollback() # Rollback this specific transaction
                 except Exception as e:
                     self.logger.error(f"Unexpected error during materialized view refresh for '{view_name}': {e}", exc_info=True)
-                    connection.rollback()
+                    connection.rollback() # Rollback this specific transaction
 
     def get_session(self):
         """Returns a SQLAlchemy session."""
