@@ -539,3 +539,42 @@ class SatellitePerformanceLogORM(Base):
         Index('ix_satellite_performance_timestamp', 'timestamp'),
         Index('ix_satellite_performance_satellite_timestamp', 'satellite_id', 'timestamp'), # Composite
     )
+
+class TrackedDomainORM(Base):
+    __tablename__ = 'tracked_domains'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    domain_name = Column(String, unique=True, nullable=False)
+    user_id = Column(String, nullable=True)
+    organization_id = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    last_tracked_gsc_analytics = Column(DateTime, nullable=True)
+    last_tracked_technical_audit = Column(DateTime, nullable=True)
+    last_tracked_whois_dns = Column(DateTime, nullable=True)
+    last_tracked_ssl_labs = Column(DateTime, nullable=True)
+    last_tracked_common_crawl = Column(DateTime, nullable=True)
+    last_tracked_pagespeed = Column(DateTime, nullable=True)
+    last_tracked_backlinks = Column(DateTime, nullable=True) # NEW: Added for backlink crawler
+
+    __table_args__ = (
+        Index('ix_tracked_domains_domain_name', 'domain_name'),
+        Index('ix_tracked_domains_user_id', 'user_id'),
+        Index('ix_tracked_domains_organization_id', 'organization_id'),
+    )
+
+class TrackedKeywordORM(Base):
+    __tablename__ = 'tracked_keywords'
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    keyword = Column(String, unique=True, nullable=False)
+    user_id = Column(String, nullable=True)
+    organization_id = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    last_tracked_google_trends = Column(DateTime, nullable=True)
+    last_tracked_serp = Column(DateTime, nullable=True)
+    last_tracked_keyword_suggestions = Column(DateTime, nullable=True)
+    last_tracked_news_reddit = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index('ix_tracked_keywords_keyword', 'keyword'),
+        Index('ix_tracked_keywords_user_id', 'user_id'),
+        Index('ix_tracked_keywords_organization_id', 'organization_id'),
+    )
