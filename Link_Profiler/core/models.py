@@ -112,8 +112,7 @@ class CrawlConfig(BaseModel):
     extract_image_text: bool = False
     crawl_web3_content: bool = False
     crawl_social_media: bool = False
-    job_type: str = "unknown"
-    ml_rate_limiter_enabled: bool = False # From rate_limiting.ml_enhanced
+    job_type: str = Field("unknown", description="The type of job this configuration is for (e.g., 'backlink_discovery', 'technical_audit').") # Added job_type to CrawlConfig
 
     def is_domain_allowed(self, domain: str) -> bool:
         if not self.allowed_domains: # If allowed_domains is empty, all are allowed
