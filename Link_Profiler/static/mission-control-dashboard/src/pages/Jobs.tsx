@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } => 'react';
 import { API_BASE_URL } from '../config';
 import DataCard from '../components/ui/DataCard';
 import ModuleContainer from '../components/shared/ModuleContainer';
@@ -28,7 +28,7 @@ const Jobs: React.FC = () => {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       };
-      const response = await fetch(`${API_BASE_URL}/api/monitoring/jobs`, { headers });
+      const response = await fetch(`${API_BASE_URL}/admin/monitoring/jobs`, { headers }); // Changed to /admin/monitoring/jobs
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || 'Failed to fetch jobs');
@@ -60,7 +60,7 @@ const Jobs: React.FC = () => {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       };
-      const response = await fetch(`${API_BASE_URL}/api/monitoring/${endpoint}`, {
+      const response = await fetch(`${API_BASE_URL}/admin/${endpoint}`, { // Changed to /admin/
         method: 'POST',
         headers,
         body: payload ? JSON.stringify(payload) : undefined,
@@ -102,19 +102,19 @@ const Jobs: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
         <DataCard title="Global Controls">
           <button
-            onClick={() => handleControlAction('jobs/pause_all', 'Pause All Jobs')}
+            onClick={() => handleControlAction('monitoring/jobs/pause_all', 'Pause All Jobs')} // Changed endpoint
             className="bg-nasa-amber hover:bg-orange-700 text-white font-bold py-2 px-4 rounded mr-2 mb-2"
           >
             Pause All Jobs
           </button>
           <button
-            onClick={() => handleControlAction('jobs/resume_all', 'Resume All Jobs')}
+            onClick={() => handleControlAction('monitoring/jobs/resume_all', 'Resume All Jobs')} // Changed endpoint
             className="bg-nasa-green hover:bg-green-700 text-white font-bold py-2 px-4 rounded mb-2"
           >
             Resume All Jobs
           </button>
           <button
-            onClick={() => handleControlAction('satellites/control/all/SHUTDOWN', 'Shutdown All Satellites')}
+            onClick={() => handleControlAction('monitoring/satellites/control/all/SHUTDOWN', 'Shutdown All Satellites')} // Changed endpoint
             className="bg-nasa-red hover:bg-red-700 text-white font-bold py-2 px-4 rounded mb-2"
           >
             Shutdown All Satellites
@@ -144,19 +144,19 @@ const Jobs: React.FC = () => {
                     <td className="py-3 px-6 text-left">{new Date(sat.last_heartbeat).toLocaleString()}</td>
                     <td className="py-3 px-6 text-left">
                       <button
-                        onClick={() => handleControlAction(`satellites/control/${sat.satellite_id}/PAUSE`, `Pause ${sat.satellite_id}`)}
+                        onClick={() => handleControlAction(`monitoring/satellites/control/${sat.satellite_id}/PAUSE`, `Pause ${sat.satellite_id}`)} // Changed endpoint
                         className="bg-nasa-blue hover:bg-blue-700 text-white py-1 px-2 rounded text-xs mr-1"
                       >
                         Pause
                       </button>
                       <button
-                        onClick={() => handleControlAction(`satellites/control/${sat.satellite_id}/RESUME`, `Resume ${sat.satellite_id}`)}
+                        onClick={() => handleControlAction(`monitoring/satellites/control/${sat.satellite_id}/RESUME`, `Resume ${sat.satellite_id}`)} // Changed endpoint
                         className="bg-nasa-green hover:bg-green-700 text-white py-1 px-2 rounded text-xs mr-1"
                       >
                         Resume
                       </button>
                       <button
-                        onClick={() => handleControlAction(`satellites/control/${sat.satellite_id}/SHUTDOWN`, `Shutdown ${sat.satellite_id}`)}
+                        onClick={() => handleControlAction(`monitoring/satellites/control/${sat.satellite_id}/SHUTDOWN`, `Shutdown ${sat.satellite_id}`)} // Changed endpoint
                         className="bg-nasa-red hover:bg-red-700 text-white py-1 px-2 rounded text-xs"
                       >
                         Shutdown
@@ -199,7 +199,7 @@ const Jobs: React.FC = () => {
                 <td className="py-3 px-6 text-left">{new Date(job.created_at).toLocaleString()}</td> {/* Corrected to created_at */}
                 <td className="py-3 px-6 text-left">
                   <button
-                    onClick={() => handleControlAction(`jobs/${job.id}/cancel`, `Cancel Job ${job.id}`)}
+                    onClick={() => handleControlAction(`monitoring/jobs/${job.id}/cancel`, `Cancel Job ${job.id}`)} // Changed endpoint
                     className="bg-nasa-red hover:bg-red-700 text-white py-1 px-2 rounded text-xs"
                   >
                     Cancel
