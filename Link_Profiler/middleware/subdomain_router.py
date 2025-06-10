@@ -62,6 +62,10 @@ class SubdomainRouterMiddleware(BaseHTTPMiddleware):
                 subdomain = hostname_parts[0]
                 request.state.subdomain = subdomain
                 logger.debug(f"Detected subdomain: {subdomain}")
+                
+                # --- NEW DEBUGGING LOGS ---
+                logger.debug(f"Comparing detected subdomain '{subdomain}' with customer_subdomain '{self.customer_subdomain}' and mission_control_subdomain '{self.mission_control_subdomain}'")
+                # --- END NEW DEBUGGING LOGS ---
 
                 if subdomain == self.customer_subdomain:
                     request.state.is_customer_dashboard = True
