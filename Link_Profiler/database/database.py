@@ -19,6 +19,11 @@ except ImportError:
     command = None
     Config = None
 import json # Import json for serializing/deserializing JSONB fields
+from urllib.parse import urlparse # For parsing domains from URLs
+
+# ClickHouse specific imports
+from sqlalchemy_clickhouse import ClickHouse
+from sqlalchemy_clickhouse.exc import ClickHouseError
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.database.models import (
@@ -26,14 +31,18 @@ from Link_Profiler.database.models import (
     SEOMetricsORM, SERPResultORM, KeywordSuggestionORM, AlertRuleORM,
     UserORM, ContentGapAnalysisResultORM, DomainHistoryORM, LinkProspectORM,
     OutreachCampaignORM, OutreachEventORM, ReportJobORM, DomainIntelligenceORM,
-    SocialMentionORM, SatellitePerformanceLogORM, # New: Import SatellitePerformanceLogORM
+    SocialMentionORM, SatellitePerformanceLogORM, TrackedDomainORM, TrackedKeywordORM, # New: Import TrackedDomainORM, TrackedKeywordORM
     LinkTypeEnum, ContentTypeEnum, CrawlStatusEnum, SpamLevelEnum, AlertSeverityEnum, AlertChannelEnum # Import ORM Enums
+)
+from Link_Profiler.database.clickhouse_models import ( # New: Import ClickHouse ORM models
+    BacklinkAnalyticalORM, SEOAnalyticalORM, SERPAnalyticalORM,
+    KeywordSuggestionAnalyticalORM, GSCBacklinkAnalyticalORM, KeywordTrendAnalyticalORM
 )
 from Link_Profiler.core.models import (
     Domain, URL, Backlink, LinkProfile, CrawlJob, SEOMetrics, SERPResult,
     KeywordSuggestion, AlertRule, User, ContentGapAnalysisResult, DomainHistory,
     LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, DomainIntelligence,
-    SocialMention, CrawlError, SatellitePerformanceLog, # New: Import SatellitePerformanceLog
+    SocialMention, CrawlError, SatellitePerformanceLog, TrackedDomain, TrackedKeyword, # New: Import TrackedDomain, TrackedKeyword
     LinkType, ContentType, CrawlStatus, SpamLevel, AlertSeverity, AlertChannel # Import Dataclass Enums
 )
 from Link_Profiler.monitoring.prometheus_metrics import (
@@ -98,7 +107,7 @@ class Database:
                 existing_tables = inspector.get_table_names()
                 self.logger.info(f"Tables found in database after create_all: {existing_tables}")
                 
-                required_tables = ["crawl_jobs", "domains", "backlinks", "satellite_performance_logs"] # Add all tables needed for MVs
+                required_tables = ["crawl_jobs", "domains", "backlinks", "satellite_performance_logs", "tracked_domains", "tracked_keywords"] # Add all tables needed for MVs and tracked entities
                 missing_tables = [t for t in required_tables if t not in existing_tables]
                 if missing_tables:
                     self.logger.error(f"CRITICAL: Following required tables are missing after create_all: {missing_tables}")
@@ -241,7 +250,7 @@ class Database:
                     connection.commit()
                     self.logger.info(f"Index on '{view_name}.day' created or already exists.")
                 except SQLAlchemyError as e:
-                    self.logger.error(f"Error creating materialized view '{view_name}': {e}", exc_info=True)
+                    self.logger.error(f"Error creating materialized view '{view_name}' (SQLAlchemyError): {e}", exc_info=True)
                     connection.rollback() # Rollback this specific transaction
                 except Exception as e:
                     self.logger.error(f"Unexpected error during materialized view creation for '{view_name}': {e}", exc_info=True)
@@ -265,7 +274,7 @@ class Database:
                     connection.commit()
                     self.logger.info(f"Materialized view '{view_name}' refreshed successfully.")
                 except SQLAlchemyError as e:
-                    self.logger.error(f"Error refreshing materialized view '{view_name}': {e}", exc_info=True)
+                    self.logger.error(f"Error refreshing materialized view '{view_name}' (SQLAlchemyError): {e}", exc_info=True)
                     connection.rollback() # Rollback this specific transaction
                 except Exception as e:
                     self.logger.error(f"Unexpected error during materialized view refresh for '{view_name}': {e}", exc_info=True)
@@ -352,6 +361,10 @@ class Database:
             return SocialMentionORM(**data)
         elif isinstance(dc_obj, SatellitePerformanceLog): # New: Handle SatellitePerformanceLog
             return SatellitePerformanceLogORM(**data)
+        elif isinstance(dc_obj, TrackedDomain): # New: Handle TrackedDomain
+            return TrackedDomainORM(**data)
+        elif isinstance(dc_obj, TrackedKeyword): # New: Handle TrackedKeyword
+            return TrackedKeywordORM(**data)
         else:
             raise TypeError(f"Unsupported dataclass type: {type(dc_obj)}")
 
@@ -434,11 +447,15 @@ class Database:
         elif isinstance(orm_obj, ReportJobORM):
             return ReportJob.from_dict(data)
         elif isinstance(orm_obj, DomainIntelligenceORM):
-            return DomainIntelligenceORM(**data) # Changed to direct instantiation
+            return DomainIntelligence.from_dict(data) # Changed to direct instantiation
         elif isinstance(orm_obj, SocialMentionORM):
             return SocialMention.from_dict(data)
         elif isinstance(orm_obj, SatellitePerformanceLogORM): # New: Handle SatellitePerformanceLog
             return SatellitePerformanceLog.from_dict(data)
+        elif isinstance(orm_obj, TrackedDomainORM): # New: Handle TrackedDomain
+            return TrackedDomain.from_dict(data)
+        elif isinstance(orm_obj, TrackedKeywordORM): # New: Handle TrackedKeyword
+            return TrackedKeyword.from_dict(data)
         else:
             raise TypeError(f"Unsupported ORM type for dataclass conversion: {type(orm_obj)}")
 
@@ -959,5 +976,341 @@ class Database:
         orm_suggestions = self._execute_operation('select', 'keyword_suggestions', _get)
         return [self._from_orm(s) for s in orm_suggestions]
 
+    # --- Tracked Entities Operations ---
+    def get_tracked_domains(self, user_id: Optional[str] = None, organization_id: Optional[str] = None) -> List[TrackedDomain]:
+        """Retrieves all active tracked domains, optionally filtered by user or organization."""
+        def _get(session):
+            query = session.query(TrackedDomainORM).filter_by(is_active=True)
+            if user_id:
+                query = query.filter_by(user_id=user_id)
+            if organization_id:
+                query = query.filter_by(organization_id=organization_id)
+            return query.all()
+        orm_domains = self._execute_operation('select', 'tracked_domains', _get)
+        return [self._from_orm(d) for d in orm_domains]
+
+    def get_tracked_keywords(self, user_id: Optional[str] = None, organization_id: Optional[str] = None) -> List[TrackedKeyword]:
+        """Retrieves all active tracked keywords, optionally filtered by user or organization."""
+        def _get(session):
+            query = session.query(TrackedKeywordORM).filter_by(is_active=True)
+            if user_id:
+                query = query.filter_by(user_id=user_id)
+            if organization_id:
+                query = query.filter_by(organization_id=organization_id)
+            return query.all()
+        orm_keywords = self._execute_operation('select', 'tracked_keywords', _get)
+        return [self._from_orm(k) for k in orm_keywords]
+
+    def update_tracked_domain(self, tracked_domain: TrackedDomain) -> None:
+        """Updates an existing tracked domain."""
+        def _update(session):
+            orm_tracked_domain = session.query(TrackedDomainORM).filter_by(id=tracked_domain.id).first()
+            if orm_tracked_domain:
+                new_data = self._to_orm(tracked_domain)
+                for key, value in new_data.__dict__.items():
+                    if key != '_sa_instance_state':
+                        setattr(orm_tracked_domain, key, value)
+            else:
+                raise ValueError(f"TrackedDomain with ID {tracked_domain.id} not found for update.")
+        self._execute_operation('update', 'tracked_domains', _update)
+        self.logger.info(f"Updated tracked domain {tracked_domain.domain_name}.")
+
+    def update_tracked_keyword(self, tracked_keyword: TrackedKeyword) -> None:
+        """Updates an existing tracked keyword."""
+        def _update(session):
+            orm_tracked_keyword = session.query(TrackedKeywordORM).filter_by(id=tracked_keyword.id).first()
+            if orm_tracked_keyword:
+                new_data = self._to_orm(tracked_keyword)
+                for key, value in new_data.__dict__.items():
+                    if key != '_sa_instance_state':
+                        setattr(orm_tracked_keyword, key, value)
+            else:
+                raise ValueError(f"TrackedKeyword with ID {tracked_keyword.id} not found for update.")
+        self._execute_operation('update', 'tracked_keywords', _update)
+        self.logger.info(f"Updated tracked keyword {tracked_keyword.keyword}.")
+
+
+class ClickHouseClient:
+    """
+    Client for interacting with ClickHouse database.
+    Handles connections and bulk inserts for analytical data.
+    """
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(ClickHouseClient, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        self._initialized = True
+        self.logger = logging.getLogger(__name__ + ".ClickHouseClient")
+        self.clickhouse_url = config_loader.get("clickhouse.url")
+        self.enabled = config_loader.get("clickhouse.enabled", False)
+        self.engine = None
+        self.Session = None
+        if self.enabled:
+            self._connect()
+        else:
+            self.logger.info("ClickHouse is disabled by configuration.")
+
+    def _connect(self):
+        """Establishes connection to the ClickHouse database."""
+        if not self.clickhouse_url:
+            self.logger.critical("ClickHouse URL is not configured.")
+            self.enabled = False
+            return
+
+        try:
+            self.engine = create_engine(self.clickhouse_url, pool_size=5, max_overflow=10)
+            self.Session = scoped_session(sessionmaker(bind=self.engine))
+            self.logger.info("ClickHouse connection established.")
+            self._create_tables()
+        except ClickHouseError as e:
+            self.logger.critical(f"Failed to connect to ClickHouse: {e}", exc_info=True)
+            self.enabled = False
+            self.engine = None
+            self.Session = None
+        except Exception as e:
+            self.logger.critical(f"An unexpected error occurred during ClickHouse connection or setup: {e}", exc_info=True)
+            self.enabled = False
+            self.engine = None
+            self.Session = None
+
+    def _create_tables(self):
+        """Creates ClickHouse tables if they don't exist."""
+        if not self.engine:
+            self.logger.warning("ClickHouse engine not initialized. Cannot create tables.")
+            return
+        try:
+            self.logger.info("Attempting to create ClickHouse tables...")
+            from Link_Profiler.database.clickhouse_models import Base as ClickHouseBase
+            ClickHouseBase.metadata.create_all(self.engine)
+            self.logger.info("ClickHouse tables created successfully or already exist.")
+        except ClickHouseError as e:
+            self.logger.error(f"Error creating ClickHouse tables: {e}", exc_info=True)
+        except Exception as e:
+            self.logger.error(f"Unexpected error during ClickHouse table creation: {e}", exc_info=True)
+
+    def get_session(self):
+        """Returns a ClickHouse SQLAlchemy session."""
+        if not self.Session:
+            raise RuntimeError("ClickHouse not connected or session not initialized.")
+        return self.Session()
+
+    def ping(self) -> bool:
+        """Pings the ClickHouse database to check connectivity."""
+        if not self.engine:
+            return False
+        try:
+            with self.engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+            self.logger.debug("ClickHouse ping successful.")
+            return True
+        except OperationalError as e:
+            self.logger.error(f"ClickHouse ping failed: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Unexpected error during ClickHouse ping: {e}")
+            return False
+
+    def _execute_ch_operation(self, operation_type: str, table_name: str, func: Callable):
+        """Helper to execute a ClickHouse database operation with error handling and metrics."""
+        if not self.enabled:
+            self.logger.warning(f"ClickHouse is disabled. Skipping {operation_type} on {table_name}.")
+            return None
+
+        session = self.get_session()
+        start_time = datetime.now()
+        try:
+            result = func(session)
+            session.commit()
+            DB_OPERATIONS_TOTAL.labels(operation_type=operation_type, table_name=table_name, status='success').inc()
+            return result
+        except ClickHouseError as e:
+            session.rollback()
+            self.logger.error(f"ClickHouse error during {operation_type} on {table_name}: {e}", exc_info=True)
+            DB_OPERATIONS_TOTAL.labels(operation_type=operation_type, table_name=table_name, status='clickhouse_error').inc()
+            raise
+        except SQLAlchemyError as e:
+            session.rollback()
+            self.logger.error(f"SQLAlchemy error during {operation_type} on {table_name}: {e}", exc_info=True)
+            DB_OPERATIONS_TOTAL.labels(operation_type=operation_type, table_name=table_name, status='sql_error').inc()
+            raise
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"Unexpected error during {operation_type} on {table_name}: {e}", exc_info=True)
+            DB_OPERATIONS_TOTAL.labels(operation_type=operation_type, table_name=table_name, status='unexpected_error').inc()
+            raise
+        finally:
+            session.close()
+            duration = (datetime.now() - start_time).total_seconds()
+            DB_QUERY_DURATION_SECONDS.labels(query_type=operation_type, table_name=table_name).observe(duration)
+
+    def _prepare_backlink_data_for_ch(self, backlink: Backlink) -> Dict[str, Any]:
+        """Prepares Backlink dataclass for ClickHouse insertion."""
+        return {
+            "id": str(backlink.id) if hasattr(backlink, 'id') else str(uuid.uuid4()), # Ensure ID exists
+            "timestamp": backlink.last_seen or datetime.utcnow(),
+            "source_url": backlink.source_url,
+            "target_url": backlink.target_url,
+            "source_url_domain": urlparse(backlink.source_url).netloc,
+            "target_url_domain": urlparse(backlink.target_url).netloc,
+            "anchor_text": backlink.anchor_text,
+            "link_type": backlink.link_type.value,
+            "nofollow": 1 if backlink.nofollow else 0,
+            "ugc": 1 if backlink.ugc else 0,
+            "sponsored": 1 if backlink.sponsored else 0,
+            "http_status": backlink.http_status,
+            "spam_level": backlink.spam_level.value if backlink.spam_level else None,
+            "source_page_authority": backlink.source_page_authority,
+            "source_domain_authority": backlink.source_domain_authority,
+            "user_id": backlink.user_id,
+            "organization_id": backlink.organization_id,
+        }
+
+    def _prepare_seo_metrics_data_for_ch(self, metrics: SEOMetrics) -> Dict[str, Any]:
+        """Prepares SEOMetrics dataclass for ClickHouse insertion."""
+        return {
+            "id": str(uuid.uuid4()), # Generate new ID for analytical record
+            "audit_timestamp": metrics.audit_timestamp or datetime.utcnow(),
+            "url": metrics.url,
+            "url_domain": urlparse(metrics.url).netloc if metrics.url else None,
+            "domain_authority": metrics.domain_authority,
+            "page_authority": metrics.page_authority,
+            "trust_flow": metrics.trust_flow,
+            "citation_flow": metrics.citation_flow,
+            "organic_keywords": metrics.organic_keywords,
+            "organic_traffic": metrics.organic_traffic,
+            "referring_domains": metrics.referring_domains,
+            "spam_score": metrics.spam_score,
+            "http_status": metrics.http_status,
+            "response_time_ms": metrics.response_time_ms,
+            "page_size_bytes": metrics.page_size_bytes,
+            "seo_score": metrics.seo_score,
+            "user_id": metrics.user_id,
+            "organization_id": metrics.organization_id,
+            "issues": json.dumps(metrics.issues),
+            "structured_data_types": json.dumps(metrics.structured_data_types),
+        }
+
+    def _prepare_serp_result_data_for_ch(self, serp_result: SERPResult) -> Dict[str, Any]:
+        """Prepares SERPResult dataclass for ClickHouse insertion."""
+        return {
+            "id": str(uuid.uuid4()), # Generate new ID for analytical record
+            "timestamp": serp_result.timestamp or datetime.utcnow(),
+            "keyword": serp_result.keyword,
+            "rank": serp_result.rank,
+            "url": serp_result.url,
+            "domain": serp_result.domain,
+            "title": serp_result.title,
+            "snippet": serp_result.snippet,
+            "position_type": serp_result.position_type,
+            "user_id": serp_result.user_id,
+            "organization_id": serp_result.organization_id,
+        }
+
+    def _prepare_keyword_suggestion_data_for_ch(self, suggestion: KeywordSuggestion) -> Dict[str, Any]:
+        """Prepares KeywordSuggestion dataclass for ClickHouse insertion."""
+        return {
+            "id": str(uuid.uuid4()), # Generate new ID for analytical record
+            "data_timestamp": suggestion.last_fetched_at or datetime.utcnow(),
+            "seed_keyword": suggestion.seed_keyword,
+            "keyword": suggestion.keyword,
+            "search_volume": suggestion.search_volume,
+            "cpc": suggestion.cpc,
+            "competition": suggestion.competition,
+            "difficulty": suggestion.difficulty,
+            "relevance": suggestion.relevance,
+            "source": suggestion.source,
+            "keyword_trend": json.dumps(suggestion.keyword_trend) if suggestion.keyword_trend else None,
+            "user_id": suggestion.user_id,
+            "organization_id": suggestion.organization_id,
+        }
+
+    def _prepare_gsc_backlink_data_for_ch(self, gsc_backlink: GSCBacklink) -> Dict[str, Any]:
+        """Prepares GSCBacklink dataclass for ClickHouse insertion."""
+        return {
+            "id": str(uuid.uuid4()), # Generate new ID for analytical record
+            "fetch_date": gsc_backlink.fetch_date or datetime.utcnow(),
+            "domain": gsc_backlink.domain,
+            "source_url": gsc_backlink.source_url,
+            "target_url": gsc_backlink.target_url,
+            "anchor_text": gsc_backlink.anchor_text,
+            "user_id": gsc_backlink.user_id,
+            "organization_id": gsc_backlink.organization_id,
+        }
+
+    def _prepare_keyword_trend_data_for_ch(self, keyword_trend: KeywordTrend) -> Dict[str, Any]:
+        """Prepares KeywordTrend dataclass for ClickHouse insertion."""
+        return {
+            "id": str(uuid.uuid4()), # Generate new ID for analytical record
+            "keyword": keyword_trend.keyword,
+            "date": keyword_trend.date,
+            "trend_index": keyword_trend.trend_index,
+            "source": keyword_trend.source,
+            "user_id": keyword_trend.user_id,
+            "organization_id": keyword_trend.organization_id,
+        }
+
+    def insert_backlinks_analytical(self, backlinks: List[Backlink]) -> None:
+        """Inserts backlink data into ClickHouse analytical table."""
+        if not self.enabled: return
+        def _insert(session):
+            ch_data = [self._prepare_backlink_data_for_ch(bl) for bl in backlinks]
+            session.bulk_insert_mappings(BacklinkAnalyticalORM, ch_data)
+        self._execute_ch_operation('insert', 'backlinks_analytical', _insert)
+        self.logger.info(f"Inserted {len(backlinks)} backlinks into ClickHouse.")
+
+    def insert_seo_metrics_analytical(self, metrics: List[SEOMetrics]) -> None:
+        """Inserts SEO metrics data into ClickHouse analytical table."""
+        if not self.enabled: return
+        def _insert(session):
+            ch_data = [self._prepare_seo_metrics_data_for_ch(m) for m in metrics]
+            session.bulk_insert_mappings(SEOAnalyticalORM, ch_data)
+        self._execute_ch_operation('insert', 'seo_metrics_analytical', _insert)
+        self.logger.info(f"Inserted {len(metrics)} SEO metrics into ClickHouse.")
+
+    def insert_serp_results_analytical(self, serp_results: List[SERPResult]) -> None:
+        """Inserts SERP results data into ClickHouse analytical table."""
+        if not self.enabled: return
+        def _insert(session):
+            ch_data = [self._prepare_serp_result_data_for_ch(sr) for sr in serp_results]
+            session.bulk_insert_mappings(SERPAnalyticalORM, ch_data)
+        self._execute_ch_operation('insert', 'serp_results_analytical', _insert)
+        self.logger.info(f"Inserted {len(serp_results)} SERP results into ClickHouse.")
+
+    def insert_keyword_suggestions_analytical(self, suggestions: List[KeywordSuggestion]) -> None:
+        """Inserts keyword suggestions data into ClickHouse analytical table."""
+        if not self.enabled: return
+        def _insert(session):
+            ch_data = [self._prepare_keyword_suggestion_data_for_ch(s) for s in suggestions]
+            session.bulk_insert_mappings(KeywordSuggestionAnalyticalORM, ch_data)
+        self._execute_ch_operation('insert', 'keyword_suggestions_analytical', _insert)
+        self.logger.info(f"Inserted {len(suggestions)} keyword suggestions into ClickHouse.")
+
+    def insert_gsc_backlinks_analytical(self, gsc_backlinks: List[GSCBacklink]) -> None:
+        """Inserts GSC backlink data into ClickHouse analytical table."""
+        if not self.enabled: return
+        def _insert(session):
+            ch_data = [self._prepare_gsc_backlink_data_for_ch(bl) for bl in gsc_backlinks]
+            session.bulk_insert_mappings(GSCBacklinkAnalyticalORM, ch_data)
+        self._execute_ch_operation('insert', 'gsc_backlinks_analytical', _insert)
+        self.logger.info(f"Inserted {len(gsc_backlinks)} GSC backlinks into ClickHouse.")
+
+    def insert_keyword_trends_analytical(self, keyword_trends: List[KeywordTrend]) -> None:
+        """Inserts keyword trend data into ClickHouse analytical table."""
+        if not self.enabled: return
+        def _insert(session):
+            ch_data = [self._prepare_keyword_trend_data_for_ch(kt) for kt in keyword_trends]
+            session.bulk_insert_mappings(KeywordTrendAnalyticalORM, ch_data)
+        self._execute_ch_operation('insert', 'keyword_trends_analytical', _insert)
+        self.logger.info(f"Inserted {len(keyword_trends)} keyword trends into ClickHouse.")
+
+
 # Create a singleton instance
 db = Database()
+clickhouse_client = ClickHouseClient()
