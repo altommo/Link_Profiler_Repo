@@ -109,12 +109,19 @@ class CommonCrawlClient(BaseAPIClient): # Inherit from BaseAPIClient
             params['from'] = from_date.replace('-', '') # Ensure YYYYMMDD format
         if to_date:
             params['to'] = to_date.replace('-', '') # Ensure YYYYMMDD format
+        
+        # Use fl=url,timestamp,mime,status to limit fields if desired.
+        # If fields are not provided, use a sensible default.
         if fields:
-            params['fl'] = ','.join(fields) # Filter fields
+            params['fl'] = ','.join(fields)
+        else:
+            params['fl'] = 'urlkey,timestamp,original,mimetype,statuscode,digest,length' # Default fields
 
         self.logger.info(f"Calling Common Crawl API for domain: {domain} (match_type: {match_type}, limit: {limit})...")
         results = []
         try:
+            # Enforce 0.5s throttle between calls
+            await asyncio.sleep(0.5)
             # Use _make_request for fetching data. It returns raw text for non-JSON responses.
             # Common Crawl returns newline-delimited JSON, so we need to process the text.
             response_text = await self._make_request("GET", self._current_index_url, params=params, return_json=False)

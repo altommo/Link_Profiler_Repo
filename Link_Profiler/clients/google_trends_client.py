@@ -93,9 +93,8 @@ class GoogleTrendsClient(BaseAPIClient):
         for i in range(0, len(keywords), chunk_size):
             chunk = keywords[i:i + chunk_size]
             
-            # Explicit throttling to respect Google Trends free tier (approx. 10 requests/min)
-            # This is handled by the resilience manager's rate limiting, but a manual sleep is also good for pytrends.
-            await asyncio.sleep(random.uniform(1.0, 3.0)) # Be respectful to Google Trends rate limits
+            # Enforce 6s throttle between payloads
+            await asyncio.sleep(6)
 
             try:
                 # Use resilience manager for the synchronous pytrends call
@@ -109,19 +108,24 @@ class GoogleTrendsClient(BaseAPIClient):
                 )
                 
                 if not interest_over_time_df.empty:
+                    # Filter out 'isPartial' rows if present (pytrends usually handles this internally)
+                    if 'isPartial' in interest_over_time_df.columns:
+                        interest_over_time_df = interest_over_time_df[~interest_over_time_df['isPartial']]
+                    
                     for kw in chunk:
                         if kw in interest_over_time_df.columns:
-                            all_trends_data[kw] = interest_over_time_df[kw].tolist()
+                            # Convert datetime index to string for dictionary keys
+                            all_trends_data[kw] = {str(idx.date()): val for idx, val in interest_over_time_df[kw].items()}
                         else:
-                            all_trends_data[kw] = [] # Keyword not found in trends data
+                            all_trends_data[kw] = {} # Keyword not found in trends data
                 else:
                     for kw in chunk:
-                        all_trends_data[kw] = [] # No data for this chunk
+                        all_trends_data[kw] = {} # No data for this chunk
 
             except Exception as e: # Catch generic exception for pytrends errors
                 self.logger.error(f"Error fetching trends for keywords {chunk}: {e}", exc_info=True)
                 for kw in chunk:
-                    all_trends_data[kw] = []
+                    all_trends_data[kw] = {}
             
         return {
             "trends_data": all_trends_data,
@@ -140,6 +144,8 @@ class GoogleTrendsClient(BaseAPIClient):
         self.logger.info(f"Fetching Google Trends related queries for keyword: {keyword}...")
         
         try:
+            # Enforce 6s throttle before payload build for related queries too
+            await asyncio.sleep(6)
             self.pytrends.build_payload([keyword], cat=0, timeframe='today 12-m', geo='', gprop='')
             related_queries_dict = await self.resilience_manager.execute_with_resilience(
                 lambda: self.pytrends.related_queries(),

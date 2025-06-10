@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import random
 
 import praw # Requires pip install praw
-from prawcore.exceptions import RequestException, ResponseException # Import specific PRAW exceptions
+from prawcore.exceptions import RequestException, ResponseException, TooManyRequests # Import specific PRAW exceptions
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.clients.base_client import BaseAPIClient
@@ -98,12 +98,19 @@ class RedditClient(BaseAPIClient):
             # PRAW search is synchronous, run in a thread pool executor
             # We use resilience_manager to wrap the synchronous call to PRAW
             # The URL for the circuit breaker is a placeholder as PRAW doesn't expose a direct API endpoint.
-            search_results = await self.resilience_manager.execute_with_resilience(
-                lambda: list(self.reddit.subreddit("all").search(query, limit=limit)),
+            
+            # PRAW's search method has a default limit of 100 items.
+            # For larger limits, external services like Pushshift would be needed.
+            # This implementation respects PRAW's default limit.
+            praw_limit = min(limit, 100) # PRAW's search method typically caps at 100.
+
+            search_results_iterator = await self.resilience_manager.execute_with_resilience(
+                lambda: self.reddit.subreddit("all").search(query, limit=praw_limit),
                 url="https://www.reddit.com/search" # Representative URL for CB
             )
             
-            for submission in search_results:
+            # Iterate over results and apply throttle
+            for i, submission in enumerate(search_results_iterator):
                 results.append({
                     "platform": "reddit",
                     "id": submission.id,
@@ -117,8 +124,20 @@ class RedditClient(BaseAPIClient):
                     "subreddit": submission.subreddit.display_name,
                     "raw_data": submission.__dict__ # Store raw PRAW object dict
                 })
+                # After each PRAW API call, await asyncio.sleep(1) to honor 60 req/min
+                # This sleep is applied per item fetched from the iterator, which aligns with PRAW's rate limits.
+                await asyncio.sleep(1) 
+                if len(results) >= limit: # Stop if we've reached the requested limit
+                    break
+
             self.logger.info(f"Found {len(results)} Reddit mentions for '{query}'.")
             return results
+        except TooManyRequests as e:
+            self.logger.warning(f"Reddit API rate limit hit (TooManyRequests) for '{query}'. Backing off 30 seconds...")
+            await asyncio.sleep(30) # Back off 30 seconds
+            # Depending on the desired behavior, you might re-raise or return partial results.
+            # For now, re-raise after backoff to let the resilience manager handle it if configured.
+            raise
         except Exception as e:
             self.logger.error(f"Error searching Reddit for '{query}': {e}", exc_info=True)
             return []

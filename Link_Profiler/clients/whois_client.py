@@ -12,6 +12,16 @@ import json
 import random
 # Removed time import as it's no longer needed for manual performance measurement
 
+# Import python-whois for direct WHOIS lookups
+try:
+    import whois
+    from whois.parser import PywhoisError
+except ImportError:
+    whois = None
+    PywhoisError = Exception
+    logging.getLogger(__name__).warning("python-whois library not found. Direct WHOIS lookups will be disabled.")
+
+
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.clients.base_client import BaseAPIClient # Import BaseAPIClient
@@ -23,74 +33,79 @@ logger = logging.getLogger(__name__)
 
 class WHOISClient(BaseAPIClient): # Inherit from BaseAPIClient
     """
-    Client for fetching WHOIS data from WHOIS-JSON.com.
-    Offers a free tier with limits.
+    Client for fetching WHOIS data.
+    This version uses the python-whois library for direct WHOIS lookups,
+    bypassing the WHOIS-JSON.com API.
     """
     def __init__(self, session_manager: Optional[SessionManager] = None, resilience_manager: Optional[DistributedResilienceManager] = None, api_quota_manager: Optional[APIQuotaManager] = None):
+        # Note: This client now performs direct WHOIS lookups using python-whois,
+        # so session_manager, resilience_manager, and api_quota_manager are less directly
+        # applicable for the actual WHOIS query, but are kept for BaseAPIClient compatibility
+        # and potential future use (e.g., if an external WHOIS API is re-introduced).
         super().__init__(session_manager, resilience_manager, api_quota_manager) # Call BaseAPIClient's init
         self.logger = logging.getLogger(__name__ + ".WHOISClient")
-        self.base_url = config_loader.get("domain_api.whois_json_api.base_url")
-        self.api_key = config_loader.get("domain_api.whois_json_api.api_key") # Optional, for higher limits
-        self.enabled = config_loader.get("domain_api.whois_json_api.enabled", False)
+        
+        # Check if python-whois is available
+        self.enabled = bool(whois) and config_loader.get("domain_api.whois_json_api.enabled", False) # Re-using config flag
         
         if not self.enabled:
-            self.logger.info("WHOIS-JSON.com API is disabled by configuration.")
+            self.logger.info("Direct WHOIS lookups are disabled (python-whois not found or configuration disabled).")
 
     async def __aenter__(self):
-        """Initialise aiohttp session."""
+        """Initialise aiohttp session (if still needed by BaseAPIClient)."""
         await super().__aenter__() # Call BaseAPIClient's __aenter__
         if self.enabled:
             self.logger.info("Entering WHOISClient context.")
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Close aiohttp session."""
+        """Close aiohttp session (if still needed by BaseAPIClient)."""
         await super().__aexit__(exc_type, exc_val, exc_tb) # Call BaseAPIClient's __aexit__
         if self.enabled:
-            self.logger.info("Exiting WHOISClient context. Closing aiohttp session.")
+            self.logger.info("Exiting WHOISClient context.")
 
+    # The api_rate_limited decorator will still apply, enforcing the throttle.
     @api_rate_limited(service="whois_json_api", api_client_type="whois_client", endpoint="get_domain_info")
     async def get_domain_info(self, domain: str) -> Optional[Dict[str, Any]]:
         """
-        Fetches WHOIS information for a given domain.
+        Fetches WHOIS information for a given domain using python-whois.
         
         Args:
             domain (str): The domain name to query.
             
         Returns:
-            Optional[Dict[str, Any]]: The JSON response from the WHOIS-JSON.com API, or None on failure.
+            Optional[Dict[str, Any]]: The parsed WHOIS data, or None on failure.
         """
         if not self.enabled:
-            self.logger.warning(f"WHOIS-JSON.com API is disabled. Simulating WHOIS data for {domain}.")
+            self.logger.warning(f"WHOIS client is disabled. Simulating WHOIS data for {domain}.")
             return self._simulate_whois_data(domain)
 
-        endpoint = self.base_url
-        params = {'domain': domain}
-        if self.api_key:
-            params['api_key'] = self.api_key # Add API key if available
+        self.logger.info(f"Fetching WHOIS data for domain: {domain} using python-whois...")
+        
+        # Enforce 1s throttle
+        await asyncio.sleep(1)
 
-        self.logger.info(f"Calling WHOIS-JSON.com API for domain: {domain}...")
         try:
-            # _make_request now handles resilience and adds 'last_fetched_at'
-            response_data = await self._make_request("GET", endpoint, params=params)
-            self.logger.info(f"WHOIS data for {domain} fetched successfully.")
+            # python-whois is synchronous, run in a thread pool executor
+            whois_data = await asyncio.to_thread(whois.whois, domain)
             
             # Normalize the output
             normalized_data = {
-                "domain_name": response_data.get("domain_name"),
-                "registrar": response_data.get("registrar", {}).get("name"),
-                "creation_date": response_data.get("creation_date"),
-                "expiration_date": response_data.get("expiration_date"),
-                "name_servers": response_data.get("name_servers", []),
-                "status": response_data.get("status"),
-                "country": response_data.get("registrant", {}).get("country"),
-                "emails": response_data.get("emails", []),
-                "organization": response_data.get("registrant", {}).get("organization"),
-                'last_fetched_at': response_data.get('last_fetched_at') # Get from _make_request
+                "domain_name": whois_data.domain_name[0] if isinstance(whois_data.domain_name, list) else whois_data.domain_name,
+                "registrar": whois_data.registrar,
+                "creation_date": whois_data.creation_date[0].isoformat() if isinstance(whois_data.creation_date, list) else (whois_data.creation_date.isoformat() if whois_data.creation_date else None),
+                "expiration_date": whois_data.expiration_date[0].isoformat() if isinstance(whois_data.expiration_date, list) else (whois_data.expiration_date.isoformat() if whois_data.expiration_date else None),
+                "name_servers": whois_data.name_servers,
+                "status": whois_data.status[0] if isinstance(whois_data.status, list) else whois_data.status,
+                "country": whois_data.country,
+                "emails": whois_data.emails,
+                "organization": whois_data.org,
+                'last_fetched_at': datetime.utcnow().isoformat()
             }
+            self.logger.info(f"WHOIS data for {domain} fetched successfully.")
             return normalized_data
-        except aiohttp.ClientResponseError as e:
-            self.logger.error(f"Network/API error fetching WHOIS data for {domain} (Status: {e.status}): {e}", exc_info=True)
+        except PywhoisError as e:
+            self.logger.error(f"PywhoisError fetching WHOIS data for {domain}: {e}", exc_info=True)
             return self._simulate_whois_data(domain) # Fallback to simulation on error
         except Exception as e:
             self.logger.error(f"Error fetching WHOIS data for {domain}: {e}", exc_info=True)

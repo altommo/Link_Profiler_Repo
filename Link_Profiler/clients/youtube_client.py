@@ -52,38 +52,61 @@ class YouTubeClient(BaseAPIClient):
             return []
 
         endpoint = f"{self.base_url}/search"
-        params = {
-            "part": "snippet",
-            "q": query,
-            "type": "video",
-            "key": self.api_key,
-            "maxResults": limit
-        }
+        all_videos = []
+        next_page_token = None
+        
+        # YouTube Data API maxResults is 50 per request
+        max_results_per_page = 50
 
-        self.logger.info(f"Searching YouTube for query: '{query}' (Limit: {limit})...")
-        results = []
-        try:
-            # _make_request now handles resilience and adds 'last_fetched_at'
-            response_data = await self._make_request("GET", endpoint, params=params)
+        while len(all_videos) < limit:
+            params = {
+                "part": "snippet",
+                "q": query,
+                "type": "video",
+                "key": self.api_key,
+                "maxResults": min(max_results_per_page, limit - len(all_videos)) # Request only what's needed
+            }
+            if next_page_token:
+                params["pageToken"] = next_page_token
+
+            self.logger.info(f"Searching YouTube for query: '{query}' (Current results: {len(all_videos)}/{limit})...")
             
-            for item in response_data.get("items", []):
-                video_id = item["id"]["videoId"]
-                results.append({
-                    "platform": "youtube",
-                    "id": video_id,
-                    "title": item["snippet"]["title"],
-                    "url": f"https://www.youtube.com/watch?v={video_id}",
-                    "text": item["snippet"]["description"],
-                    "author": item["snippet"]["channelTitle"],
-                    "published_at": item["snippet"]["publishedAt"],
-                    "raw_data": item,
-                    "last_fetched_at": response_data.get('last_fetched_at') # Get from _make_request
-                })
-            self.logger.info(f"Found {len(results)} YouTube videos for '{query}'.")
-            return results
-        except aiohttp.ClientResponseError as e:
-            self.logger.error(f"Network/API error searching YouTube for '{query}' (Status: {e.status}): {e}", exc_info=True)
-            return []
-        except Exception as e:
-            self.logger.error(f"Error searching YouTube for '{query}': {e}", exc_info=True)
-            return []
+            try:
+                # _make_request now handles resilience and adds 'last_fetched_at'
+                response_data = await self._make_request("GET", endpoint, params=params)
+                
+                articles_on_page = response_data.get("items", [])
+                for item in articles_on_page:
+                    video_id = item["id"]["videoId"]
+                    all_videos.append({
+                        "platform": "youtube",
+                        "id": video_id,
+                        "title": item["snippet"]["title"],
+                        "url": f"https://www.youtube.com/watch?v={video_id}",
+                        "text": item["snippet"]["description"],
+                        "author": item["snippet"]["channelTitle"],
+                        "published_at": item["snippet"]["publishedAt"],
+                        "raw_data": item,
+                        "last_fetched_at": response_data.get('last_fetched_at') # Get from _make_request
+                    })
+                
+                next_page_token = response_data.get("nextPageToken")
+                if not next_page_token or not articles_on_page: # No more pages or no articles on this page
+                    break
+                
+                # Enforce 1s throttle between calls
+                await asyncio.sleep(1)
+
+            except aiohttp.ClientResponseError as e:
+                if e.status == 429:
+                    self.logger.error(f"YouTube API quota exceeded (429) for '{query}'. Skipping further results for this query.", exc_info=True)
+                    break # Stop on quota error
+                else:
+                    self.logger.error(f"Network/API error searching YouTube for '{query}' (Status: {e.status}): {e}", exc_info=True)
+                    break # Break on other errors
+            except Exception as e:
+                self.logger.error(f"Error searching YouTube for '{query}': {e}", exc_info=True)
+                break # Break on general error
+
+        self.logger.info(f"Found {len(all_videos)} YouTube videos for '{query}'.")
+        return all_videos[:limit] # Ensure we don't exceed the requested limit

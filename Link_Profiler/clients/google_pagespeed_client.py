@@ -53,14 +53,26 @@ class PageSpeedClient(BaseAPIClient):
         }
 
         self.logger.info(f"Calling PageSpeed Insights API for URL: {url} (Strategy: {strategy})...")
-        try:
-            # _make_request now handles resilience and adds 'last_fetched_at'
-            response_data = await self._make_request("GET", self.base_url, params=params)
-            self.logger.info(f"PageSpeed Insights data for {url} fetched successfully.")
-            return response_data
-        except aiohttp.ClientResponseError as e:
-            self.logger.error(f"Network/API error fetching PageSpeed Insights data for {url} (Status: {e.status}): {e}", exc_info=True)
-            return None
-        except Exception as e:
-            self.logger.error(f"Error fetching PageSpeed Insights data for {url}: {e}", exc_info=True)
-            return None
+        
+        retries = 1 # One retry for 429 specifically
+        for attempt in range(retries + 1):
+            try:
+                # Enforce 60s throttle to respect 25 req/day limit.
+                # This is a hard throttle for this specific API due to its strict daily limits.
+                await asyncio.sleep(60)
+                
+                # _make_request now handles resilience and adds 'last_fetched_at'
+                response_data = await self._make_request("GET", self.base_url, params=params)
+                self.logger.info(f"PageSpeed Insights data for {url} fetched successfully.")
+                return response_data
+            except aiohttp.ClientResponseError as e:
+                if e.status == 429 and attempt < retries:
+                    self.logger.warning(f"PageSpeed Insights API rate limit hit (429) for '{url}'. Backing off 60 seconds, then retrying...")
+                    await asyncio.sleep(60) # Back off 60 seconds
+                else:
+                    self.logger.error(f"Network/API error fetching PageSpeed Insights data for {url} (Status: {e.status}): {e}", exc_info=True)
+                    return None # Return None on persistent error
+            except Exception as e:
+                self.logger.error(f"Error fetching PageSpeed Insights data for {url}: {e}", exc_info=True)
+                return None # Return None on general error
+        return None # Should not be reached if retries are handled

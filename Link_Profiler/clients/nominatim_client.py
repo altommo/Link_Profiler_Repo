@@ -79,20 +79,28 @@ class NominatimClient(BaseAPIClient): # Inherit from BaseAPIClient
         }
 
         self.logger.info(f"Calling Nominatim API for geocode search: '{query}' (limit: {limit})...")
-        try:
-            # Use _make_request which handles throttling, resilience, and performance recording
-            data = await self._make_request("GET", endpoint, params=params)
-            results = data if isinstance(data, list) else [] # Ensure it's a list
-            self.logger.info(f"Found {len(results)} geocode results for '{query}'.")
-            return results
-        except aiohttp.ClientResponseError as e:
-            # BaseAPIClient's _make_request will raise ClientResponseError for 4xx/5xx.
-            # Specific retry logic for 429 can be handled here if needed, but resilience_manager should handle it.
-            self.logger.error(f"Network/API error geocoding '{query}' with Nominatim (Status: {e.status}): {e}", exc_info=True)
-            return self._simulate_geocode_results(query, limit) # Fallback to simulation on error
-        except Exception as e:
-            self.logger.error(f"Unexpected error geocoding '{query}' with Nominatim: {e}", exc_info=True)
-            return self._simulate_geocode_results(query, limit) # Fallback to simulation on error
+        
+        retries = 1 # One retry for 429/5xx specifically
+        for attempt in range(retries + 1):
+            try:
+                # Enforce 1s throttle before each call
+                await asyncio.sleep(1)
+                # Use _make_request which handles throttling, resilience, and performance recording
+                data = await self._make_request("GET", endpoint, params=params)
+                results = data if isinstance(data, list) else [] # Ensure it's a list
+                self.logger.info(f"Found {len(results)} geocode results for '{query}'.")
+                return results
+            except aiohttp.ClientResponseError as e:
+                if e.status in [429, 500, 502, 503, 504] and attempt < retries:
+                    self.logger.warning(f"Nominatim API {e.status} error for '{query}'. Backing off, then retrying...")
+                    await asyncio.sleep(2 ** attempt * 5) # Exponential backoff
+                else:
+                    self.logger.error(f"Network/API error geocoding '{query}' with Nominatim (Status: {e.status}): {e}", exc_info=True)
+                    return self._simulate_geocode_results(query, limit) # Fallback to simulation on error
+            except Exception as e:
+                self.logger.error(f"Unexpected error geocoding '{query}' with Nominatim: {e}", exc_info=True)
+                return self._simulate_geocode_results(query, limit) # Fallback to simulation on error
+        return self._simulate_geocode_results(query, limit) # Should not be reached if retries are handled
 
     @api_rate_limited(service="nominatim_api", api_client_type="nominatim_client", endpoint="reverse_geocode")
     async def reverse_geocode(self, lat: float, lon: float) -> Optional[Dict[str, Any]]:
@@ -119,16 +127,26 @@ class NominatimClient(BaseAPIClient): # Inherit from BaseAPIClient
         }
 
         self.logger.info(f"Calling Nominatim API for reverse geocode: {lat}, {lon}...")
-        try:
-            # Use _make_request which handles throttling, resilience, and performance recording
-            data = await self._make_request("GET", endpoint, params=params)
-            return data
-        except aiohttp.ClientResponseError as e:
-            self.logger.error(f"Network/API error reverse geocoding {lat}, {lon} with Nominatim (Status: {e.status}): {e}", exc_info=True)
-            return self._simulate_reverse_geocode_result(lat, lon) # Fallback to simulation on error
-        except Exception as e:
-            self.logger.error(f"Unexpected error reverse geocoding {lat}, {lon} with Nominatim: {e}", exc_info=True)
-            return self._simulate_reverse_geocode_result(lat, lon) # Fallback to simulation on error
+        
+        retries = 1 # One retry for 429/5xx specifically
+        for attempt in range(retries + 1):
+            try:
+                # Enforce 1s throttle before each call
+                await asyncio.sleep(1)
+                # Use _make_request which handles throttling, resilience, and performance recording
+                data = await self._make_request("GET", endpoint, params=params)
+                return data
+            except aiohttp.ClientResponseError as e:
+                if e.status in [429, 500, 502, 503, 504] and attempt < retries:
+                    self.logger.warning(f"Nominatim API {e.status} error for {lat}, {lon}. Backing off, then retrying...")
+                    await asyncio.sleep(2 ** attempt * 5) # Exponential backoff
+                else:
+                    self.logger.error(f"Network/API error reverse geocoding {lat}, {lon} with Nominatim (Status: {e.status}): {e}", exc_info=True)
+                    return self._simulate_reverse_geocode_result(lat, lon) # Fallback to simulation on error
+            except Exception as e:
+                self.logger.error(f"Unexpected error reverse geocoding {lat}, {lon} with Nominatim: {e}", exc_info=True)
+                return self._simulate_reverse_geocode_result(lat, lon) # Fallback to simulation on error
+        return self._simulate_reverse_geocode_result(lat, lon) # Should not be reached if retries are handled
 
     def _simulate_geocode_results(self, query: str, limit: int) -> List[Dict[str, Any]]:
         """Helper to generate simulated geocode results."""

@@ -10,6 +10,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.clients.base_client import BaseAPIClient
@@ -174,6 +175,20 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
                 start_row += len(rows)
                 await asyncio.sleep(1) # Delay between pages to avoid 429s
                 
+            except HttpError as e:
+                if e.resp.status == 401: # Token expired or invalid
+                    self.logger.warning(f"GSC API 401 error for {site_url}. Attempting token refresh.")
+                    # Invalidate current credentials to force refresh on next __aenter__ or retry
+                    self._creds = None 
+                    self.enabled = False # Disable for current call, will re-auth on next context entry
+                    break
+                elif e.resp.status in [429, 500, 502, 503, 504]: # Rate limit or server error
+                    self.logger.warning(f"GSC API {e.resp.status} error for {site_url}. Resilience manager should handle retries.")
+                    # Resilience manager should handle retries, if it fails after retries, it will re-raise
+                    raise # Re-raise to let resilience manager handle it
+                else:
+                    self.logger.error(f"Error fetching search analytics for {site_url} (startRow: {start_row}): {e}")
+                    break # Break on other errors
             except Exception as e: # Catch generic exception for GSC API errors
                 self.logger.error(f"Error fetching search analytics for {site_url} (startRow: {start_row}): {e}")
                 break # Break on other errors
@@ -208,6 +223,14 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             self.logger.info(f"Found {len(sites)} sites in GSC account")
             return sites
             
+        except HttpError as e:
+            if e.resp.status == 401: # Token expired or invalid
+                self.logger.warning(f"GSC API 401 error fetching sites. Attempting token refresh.")
+                self._creds = None 
+                self.enabled = False
+            else:
+                self.logger.error(f"Error fetching GSC sites: {e}")
+            return []
         except Exception as e: # Catch generic exception for GSC API errors
             self.logger.error(f"Error fetching GSC sites: {e}")
             return []
@@ -234,6 +257,14 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             self.logger.info(f"Found {len(sitemaps)} sitemaps for {site_url}")
             return sitemaps
             
+        except HttpError as e:
+            if e.resp.status == 401: # Token expired or invalid
+                self.logger.warning(f"GSC API 401 error fetching sitemaps for {site_url}. Attempting token refresh.")
+                self._creds = None 
+                self.enabled = False
+            else:
+                self.logger.error(f"Error fetching sitemaps for {site_url}: {e}")
+            return []
         except Exception as e: # Catch generic exception for GSC API errors
             self.logger.error(f"Error fetching sitemaps for {site_url}: {e}")
             return []
@@ -269,6 +300,14 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             self.logger.info(f"URL inspection completed for {inspection_url}")
             return response
             
+        except HttpError as e:
+            if e.resp.status == 401: # Token expired or invalid
+                self.logger.warning(f"GSC API 401 error inspecting URL {inspection_url}. Attempting token refresh.")
+                self._creds = None 
+                self.enabled = False
+            else:
+                self.logger.error(f"Error inspecting URL {inspection_url}: {e}")
+            return None
         except Exception as e: # Catch generic exception for GSC API errors
             self.logger.error(f"Error inspecting URL {inspection_url}: {e}")
             return None
@@ -316,6 +355,14 @@ class GoogleSearchConsoleClient(BaseAPIClient): # Inherit from BaseAPIClient
             self.logger.info(f"Retrieved {len(normalized_backlinks)} linking sites from GSC for {site_url}.")
             return normalized_backlinks
 
+        except HttpError as e:
+            if e.resp.status == 401: # Token expired or invalid
+                self.logger.warning(f"GSC API 401 error fetching backlinks for {site_url}. Attempting token refresh.")
+                self._creds = None 
+                self.enabled = False
+            else:
+                self.logger.error(f"Error fetching backlinks from GSC for {site_url}: {e}", exc_info=True)
+            return []
         except Exception as e: # Catch generic exception for GSC API errors
             self.logger.error(f"Error fetching backlinks from GSC for {site_url}: {e}", exc_info=True)
             return []

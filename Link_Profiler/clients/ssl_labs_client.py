@@ -75,32 +75,40 @@ class SSLLabsClient(BaseAPIClient): # Inherit from BaseAPIClient
 
         self.logger.info(f"Calling SSL Labs API for SSL analysis of {host}...")
         
-        try:
-            data = await self._make_request("GET", endpoint, params=params)
-            
-            # Implement polling logic
-            while data.get('status') in ('IN_PROGRESS', 'DNS'):
-                self.logger.info(f"SSL Labs analysis for {host} is {data.get('status')}. Polling in 10 seconds...")
-                await asyncio.sleep(10)
+        retries = 3 # Up to 3 retries for 429/5xx
+        for attempt in range(retries + 1):
+            try:
+                data = await self._make_request("GET", endpoint, params=params)
                 
-                data = await self._make_request("GET", endpoint, params=params) # Poll again
-            
-            if data.get('status') == 'READY':
-                self.logger.info(f"SSL analysis for {host} completed with grade: {data.get('endpoints', [{}])[0].get('grade')}.")
-                return data
-            elif data.get('status') == 'ERROR':
-                self.logger.error(f"SSL Labs analysis for {host} returned an error status: {data.get('statusMessage')}")
-                return None # Analysis failed
-            else:
-                self.logger.warning(f"SSL Labs analysis for {host} returned unexpected status: {data.get('status')}. Data: {data}")
-                return None # Unexpected status
-        except aiohttp.ClientResponseError as e:
-            self.logger.error(f"Network/API error fetching SSL analysis for {host} (Status: {e.status}): {e}", exc_info=True)
-            return self._simulate_ssl_analysis(host) # Fallback to simulation on error
-        except Exception as e:
-            self.logger.error(f"Unexpected error fetching SSL analysis for {host}: {e}", exc_info=True)
-            return self._simulate_ssl_analysis(host) # Fallback to simulation on error
-        
+                # Implement polling logic
+                while data.get('status') in ('IN_PROGRESS', 'DNS'):
+                    self.logger.info(f"SSL Labs analysis for {host} is {data.get('status')}. Polling in 10 seconds...")
+                    await asyncio.sleep(10) # Poll every 10 seconds
+                    
+                    # Re-fetch data for polling, using _make_request for resilience
+                    data = await self._make_request("GET", endpoint, params=params) 
+                
+                if data.get('status') == 'READY':
+                    self.logger.info(f"SSL analysis for {host} completed with grade: {data.get('endpoints', [{}])[0].get('grade')}.")
+                    return data
+                elif data.get('status') == 'ERROR':
+                    self.logger.error(f"SSL Labs analysis for {host} returned an error status: {data.get('statusMessage')}")
+                    return None # Analysis failed
+                else:
+                    self.logger.warning(f"SSL Labs analysis for {host} returned unexpected status: {data.get('status')}. Data: {data}")
+                    return None # Unexpected status
+            except aiohttp.ClientResponseError as e:
+                if e.status in [429, 500, 502, 503, 504] and attempt < retries:
+                    self.logger.warning(f"SSL Labs API {e.status} error fetching SSL analysis for {host}. Backing off, then retrying...")
+                    await asyncio.sleep(2 ** attempt * 5) # Exponential backoff
+                else:
+                    self.logger.error(f"Network/API error fetching SSL analysis for {host} (Status: {e.status}): {e}", exc_info=True)
+                    return self._simulate_ssl_analysis(host) # Fallback to simulation on error
+            except Exception as e:
+                self.logger.error(f"Unexpected error fetching SSL analysis for {host}: {e}", exc_info=True)
+                return self._simulate_ssl_analysis(host) # Fallback to simulation on error
+        return self._simulate_ssl_analysis(host) # Should not be reached if retries are handled
+
     def _simulate_ssl_analysis(self, host: str) -> Dict[str, Any]:
         """Helper to generate simulated SSL analysis data."""
         self.logger.info(f"Simulating SSL Labs analysis for {host}.")

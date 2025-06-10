@@ -8,7 +8,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 import aiohttp
 import json # For parsing JSON response
-import random # Import random for simulation
+import random
 # Removed time import as it's no longer needed for manual performance measurement
 
 from Link_Profiler.config.config_loader import config_loader
@@ -74,6 +74,8 @@ class SecurityTrailsClient(BaseAPIClient): # Inherit from BaseAPIClient
         self.logger.info(f"Calling SecurityTrails API for subdomains of {domain}...")
         subdomains = []
         try:
+            # Enforce 1s throttle between calls
+            await asyncio.sleep(1)
             data = await self._make_request("GET", endpoint)
             
             for subdomain_prefix in data.get('subdomains', []):
@@ -108,9 +110,14 @@ class SecurityTrailsClient(BaseAPIClient): # Inherit from BaseAPIClient
         self.logger.info(f"Calling SecurityTrails API for DNS history of {domain} ({record_type})...")
         all_records = []
         page = 1
+        # SecurityTrails API uses 'records' and 'has_next_page' for pagination.
+        # The 'cursor' parameter is not explicitly documented for DNS history,
+        # but 'page' is used. The existing loop handles this.
         while True:
             params = {"page": page}
             try:
+                # Enforce 1s throttle between calls (including between pages)
+                await asyncio.sleep(1)
                 data = await self._make_request("GET", endpoint, params=params)
                     
                 records_on_page = data.get("records", [])
@@ -120,7 +127,6 @@ class SecurityTrailsClient(BaseAPIClient): # Inherit from BaseAPIClient
                     break # No more pages or no records on current page
                 
                 page += 1
-                await asyncio.sleep(1) # Delay between pages
             except aiohttp.ClientResponseError as e:
                 self.logger.error(f"Network/API error fetching DNS history for {domain} ({record_type}, page {page}) (Status: {e.status}): {e}", exc_info=True)
                 return self._simulate_dns_history(domain, record_type) # Fallback to simulation on error

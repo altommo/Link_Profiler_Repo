@@ -52,37 +52,67 @@ class NewsAPIClient(BaseAPIClient):
             return []
 
         endpoint = f"{self.base_url}/everything"
-        params = {
-            "q": query,
-            "apiKey": self.api_key,
-            "pageSize": limit,
-            "language": "en",
-            "sortBy": "relevancy"
-        }
+        all_articles = []
+        
+        # NewsAPI.org has a max page size of 100, and free tier limits total results.
+        # Loop pages 1-5 to accumulate up to 100 articles (20 articles per page * 5 pages)
+        # or up to the requested limit.
+        articles_per_page = min(limit, 20) # NewsAPI default page size is 20, max 100. Let's use 20 for more pages.
+        max_pages = 5 # Loop up to 5 pages as requested
 
-        self.logger.info(f"Searching NewsAPI.org for query: '{query}' (Limit: {limit})...")
-        results = []
-        try:
-            # _make_request now handles resilience and adds 'last_fetched_at'
-            response_data = await self._make_request("GET", endpoint, params=params)
+        for page in range(1, max_pages + 1):
+            if len(all_articles) >= limit:
+                break
+
+            params = {
+                "q": query,
+                "apiKey": self.api_key,
+                "pageSize": articles_per_page,
+                "page": page,
+                "language": "en",
+                "sortBy": "relevancy"
+            }
+
+            self.logger.info(f"Searching NewsAPI.org for query: '{query}' (Page: {page}, PageSize: {articles_per_page})...")
             
-            for article in response_data.get("articles", []):
-                results.append({
-                    "platform": "newsapi",
-                    "title": article.get("title"),
-                    "url": article.get("url"),
-                    "text": article.get("description"),
-                    "author": article.get("author"),
-                    "published_at": article.get("publishedAt"),
-                    "source_name": article.get("source", {}).get("name"),
-                    "raw_data": article,
-                    "last_fetched_at": response_data.get('last_fetched_at') # Get from _make_request
-                })
-            self.logger.info(f"Found {len(results)} news articles for '{query}'.")
-            return results
-        except aiohttp.ClientResponseError as e:
-            self.logger.error(f"Network/API error searching NewsAPI.org for '{query}' (Status: {e.status}): {e}", exc_info=True)
-            return []
-        except Exception as e:
-            self.logger.error(f"Error searching NewsAPI.org for '{query}': {e}", exc_info=True)
-            return []
+            retries = 1 # One retry for 429 specifically
+            for attempt in range(retries + 1):
+                try:
+                    # _make_request now handles resilience and adds 'last_fetched_at'
+                    response_data = await self._make_request("GET", endpoint, params=params)
+                    
+                    articles_on_page = response_data.get("articles", [])
+                    for article in articles_on_page:
+                        all_articles.append({
+                            "platform": "newsapi",
+                            "title": article.get("title"),
+                            "url": article.get("url"),
+                            "text": article.get("description"),
+                            "author": article.get("author"),
+                            "published_at": article.get("publishedAt"),
+                            "source_name": article.get("source", {}).get("name"),
+                            "raw_data": article,
+                            "last_fetched_at": response_data.get('last_fetched_at') # Get from _make_request
+                        })
+                    
+                    if len(articles_on_page) < articles_per_page: # No more articles on this page
+                        break # Exit page loop
+                    
+                    break # Break retry loop on success
+                except aiohttp.ClientResponseError as e:
+                    if e.status == 429 and attempt < retries:
+                        self.logger.warning(f"NewsAPI.org rate limit hit (429) for '{query}'. Backing off 60 seconds, then retrying...")
+                        await asyncio.sleep(60) # Back off 60 seconds
+                    else:
+                        self.logger.error(f"Network/API error searching NewsAPI.org for '{query}' (Status: {e.status}): {e}", exc_info=True)
+                        return [] # Return empty on persistent error
+                except Exception as e:
+                    self.logger.error(f"Error searching NewsAPI.org for '{query}': {e}", exc_info=True)
+                    return [] # Return empty on general error
+            
+            # Throttle 1 second between requests
+            if page < max_pages and len(all_articles) < limit:
+                await asyncio.sleep(1)
+
+        self.logger.info(f"Found {len(all_articles)} news articles for '{query}'.")
+        return all_articles[:limit] # Ensure we don't exceed the requested limit
