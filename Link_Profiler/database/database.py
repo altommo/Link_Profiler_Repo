@@ -402,7 +402,7 @@ class Database:
         elif isinstance(orm_obj, ReportJobORM):
             return ReportJob.from_dict(data)
         elif isinstance(orm_obj, DomainIntelligenceORM):
-            return DomainIntelligence.from_dict(data)
+            return DomainIntelligenceORM(**data) # Changed to direct instantiation
         elif isinstance(orm_obj, SocialMentionORM):
             return SocialMention.from_dict(data)
         elif isinstance(orm_obj, SatellitePerformanceLogORM): # New: Handle SatellitePerformanceLog
