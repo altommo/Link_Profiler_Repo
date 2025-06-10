@@ -266,9 +266,10 @@ from Link_Profiler.api.mission_control import mission_control_router
 from Link_Profiler.api.customer_routes import customer_router
 # New: Import admin_routes
 from Link_Profiler.api.admin_routes import admin_router # Import the new admin router
+# New: Import public_api_routes
+from Link_Profiler.api.public_api_routes import public_api_router # Import the new public API router
 
 # New: Import authentication dependencies
-from Link_Profiler.api.dependencies import get_current_user, get_current_admin_user, get_current_customer_user # Import specific dependency functions
 from fastapi.security import OAuth2PasswordRequestForm # Only import this specific class needed for /token endpoint
 
 # --- RESTORED: Import CORSMiddleware ---
@@ -732,6 +733,7 @@ app.include_router(websocket_router)
 app.include_router(mission_control_router)
 app.include_router(customer_router) # Include the new customer router
 app.include_router(admin_router) # Include the new admin router
+app.include_router(public_api_router) # Include the new public API router
 # --- End Register API Routers ---
 
 # Mount static files AFTER API routers
@@ -788,42 +790,42 @@ async def register_user(user_create: UserCreate):
     )
     return UserResponse.from_user(new_user)
 
-@app.get("/users/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user)): # Use imported get_current_user
-    return UserResponse.from_user(current_user)
+# Removed: @app.get("/users/me", response_model=UserResponse)
+# async def read_users_me(current_user: User = Depends(get_current_user)): # Use imported get_current_user
+#     return UserResponse.from_user(current_user)
 
 # --- Re-exposed Monitoring Endpoints from dashboard_server.py ---
 # These endpoints are now part of the main API for Mission Control to consume.
 
 
-@app.get("/health")
-async def health_check():
-    db_status = db.ping()
-    return {"status": "ok", "database_connected": db_status}
+# Removed: @app.get("/health")
+# async def health_check():
+#     db_status = db.ping()
+#     return {"status": "ok", "database_connected": db_status}
 
-@app.get("/metrics")
-async def metrics():
-    return HTMLResponse(content=get_metrics_text(), media_type="text/plain")
+# Removed: @app.get("/metrics")
+# async def metrics():
+#     return HTMLResponse(content=get_metrics_text(), media_type="text/plain")
 
-@app.get("/link_profile/{target_url:path}", response_model=LinkProfileResponse)
-async def get_link_profile(target_url: str, current_user: User = Depends(get_current_user)): # Use imported get_current_user
-    profile = db.get_link_profile(target_url)
-    if not profile:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link profile not found")
-    return LinkProfileResponse.from_link_profile(profile)
+# Removed: @app.get("/link_profile/{target_url:path}", response_model=LinkProfileResponse)
+# async def get_link_profile(target_url: str, current_user: User = Depends(get_current_user)): # Use imported get_current_user
+#     profile = db.get_link_profile(target_url)
+#     if not profile:
+#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link profile not found")
+#     return LinkProfileResponse.from_link_profile(profile)
 
-@app.get("/domain/info/{domain_name}", response_model=DomainResponse)
-async def get_domain_info(domain_name: str, current_user: User = Depends(get_current_user)): # Use imported get_current_user
-    domain = db.get_domain(domain_name)
-    if not domain:
-        # DomainService now uses smart_api_router_service internally
-        async with domain_service_instance as ds:
-            domain = await ds.get_domain_info(domain_name)
-            if domain:
-                db.save_domain(domain)
-            else:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Domain info not found")
-    return DomainResponse.from_domain(domain)
+# Removed: @app.get("/domain/info/{domain_name}", response_model=DomainResponse)
+# async def get_domain_info(domain_name: str, current_user: User = Depends(get_current_user)): # Use imported get_current_user
+#     domain = db.get_domain(domain_name)
+#     if not domain:
+#         # DomainService now uses smart_api_router_service internally
+#         async with domain_service_instance as ds:
+#             domain = await ds.get_domain_info(domain_name)
+#             if domain:
+#                 db.save_domain(domain)
+#             else:
+#                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Domain info not found")
+#     return DomainResponse.from_domain(domain)
 
 # Catch-all route for serving SPAs based on subdomain
 # This must come AFTER all other API routes and static mounts to ensure they are matched first.
