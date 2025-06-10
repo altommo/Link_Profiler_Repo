@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from urllib.parse import urlparse # Import urlparse
 
 # Import from core.models for shared data structures and serialization
-from Link_Profiler.core.models import User, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, Token, TokenData, GSCBacklink, KeywordTrend, Role, TelemetryEvent # Added new models
+from Link_Profiler.core.models import User, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, Token, TokenData, GSCBacklink, KeywordTrend, Role, TelemetryEvent, LinkIntersectResult, CompetitiveKeywordAnalysisResult # Added new models
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
