@@ -64,6 +64,7 @@ link_profiler/
 │   ├── main.py             # Main FastAPI application entry point
 │   ├── routes/             # API endpoint definitions (e.g., admin.py)
 │   └── schemas.py          # Pydantic models for API request/response validation
+│   └── queue_endpoints.py  # API endpoints for queue management
 ├── clients/                # Integrations with external services and APIs (e.g., Wayback Machine)
 ├── config/                 # Configuration loading and management (e.g., config_loader.py)
 ├── core/                   # Core business logic and data models (e.g., models.py for dataclasses)
@@ -145,6 +146,10 @@ REDIS_URL=redis://localhost:6379/0
 ABSTRACT_API_KEY=your_abstract_api_key
 GSC_CREDENTIALS_FILE=credentials.json
 OPENAI_API_KEY=your_openai_key
+
+# Default Admin User Password (for initial setup)
+# This should be set via LP_MONITOR_PASSWORD environment variable
+# e.g., LP_MONITOR_PASSWORD=your_secure_admin_password
 ```
 
 ### 4. Start the System
@@ -155,7 +160,7 @@ OPENAI_API_KEY=your_openai_key
 export PYTHONPATH=$(pwd)
 
 # Start the API server
-uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn Link_Profiler.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **Option B: Docker Compose**
@@ -173,6 +178,7 @@ Visit the API documentation:
 - **Interactive API Docs**: http://localhost:8000/docs
 - **API Documentation**: http://localhost:8000/redoc
 - **Health Check**: http://localhost:8000/health
+- **Prometheus Metrics**: http://localhost:8000/metrics
 
 ## 📖 Usage Guide
 
@@ -196,7 +202,7 @@ curl -X POST "http://localhost:8000/crawl/start_backlink_discovery" \
   }'
 
 # Check job status
-curl "http://localhost:8000/crawl/status/{job_id}"
+curl "http://localhost:8000/api/queue/job_status/{job_id}"
 
 # Get results
 curl "http://localhost:8000/link_profile/https://example.com"
@@ -364,7 +370,7 @@ curl http://localhost:8000/health/database
 curl http://localhost:8000/health/redis
 
 # Queue status
-curl http://localhost:8000/queue/stats
+curl http://localhost:8000/api/queue/stats
 ```
 
 ### Alerting
@@ -388,7 +394,7 @@ Configure custom alert rules:
 
 ```bash
 # Register user
-curl -X POST "http://localhost:8000/auth/register" \
+curl -X POST "http://localhost:8000/register" \
   -H "Content-Type: application/json" \
   -d '{
     "username": "user",
@@ -397,7 +403,7 @@ curl -X POST "http://localhost:8000/auth/register" \
   }'
 
 # Get access token
-curl -X POST "http://localhost:8000/auth/token" \
+curl -X POST "http://localhost:8000/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=user&password=secure_password"
 
@@ -409,10 +415,10 @@ curl -H "Authorization: Bearer {access_token}" \
 ### Core Endpoints
 
 **Crawling Operations:**
-- `POST /crawl/start_backlink_discovery` - Start backlink discovery
+- `POST /api/queue/submit_crawl` - Submit a new crawl job
 - `POST /audit/link_health` - Audit link health
 - `POST /audit/technical_audit` - Technical SEO audit
-- `GET /crawl/status/{job_id}` - Check job status
+- `GET /api/queue/job_status/{job_id}` - Check job status
 
 **Analysis & Research:**
 - `GET /link_profile/{target_url}` - Get link profile
@@ -649,7 +655,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🔗 Resources
 
 - **API Documentation**: http://localhost:8000/docs
-- **Prometheus Metrics**: http://localhost:8001/metrics
+- **Prometheus Metrics**: http://localhost:8000/metrics
 - **Health Dashboard**: http://localhost:8001/dashboard
 - **Dashboard Templates**: `Link_Profiler/templates` (static assets in `templates/static`)
 - **Customer Dashboard**: `customer-dashboard` (React + Vite)
