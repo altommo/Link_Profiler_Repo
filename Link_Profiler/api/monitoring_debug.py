@@ -9,33 +9,33 @@ from typing import Annotated, Dict, List, Any, Optional
 import psutil
 import psycopg2 # For database stats
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Query # Removed Request as it's no longer needed for middleware
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Query
 
 # Import globally initialized instances from main.py
+# We will rely on dependency injection or the data_service for most data access
+# and the coordinator for job/satellite management.
 try:
     from Link_Profiler.main import (
         logger, db, redis_client, config_loader,
         domain_service_instance, backlink_service_instance, serp_service_instance,
-        keyword_service_instance, ai_service_instance, clickhouse_loader_instance,
-        auth_service_instance, get_coordinator # Import get_coordinator from main
+        keyword_service_instance, ai_service_instance, clickhouse_client, # Changed clickhouse_loader_instance to clickhouse_client
+        auth_service_instance, get_coordinator
     )
 except ImportError:
     logger = logging.getLogger(__name__)
     logging.basicConfig(level=logging.INFO)
     # Dummy instances for testing or if main.py is not fully initialized
     class DummyDB:
-        def ping(self): raise Exception("DB not connected")
+        def ping(self): return True # Simulate success for health check
         def get_all_crawl_jobs(self): return []
         def get_all_link_profiles(self): return []
         def get_all_domains(self): return []
         def get_count_of_competitive_keyword_analyses(self): return 0
         def get_all_backlinks(self): return []
-        class Session:
-            @staticmethod
-            def remove(): pass
+        def get_crawl_job(self, job_id): return None
     db = DummyDB()
     class DummyRedisClient:
-        async def ping(self): raise Exception("Redis not connected")
+        async def ping(self): return True # Simulate success for health check
         async def get(self, key): return None
         async def lrange(self, key, start, end): return []
         async def delete(self, key): return 0
@@ -58,11 +58,10 @@ except ImportError:
     serp_service_instance = DummyService()
     keyword_service_instance = DummyService()
     ai_service_instance = DummyService()
-    clickhouse_loader_instance = None
+    clickhouse_client = None # Dummy for ClickHouse
     class DummyAuthService:
         def _check_secret_key(self): raise HTTPException(status_code=500, detail="Secret key not set.")
     auth_service_instance = DummyAuthService()
-    # Dummy get_coordinator for testing
     class DummyCoordinator:
         async def get_queue_stats(self):
             return {
@@ -85,10 +84,10 @@ except ImportError:
     async def get_coordinator():
         return DummyCoordinator()
 
-
 # Import shared Pydantic models and dependencies
 from Link_Profiler.api.schemas import CrawlJobResponse
-from Link_Profiler.api.dependencies import get_current_user
+from Link_Profiler.utils.auth_utils import get_current_user, get_user_tier # Use auth_utils for JWT
+from Link_Profiler.services.data_service import data_service # Import the new data service
 
 # Import core models
 from Link_Profiler.core.models import User, CrawlStatus
@@ -126,13 +125,13 @@ async def health_check_internal() -> Dict[str, Any]:
         }
     }
 
-    # Check Redis connectivity
+    # Check Redis connectivity (via data_service's cache)
     try:
-        if redis_client:
-            await redis_client.ping()
-            health_status["dependencies"]["redis"] = {"status": "connected"}
+        if data_service.cache.enabled:
+            redis_ping_result = await data_service.cache.redis_client.ping()
+            health_status["dependencies"]["redis"] = {"status": "connected" if redis_ping_result else "failed"}
         else:
-            health_status["dependencies"]["redis"] = {"status": "disabled", "message": "Redis client not initialized."}
+            health_status["dependencies"]["redis"] = {"status": "disabled", "message": "Redis client not initialized or cache disabled."}
     except Exception as e:
         health_status["status"] = "unhealthy"
         health_status["dependencies"]["redis"] = {"status": "disconnected", "error": str(e)}
@@ -140,8 +139,8 @@ async def health_check_internal() -> Dict[str, Any]:
 
     # Check PostgreSQL connectivity
     try:
-        db.ping()
-        health_status["dependencies"]["postgresql"] = {"status": "connected"}
+        db_ping_result = db.ping()
+        health_status["dependencies"]["postgresql"] = {"status": "connected" if db_ping_result else "failed"}
     except Exception as e:
         health_status["status"] = "unhealthy"
         health_status["dependencies"]["postgresql"] = {"status": "disconnected", "error": str(e)}
@@ -153,10 +152,10 @@ async def health_check_internal() -> Dict[str, Any]:
     # Domain Service
     try:
         async with domain_service_instance as ds:
-            if ds.api_client:
+            if ds.api_client and ds.api_client.enabled:
                 health_status["dependencies"]["domain_service"] = {"status": "ready", "client": ds.api_client.__class__.__name__}
             else:
-                health_status["dependencies"]["domain_service"] = {"status": "not_ready", "message": "API client not initialized."}
+                health_status["dependencies"]["domain_service"] = {"status": "not_ready", "message": "API client not initialized or disabled."}
     except Exception as e:
         health_status["status"] = "unhealthy"
         health_status["dependencies"]["domain_service"] = {"status": "failed_init", "error": str(e)}
@@ -165,10 +164,10 @@ async def health_check_internal() -> Dict[str, Any]:
     # Backlink Service
     try:
         async with backlink_service_instance as bs:
-            if bs.api_client:
+            if bs.api_client and bs.api_client.enabled:
                 health_status["dependencies"]["backlink_service"] = {"status": "ready", "client": bs.api_client.__class__.__name__}
             else:
-                health_status["dependencies"]["backlink_service"] = {"status": "not_ready", "message": "API client not initialized."}
+                health_status["dependencies"]["backlink_service"] = {"status": "not_ready", "message": "API client not initialized or disabled."}
     except Exception as e:
         health_status["status"] = "unhealthy"
         health_status["dependencies"]["backlink_service"] = {"status": "failed_init", "error": str(e)}
@@ -177,10 +176,10 @@ async def health_check_internal() -> Dict[str, Any]:
     # SERP Service
     try:
         async with serp_service_instance as ss:
-            if ss.api_client or ss.serp_crawler:
-                health_status["dependencies"]["serp_service"] = {"status": "ready", "client": ss.api_client.__class__.__name__}
+            if (ss.api_client and ss.api_client.enabled) or (ss.serp_crawler and ss.serp_crawler.enabled):
+                health_status["dependencies"]["serp_service"] = {"status": "ready", "client": ss.api_client.__class__.__name__ if ss.api_client else "SerpCrawler"}
             else:
-                health_status["dependencies"]["serp_service"] = {"status": "not_ready", "message": "No client or crawler initialized."}
+                health_status["dependencies"]["serp_service"] = {"status": "not_ready", "message": "No client or crawler initialized or enabled."}
     except Exception as e:
         health_status["status"] = "unhealthy"
         health_status["dependencies"]["serp_service"] = {"status": "failed_init", "error": str(e)}
@@ -189,10 +188,10 @@ async def health_check_internal() -> Dict[str, Any]:
     # Keyword Service
     try:
         async with keyword_service_instance as ks:
-            if ks.api_client or ks.keyword_scraper:
-                health_status["dependencies"]["keyword_service"] = {"status": "ready", "client": ks.api_client.__class__.__name__}
+            if (ks.api_client and ks.api_client.enabled) or (ks.keyword_scraper and ks.keyword_scraper.enabled):
+                health_status["dependencies"]["keyword_service"] = {"status": "ready", "client": ks.api_client.__class__.__name__ if ks.api_client else "KeywordScraper"}
             else:
-                health_status["dependencies"]["keyword_service"] = {"status": "not_ready", "message": "No client or scraper initialized."}
+                health_status["dependencies"]["keyword_service"] = {"status": "not_ready", "message": "No client or scraper initialized or enabled."}
     except Exception as e:
         health_status["status"] = "unhealthy"
         health_status["dependencies"]["keyword_service"] = {"status": "failed_init", "error": str(e)}
@@ -210,21 +209,17 @@ async def health_check_internal() -> Dict[str, Any]:
         health_status["dependencies"]["ai_service"] = {"status": "failed_init", "error": str(e)}
         logger.error(f"Health check: AI Service failed: {e}")
 
-    # ClickHouse Loader
+    # ClickHouse Client
     try:
-        if clickhouse_loader_instance:
-            await clickhouse_loader_instance.__aenter__()
-            if clickhouse_loader_instance.client:
-                health_status["dependencies"]["clickhouse_loader"] = {"status": "connected"}
-            else:
-                health_status["dependencies"]["clickhouse_loader"] = {"status": "disconnected", "message": "Client not active after init."}
-            await clickhouse_loader_instance.__aexit__(None, None, None)
+        if clickhouse_client and clickhouse_client.enabled:
+            ch_ping_result = clickhouse_client.ping()
+            health_status["dependencies"]["clickhouse_client"] = {"status": "connected" if ch_ping_result else "failed"}
         else:
-            health_status["dependencies"]["clickhouse_loader"] = {"status": "disabled", "message": "ClickHouse integration is disabled."}
+            health_status["dependencies"]["clickhouse_client"] = {"status": "disabled", "message": "ClickHouse integration is disabled."}
     except Exception as e:
         health_status["status"] = "unhealthy"
-        health_status["dependencies"]["clickhouse_loader"] = {"status": "failed_init", "error": str(e)}
-        logger.error(f"Health check: ClickHouse Loader failed: {e}")
+        health_status["dependencies"]["clickhouse_client"] = {"status": "failed_init", "error": str(e)}
+        logger.error(f"Health check: ClickHouse Client failed: {e}")
 
     # Auth Service
     try:
@@ -242,7 +237,7 @@ async def health_check_internal() -> Dict[str, Any]:
     return health_status
 
 # --- Helper function for aggregated stats ---
-async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
+async def _get_aggregated_stats_for_api(source: Optional[str] = None, current_user: Optional[User] = None) -> Dict[str, Any]:
     """Aggregates various statistics for the /api/stats endpoint."""
     
     coord = await get_coordinator()
@@ -271,49 +266,48 @@ async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
 
     # Performance Stats
     performance_stats = {"error": "Database not connected"}
-    if db:
-        try:
-            all_jobs = db.get_all_crawl_jobs()
-            total_jobs = len(all_jobs)
-            successful_jobs = sum(1 for job in all_jobs if job.status == CrawlStatus.COMPLETED)
-            
-            success_rate = (successful_jobs / total_jobs * 100) if total_jobs > 0 else 0.0
-            
-            performance_stats = {
-                "total_jobs_processed": total_jobs,
-                "successful_jobs": successful_jobs,
-                "success_rate": round(success_rate, 1),
-                "timestamp": datetime.now().isoformat()
-            }
-        except Exception as e:
-            logger.error(f"Error getting performance stats for /api/stats: {e}", exc_info=True)
-            performance_stats = {"error": str(e)}
-        finally:
-            if db and hasattr(db, 'Session'):
-                db.Session.remove()
+    try:
+        # Use data_service for fetching jobs
+        all_jobs_data = await data_service.get_all_crawl_jobs(source=source, current_user=current_user)
+        total_jobs = len(all_jobs_data)
+        
+        # Convert dicts back to CrawlJob dataclasses for status check
+        from Link_Profiler.core.models import CrawlJob
+        all_jobs_dataclasses = [CrawlJob.from_dict(job_dict) for job_dict in all_jobs_data]
+
+        successful_jobs = sum(1 for job in all_jobs_dataclasses if job.status == CrawlStatus.COMPLETED)
+        
+        success_rate = (successful_jobs / total_jobs * 100) if total_jobs > 0 else 0.0
+        
+        performance_stats = {
+            "total_jobs_processed": total_jobs,
+            "successful_jobs": successful_jobs,
+            "success_rate": round(success_rate, 1),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting performance stats for /api/stats: {e}", exc_info=True)
+        performance_stats = {"error": str(e)}
 
     # Data Summaries
     data_summaries = {"error": "Database not connected"}
-    if db:
-        try:
-            total_link_profiles = len(db.get_all_link_profiles())
-            total_domains_analyzed = len(db.get_all_domains())
-            competitive_keyword_analyses = db.get_count_of_competitive_keyword_analyses()
-            total_backlinks_stored = len(db.get_all_backlinks())
+    try:
+        total_link_profiles = len(await data_service.get_all_link_profiles(source=source, current_user=current_user))
+        total_domains_analyzed = len(await data_service.get_all_domains(source=source, current_user=current_user))
+        # This call is a placeholder in db.py, so it remains a placeholder here.
+        competitive_keyword_analyses = db.get_count_of_competitive_keyword_analyses() 
+        total_backlinks_stored = len(await data_service.get_all_backlinks(source=source, current_user=current_user))
 
-            data_summaries = {
-                "total_link_profiles": total_link_profiles,
-                "total_domains_analyzed": total_domains_analyzed,
-                "competitive_keyword_analyses": competitive_keyword_analyses,
-                "total_backlinks_stored": total_backlinks_stored,
-                "timestamp": datetime.now().isoformat()
-            }
-        except Exception as e:
-            logger.error(f"Error getting data summaries for /api/stats: {e}", exc_info=True)
-            data_summaries = {"error": str(e)}
-        finally:
-            if db and hasattr(db, 'Session'):
-                db.Session.remove()
+        data_summaries = {
+            "total_link_profiles": total_link_profiles,
+            "total_domains_analyzed": total_domains_analyzed,
+            "competitive_keyword_analyses": competitive_keyword_analyses,
+            "total_backlinks_stored": total_backlinks_stored,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting data summaries for /api/stats: {e}", exc_info=True)
+        data_summaries = {"error": str(e)}
 
     # System Stats
     system_stats = {}
@@ -349,7 +343,7 @@ async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
 
     # Redis Stats
     redis_stats = {"status": "disconnected"}
-    if redis_client:
+    if redis_client: # Use the actual redis_client from main.py
         try:
             info = await redis_client.info()
             redis_stats = {
@@ -367,7 +361,10 @@ async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
     if db:
         try:
             db.ping()
-            conn = psycopg2.connect(db.db_url)
+            # This part requires direct psycopg2 access, which is fine for debug/monitoring
+            # but should be handled carefully in production to avoid blocking the event loop.
+            # For a truly async solution, consider asyncpg or similar.
+            conn = psycopg2.connect(db.database_url) # Use db.database_url
             cur = conn.cursor()
             cur.execute("""
                 SELECT 
@@ -394,9 +391,6 @@ async def _get_aggregated_stats_for_api() -> Dict[str, Any]:
         except Exception as e:
             logger.error(f"Error getting database stats for /api/stats: {e}", exc_info=True)
             database_stats = {"status": "error", "message": str(e)}
-        finally:
-            if db and hasattr(db, 'Session'):
-                db.Session.remove()
 
     return {
         "queue_metrics": queue_metrics,
@@ -422,54 +416,63 @@ async def _get_satellites_data_internal() -> Dict[str, Any]:
     return {"satellites": satellite_list, "active_count": len(satellite_list)}
 
 
-@monitoring_debug_router.get("/api/stats")
-async def get_api_stats(current_user: Annotated[User, Depends(get_current_user)]):
-    """
-    Retrieves aggregated statistics for the Link Profiler system.
-    This endpoint is primarily consumed by the monitoring dashboard and requires admin authentication.
-    """
-    verify_admin_access(current_user)
-    logger.info(f"API: Received request for aggregated stats by admin: {current_user.username}.")
-    return await _get_aggregated_stats_for_api()
-
-@monitoring_debug_router.get("/api/jobs/all", response_model=List[CrawlJobResponse])
-async def get_all_jobs_api(
-    status_filter: Annotated[Optional[str], Query(description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED').")] = None,
+@monitoring_debug_router.get("/api/stats", summary="Get aggregated system statistics (cache-first)")
+async def get_api_stats(
+    source: Optional[str] = Query(None, description="Set to 'live' to bypass cache and fetch fresh data. Requires appropriate user tier."),
     current_user: Annotated[User, Depends(get_current_user)] = None # Protect this endpoint
 ):
     """
-    Retrieves all crawl jobs, optionally filtered by status.
-    This endpoint is primarily consumed by the monitoring dashboard and requires authentication.
+    Retrieves aggregated statistics for the Link Profiler system.
+    This endpoint is primarily consumed by the monitoring dashboard and requires admin authentication.
+    By default, data is served from cache. Use `?source=live` to fetch the latest data,
+    subject to user permissions and configuration.
+    """
+    verify_admin_access(current_user)
+    logger.info(f"API: Received request for aggregated stats by admin: {current_user.username} (source: {source}).")
+    return await _get_aggregated_stats_for_api(source=source, current_user=current_user)
+
+@monitoring_debug_router.get("/api/jobs/all", response_model=List[CrawlJobResponse], summary="Get all crawl jobs (cache-first)")
+async def get_all_jobs_api(
+    status_filter: Annotated[Optional[str], Query(description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED').")] = None,
+    source: Optional[str] = Query(None, description="Set to 'live' to bypass cache and fetch fresh data. Requires appropriate user tier."),
+    current_user: Annotated[User, Depends(get_current_user)] = None # Protect this endpoint
+):
+    """
+    Retrieves a list of all crawl jobs. By default, data is served from cache.
+    Use `?source=live` to fetch the latest data, subject to user permissions and configuration.
     Returns the most recent 50 jobs.
     """
     verify_admin_access(current_user)
-    logger.info(f"API: Received request for all jobs by admin: {current_user.username} (status_filter: {status_filter}).")
+    logger.info(f"API: Received request for all jobs by admin: {current_user.username} (status_filter: {status_filter}, source: {source}).")
     
-    # Handle empty string status filter
     if status_filter == "":
         status_filter = None
     try:
-        all_jobs = db.get_all_crawl_jobs()
-        logger.debug(f"API: Retrieved {len(all_jobs)} jobs from database before filtering.")
+        # Use data_service to get all jobs
+        all_jobs_data = await data_service.get_all_crawl_jobs(source=source, current_user=current_user)
+        
+        # Convert dicts back to CrawlJob dataclasses for filtering and sorting
+        from Link_Profiler.core.models import CrawlJob
+        all_jobs_dataclasses = [CrawlJob.from_dict(job_dict) for job_dict in all_jobs_data]
+
+        logger.debug(f"API: Retrieved {len(all_jobs_dataclasses)} jobs from data service before filtering.")
         
         if status_filter:
             try:
                 filter_status = CrawlStatus[status_filter.upper()]
-                all_jobs = [job for job in all_jobs if job.status == filter_status]
+                all_jobs_dataclasses = [job for job in all_jobs_dataclasses if job.status == filter_status]
             except KeyError:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid status_filter: {status_filter}. Must be one of {list(CrawlStatus.__members__.keys())}.")
         
-        sorted_jobs = sorted(all_jobs, key=lambda job: job.created_date, reverse=True)[:50]
+        # Sort by created_at (assuming it's a datetime object in the dataclass)
+        sorted_jobs = sorted(all_jobs_dataclasses, key=lambda job: job.created_at, reverse=True)[:50]
         
         return [CrawlJobResponse.from_crawl_job(job) for job in sorted_jobs]
     except Exception as e:
         logger.error(f"API: Error retrieving all jobs: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve all jobs: {e}")
-    finally:
-        if db and hasattr(db, 'Session'):
-            db.Session.remove()
 
-@monitoring_debug_router.get("/api/jobs/is_paused", response_model=Dict[str, bool])
+@monitoring_debug_router.get("/api/jobs/is_paused", response_model=Dict[str, bool], summary="Check if job processing is paused")
 async def is_jobs_paused_endpoint(current_user: Annotated[User, Depends(get_current_user)]):
     """
     Checks if global job processing is currently paused.
@@ -487,7 +490,7 @@ async def is_jobs_paused_endpoint(current_user: Annotated[User, Depends(get_curr
         logger.error(f"API: Error checking if jobs are paused: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to check pause status: {e}")
 
-@monitoring_debug_router.post("/api/jobs/{job_id}/cancel")
+@monitoring_debug_router.post("/api/jobs/{job_id}/cancel", summary="Cancel a specific crawl job")
 async def cancel_job_api(job_id: str, current_user: Annotated[User, Depends(get_current_user)]):
     """
     Cancels a specific crawl job.
@@ -506,7 +509,7 @@ async def cancel_job_api(job_id: str, current_user: Annotated[User, Depends(get_
         logger.error(f"Error cancelling job {job_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to cancel job {job_id}: {e}")
 
-@monitoring_debug_router.post("/api/jobs/pause_all")
+@monitoring_debug_router.post("/api/jobs/pause_all", summary="Pause all new job processing")
 async def pause_all_jobs_api(current_user: Annotated[User, Depends(get_current_user)]):
     """
     Pauses all new job processing.
@@ -521,7 +524,7 @@ async def pause_all_jobs_api(current_user: Annotated[User, Depends(get_current_u
         logger.error(f"Error pausing all jobs: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to pause all jobs: {e}")
 
-@monitoring_debug_router.post("/api/jobs/resume_all")
+@monitoring_debug_router.post("/api/jobs/resume_all", summary="Resume all job processing")
 async def resume_all_jobs_api(current_user: Annotated[User, Depends(get_current_user)]):
     """
     Resumes all job processing.
@@ -536,7 +539,7 @@ async def resume_all_jobs_api(current_user: Annotated[User, Depends(get_current_
         logger.error(f"Error resuming all jobs: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to resume all jobs: {e}")
 
-@monitoring_debug_router.get("/api/monitoring/satellites")
+@monitoring_debug_router.get("/api/monitoring/satellites", summary="Get detailed satellite health information")
 async def get_monitoring_satellites(current_user: Annotated[User, Depends(get_current_user)]):
     """
     Retrieves detailed health information for all satellite crawlers.
@@ -546,7 +549,7 @@ async def get_monitoring_satellites(current_user: Annotated[User, Depends(get_cu
     logger.info(f"API: Received request for detailed satellite health by admin: {current_user.username}.")
     return await _get_satellites_data_internal()
 
-@monitoring_debug_router.post("/api/satellites/control/{crawler_id}/{command}")
+@monitoring_debug_router.post("/api/satellites/control/{crawler_id}/{command}", summary="Send control command to a specific satellite")
 async def control_single_satellite_api(crawler_id: str, command: str, current_user: Annotated[User, Depends(get_current_user)]):
     """
     Sends a control command to a specific satellite crawler.
@@ -564,7 +567,7 @@ async def control_single_satellite_api(crawler_id: str, command: str, current_us
         logger.error(f"Error controlling satellite {crawler_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to control satellite {crawler_id}: {e}")
 
-@monitoring_debug_router.post("/api/satellites/control/all/{command}")
+@monitoring_debug_router.post("/api/satellites/control/all/{command}", summary="Send control command to all satellites")
 async def control_all_satellites_api(command: str, current_user: Annotated[User, Depends(get_current_user)]):
     """
     Sends a control command to all active satellite crawlers.
@@ -583,7 +586,7 @@ async def control_all_satellites_api(command: str, current_user: Annotated[User,
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to control all satellites: {e}")
 
 
-@monitoring_debug_router.get("/public/health")
+@monitoring_debug_router.get("/public/health", summary="Public health check")
 async def public_health_check_endpoint():
     """
     Public endpoint: Performs a comprehensive health check of the API and its dependencies.
@@ -593,14 +596,14 @@ async def public_health_check_endpoint():
     return Response(content=json.dumps(health_status, indent=2), media_type="application/json", status_code=status_code)
 
 
-@monitoring_debug_router.get("/metrics", response_class=Response)
+@monitoring_debug_router.get("/metrics", response_class=Response, summary="Expose Prometheus metrics")
 async def prometheus_metrics():
     """
     Exposes Prometheus metrics.
     """
     return Response(content=get_metrics_text(), media_type="text/plain; version=0.0.4; charset=utf-8")
 
-@monitoring_debug_router.get("/status")
+@monitoring_debug_router.get("/status", summary="Get detailed system status information")
 async def get_system_status():
     """
     Provides detailed system status information.
@@ -628,7 +631,7 @@ async def get_system_status():
         }
     }
 
-@monitoring_debug_router.get("/debug/dead_letters")
+@monitoring_debug_router.get("/debug/dead_letters", summary="DEBUG: Retrieve messages from dead-letter queue")
 async def get_dead_letters(current_user: Annotated[User, Depends(get_current_user)]):
     """
     DEBUG endpoint: Retrieves messages from the Redis dead-letter queue.
@@ -649,7 +652,7 @@ async def get_dead_letters(current_user: Annotated[User, Depends(get_current_use
         logger.error(f"Error retrieving dead-letter messages: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve dead-letter messages: {e}")
 
-@monitoring_debug_router.post("/debug/clear_dead_letters")
+@monitoring_debug_router.post("/debug/clear_dead_letters", summary="DEBUG: Clear dead-letter queue")
 async def clear_dead_letters(current_user: Annotated[User, Depends(get_current_user)]):
     """
     DEBUG endpoint: Clears all messages from the Redis dead-letter queue.
@@ -669,7 +672,7 @@ async def clear_dead_letters(current_user: Annotated[User, Depends(get_current_u
         logger.error(f"Error clearing dead-letter messages: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to clear dead-letter messages: {e}")
 
-@monitoring_debug_router.post("/debug/reprocess_dead_letters", response_model=Dict[str, str])
+@monitoring_debug_router.post("/debug/reprocess_dead_letters", response_model=Dict[str, str], summary="DEBUG: Reprocess dead-letter messages")
 async def reprocess_dead_letters(current_user: Annotated[User, Depends(get_current_user)]):
     """
     DEBUG endpoint: Moves all messages from the dead-letter queue back to the main job queue for reprocessing.
@@ -711,12 +714,12 @@ async def reprocess_dead_letters(current_user: Annotated[User, Depends(get_curre
         await redis_client.delete(dead_letter_queue_name)
         
         logger.info(f"Reprocessed {requeued_count} messages from dead-letter queue to {job_queue_name}.")
-        return {"status": "success", "message": f"Reprocessed {requeued_count} messages from dead-letter queue."}
+        return {"status": "success", "message": f"Cleared {requeued_count} messages from dead-letter queue."}
     except Exception as e:
         logger.error(f"Error reprocessing dead-letter messages: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to reprocess dead-letter messages: {e}")
 
-@monitoring_debug_router.get("/public/satellites") # New: Implement /public/satellites endpoint
+@monitoring_debug_router.get("/public/satellites", summary="Public satellite health information")
 async def public_satellites_endpoint():
     """
     Public endpoint: Retrieves detailed health information for all satellite crawlers.
@@ -724,10 +727,14 @@ async def public_satellites_endpoint():
     logger.info("API: Received request for public satellite health.")
     return await _get_satellites_data_internal()
 
-@monitoring_debug_router.get("/public/stats")
-async def public_stats_endpoint():
+@monitoring_debug_router.get("/public/stats", summary="Public aggregated system statistics")
+async def public_stats_endpoint(
+    source: Optional[str] = Query(None, description="Set to 'live' to bypass cache and fetch fresh data. Note: Public endpoint may not support live data fetching.")
+):
     """
     Public endpoint: Retrieves aggregated statistics for the Link Profiler system.
     """
     logger.info("API: Received request for public aggregated stats.")
-    return await _get_aggregated_stats_for_api()
+    # For public endpoints, we generally don't allow 'live' fetching based on user tier.
+    # The data_service._should_force_live method will handle this.
+    return await _get_aggregated_stats_for_api(source=source, current_user=None)

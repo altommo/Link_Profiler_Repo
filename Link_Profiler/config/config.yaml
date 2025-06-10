@@ -118,10 +118,6 @@ domain_api:
     api_key: "${LP_DOMAIN_ABSTRACT_API_KEY}" # Your AbstractAPI key for domain validation/WHOIS
     base_url: "https://domain-validation.abstractapi.com/v1/" # Base URL for AbstractAPI Domain Validation
     whois_base_url: "https://whois.abstractapi.com/v1/" # Base URL for AbstractAPI WHOIS
-  real_api:
-    enabled: false
-    api_key: "${LP_DOMAIN_REAL_API_KEY}" # Your API key for a real domain provider (e.g., WhoisXMLAPI, DomainTools)
-    base_url: "https://api.whoisxmlapi.com/v1" # WhoisXMLAPI base URL
   whois_json_api: # New: WHOIS-JSON.com API
     enabled: false
     base_url: "https://www.whois-json.com/api/v1/whois"
@@ -475,3 +471,7 @@ external_apis:
     cost_per_unit: 0.015
     quality_score: 5
     supported_query_types: ["domain_data", "dns_history"]
+
+# Data Fetching settings (New Section)
+data_fetching:
+  allow_live_data_fetching: true # Set to true to allow 'source=live' parameter to fetch fresh data
