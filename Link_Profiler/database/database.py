@@ -20,6 +20,7 @@ except ImportError:
     Config = None
 import json # Import json for serializing/deserializing JSONB fields
 from urllib.parse import urlparse # For parsing domains from URLs
+import uuid # Import uuid for generating IDs
 
 # ClickHouse specific imports
 from sqlalchemy_clickhouse import ClickHouse
@@ -43,6 +44,7 @@ from Link_Profiler.core.models import (
     KeywordSuggestion, AlertRule, User, ContentGapAnalysisResult, DomainHistory,
     LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, DomainIntelligence,
     SocialMention, CrawlError, SatellitePerformanceLog, TrackedDomain, TrackedKeyword, # New: Import TrackedDomain, TrackedKeyword
+    GSCBacklink, KeywordTrend, # Added GSCBacklink and KeywordTrend
     LinkType, ContentType, CrawlStatus, SpamLevel, AlertSeverity, AlertChannel # Import Dataclass Enums
 )
 from Link_Profiler.monitoring.prometheus_metrics import (
@@ -230,7 +232,7 @@ class Database:
             
             missing_source_tables = [t for t in source_tables if t not in existing_tables]
             if missing_source_tables:
-                self.logger.warning(f"Skipping materialized view '{view_name}': Missing source tables: {missing_source_tables}. Ensure these tables are created first.")
+                self.logger.warning(f"Skipping materialized view '{view_name}': Missing source tables: {missing_tables}. Ensure these tables are created first.")
                 continue # Skip to next view if source tables are missing
 
             with self.engine.connect() as connection: # New connection for each MV
