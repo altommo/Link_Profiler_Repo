@@ -56,19 +56,29 @@ A comprehensive, open-source link analysis and domain research system inspired b
 ```
 
 ### **Modular Design**
+The project follows a modular structure to separate concerns and facilitate development.
+
 ```
 link_profiler/
-├── api/                    # FastAPI REST endpoints
-├── core/                   # Data models and schemas
-├── crawlers/               # Web crawling engines
-├── services/               # Business logic layer
-├── database/               # PostgreSQL ORM models
-├── queue_system/           # Distributed job processing
-├── clients/                # External API integrations
-├── monitoring/             # Metrics and alerting
-├── admin-management-console/ # Admin/Management Console HTML and static assets
-├── utils/                  # Utilities and helpers
-└── deployment/             # Docker and Kubernetes configs
+├── api/                    # FastAPI REST API definitions
+│   ├── main.py             # Main FastAPI application entry point
+│   ├── routes/             # API endpoint definitions (e.g., admin.py)
+│   └── schemas.py          # Pydantic models for API request/response validation
+├── clients/                # Integrations with external services and APIs (e.g., Wayback Machine)
+├── config/                 # Configuration loading and management (e.g., config_loader.py)
+├── core/                   # Core business logic and data models (e.g., models.py for dataclasses)
+├── database/               # Database interaction logic and ORM models (e.g., models.py, clickhouse_loader.py)
+├── monitoring/             # Metrics collection and monitoring tools (e.g., crawler_metrics.py)
+├── queue_system/           # Task queuing and processing (e.g., smart_crawler_queue.py)
+├── static/                 # Static files, including frontend dashboard assets
+│   ├── customer-dashboard/ # Customer-facing dashboard assets (e.g., stores, types)
+│   └── mission-control-dashboard/ # Mission control dashboard assets (e.g., types)
+└── utils/                  # Utility functions and helper classes
+    ├── api_cache.py        # Caching for external API responses
+    ├── api_rate_limiter.py # Rate limiting for external API calls
+    ├── proxy_manager.py    # Proxy management with health checking and rotation
+    ├── session_manager.py  # HTTP client session management
+    └── user_agent_manager.py # User agent rotation
 ```
 
 ## 🚀 Quick Start
@@ -145,7 +155,7 @@ OPENAI_API_KEY=your_openai_key
 export PYTHONPATH=$(pwd)
 
 # Start the API server
-uvicorn Link_Profiler.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn Link_Profiler.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 **Option B: Docker Compose**
@@ -641,15 +651,47 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **API Documentation**: http://localhost:8000/docs
 - **Prometheus Metrics**: http://localhost:8001/metrics
 - **Health Dashboard**: http://localhost:8001/dashboard
-<<<<<<< HEAD
-- **Admin/Management Console**: `admin-management-console` (static assets in `admin-management-console/static`)
-=======
 - **Dashboard Templates**: `Link_Profiler/templates` (static assets in `templates/static`)
->>>>>>> master
 - **Customer Dashboard**: `customer-dashboard` (React + Vite)
 - **Admin Dashboard**: `admin-dashboard` (React + Vite)
 - **GitHub Repository**: https://github.com/your-org/link-profiler
 - **Docker Hub**: https://hub.docker.com/r/your-org/link-profiler
+
+## 🚧 Current Gaps and Future Work
+
+Based on the provided code and summaries, here are some identified areas that require further development or refinement:
+
+### 1. API Key Management Persistence
+- **Gap**: The `POST /admin/api_keys/{api_name}/update` endpoint currently only simulates the update of API keys. Changes are not persisted back to the configuration files or a secure secrets management system.
+- **Future Work**: Implement a mechanism within `ConfigLoader` or a dedicated service to securely write updated API keys to a persistent storage (e.g., encrypted configuration file, environment variables, or a secrets manager like HashiCorp Vault).
+
+### 2. Comprehensive Database Integration
+- **Gap**: While `Link_Profiler/database/models.py` indicates SQLAlchemy ORM usage and `Link_Profiler/database/clickhouse_loader.py` suggests ClickHouse, the full integration of these with the API endpoints for data storage and retrieval is not fully evident in the provided snippets. Many `core.models.py` dataclasses have `to_dict`/`from_dict` methods, but direct ORM mapping and usage in services are not shown.
+- **Future Work**: Ensure all data models are properly mapped to the chosen database(s) (PostgreSQL for transactional data, ClickHouse for analytics/logs) and that API endpoints interact with these databases for persistent storage and retrieval of all relevant data (e.g., crawl results, link profiles, job statuses).
+
+### 3. Full Job Management Lifecycle
+- **Gap**: Models for `CrawlJob` and `ReportJob` exist, and `queue_system/smart_crawler_queue.py` defines `CrawlTask`. However, the complete implementation of starting, monitoring, pausing, resuming, and retrieving detailed results for these jobs via dedicated API endpoints (beyond basic status checks) is not fully visible. The actual queueing mechanism (e.g., Redis Queue, Celery) and its integration with the API and satellite crawlers need to be robustly implemented.
+- **Future Work**: Develop comprehensive job management services and API endpoints to handle the full lifecycle of crawl and report generation jobs, including error handling, retry mechanisms, and detailed progress reporting.
+
+### 4. Authentication and Authorization
+- **Gap**: The `Link_Profiler/api/routes/admin.py` file contains commented-out lines for `get_current_admin_user`, suggesting that authentication and authorization are planned but not yet fully integrated or enforced for administrative endpoints. The `security.yaml` configuration file is mentioned but not provided.
+- **Future Work**: Implement robust JWT-based authentication and role-based access control (RBAC) across all API endpoints, ensuring that only authorized users can access sensitive administrative functions and data.
+
+### 5. External API Integrations (Service Layer)
+- **Gap**: While API keys are loaded via `ConfigLoader` and `Link_Profiler/clients/wayback_machine_client.py` exists, the actual service layer implementations that utilise these external APIs (e.g., Google Search Console, Ahrefs, Moz, OpenAI, Abstract API) for data enrichment, backlink discovery, or AI-powered insights are not fully detailed in the provided code.
+- **Future Work**: Develop dedicated service modules for each external API integration, handling API calls, rate limiting, error handling, and data processing, and integrate these services into the core business logic.
+
+### 6. Monitoring and Metrics Exposure
+- **Gap**: `Link_Profiler/monitoring/crawler_metrics.py` defines Prometheus-style metrics. However, the mechanism for exposing these metrics via a dedicated `/metrics` endpoint for Prometheus scraping is not explicitly shown in the provided `api/main.py` or other route files.
+- **Future Work**: Implement a `/metrics` endpoint (or similar) to expose the collected Prometheus metrics, allowing for external monitoring and alerting.
+
+### 7. Frontend Integration (Dashboard)
+- **Gap**: The `Link_Profiler/static/mission-control-dashboard/src/pages/Settings.tsx` file was removed, indicating that the frontend component for managing API keys might no longer exist or is not integrated. While the backend endpoint `GET /admin/api_keys` is now functional, there might be no active frontend consuming it.
+- **Future Work**: Re-evaluate the frontend dashboard strategy. If API key management is a required feature, ensure a corresponding frontend component is developed and properly integrated with the backend API.
+
+### 8. Comprehensive Testing and Deployment Assets
+- **Gap**: The `README.md` mentions `pytest` for testing and `docker-compose` / Kubernetes for deployment, but no actual `tests/` directory or `deployment/` assets (e.g., Dockerfiles, Kubernetes manifests) were provided for review.
+- **Future Work**: Develop a comprehensive suite of unit, integration, and end-to-end tests. Provide complete and verified Docker and Kubernetes deployment configurations to ensure easy and reliable deployment of the entire system.
 
 ## 🚀 Roadmap
 
