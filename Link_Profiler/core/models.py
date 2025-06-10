@@ -515,7 +515,7 @@ class CrawlJob:
     job_type: str # e.g., "backlink_discovery", "site_audit", "content_crawl"
     status: CrawlStatus = CrawlStatus.PENDING
     config: Dict[str, Any] = field(default_factory=dict) # Store CrawlConfig as dict
-    created_at: datetime = field(default_factory=datetime.now) # Changed from created_date
+    created_at: datetime = field(default_factory=datetime.now) # Reverted: database actually uses created_at
     started_date: Optional[datetime] = None
     completed_date: Optional[datetime] = None
     progress_percentage: float = 0.0
@@ -663,7 +663,7 @@ class AlertRule:
     severity: AlertSeverity = AlertSeverity.WARNING
     channels: List[AlertChannel] = field(default_factory=list)
     is_active: bool = True
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=datetime.now) # Reverted: database actually uses created_at
     updated_at: datetime = field(default_factory=datetime.now)
     last_triggered_at: Optional[datetime] = None
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
@@ -698,7 +698,7 @@ class User:
     is_admin: bool = False
     role: str = "customer" # New: Role field (e.g., "customer", "admin", "analyst")
     organization_id: Optional[str] = None # New: For multi-tenancy
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=datetime.now) # Reverted: database actually uses created_at
     updated_at: datetime = field(default_factory=datetime.now)
     last_updated: Optional[datetime] = None # Database field that was added manually
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
@@ -815,7 +815,7 @@ class OutreachCampaign:
     name: str
     target_domains: List[str] = field(default_factory=list)
     status: str = "planning" # e.g., "planning", "active", "completed", "paused"
-    created_at: datetime = field(default_factory=datetime.now) # Changed from created_date
+    created_at: datetime = field(default_factory=datetime.now) # Reverted: database actually uses created_at
     start_date: datetime = field(default_factory=datetime.now)
     end_date: Optional[datetime] = None
     notes: Optional[str] = None
@@ -895,7 +895,7 @@ class ReportJob:
     target_identifier: str
     format: str
     status: CrawlStatus = CrawlStatus.PENDING
-    created_at: datetime = field(default_factory=datetime.now) # Changed from created_date
+    created_at: datetime = field(default_factory=datetime.now) # Reverted: database actually uses created_at
     completed_at: Optional[datetime] = None
     generated_file_path: Optional[str] = None # Changed from file_path
     error_message: Optional[str] = None
