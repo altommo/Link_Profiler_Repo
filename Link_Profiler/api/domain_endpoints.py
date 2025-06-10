@@ -1,0 +1,143 @@
+import logging
+from typing import Annotated, Dict, Any, Optional, List
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path
+
+# Import core models
+from Link_Profiler.core.models import User
+from Link_Profiler.api.schemas import BacklinkResponse # Assuming this schema exists for backlinks
+
+# Import decorators and data_service
+from Link_Profiler.api.decorators import require_auth, cache_first_route
+from Link_Profiler.services.data_service import data_service
+
+logger = logging.getLogger(__name__)
+
+domain_router = APIRouter(prefix="/api/domains", tags=["Domain Data"])
+
+@domain_router.get("/{domain}/overview", response_model=Dict[str, Any], summary="Get comprehensive domain overview (cache-first)")
+@require_auth
+@cache_first_route
+async def get_domain_overview_api(
+    domain: Annotated[str, Path(..., description="Domain to analyze", example="example.com")],
+    current_user: User, # Injected by @require_auth
+    source: Annotated[Optional[str], Query(
+        "cache", 
+        description="""Data source for the request:
+        - `cache`: Returns cached data (default, fastest response)
+        - `live`: Returns real-time data (slower, requires appropriate user tier)""",
+        enum=["cache", "live"],
+        example="cache"
+    )] = "cache"
+) -> Dict[str, Any]:
+    """
+    Retrieves a comprehensive overview for a given domain, including authority, health, and key metrics.
+    By default, data is served from cache. Use `?source=live` to fetch the latest data,
+    subject to user permissions and configuration.
+    """
+    logger.info(f"User {current_user.username} requesting domain overview for {domain} (source: {source}).")
+    try:
+        overview_data = await data_service.get_domain_overview(domain, source=source, current_user=current_user)
+        if not overview_data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Domain overview not found.")
+        return overview_data
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving domain overview for {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve domain overview: {e}")
+
+@domain_router.get("/{domain}/backlinks", response_model=List[BacklinkResponse], summary="Get backlinks for a domain (cache-first)")
+@require_auth
+@cache_first_route
+async def get_domain_backlinks_api(
+    domain: Annotated[str, Path(..., description="Domain to analyze", example="example.com")],
+    current_user: User, # Injected by @require_auth
+    source: Annotated[Optional[str], Query(
+        "cache", 
+        description="""Data source for the request:
+        - `cache`: Returns cached data (default, fastest response)
+        - `live`: Returns real-time data (slower, requires appropriate user tier)""",
+        enum=["cache", "live"],
+        example="cache"
+    )] = "cache"
+) -> List[BacklinkResponse]:
+    """
+    Retrieves a list of backlinks pointing to the specified domain.
+    By default, data is served from cache. Use `?source=live` to fetch the latest data,
+    subject to user permissions and configuration.
+    """
+    logger.info(f"User {current_user.username} requesting backlinks for {domain} (source: {source}).")
+    try:
+        backlinks_data = await data_service.get_domain_backlinks(domain, source=source, current_user=current_user)
+        if not backlinks_data:
+            return [] # Return empty list if no backlinks found
+        return [BacklinkResponse(**bl) for bl in backlinks_data]
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving backlinks for {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve backlinks: {e}")
+
+@domain_router.get("/{domain}/metrics", response_model=Dict[str, Any], summary="Get SEO metrics for a domain (cache-first)")
+@require_auth
+@cache_first_route
+async def get_domain_metrics_api(
+    domain: Annotated[str, Path(..., description="Domain to analyze", example="example.com")],
+    current_user: User, # Injected by @require_auth
+    source: Annotated[Optional[str], Query(
+        "cache", 
+        description="""Data source for the request:
+        - `cache`: Returns cached data (default, fastest response)
+        - `live`: Returns real-time data (slower, requires appropriate user tier)""",
+        enum=["cache", "live"],
+        example="cache"
+    )] = "cache"
+) -> Dict[str, Any]:
+    """
+    Retrieves various SEO metrics for a given domain, such as Domain Authority, Trust Flow, etc.
+    By default, data is served from cache. Use `?source=live` to fetch the latest data,
+    subject to user permissions and configuration.
+    """
+    logger.info(f"User {current_user.username} requesting domain metrics for {domain} (source: {source}).")
+    try:
+        metrics_data = await data_service.get_domain_metrics(domain, source=source, current_user=current_user)
+        if not metrics_data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Domain metrics not found.")
+        return metrics_data
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving domain metrics for {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve domain metrics: {e}")
+
+@domain_router.get("/{domain}/competitors", response_model=List[Dict[str, Any]], summary="Get top competitors for a domain (cache-first)")
+@require_auth
+@cache_first_route
+async def get_domain_competitors_api(
+    domain: Annotated[str, Path(..., description="Domain to analyze", example="example.com")],
+    current_user: User, # Injected by @require_auth
+    source: Annotated[Optional[str], Query(
+        "cache", 
+        description="""Data source for the request:
+        - `cache`: Returns cached data (default, fastest response)
+        - `live`: Returns real-time data (slower, requires appropriate user tier)""",
+        enum=["cache", "live"],
+        example="cache"
+    )] = "cache"
+) -> List[Dict[str, Any]]:
+    """
+    Retrieves a list of top organic search competitors for the specified domain.
+    By default, data is served from cache. Use `?source=live` to fetch the latest data,
+    subject to user permissions and configuration.
+    """
+    logger.info(f"User {current_user.username} requesting competitors for {domain} (source: {source}).")
+    try:
+        competitors_data = await data_service.get_domain_competitors(domain, source=source, current_user=current_user)
+        if not competitors_data:
+            return [] # Return empty list if no competitors found
+        return competitors_data
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving competitors for {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to retrieve competitors: {e}")

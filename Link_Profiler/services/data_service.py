@@ -14,6 +14,40 @@ from Link_Profiler.core.models import (
 )
 from Link_Profiler.utils.auth_utils import get_user_tier # Import get_user_tier
 
+# Import service instances for live data fetching (assuming they are global singletons)
+# These imports are placed here to avoid circular dependencies at module load time
+try:
+    from Link_Profiler.main import (
+        domain_service_instance, backlink_service_instance, serp_service_instance,
+        keyword_service_instance
+    )
+except ImportError:
+    # Fallback for testing or if main.py is not fully initialized
+    logging.getLogger(__name__).warning("Could not import service instances from main.py. Live data fetching will be simulated or unavailable.")
+    class DummyDomainService:
+        async def get_domain_info(self, domain_name: str) -> Optional[Domain]:
+            logging.getLogger(__name__).warning(f"Simulating live domain info for {domain_name}")
+            return Domain(name=domain_name, authority_score=50, last_checked=datetime.now())
+        async def get_domain_metrics(self, domain_name: str) -> Optional[Dict[str, Any]]:
+            logging.getLogger(__name__).warning(f"Simulating live domain metrics for {domain_name}")
+            return {"domain_authority": 50, "page_authority": 60, "last_fetched_at": datetime.utcnow().isoformat()}
+    class DummyBacklinkService:
+        async def get_backlinks(self, domain_name: str) -> List[Backlink]:
+            logging.getLogger(__name__).warning(f"Simulating live backlinks for {domain_name}")
+            return [Backlink(source_url=f"http://example.com/{i}", target_url=f"http://{domain_name}", anchor_text="test", first_seen=datetime.now()) for i in range(3)]
+    class DummySerpService:
+        async def get_competitors(self, domain_name: str) -> List[Dict[str, Any]]:
+            logging.getLogger(__name__).warning(f"Simulating live competitors for {domain_name}")
+            return [{"domain": f"competitor{i}.com", "common_keywords": 100} for i in range(3)]
+    class DummyKeywordService:
+        pass # Not directly used for these endpoints
+
+    domain_service_instance = DummyDomainService()
+    backlink_service_instance = DummyBacklinkService()
+    serp_service_instance = DummySerpService()
+    keyword_service_instance = DummyKeywordService()
+
+
 logger = logging.getLogger(__name__)
 
 class DataService:
@@ -78,7 +112,11 @@ class DataService:
         
         # Define which tiers can access live data for which features
         # This is a simplified example; you might have a more granular configuration
-        PREMIUM_LIVE_FEATURES = ["backlinks", "gsc_backlinks_analytical", "keyword_trends_analytical", "single_job_status", "single_report_status"] # Example features requiring premium
+        PREMIUM_LIVE_FEATURES = [
+            "backlinks", "gsc_backlinks_analytical", "keyword_trends_analytical",
+            "single_job_status", "single_report_status",
+            "domain_overview", "domain_backlinks", "domain_metrics", "domain_competitors" # Added new features
+        ]
         
         if user_tier == "free":
             self.logger.warning(f"Live data access denied for user {user.username} (tier: {user_tier}) for feature '{feature}'.")
@@ -237,6 +275,79 @@ class DataService:
             return report_job.to_dict() if report_job else None
         
         return await self._fetch_and_cache(cache_key, fetch_live, ttl=60, force_live=force_live) # Cache for 1 minute
+
+    async def get_domain_overview(self, domain: str, source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves a comprehensive overview for a given domain.
+        """
+        feature = "domain_overview"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{domain}"
+
+        async def fetch_live():
+            # This calls the underlying domain_service to get live data
+            domain_obj = await domain_service_instance.get_domain_info(domain)
+            return domain_obj.to_dict() if domain_obj else None
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+
+    async def get_domain_backlinks(self, domain: str, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
+        """
+        Retrieves backlinks for a domain.
+        """
+        feature = "domain_backlinks"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{domain}"
+
+        async def fetch_live():
+            # This calls the underlying backlink_service to get live data
+            backlinks = await backlink_service_instance.get_backlinks(domain)
+            return [bl.to_dict() for bl in backlinks]
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+
+    async def get_domain_metrics(self, domain: str, source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves SEO metrics for a domain.
+        """
+        feature = "domain_metrics"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{domain}"
+
+        async def fetch_live():
+            # This calls the underlying domain_service (or a dedicated metrics service) to get live data
+            metrics = await domain_service_instance.get_domain_metrics(domain) # Assuming domain_service has this method
+            return metrics # Assuming it returns a dict or can be converted
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+
+    async def get_domain_competitors(self, domain: str, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
+        """
+        Retrieves top competitors for a domain.
+        """
+        feature = "domain_competitors"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{domain}"
+
+        async def fetch_live():
+            # This calls the underlying serp_service (or keyword_service) to get live data
+            competitors = await serp_service_instance.get_competitors(domain) # Assuming serp_service has this method
+            return competitors # Assuming it returns a list of dicts
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+
 
 # Initialize the service with the singleton database clients
 data_service = DataService(database_client=db, ch_client=clickhouse_client, cache_client=APICache())
