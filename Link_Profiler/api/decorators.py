@@ -1,6 +1,6 @@
 import logging
 from functools import wraps
-from typing import Callable, Any, Optional
+from typing import Callable, Any, Optional, Annotated
 from fastapi import Depends, HTTPException, status, Query
 from Link_Profiler.utils.auth_utils import get_current_user
 from Link_Profiler.core.models import User
@@ -13,10 +13,13 @@ def require_auth(func: Callable[..., Any]) -> Callable[..., Any]:
     It injects the `current_user` dependency.
     """
     @wraps(func)
-    async def wrapper(*args, current_user: User = Depends(get_current_user), **kwargs) -> Any:
+    async def wrapper(*args, current_user: Annotated[User, Depends(get_current_user)], **kwargs) -> Any:
         # The get_current_user dependency already handles raising HTTPException for unauthorized access.
         # We just need to ensure current_user is passed to the decorated function.
-        return await func(*args, current_user=current_user, **kwargs)
+        # FastAPI handles injecting `current_user` based on the Depends(get_current_user) annotation.
+        # We explicitly pass it here to ensure the decorated function receives it.
+        kwargs['current_user'] = current_user
+        return await func(*args, **kwargs)
     return wrapper
 
 def cache_first_route(func: Callable[..., Any]) -> Callable[..., Any]:
