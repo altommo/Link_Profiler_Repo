@@ -6,11 +6,12 @@ from datetime import datetime, timedelta # Import datetime and timedelta
 import json # Import json
 
 from Link_Profiler.core.models import User, CrawlStatus
-from Link_Profiler.api.schemas import UserCreate, UserResponse, LinkProfileResponse, DomainResponse
+from Link_Profiler.api.schemas import UserCreate, UserResponse, LinkProfileResponse, DomainResponse, Token # Ensure Token is imported
 from Link_Profiler.api.dependencies import get_current_user
 from Link_Profiler.database.database import db
 from Link_Profiler.services.domain_service import get_domain_service # Import get_domain_service
 from Link_Profiler.monitoring.prometheus_metrics import get_metrics_text
+from Link_Profiler.services.auth_service import auth_service_instance # Import auth_service_instance
 
 logger = logging.getLogger(__name__)
 
