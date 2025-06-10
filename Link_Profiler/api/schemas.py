@@ -214,7 +214,7 @@ class LinkProfileResponse(BaseModel):
     external_backlinks: int # Added
     broken_backlinks: int # Added
     top_anchor_texts: Dict[str, int] # Changed from anchor_text_distribution
-    top_referring_domains: Dict[str, int] # Changed from referring_domains
+    top_referring_domains: Dict[str, int] = Field(default_factory=dict) # Changed from referring_domains
     last_updated: datetime # Changed from analysis_date
     last_fetched_at: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
@@ -273,19 +273,19 @@ class BacklinkResponse(BaseModel):
 class DomainResponse(BaseModel):
     name: str
     authority_score: Optional[float] # Made optional
-    trust_score: Optional[float] # Made optional
-    spam_score: Optional[float] # Made optional
-    registered_date: Optional[datetime] # Changed from first_seen
-    expiration_date: Optional[datetime] # Added
-    registrar: Optional[str] # Added
-    is_registered: Optional[bool] # Added
+    trust_score: Optional[float] = None # Made optional
+    spam_score: Optional[float] = None # Made optional
+    registered_date: Optional[datetime] = None # Changed from first_seen
+    expiration_date: Optional[datetime] = None # Added
+    registrar: Optional[str] = None # Added
+    is_registered: Optional[bool] = None # Added
     is_parked: Optional[bool] = None # Added
     is_dead: Optional[bool] = None # Added
-    whois_raw: Optional[str] # Changed from whois_data
-    dns_records: Dict[str, List[str]] # Added
-    ip_address: Optional[str] # Added
-    country: Optional[str] # Added
-    seo_metrics: SEOMetrics # Added
+    whois_raw: Optional[str] = None # Changed from whois_data
+    dns_records: Dict[str, List[str]] = Field(default_factory=dict) # Added
+    ip_address: Optional[str] = None # Added
+    country: Optional[str] = None # Added
+    seo_metrics: SEOMetrics = Field(default_factory=SEOMetrics) # Added
     last_checked: datetime # Changed from last_crawled
     last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
@@ -335,7 +335,7 @@ class SERPResultResponse(BaseModel):
     title: str # Changed from title_text
     snippet: Optional[str] = None # Changed from snippet_text
     domain: str # Added
-    position_type: Optional[str] # Added
+    position_type: Optional[str] = None # Added
     timestamp: datetime # Changed from crawl_timestamp
     last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
     
@@ -474,14 +474,14 @@ class LinkProspectResponse(BaseModel):
     target_domain: str # Added target_domain
     prospect_url: str # Changed from url
     status: str # Added
-    contact_email: Optional[str] # Added
-    contact_name: Optional[str] # Added
-    notes: Optional[str] # Added
+    contact_email: Optional[str] = None # Added
+    contact_name: Optional[str] = None # Added
+    notes: Optional[str] = None # Added
     priority: str # Added
     discovered_date: datetime # Added
-    last_contacted: Optional[datetime] # Added
-    link_acquired_date: Optional[datetime] # Added
-    prospect_seo_metrics: SEOMetrics # Added
+    last_contacted: Optional[datetime] = None # Added
+    link_acquired_date: Optional[datetime] = None # Added
+    prospect_seo_metrics: SEOMetrics = Field(default_factory=SEOMetrics) # Added
     last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
@@ -602,8 +602,8 @@ class ReportJobResponse(BaseModel):
     file_path: Optional[str] = Field(None, alias="generated_file_path") # Use generated_file_path from core.models.ReportJob
     error_message: Optional[str]
     config: Optional[Dict] # Added config
-    scheduled_at: Optional[datetime] # Added scheduled_at
-    cron_schedule: Optional[str] # Added cron_schedule
+    scheduled_at: Optional[datetime] = Field(None, alias="scheduled_at") # Added scheduled_at
+    cron_schedule: Optional[str] = Field(None, alias="cron_schedule") # Added cron_schedule
     last_updated: Optional[datetime] = Field(None, alias="last_fetched_at") # New: last_fetched_at
 
     class Config:
@@ -850,3 +850,16 @@ class SystemConfigUpdate(BaseModel):
     crawler_max_depth: Optional[int] = None
     crawler_render_javascript: Optional[bool] = None
     # Add other relevant config items here
+
+# NEW: Customer Dashboard Summary Schema
+class CustomerDashboardSummary(BaseModel):
+    total_domains_monitored: int
+    avg_domain_authority: Optional[float]
+    total_backlinks_discovered: int
+    new_backlinks_7d: int
+    broken_links_found_7d: int
+    api_quota_status: List[ApiQuotaStatus] # User's specific API quotas
+    recent_alerts: List[DashboardAlert] # Alerts relevant to the user
+    last_updated: datetime
+    user_id: str
+    organization_id: Optional[str] = None
