@@ -215,6 +215,25 @@ SATELLITE_STATUS_GAUGE = Gauge(
     ['satellite_id', 'status']
 )
 
+# --- Ingestion Job Metrics ---
+INGESTION_JOB_RUNS_TOTAL = Counter(
+    'link_profiler_ingestion_job_runs_total',
+    'Total number of ingestion job runs',
+    ['job_name', 'status'] # status: 'success', 'failure'
+)
+
+INGESTION_JOB_DURATION_SECONDS = Histogram(
+    'link_profiler_ingestion_job_duration_seconds',
+    'Duration of ingestion job runs in seconds',
+    ['job_name']
+)
+
+INGESTION_DATA_VOLUME_RECORDS = Counter(
+    'link_profiler_ingestion_data_volume_records',
+    'Number of records processed by ingestion jobs',
+    ['job_name', 'data_type']
+)
+
 # --- Utility function to expose metrics ---
 def get_metrics_text():
     """Returns the current metrics in Prometheus text format."""
