@@ -778,6 +778,14 @@ class ApiQuotaStatus(BaseModel):
     recommended_action: Optional[str] = None
     performance: ApiPerformanceMetrics # New: Nested performance metrics
 
+# New Pydantic model for API Key Information
+class ApiKeyInfo(BaseModel):
+    api_name: str
+    enabled: bool
+    api_key_masked: str
+    monthly_limit: int
+    cost_per_unit: float
+
 class DomainIntelligenceMetrics(BaseModel):
     total_domains_analyzed: int
     valuable_expired_domains_found: int
