@@ -959,7 +959,7 @@ async def get_jobs_main_endpoint(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid status_filter: {status_filter}. Must be one of {list(CrawlStatus.__members__.keys())}.")
         
         # Sort by created date, newest first
-        sorted_jobs = sorted(all_jobs, key=lambda job: job.created_date, reverse=True)
+        sorted_jobs = sorted(all_jobs, key=lambda job: job.created_at, reverse=True) # Corrected from job.created_date
         
         # Convert CrawlJob objects to their dictionary representation for JSON serialization
         return [job.to_dict() for job in sorted_jobs]
