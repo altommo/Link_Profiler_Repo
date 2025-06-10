@@ -1,0 +1,146 @@
+# External API Integrations
+domain_api:
+  abstract_api:
+    enabled: false
+    api_key: "${LP_DOMAIN_ABSTRACT_API_KEY}"
+    base_url: "https://domain-validation.abstractapi.com/v1/"
+    whois_base_url: "https://whois.abstractapi.com/v1/"
+  real_api:
+    enabled: false
+    api_key: "${LP_DOMAIN_REAL_API_KEY}"
+    base_url: "https://api.whoisxmlapi.com/v1"
+  whois_json_api:
+    enabled: false
+    base_url: "https://www.whois-json.com/api/v1/whois"
+    api_key: "${LP_WHOIS_JSON_API_KEY}"
+  dns_over_https_api:
+    enabled: false
+    cloudflare_url: "https://cloudflare-dns.com/dns-query"
+    google_url: "https://dns.google/resolve"
+  domain_service:
+    allow_live: true
+    staleness_threshold_hours: 24
+
+backlink_api:
+  gsc_api:
+    enabled: false
+    credentials_file: "credentials.json"
+    token_file: "token.json"
+  openlinkprofiler_api:
+    enabled: false
+    base_url: "http://www.openlinkprofiler.org/api/index.php"
+  real_api:
+    enabled: false
+    api_key: "${LP_BACKLINK_REAL_API_KEY}"
+    base_url: "https://api.ahrefs.com/v3"
+  backlink_service:
+    allow_live: true
+    staleness_threshold_hours: 24
+
+serp_api:
+  real_api:
+    enabled: false
+    api_key: "${LP_SERP_REAL_API_KEY}"
+    base_url: "https://serpapi.com/search"
+  pagespeed_insights_api:
+    enabled: false
+    api_key: "${LP_PAGESPEED_API_KEY}"
+    base_url: "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+  serp_service:
+    allow_live: true
+    staleness_threshold_hours: 12
+
+keyword_api:
+  real_api:
+    enabled: false
+    api_key: "${LP_KEYWORD_REAL_API_KEY}"
+    base_url: "https://api.ahrefs.com/v3"
+  metrics_api:
+    enabled: false
+    api_key: "${LP_KEYWORD_METRICS_API_KEY}"
+    base_url: "https://googleads.googleapis.com/v16"
+  google_trends_api:
+    enabled: false
+  keyword_service:
+    allow_live: true
+    staleness_threshold_hours: 24
+
+# AI Service Integration
+ai:
+  enabled: false
+  openrouter_api_key: "${LP_AI_OPENROUTER_API_KEY}"
+  models:
+    content_scoring: "anthropic/claude-3-haiku"
+    content_classification: "anthropic/claude-3-haiku"
+    content_gap_analysis: "openai/gpt-4-turbo"
+    keyword_research: "google/gemini-pro"
+    technical_seo_analysis: "anthropic/claude-3-5-sonnet"
+    competitor_analysis: "openai/gpt-4"
+    content_generation: "anthropic/claude-3-5-sonnet"
+    domain_value_analysis: "mistralai/mistral-7b-instruct"
+    content_nlp_analysis: "anthropic/claude-3-haiku"
+    topic_clustering: "mistralai/mistral-7b-instruct"
+    content_quality_assessment: "anthropic/claude-3-haiku"
+    video_frame_analysis: "openai/gpt-4o"
+  ai_service:
+    allow_live: true
+    staleness_threshold_hours: 24
+
+# External API Quota Manager specific configurations
+external_apis:
+  serpstack:
+    enabled: false
+    api_key: "${LP_SERPSTACK_API_KEY}"
+    monthly_limit: 1000
+    reset_day_of_month: 1
+    cost_per_unit: 0.001
+    quality_score: 5
+    supported_query_types: ["serp_search"]
+  valueserp:
+    enabled: false
+    api_key: "${LP_VALUESERP_API_KEY}"
+    monthly_limit: 100
+    reset_day_of_month: 1
+    cost_per_unit: 0.005
+    quality_score: 4
+    supported_query_types: ["serp_search"]
+  webscraping_ai:
+    enabled: false
+    api_key: "${LP_WEBSCRAPING_AI_API_KEY}"
+    monthly_limit: 1000
+    reset_day_of_month: 1
+    cost_per_unit: 0.002
+    quality_score: 4
+    supported_query_types: ["web_scrape"]
+  hunter_io:
+    enabled: false
+    api_key: "${LP_HUNTER_IO_API_KEY}"
+    monthly_limit: 50
+    reset_day_of_month: 1
+    cost_per_unit: 0.01
+    quality_score: 3
+    supported_query_types: ["email_lookup"]
+  builtwith:
+    enabled: false
+    api_key: "${LP_BUILTWITH_API_KEY}"
+    monthly_limit: 200
+    reset_day_of_month: 1
+    cost_per_unit: 0.008
+    quality_score: 4
+    supported_query_types: ["tech_stack"]
+  clearbit:
+    enabled: false
+    api_key: "${LP_CLEARBIT_API_KEY}"
+    monthly_limit: 50
+    reset_day_of_month: 1
+    cost_per_unit: 0.02
+    quality_score: 5
+    supported_query_types: ["company_info", "person_info"]
+  securitytrails:
+    enabled: false
+    api_key: "${LP_SECURITY_TRAILS_API_KEY}"
+    monthly_limit: 50
+    reset_day_of_month: 1
+    cost_per_unit: 0.015
+    quality_score: 5
+    supported_query_types: ["domain_data", "dns_history"]

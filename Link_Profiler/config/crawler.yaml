@@ -1,0 +1,76 @@
+# Crawler settings
+crawler:
+  max_depth: 3
+  max_pages: 1000
+  user_agent: "LinkProfilerBot/1.0 (+http://linkprofiler.com/bot.html)"
+  respect_robots_txt: true
+  follow_redirects: true
+  extract_images: true
+  extract_pdfs: false
+  max_file_size_mb: 10
+  max_retries: 3
+  retry_delay_seconds: 5.0
+
+# Anti-detection & Quality Assurance settings
+anti_detection:
+  user_agent_rotation: true
+  consistent_ua_per_domain: true
+  request_header_randomization: true
+  human_like_delays: true
+  random_delay_range: [0.5, 2.0]
+  stealth_mode: true
+  browser_fingerprint_randomization: false
+  captcha_solving_enabled: false
+
+quality_assurance:
+  spam_filtering: true
+  data_quality_scoring: true
+
+# Proxy management settings
+proxy:
+  use_proxies: false
+  proxy_list: []
+  proxy_retry_delay_seconds: 300
+
+# Browser-based crawling settings
+browser_crawler:
+  enabled: true
+  browser_type: "chromium"
+  headless: true
+
+# SERP crawler settings
+serp_crawler:
+  playwright:
+    enabled: true
+    headless: true
+    browser_type: "chromium"
+
+# Social Media Integration
+social_media_crawler:
+  enabled: false
+  platforms: ["twitter", "facebook", "linkedin", "reddit", "youtube"]
+
+# Web3 Integration
+web3_crawler:
+  enabled: false
+  ipfs_gateway_url: "https://ipfs.io/ipfs/"
+
+# Queue system settings
+queue:
+  job_queue_name: "crawl_jobs"
+  result_queue_name: "crawl_results"
+  dead_letter_queue_name: "dead_letter_queue"
+  scheduler_interval: 5
+  heartbeat_queue_sorted_name: "crawler_heartbeats_sorted"
+
+# Queue System settings
+queue_system:
+  redis_url: "${LP_REDIS_URL}"
+  max_queue_size: 100000
+  domain_max_concurrent: 2
+  scheduled_jobs_queue: "scheduled_crawl_jobs"
+
+# Satellite Crawler settings
+satellite:
+  id: "default-satellite-1"
+  heartbeat_interval: 5

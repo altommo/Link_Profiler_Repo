@@ -1,0 +1,77 @@
+# Monitoring and Alerting Configuration
+logging:
+  level: DEBUG
+  config:
+    version: 1
+    disable_existing_loggers: False
+    formatters:
+      standard:
+        format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: standard
+        level: DEBUG
+    loggers:
+      Link_Profiler:
+        handlers: [console]
+        level: DEBUG
+        propagate: False
+      uvicorn:
+        handlers: [console]
+        level: INFO
+        propagate: False
+      uvicorn.access:
+        handlers: [console]
+        level: INFO
+        propagate: False
+      sqlalchemy.engine:
+        handlers: [console]
+        level: WARNING
+        propagate: False
+    root:
+      handlers: [console]
+      level: DEBUG
+
+# Monitoring settings
+monitoring:
+  monitor_port: 8001
+  performance_window: 3600
+  max_job_history: 50
+  monitor_auth:
+    username: "${LP_MONITOR_USERNAME}"
+    password: "${LP_MONITOR_PASSWORD}"
+  enabled: true
+  metrics_interval: 30
+  health_check_interval: 60
+  alert_cooldown: 300
+
+# Notifications & Alerting
+notifications:
+  webhooks:
+    enabled: true
+    urls: []
+  email:
+    enabled: false
+    smtp_server: "${LP_SMTP_SERVER}"
+    smtp_port: "${LP_SMTP_PORT:-587}"
+    smtp_username: "${LP_SMTP_USERNAME}"
+    smtp_password: "${LP_SMTP_PASSWORD}"
+    sender_email: "${LP_SENDER_EMAIL}"
+  slack:
+    enabled: false
+    webhook_url: "${LP_SLACK_WEBHOOK_URL}"
+
+# Subdomain Configuration
+subdomains:
+  customer: "customer"
+  mission_control: "monitor"
+
+# Mission Control Dashboard Settings - THE KEY SECTION
+mission_control:
+  enabled: true
+  websocket_enabled: true  # This is the key setting that was missing!
+  dashboard_refresh_rate: 1000
+  max_websocket_connections: 500  # Increased from 100 to 500
+  cache_ttl: 60
+  history_retention_days: 30
