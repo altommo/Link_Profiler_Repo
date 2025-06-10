@@ -1109,7 +1109,9 @@ async def serve_dashboard_spa(request: Request, path: str):
     """
     # Problem: Unsafe state attribute checking causing AttributeError when accessing request state
     # Fixed: Use hasattr() checks
+    logger.debug(f"serve_dashboard_spa invoked for path: {request.url.path}. is_api_request: {getattr(request.state, 'is_api_request', 'N/A')}")
     if hasattr(request.state, 'is_api_request') and request.state.is_api_request:
+        logger.warning(f"serve_dashboard_spa received an API request: {request.url.path}. This should have been handled by a specific router.")
         raise HTTPException(status_code=404, detail="API endpoint not found or handled by other routers.")
 
     # Check if this is a customer dashboard request

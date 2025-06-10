@@ -26,22 +26,29 @@ class SubdomainRouterMiddleware(BaseHTTPMiddleware):
         request.state.is_api_request = False # Default for API requests
         request.state.subdomain = None
 
-        # Added: Comprehensive debugging logs
         logger.debug(f"Processing request - Host: {host}, Path: {request.url.path}")
 
         if host:
             parsed_host = urlparse(f"http://{host}") # Prepend scheme for urlparse
-            # Fixed: Better subdomain detection with null checking
             hostname_parts = parsed_host.hostname.split('.') if parsed_host.hostname else []
             
-            # Added: Comprehensive debugging logs
             logger.debug(f"Hostname parts: {hostname_parts}")
             
-            # FIXED: Check for API requests FIRST, regardless of subdomain
+            # Detailed logging for API path detection
+            logger.debug(f"Path: {request.url.path}")
+            logger.debug(f"Path starts with /api/: {request.url.path.startswith('/api/')}")
+            logger.debug(f"Path starts with /admin/: {request.url.path.startswith('/admin/')}")
+            logger.debug(f"Path starts with /ws/: {request.url.path.startswith('/ws/')}")
+            logger.debug(f"Path starts with /health: {request.url.path.startswith('/health')}")
+            logger.debug(f"Path starts with /metrics: {request.url.path.startswith('/metrics')}")
+            logger.debug(f"Path starts with /token: {request.url.path.startswith('/token')}")
+            logger.debug(f"Path starts with /register: {request.url.path.startswith('/register')}")
+
+            # Check for API requests FIRST, regardless of subdomain
             # API requests should be handled by FastAPI routers, not served as dashboard
-            if (request.url.path.startswith("/api/") or # Changed from /api to /api/
-                request.url.path.startswith("/admin/") or # Added /admin/
-                request.url.path.startswith("/ws/") or # Changed from /ws to /ws/
+            if (request.url.path.startswith("/api/") or 
+                request.url.path.startswith("/admin/") or 
+                request.url.path.startswith("/ws/") or 
                 request.url.path.startswith("/health") or 
                 request.url.path.startswith("/metrics") or
                 request.url.path.startswith("/token") or
@@ -67,8 +74,8 @@ class SubdomainRouterMiddleware(BaseHTTPMiddleware):
             else:
                 logger.debug(f"No subdomain detected in host: {host} (parts: {hostname_parts})")
 
-        # Log final state
-        logger.debug(f"Request routing state - Customer: {request.state.is_customer_dashboard}, Mission Control: {request.state.is_mission_control_dashboard}, API: {request.state.is_api_request}")
+        # Log final state before calling next middleware/route
+        logger.debug(f"Request routing state (before call_next) - Customer: {request.state.is_customer_dashboard}, Mission Control: {request.state.is_mission_control_dashboard}, API: {request.state.is_api_request}")
 
         response = await call_next(request)
         return response
