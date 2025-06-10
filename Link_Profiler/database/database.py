@@ -138,74 +138,104 @@ class Database:
             return
 
         views_sql = {
-            "mv_daily_job_stats": """
-                CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_job_stats AS
-                SELECT
-                    DATE_TRUNC('day', created_at) AS day, -- Corrected from created_date
-                    job_type,
-                    COUNT(id) AS total_jobs,
-                    COUNT(CASE WHEN status = 'completed' THEN 1 END) AS completed_jobs,
-                    COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed_jobs,
-                    SUM(urls_crawled) AS total_pages_crawled,
-                    AVG(EXTRACT(EPOCH FROM (completed_date - started_date))) AS avg_job_duration_seconds
-                FROM crawl_jobs
-                WHERE created_at IS NOT NULL -- Corrected from created_date
-                GROUP BY 1, 2
-                ORDER BY 1 DESC, 2;
-            """,
-            "mv_daily_backlink_stats": """
-                CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_backlink_stats AS
-                SELECT
-                    DATE_TRUNC('day', first_seen) AS day, -- Corrected from discovered_date
-                    COUNT(id) AS total_backlinks_discovered,
-                    COUNT(DISTINCT source_domain_name) AS unique_domains_discovered,
-                    COUNT(CASE WHEN spam_level IN ('likely_spam', 'confirmed_spam') THEN 1 END) AS potential_spam_links,
-                    AVG(authority_passed) AS avg_authority_passed
-                FROM backlinks
-                WHERE first_seen IS NOT NULL -- Corrected from discovered_date
-                GROUP BY 1
-                ORDER BY 1 DESC;
-            """,
-            "mv_daily_domain_stats": """
-                CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_domain_stats AS
-                SELECT
-                    DATE_TRUNC('day', last_checked) AS day,
-                    COUNT(name) AS total_domains_analyzed,
-                    COUNT(CASE WHEN authority_score >= 20 AND spam_score <= 0.3 THEN 1 END) AS valuable_domains_found,
-                    AVG(authority_score) AS avg_domain_authority_score
-                FROM domains
-                WHERE last_checked IS NOT NULL
-                GROUP BY 1
-                ORDER BY 1 DESC;
-            """,
-            "mv_daily_satellite_performance": """
-                CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_satellite_performance AS
-                SELECT
-                    DATE_TRUNC('day', timestamp) AS day,
-                    satellite_id,
-                    AVG(pages_crawled) AS avg_pages_crawled,
-                    AVG(links_extracted) AS avg_links_extracted,
-                    AVG(crawl_speed_pages_per_minute) AS avg_crawl_speed_ppm,
-                    AVG(success_rate_percentage) AS avg_success_rate,
-                    AVG(avg_response_time_ms) AS avg_response_time_ms,
-                    AVG(cpu_utilization_percent) AS avg_cpu_utilization,
-                    AVG(memory_utilization_percent) AS avg_memory_utilization,
-                    AVG(network_io_mbps) AS avg_network_io,
-                    SUM(errors_logged) AS total_errors_logged
-                FROM satellite_performance_logs
-                WHERE timestamp IS NOT NULL
-                GROUP BY 1, 2
-                ORDER BY 1 DESC, 2;
-            """
+            "mv_daily_job_stats": {
+                "sql": """
+                    CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_job_stats AS
+                    SELECT
+                        DATE_TRUNC('day', created_at) AS day, -- Corrected from created_date
+                        job_type,
+                        COUNT(id) AS total_jobs,
+                        COUNT(CASE WHEN status = 'completed' THEN 1 END) AS completed_jobs,
+                        COUNT(CASE WHEN status = 'failed' THEN 1 END) AS failed_jobs,
+                        SUM(urls_crawled) AS total_pages_crawled,
+                        AVG(EXTRACT(EPOCH FROM (completed_date - started_date))) AS avg_job_duration_seconds
+                    FROM crawl_jobs
+                    WHERE created_at IS NOT NULL -- Corrected from created_date
+                    GROUP BY 1, 2
+                    ORDER BY 1 DESC, 2;
+                """,
+                "source_tables": ["crawl_jobs"]
+            },
+            "mv_daily_backlink_stats": {
+                "sql": """
+                    CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_backlink_stats AS
+                    SELECT
+                        DATE_TRUNC('day', first_seen) AS day, -- Corrected from discovered_date
+                        COUNT(id) AS total_backlinks_discovered,
+                        COUNT(DISTINCT source_domain_name) AS unique_domains_discovered,
+                        COUNT(CASE WHEN spam_level IN ('likely_spam', 'confirmed_spam') THEN 1 END) AS potential_spam_links,
+                        AVG(authority_passed) AS avg_authority_passed
+                    FROM backlinks
+                    WHERE first_seen IS NOT NULL -- Corrected from discovered_date
+                    GROUP BY 1
+                    ORDER BY 1 DESC;
+                """,
+                "source_tables": ["backlinks"]
+            },
+            "mv_daily_domain_stats": {
+                "sql": """
+                    CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_domain_stats AS
+                    SELECT
+                        DATE_TRUNC('day', last_checked) AS day,
+                        COUNT(name) AS total_domains_analyzed,
+                        COUNT(CASE WHEN authority_score >= 20 AND spam_score <= 0.3 THEN 1 END) AS valuable_domains_found,
+                        AVG(authority_score) AS avg_domain_authority_score
+                    FROM domains
+                    WHERE last_checked IS NOT NULL
+                    GROUP BY 1
+                    ORDER BY 1 DESC;
+                """,
+                "source_tables": ["domains"]
+            },
+            "mv_daily_satellite_performance": {
+                "sql": """
+                    CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_satellite_performance AS
+                    SELECT
+                        DATE_TRUNC('day', timestamp) AS day,
+                        satellite_id,
+                        AVG(pages_crawled) AS avg_pages_crawled,
+                        AVG(links_extracted) AS avg_links_extracted,
+                        AVG(crawl_speed_pages_per_minute) AS avg_crawl_speed_ppm,
+                        AVG(success_rate_percentage) AS avg_success_rate,
+                        AVG(avg_response_time_ms) AS avg_avg_response_time_ms,
+                        AVG(cpu_utilization_percent) AS avg_cpu_utilization,
+                        AVG(memory_utilization_percent) AS avg_memory_utilization,
+                        AVG(network_io_mbps) AS avg_network_io,
+                        SUM(errors_logged) AS total_errors_logged
+                    FROM satellite_performance_logs
+                    WHERE timestamp IS NOT NULL
+                    GROUP BY 1, 2
+                    ORDER BY 1 DESC, 2;
+                """,
+                "source_tables": ["satellite_performance_logs"]
+            }
         }
 
-        for view_name, sql in views_sql.items():
+        inspector = inspect(self.engine)
+        existing_tables = inspector.get_table_names()
+        self.logger.info(f"Tables found in database before MV creation: {existing_tables}")
+
+        for view_name, view_info in views_sql.items():
+            sql = view_info["sql"]
+            source_tables = view_info["source_tables"]
+            
+            missing_source_tables = [t for t in source_tables if t not in existing_tables]
+            if missing_source_tables:
+                self.logger.warning(f"Skipping materialized view '{view_name}': Missing source tables: {missing_source_tables}. Ensure these tables are created first.")
+                continue # Skip to next view if source tables are missing
+
             with self.engine.connect() as connection: # New connection for each MV
                 try:
-                    self.logger.info(f"Attempting to create materialized view '{view_name}'...")
+                    self.logger.info(f"Attempting to DROP and CREATE materialized view '{view_name}'...")
+                    # Drop existing view to ensure clean creation/update
+                    connection.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {view_name};"))
+                    connection.commit() # Commit drop
+                    self.logger.info(f"Dropped existing materialized view '{view_name}' (if it existed).")
+
                     connection.execute(text(sql))
                     connection.commit()
-                    self.logger.info(f"Materialized view '{view_name}' created/refreshed successfully.")
+                    self.logger.info(f"Materialized view '{view_name}' created successfully.")
+                    
                     # Create index on the 'day' column for faster queries
                     connection.execute(text(f"CREATE INDEX IF NOT EXISTS idx_{view_name}_day ON {view_name} (day);"))
                     connection.commit()
@@ -226,7 +256,7 @@ class Database:
             self.logger.error("Cannot refresh materialized views: Database engine not initialized.")
             return
 
-        view_names = ["mv_daily_job_stats", "mv_daily_backlink_stats", "mv_daily_domain_stats", "mv_daily_satellite_performance"] # New: Add satellite performance view
+        view_names = ["mv_daily_job_stats", "mv_daily_backlink_stats", "mv_daily_domain_stats", "mv_daily_satellite_performance"] # Add satellite performance view
         for view_name in view_names:
             with self.engine.connect() as connection: # New connection for each MV
                 try:
