@@ -47,7 +47,8 @@ def validate_critical_config():
     critical_vars = {
         "LP_AUTH_SECRET_KEY": "auth.secret_key",
         "LP_DATABASE_URL": "database.url", 
-        "LP_REDIS_URL": "redis.url"
+        "LP_REDIS_URL": "redis.url",
+        "LP_MONITOR_PASSWORD": "monitoring.monitor_auth.password" # Added for validation
     }
     
     for env_var, config_path in critical_vars.items():
@@ -64,6 +65,9 @@ def validate_critical_config():
              logger.warning(f"WARNING: {env_var} is not set and config still uses placeholder. Authentication will fail.")
         elif not env_value and (config_path == "database.url" or config_path == "redis.url"):
              logger.warning(f"WARNING: {env_var} is not set. Using default/fallback for {config_path}.")
+        elif not env_value and config_path == "monitoring.monitor_auth.password":
+            logger.warning(f"WARNING: {env_var} is not set. Default admin password might be insecure.")
+
 
 # Call validation after config loading
 validate_critical_config()
@@ -268,6 +272,9 @@ from Link_Profiler.api.customer_routes import customer_router
 from Link_Profiler.api.admin_routes import admin_router # Import the new admin router
 # New: Import public_api_routes
 from Link_Profiler.api.public_api_routes import public_api_router # Import the new public API router
+# New: Import queue_router and set_coordinator_dependencies
+from Link_Profiler.api.queue_endpoints import queue_router, set_coordinator_dependencies
+
 
 # New: Import authentication dependencies
 from fastapi.security import OAuth2PasswordRequestForm # Only import this specific class needed for /token endpoint
@@ -628,8 +635,14 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("Redis client not initialized. Skipping Redis ping.")
         
-        # Removed set_coordinator_dependencies as it's now handled by get_coordinator in queue_system
-        # Removed explicit asyncio.create_task calls for JobCoordinator as they are handled by get_coordinator in queue_system
+        # Set JobCoordinator dependencies
+        set_coordinator_dependencies(
+            redis_client=redis_client,
+            config_loader=config_loader,
+            db=db,
+            alert_service=alert_service_instance,
+            connection_manager=connection_manager
+        )
 
         try:
             await get_coordinator() # This will initialize the JobCoordinator and start its tasks
@@ -641,24 +654,28 @@ async def lifespan(app: FastAPI):
 
         # --- NEW: Create default admin user if not exists ---
         default_admin_username = "monitor_user"
-        default_admin_password = "monitor_password" # This should ideally be loaded from a secure config/env var
+        # Load default admin password from config_loader
+        default_admin_password = config_loader.get("monitoring.monitor_auth.password")
         
-        existing_admin_user = db.get_user_by_username(default_admin_username)
-        if not existing_admin_user:
-            logger.info(f"Default admin user '{default_admin_username}' not found. Creating...")
-            try:
-                await auth_service_instance.register_user(
-                    username=default_admin_username,
-                    email="admin@linkprofiler.com", # Use a default admin email
-                    password=default_admin_password,
-                    is_admin=True,
-                    role="admin"
-                )
-                logger.info(f"Default admin user '{default_admin_username}' created successfully.")
-            except Exception as e:
-                logger.error(f"Failed to create default admin user '{default_admin_username}': {e}", exc_info=True)
+        if not default_admin_password:
+            logger.critical("CRITICAL: Default admin password (LP_MONITOR_PASSWORD) not set in configuration. Default admin user will not be created.")
         else:
-            logger.info(f"Default admin user '{default_admin_username}' already exists.")
+            existing_admin_user = db.get_user_by_username(default_admin_username)
+            if not existing_admin_user:
+                logger.info(f"Default admin user '{default_admin_username}' not found. Creating...")
+                try:
+                    await auth_service_instance.register_user(
+                        username=default_admin_username,
+                        email="admin@linkprofiler.com", # Use a default admin email
+                        password=default_admin_password,
+                        is_admin=True,
+                        role="admin"
+                    )
+                    logger.info(f"Default admin user '{default_admin_username}' created successfully.")
+                except Exception as e:
+                    logger.error(f"Failed to create default admin user '{default_admin_username}': {e}", exc_info=True)
+            else:
+                logger.info(f"Default admin user '{default_admin_username}' already exists.")
         # --- END NEW ---
 
         yield
@@ -733,6 +750,7 @@ app.include_router(mission_control_router)
 app.include_router(customer_router) # Include the new customer router
 app.include_router(admin_router) # Include the new admin router
 app.include_router(public_api_router) # Include the new public API router
+app.include_router(queue_router) # Include the queue router
 # --- End Register API Routers ---
 
 # Mount static files AFTER API routers
@@ -789,28 +807,23 @@ async def register_user(user_create: UserCreate):
     )
     return UserResponse.from_user(new_user)
 
-# Removed: @app.get("/users/me", response_model=UserResponse)
-# async def read_users_me(current_user: User = Depends(get_current_user)): # Use imported get_current_user
-#     return UserResponse.from_user(current_user)
-
 # --- Re-exposed Monitoring Endpoints from dashboard_server.py ---
 # These endpoints are now part of the main API for Mission Control to consume.
 
+@app.get("/health")
+async def health_check():
+    db_status = db.ping()
+    return {"status": "ok", "database_connected": db_status}
 
-# Removed: @app.get("/health")
-# async def health_check():
-#     db_status = db.ping()
-#     return {"status": "ok", "database_connected": db_status}
-
-# Removed: @app.get("/metrics")
-# async def metrics():
-#     return HTMLResponse(content=get_metrics_text(), media_type="text/plain")
+@app.get("/metrics")
+async def metrics():
+    return HTMLResponse(content=get_metrics_text(), media_type="text/plain")
 
 # Removed: @app.get("/link_profile/{target_url:path}", response_model=LinkProfileResponse)
 # async def get_link_profile(target_url: str, current_user: User = Depends(get_current_user)): # Use imported get_current_user
 #     profile = db.get_link_profile(target_url)
 #     if not profile:
-#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Link profile not found")
+#         raise HTTPException(status_code=status.HTTP_404_NOT_NOT_FOUND, detail="Link profile not found")
 #     return LinkProfileResponse.from_link_profile(profile)
 
 # Removed: @app.get("/domain/info/{domain_name}", response_model=DomainResponse)
