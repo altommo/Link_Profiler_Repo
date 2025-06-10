@@ -8,9 +8,9 @@ export const WS_BASE_URL = window.location.protocol === 'https:' ?
   `ws://${window.location.host}`;
 
 export const AUTH_ENDPOINTS = {
-  login: `${API_BASE_URL}/api/mission-control/token`,
+  login: `${API_BASE_URL}/token`, // Corrected to hit the main /token endpoint
   register: `${API_BASE_URL}/register`,
-  verify: `${API_BASE_URL}/api/mission-control/users/me`, // Mission control specific endpoint
+  verify: `${API_BASE_URL}/users/me`, // Corrected to hit the main /users/me endpoint
 };
 
 // Other configurations can go here

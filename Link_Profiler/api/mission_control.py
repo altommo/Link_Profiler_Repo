@@ -67,21 +67,22 @@ async def mission_control_login(request: Request):
             "error": str(e)
         }
 
-@mission_control_router.get("/api/mission-control/users/me")
-async def get_current_user():
-    """Get current user info - mission control dashboard compatibility."""
-    logger.info("Mission control /users/me endpoint accessed.")
-    try:
-        return {
-            "username": "monitor_user",
-            "role": "admin",
-            "organization_id": None,
-            "is_active": True,
-            "is_admin": True
-        }
-    except Exception as e:
-        logger.error(f"Error in get_current_user: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error fetching user info")
+# REMOVED: This endpoint was causing confusion by hardcoding user info
+# @mission_control_router.get("/api/mission-control/users/me")
+# async def get_current_user():
+#     """Get current user info - mission control dashboard compatibility."""
+#     logger.info("Mission control /users/me endpoint accessed.")
+#     try:
+#         return {
+#             "username": "monitor_user",
+#             "role": "admin",
+#             "organization_id": None,
+#             "is_active": True,
+#             "is_admin": True
+#         }
+#     except Exception as e:
+#         logger.error(f"Error in get_current_user: {e}", exc_info=True)
+#         raise HTTPException(status_code=500, detail="Internal server error fetching user info")
 
 @mission_control_router.get("/api/mission-control/reset-connections")
 async def reset_websocket_connections():
