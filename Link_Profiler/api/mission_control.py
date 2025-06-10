@@ -205,7 +205,7 @@ async def mission_control_websocket(websocket: WebSocket):
         return
 
     # Add to connection manager
-    connection_manager.connect(websocket)
+    await connection_manager.connect(websocket) # AWAIT THIS CALL
     logger.info(f"Mission control websocket connected: {client_info}. Total active connections: {len(connection_manager.active_connections)}")
     
     try:
@@ -308,5 +308,5 @@ async def mission_control_websocket(websocket: WebSocket):
         logger.error(f"Mission control websocket error for {client_info}: {e}", exc_info=True)
     finally:
         # Ensure connection is removed from manager on exit
-        connection_manager.disconnect(websocket)
+        await connection_manager.disconnect(websocket) # AWAIT THIS CALL
         logger.info(f"Mission control websocket cleanup complete for {client_info}. Total active connections: {len(connection_manager.active_connections)}")
