@@ -142,7 +142,7 @@ class Database:
             "mv_daily_job_stats": """
                 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_job_stats AS
                 SELECT
-                    DATE_TRUNC('day', created_date) AS day,
+                    DATE_TRUNC('day', created_at) AS day, -- Corrected from created_date
                     job_type,
                     COUNT(id) AS total_jobs,
                     COUNT(CASE WHEN status = 'completed' THEN 1 END) AS completed_jobs,
@@ -150,20 +150,20 @@ class Database:
                     SUM(urls_crawled) AS total_pages_crawled,
                     AVG(EXTRACT(EPOCH FROM (completed_date - started_date))) AS avg_job_duration_seconds
                 FROM crawl_jobs
-                WHERE created_date IS NOT NULL
+                WHERE created_at IS NOT NULL -- Corrected from created_date
                 GROUP BY 1, 2
                 ORDER BY 1 DESC, 2;
             """,
             "mv_daily_backlink_stats": """
                 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_daily_backlink_stats AS
                 SELECT
-                    DATE_TRUNC('day', discovered_date) AS day,
+                    DATE_TRUNC('day', first_seen) AS day, -- Corrected from discovered_date
                     COUNT(id) AS total_backlinks_discovered,
                     COUNT(DISTINCT source_domain_name) AS unique_domains_discovered,
                     COUNT(CASE WHEN spam_level IN ('likely_spam', 'confirmed_spam') THEN 1 END) AS potential_spam_links,
                     AVG(authority_passed) AS avg_authority_passed
                 FROM backlinks
-                WHERE discovered_date IS NOT NULL
+                WHERE first_seen IS NOT NULL -- Corrected from discovered_date
                 GROUP BY 1
                 ORDER BY 1 DESC;
             """,
@@ -315,7 +315,7 @@ class Database:
         elif isinstance(dc_obj, ReportJob):
             return ReportJobORM(**data)
         elif isinstance(dc_obj, DomainIntelligence):
-            return DomainIntelligenceORM(**data)
+            return DomainIntelligenceORM(**data) # Changed to direct instantiation
         elif isinstance(dc_obj, SocialMention):
             return SocialMentionORM(**data)
         elif isinstance(dc_obj, SatellitePerformanceLog): # New: Handle SatellitePerformanceLog
@@ -695,26 +695,9 @@ class Database:
     def get_user_by_username(self, username: str) -> Optional[User]:
         """Fetches a user by username."""
         def _get(session):
-            orm_user = session.query(UserORM).filter_by(username=username).first()
-            if orm_user:
-                # Access all attributes while the object is still attached to the session
-                user_data = {
-                    'id': orm_user.id,
-                    'username': orm_user.username,
-                    'email': orm_user.email,
-                    'hashed_password': orm_user.hashed_password,
-                    'is_active': orm_user.is_active,
-                    'is_admin': orm_user.is_admin,
-                    'role': orm_user.role,
-                    'organization_id': orm_user.organization_id,
-                    'created_at': orm_user.created_at,
-                    'updated_at': orm_user.created_at,  # Use created_at as fallback for updated_at
-                    'last_updated': getattr(orm_user, 'last_updated', None),
-                    'last_fetched_at': getattr(orm_user, 'last_fetched_at', None)
-                }
-                return User.from_dict(user_data)
-            return None
-        return self._execute_operation('select', 'users', _get)
+            return session.query(UserORM).filter_by(username=username).first()
+        orm_user = self._execute_operation('select', 'users', _get)
+        return self._from_orm(orm_user) if orm_user else None
 
     def get_user_by_email(self, email: str) -> Optional[User]:
         """Fetches a user by email address."""
