@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: satellite-crawlers
+  namespace: link-profiler # Ensure this matches your namespace
+  labels:
+    app: satellite-crawler
+spec:
+  replicas: 2 # Start with 2 replicas, HPA will scale this
+  selector:
+    matchLabels:
+      app: satellite-crawler
+  template:
+    metadata:
+      labels:
+        app: satellite-crawler
+    spec:
+      containers:
+      - name: satellite-crawler
+        image: your-docker-registry/link-profiler-satellite:latest # Replace with your image name and tag
+        imagePullPolicy: Always # Or IfNotPresent for local testing
+        # The satellite_crawler.py script uses ConfigLoader to read LP_ prefixed environment variables.
+        # The Dockerfile's CMD passes some arguments, but these are typically consumed as ENV vars by ConfigLoader.
+        # For Kubernetes, it's cleaner to set them directly as ENV vars.
+        command: ["python", "-m", "Link_Profiler.queue_system.satellite_crawler"] # Simplified command
+        args: [] # Arguments are now passed via environment variables
+        env:
+          # Essential environment variables for the satellite crawler (LP_ prefixed for ConfigLoader)
+          - name: LP_REDIS_URL
+            valueFrom:
+              secretKeyRef:
+                name: link-profiler-secrets # Assuming you have a Kubernetes Secret for Redis URL
+                key: redis-url
+          - name: LP_DATABASE_URL
+            valueFrom:
+              secretKeyRef:
+                name: link-profiler-secrets # Assuming you have a Kubernetes Secret for DB URL
+                key: database-url
+          - name: LP_AUTH_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: link-profiler-secrets
+                key: auth-secret-key
+          - name: LP_MONITOR_PASSWORD # Required for default admin user creation in main API
+            valueFrom:
+              secretKeyRef:
+                name: link-profiler-secrets
+                key: monitor-password
+          
+          # Unique ID for each satellite instance (Kubernetes will handle this via pod name)
+          # The satellite_crawler.py script will generate a UUID if not provided,
+          # but for better traceability, you might want to use a combination of deployment name and pod name.
+          - name: LP_SATELLITE_ID
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name # Uses the pod's name as the satellite ID
+          
+          # Configuration for the satellite's behavior (from config_loader)
+          - name: LP_SATELLITE_HEARTBEAT_INTERVAL
+            value: "5" # Default 5 seconds
+          - name: LP_QUEUE_JOB_QUEUE_NAME
+            value: "crawl_jobs"
+          - name: LP_QUEUE_RESULT_QUEUE_NAME
+            value: "crawl_results"
+          - name: LP_QUEUE_DEAD_LETTER_QUEUE_NAME
+            value: "dead_letter_queue"
+          
+          # Playwright browser settings (if browser_crawler.enabled is true in config)
+          - name: LP_BROWSER_CRAWLER_ENABLED
+            value: "true" # Or "false" if you only want headless/non-browser crawling
+          - name: LP_BROWSER_CRAWLER_HEADLESS
+            value: "true"
+          - name: LP_BROWSER_CRAWLER_BROWSER_TYPE
+            value: "chromium"
+
+          # Logging level
+          - name: LP_LOGGING_LEVEL
+            value: "INFO"
+          
+          # Region (if used by your application logic)
+          - name: LP_REGION
+            value: "default" # Example: "us-east-1" or "eu-west-1"
+
+        resources:
+          requests:
+            cpu: 200m # Request 0.2 CPU cores
+            memory: 512Mi # Request 512 MB of memory
+          limits:
+            cpu: 1000m # Limit to 1 CPU core
+            memory: 2Gi # Limit to 2 GB of memory
+        
+        # Liveness and Readiness Probes (optional but recommended for production)
+        # Requires the satellite crawler to expose a health endpoint (e.g., on port 8000)
+        # livenessProbe:
+        #   httpGet:
+        #     path: /health
+        #     port: 8000
+        #   initialDelaySeconds: 30
+        #   periodSeconds: 10
+        # readinessProbe:
+        #   httpGet:
+        #     path: /health
+        #     port: 8000
+        #   initialDelaySeconds: 15
+        #   periodSeconds: 5
+      
+      # Optional: Node affinity or tolerations for specific node pools
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #       - matchExpressions:
+      #         - key: node-role.kubernetes.io/worker
+      #           operator: Exists
+      
+      # Optional: Image pull secrets if your registry requires authentication
+      # imagePullSecrets:
+      # - name: regcred
