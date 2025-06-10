@@ -268,6 +268,7 @@ from Link_Profiler.api.customer_routes import customer_router
 from Link_Profiler.api.admin_routes import admin_router # Import the new admin router
 
 # New: Import authentication dependencies
+from Link_Profiler.api.dependencies import get_current_user, get_current_admin_user, get_current_customer_user # Import specific dependency functions
 from fastapi.security import OAuth2PasswordRequestForm # Only import this specific class needed for /token endpoint
 
 # --- RESTORED: Import CORSMiddleware ---
@@ -705,6 +706,8 @@ origins = [
     "null" # For local development with file:// or some dev servers
 ]
 
+from fastapi.middleware.cors import CORSMiddleware # Import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins, # Restrict to specific origins in production
@@ -990,7 +993,7 @@ async def read_users_me(current_user: User = Depends(get_current_user)): # Use i
 #     Cancels a specific crawl job.
 #     Requires admin authentication.
 #     """
-#     logger.info(f"Main API: Received request to cancel job {job_id} by admin: {current_user.username}.")
+#     logger.info(f"Admin user {current_user.username} requesting to cancel job {job_id}.")
 #     try:
 #         coordinator = await get_coordinator()
 #         success = await coordinator.cancel_job(job_id)
@@ -1000,7 +1003,7 @@ async def read_users_me(current_user: User = Depends(get_current_user)): # Use i
 #     except HTTPException:
 #         raise
 #     except Exception as e:
-#         logger.error(f"Main API: Error cancelling job {job_id}: {e}", exc_info=True)
+#         logger.error(f"Error cancelling job {job_id}: {e}", exc_info=True)
 #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to cancel job {job_id}: {e}")
 
 # Moved to admin_routes.py
@@ -1010,13 +1013,13 @@ async def read_users_me(current_user: User = Depends(get_current_user)): # Use i
 #     Pauses all new job processing.
 #     Requires admin authentication.
 #     """
-#     logger.info(f"Main API: Received request to pause all jobs by admin: {current_user.username}.")
+#     logger.info(f"Admin user {current_user.username} requesting to pause all jobs.")
 #     try:
 #         coordinator = await get_coordinator()
 #         await coordinator.pause_job_processing()
 #         return {"message": "All new job processing paused."}
 #     except Exception as e:
-#         logger.error(f"Main API: Error pausing all jobs: {e}", exc_info=True)
+#         logger.error(f"Error pausing all jobs: {e}", exc_info=True)
 #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to pause all jobs: {e}")
 
 # Moved to admin_routes.py
@@ -1026,13 +1029,13 @@ async def read_users_me(current_user: User = Depends(get_current_user)): # Use i
 #     Resumes all job processing.
 #     Requires admin authentication.
 #     """
-#     logger.info(f"Main API: Received request to resume all jobs by admin: {current_user.username}.")
+#     logger.info(f"Admin user {current_user.username} requesting to resume all jobs.")
 #     try:
 #         coordinator = await get_coordinator()
 #         await coordinator.resume_job_processing()
 #         return {"message": "All job processing resumed."}
 #     except Exception as e:
-#         logger.error(f"Main API: Error resuming all jobs: {e}", exc_info=True)
+#         logger.error(f"Error resuming all jobs: {e}", exc_info=True)
 #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to resume all jobs: {e}")
 
 # Moved to admin_routes.py
@@ -1043,7 +1046,7 @@ async def read_users_me(current_user: User = Depends(get_current_user)): # Use i
 #     Commands: PAUSE, RESUME, SHUTDOWN, RESTART.
 #     Requires admin authentication.
 #     """
-#     logger.info(f"Main API: Received command '{command}' for satellite '{crawler_id}' by admin: {current_user.username}.")
+#     logger.info(f"Admin user {current_user.username} requesting command '{command}' for satellite '{crawler_id}'.")
 #     try:
 #         coordinator = await get_coordinator()
 #         response = await coordinator.send_control_command(crawler_id, command)
