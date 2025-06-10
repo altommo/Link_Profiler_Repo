@@ -28,6 +28,7 @@ from Link_Profiler.clients.dns_client import DNSClient # Import DNSClient
 from Link_Profiler.clients.builtwith_client import BuiltWithClient # Import BuiltWithClient
 from Link_Profiler.clients.hunter_io_client import HunterIOClient # Import HunterIOClient
 from Link_Profiler.services.smart_api_router_service import SmartAPIRouterService # New: Import SmartAPIRouterService
+from Link_Profiler.database.database import db # Import db singleton
 
 logger = logging.getLogger(__name__)
 
@@ -452,6 +453,30 @@ class DomainService:
             "last_fetched_at": datetime.utcnow().isoformat() # Add last_fetched_at
         }
 
-# Create a singleton instance
-# This will be initialized in main.py's lifespan with proper dependencies
-# domain_service_instance = DomainService()
+# Global instance variable
+_domain_service_instance: Optional['DomainService'] = None
+
+async def get_domain_service() -> 'DomainService':
+    """
+    Returns the singleton DomainService instance.
+    Initializes it if it hasn't been already.
+    """
+    global _domain_service_instance
+    
+    if _domain_service_instance is None:
+        # Import necessary global singletons from main.py to ensure we get the already initialized instances
+        # This import is placed here to avoid circular dependencies at module load time
+        from Link_Profiler.main import (
+            smart_api_router_service, session_manager,
+            distributed_resilience_manager, api_quota_manager, redis_client
+        )
+        _domain_service_instance = DomainService(
+            db=db,
+            smart_api_router_service=smart_api_router_service,
+            session_manager=session_manager,
+            resilience_manager=distributed_resilience_manager,
+            api_quota_manager=api_quota_manager,
+            redis_client=redis_client
+        )
+        logger.info("DomainService instance created successfully via get_domain_service().")
+    return _domain_service_instance
