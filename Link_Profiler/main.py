@@ -275,6 +275,35 @@ from fastapi.security import OAuth2PasswordRequestForm # Only import this specif
 # --- RESTORED: Import CORSMiddleware ---
 from fastapi.middleware.cors import CORSMiddleware # Import CORSMiddleware
 
+# Define FastAPI app instance here
+app = FastAPI(
+    title="Link Profiler API",
+    description="API for comprehensive link profiling, SEO analysis, and domain intelligence.",
+    version=config_loader.get("system.current_code_version", "0.1.0"),
+    lifespan=lifespan
+)
+
+# Define origins here
+origins = [
+    "https://monitor.yspanel.com",
+    "https://api.yspanel.com",
+    "https://linkprofiler.yspanel.com",
+    "https://yspanel.com",
+    "https://www.yspanel.com",
+    "http://localhost:8001",
+    "http://localhost:8000",
+    "null" # For local development with file:// or some dev servers
+]
+
+# Add the subdomain router middleware BEFORE other middleware or routes
+app.add_middleware(
+    SubdomainRouterMiddleware,
+    customer_subdomain=CUSTOMER_SUBDOMAIN,
+    mission_control_subdomain=MISSION_CONTROL_SUBDOMAIN
+)
+
+
+# Add CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins, # Restrict to specific origins in production
