@@ -406,5 +406,12 @@
   "system": {
     "current_code_version": "1.0.3",
     "version_control_enabled": false
+  },
+  "mission_control": {
+    "websocket_enabled": true,
+    "dashboard_refresh_rate": 3000,
+    "max_websocket_connections": 50,
+    "cache_ttl": 60,
+    "history_retention_days": 30
   }
 }

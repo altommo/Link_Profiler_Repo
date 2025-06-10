@@ -137,6 +137,35 @@ async def get_audit_logs(
     ]
     return simulated_logs[offset:offset+limit]
 
+@admin_router.get("/api_keys", response_model=List[Dict[str, Any]])
+async def get_api_keys(current_user: User = Depends(get_current_admin_user)):
+    """Retrieve all API keys information. Requires admin access."""
+    logger.info(f"Admin user {current_user.username} requesting API keys information.")
+    
+    # Get API keys from the external_apis configuration section
+    api_keys_config = config_loader.get("external_apis", {})
+    api_keys_info = []
+    
+    for api_name, config in api_keys_config.items():
+        api_key = config.get("api_key", "")
+        # Mask the API key for security (show only first 4 and last 4 characters)
+        if len(api_key) > 8:
+            masked_key = api_key[:4] + "*" * (len(api_key) - 8) + api_key[-4:]
+        elif len(api_key) > 0:
+            masked_key = "*" * len(api_key)
+        else:
+            masked_key = "Not configured"
+        
+        api_keys_info.append({
+            "api_name": api_name,
+            "enabled": config.get("enabled", False),
+            "api_key_masked": masked_key,
+            "monthly_limit": config.get("monthly_limit", -1),
+            "cost_per_unit": config.get("cost_per_unit", 0.0)
+        })
+    
+    return api_keys_info
+
 @admin_router.post("/api_keys/{api_name}/update", response_model=Dict[str, str])
 async def update_api_key(api_name: str, new_key: str, current_user: User = Depends(get_current_admin_user)):
     """Update an external API key. Requires admin access."""

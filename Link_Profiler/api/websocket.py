@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 # Use the shared ConnectionManager instance
@@ -29,3 +30,5 @@ async def websocket_endpoint(websocket: WebSocket):
             exc_info=True,
         )
         connection_manager.disconnect(websocket)
+
+# Removed duplicate /ws/mission-control endpoint - it's handled in mission_control.py

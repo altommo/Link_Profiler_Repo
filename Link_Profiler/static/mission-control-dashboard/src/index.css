@@ -66,11 +66,11 @@ body {
 }
 
 .login-form .form-input {
-  @apply shadow appearance-none border border-nasa-light-gray rounded w-full py-2 px-3 text-nasa-dark-blue leading-tight focus:outline-none focus:shadow-outline bg-nasa-light-gray;
+  @apply shadow appearance-none border border-nasa-light-gray rounded w-full py-2 px-3 text-nasa-dark-blue leading-tight focus:outline-none focus:ring-2 focus:ring-nasa-cyan bg-nasa-light-gray;
 }
 
 .login-button {
-  @apply bg-nasa-cyan hover:bg-nasa-blue text-nasa-dark-blue font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-colors duration-200;
+  @apply bg-nasa-cyan hover:bg-nasa-blue text-nasa-dark-blue font-bold py-2 px-4 rounded focus:outline-none focus:ring-2 focus:ring-nasa-cyan transition-colors duration-200;
   box-shadow: 0 0 10px rgba(0, 255, 255, 0.3); /* Cyan glow */
 }
 

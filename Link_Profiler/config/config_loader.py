@@ -8,7 +8,11 @@ import os
 import yaml
 import json
 import logging
+import re
 from typing import Any, Dict, Optional
+
+# Import env_loader first to ensure .env file is loaded
+from . import env_loader
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +38,44 @@ class ConfigLoader:
         self.logger = logging.getLogger(__name__ + ".ConfigLoader")
         self._load_config()
 
+    def _substitute_env_vars(self, obj):
+        """Recursively substitute environment variables in config values."""
+        if isinstance(obj, dict):
+            return {key: self._substitute_env_vars(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._substitute_env_vars(item) for item in obj]
+        elif isinstance(obj, str):
+            # Replace ${VAR_NAME} and ${VAR_NAME:-default} patterns with environment variable values
+            def replace_env_var(match):
+                var_expr = match.group(1)
+                if ':-' in var_expr:
+                    # Handle ${VAR_NAME:-default} syntax
+                    var_name, default_value = var_expr.split(':-', 1)
+                    return os.getenv(var_name, default_value)
+                else:
+                    # Handle ${VAR_NAME} syntax
+                    return os.getenv(var_expr, match.group(0))  # Return original if env var not found
+            
+            return re.sub(r'\$\{([^}]+)\}', replace_env_var, obj)
+        else:
+            return obj
+
     def _load_config(self):
         """
         Loads configuration from default YAML files and environment variables.
         Environment variables override file settings.
         """
+        # Get the directory where this config_loader.py file is located
+        config_dir = os.path.dirname(os.path.abspath(__file__))
+        
         config_paths = [
-            "Link_Profiler/config/core.yaml",
-            "Link_Profiler/config/crawler.yaml",
-            "Link_Profiler/config/external_apis.yaml",
-            "Link_Profiler/config/security.yaml",
-            "Link_Profiler/config/monitoring.yaml",
-            "Link_Profiler/config/features.yaml",
-            "Link_Profiler/config/config.yaml" # Legacy/fallback
+            os.path.join(config_dir, "core.yaml"),
+            os.path.join(config_dir, "crawler.yaml"),
+            os.path.join(config_dir, "external_apis.yaml"),
+            os.path.join(config_dir, "security.yaml"),
+            os.path.join(config_dir, "monitoring.yaml"),
+            os.path.join(config_dir, "features.yaml"),
+            os.path.join(config_dir, "config.yaml")  # Legacy/fallback
         ]
         
         loaded_files = []
@@ -56,6 +85,8 @@ class ConfigLoader:
                     with open(path, 'r') as f:
                         file_config = yaml.safe_load(f)
                         if file_config:
+                            # Substitute environment variables in the loaded config
+                            file_config = self._substitute_env_vars(file_config)
                             self._merge_config(self._config_data, file_config)
                             loaded_files.append(path)
                 except Exception as e:
@@ -99,7 +130,7 @@ class ConfigLoader:
             config_key_path = key[3:].lower().replace('__', '.') # Remove prefix, lowercase, replace __ with .
 
             # Handle special cases for password/secret keys that might be directly referenced
-            if config_key_path == 'auth.secret_key':
+            if config_key_path == 'auth_secret_key':  # LP_AUTH_SECRET_KEY
                 self._set_nested_value(self._config_data, 'auth.secret_key', value)
                 self.logger.debug(f"Applied environment variable LP_AUTH_SECRET_KEY to auth.secret_key")
             elif config_key_path == 'monitor_password': # LP_MONITOR_PASSWORD
@@ -118,8 +149,8 @@ class ConfigLoader:
                 self._set_nested_value(self._config_data, 'mission_control.enabled', value.lower() == 'true')
                 self.logger.debug("Applied environment variable LP_MISSION_CONTROL_ENABLED to mission_control.enabled")
             elif config_key_path == 'websocket_enabled':
-                self._set_nested_value(self._config_data, 'websocket.enabled', value.lower() == 'true')
-                self.logger.debug("Applied environment variable LP_WEBSOCKET_ENABLED to websocket.enabled")
+                self._set_nested_value(self._config_data, 'mission_control.websocket_enabled', value.lower() == 'true')
+                self.logger.debug("Applied environment variable LP_WEBSOCKET_ENABLED to mission_control.websocket_enabled")
             elif config_key_path == 'dashboard_refresh_rate':
                 self._set_nested_value(self._config_data, 'mission_control.dashboard_refresh_rate', int(value))
                 self.logger.debug("Applied environment variable LP_DASHBOARD_REFRESH_RATE to mission_control.dashboard_refresh_rate")
@@ -166,6 +197,14 @@ class ConfigLoader:
         self._config_data = {} # Clear existing config
         self._load_config()
         self.logger.info("Configuration reloaded.")
+    
+    def reload_config(self):
+        """Alias for reload method for compatibility."""
+        self.reload()
+    
+    def set(self, key_path: str, value: Any):
+        """Sets a configuration value using a dot-separated key path."""
+        self._set_nested_value(self._config_data, key_path, value)
 
 # Create a singleton instance for global access
 config_loader = ConfigLoader()

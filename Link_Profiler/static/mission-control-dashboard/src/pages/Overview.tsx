@@ -59,7 +59,32 @@ const Overview: React.FC = () => {
 
   return (
     <div className="p-6 bg-nasa-dark-blue min-h-screen text-nasa-light-gray">
-      <h1 className="text-3xl font-bold mb-6">Mission Control Overview</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-3xl font-bold text-nasa-cyan">Mission Control Overview</h1>
+        <div className="text-nasa-amber">
+          <span className="animate-pulse">●</span> LIVE
+        </div>
+      </div>
+      
+      {/* Quick Stats Summary */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="bg-nasa-medium-blue p-4 rounded border border-nasa-cyan">
+          <div className="text-nasa-cyan text-2xl font-bold">{(crawler_mission_status.active_jobs_count ?? 0) + (crawler_mission_status.queued_jobs_count ?? 0)}</div>
+          <div className="text-nasa-light-gray text-sm">Total Jobs</div>
+        </div>
+        <div className="bg-nasa-medium-blue p-4 rounded border border-nasa-cyan">
+          <div className="text-nasa-green text-2xl font-bold">{crawler_mission_status.active_satellites_count ?? 0}</div>
+          <div className="text-nasa-light-gray text-sm">Active Satellites</div>
+        </div>
+        <div className="bg-nasa-medium-blue p-4 rounded border border-nasa-cyan">
+          <div className="text-nasa-amber text-2xl font-bold">{alerts.length}</div>
+          <div className="text-nasa-light-gray text-sm">Active Alerts</div>
+        </div>
+        <div className="bg-nasa-medium-blue p-4 rounded border border-nasa-cyan">
+          <div className="text-nasa-cyan text-2xl font-bold">{(crawler_mission_status.satellite_utilization_percentage ?? 0).toFixed(1)}%</div>
+          <div className="text-nasa-light-gray text-sm">System Load</div>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         {/* Crawler Mission Status */}

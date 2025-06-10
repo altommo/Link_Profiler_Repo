@@ -97,5 +97,12 @@
     "initial_pool_size": 10,
     "max_pool_size_per_domain": 25,
     "adaptation_interval": 45
+  },
+  "mission_control": {
+    "websocket_enabled": true,
+    "dashboard_refresh_rate": 2000,
+    "max_websocket_connections": 100,
+    "cache_ttl": 30,
+    "history_retention_days": 30
   }
 }

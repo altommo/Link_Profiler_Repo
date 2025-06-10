@@ -1,6 +1,7 @@
 import React, { useState, ReactNode } from 'react';
 import Header from './Header';
 import Sidebar from './Sidebar';
+import useRealTimeData from '../../hooks/useRealTimeData'; // Initialize WebSocket at layout level
 
 interface LayoutProps {
   children: ReactNode;
@@ -8,6 +9,9 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  
+  // Initialize WebSocket connection once at the layout level
+  useRealTimeData();
 
   const toggleSidebar = () => {
     setIsSidebarOpen(!isSidebarOpen);
@@ -23,7 +27,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <Sidebar isOpen={isSidebarOpen} toggleSidebar={toggleSidebar} />
 
         {/* Main Content Area */}
-        <main className="flex-1 p-6 md:p-8 overflow-y-auto">
+        <main className="flex-1 lg:ml-64 p-6 md:p-8 overflow-y-auto">
           {children}
         </main>
       </div>
