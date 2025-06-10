@@ -1,4 +1,4 @@
-import React, { useState, useEffect } => 'react';
+import React, { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../config';
 import DataCard from '../components/ui/DataCard';
 import ModuleContainer from '../components/shared/ModuleContainer';
