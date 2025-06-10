@@ -37,35 +37,34 @@ class SubdomainRouterMiddleware(BaseHTTPMiddleware):
             # Added: Comprehensive debugging logs
             logger.debug(f"Hostname parts: {hostname_parts}")
             
-            if len(hostname_parts) > 2: # e.g., customer.example.com
+            # FIXED: Check for API requests FIRST, regardless of subdomain
+            # API requests should be handled by FastAPI routers, not served as dashboard
+            if (request.url.path.startswith("/api") or 
+                request.url.path.startswith("/ws") or 
+                request.url.path.startswith("/health") or 
+                request.url.path.startswith("/metrics") or
+                request.url.path.startswith("/token") or
+                request.url.path.startswith("/register")):
+                request.state.is_api_request = True
+                logger.debug(f"🔧 API/WebSocket request detected from host: {host}, path: {request.url.path}")
+                # Reset dashboard flags for API requests
+                request.state.is_customer_dashboard = False
+                request.state.is_mission_control_dashboard = False
+            elif len(hostname_parts) > 2:  # Dashboard requests only if not API
                 subdomain = hostname_parts[0]
                 request.state.subdomain = subdomain
                 logger.debug(f"Detected subdomain: {subdomain}")
 
                 if subdomain == self.customer_subdomain:
                     request.state.is_customer_dashboard = True
-                    # Added: Success logging with visual indicators
                     logger.info(f"✅ Customer dashboard request detected from host: {host}")
                 elif subdomain == self.mission_control_subdomain:
                     request.state.is_mission_control_dashboard = True
-                    # Added: Success logging with visual indicators
                     logger.info(f"✅ Mission control dashboard request detected from host: {host}")
                 else:
                     logger.debug(f"Unknown subdomain '{subdomain}' from host: {host}")
             else:
                 logger.debug(f"No subdomain detected in host: {host} (parts: {hostname_parts})")
-            
-            # Determine if it's an API request (e.g., api.example.com or example.com/api)
-            # This is a simplified check; a more robust solution might involve checking path prefixes
-            # or having a dedicated API subdomain. For now, assume if it's not a dashboard subdomain,
-            # and the path starts with /api, it's an API request.
-            if not request.state.is_customer_dashboard and not request.state.is_mission_control_dashboard:
-                if request.url.path.startswith("/api"):
-                    request.state.is_api_request = True
-                    logger.debug(f"API request detected from host: {host}, path: {request.url.path}")
-                else:
-                    # If no specific subdomain and not /api, it's likely the root domain serving the main API docs or default UI
-                    logger.debug(f"Default/root domain request from host: {host}, path: {request.url.path}")
         else:
             logger.warning("No host header found in request")
 
