@@ -418,8 +418,15 @@ async def _get_satellites_data_internal() -> Dict[str, Any]:
 
 @monitoring_debug_router.get("/api/stats", summary="Get aggregated system statistics (cache-first)")
 async def get_api_stats(
-    source: Optional[str] = Query(None, description="Set to 'live' to bypass cache and fetch fresh data. Requires appropriate user tier."),
-    current_user: Annotated[User, Depends(get_current_user)] = None # Protect this endpoint
+    source: Annotated[Optional[str], Query(
+        "cache", 
+        description="""Data source for the request:
+        - `cache`: Returns cached data (default, fastest response)
+        - `live`: Returns real-time data (slower, requires appropriate user tier)""",
+        enum=["cache", "live"],
+        example="cache"
+    )] = "cache",
+    current_user: Annotated[User, Depends(get_current_user)] # Protect this endpoint
 ):
     """
     Retrieves aggregated statistics for the Link Profiler system.
@@ -434,8 +441,15 @@ async def get_api_stats(
 @monitoring_debug_router.get("/api/jobs/all", response_model=List[CrawlJobResponse], summary="Get all crawl jobs (cache-first)")
 async def get_all_jobs_api(
     status_filter: Annotated[Optional[str], Query(description="Filter jobs by status (e.g., 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED').")] = None,
-    source: Optional[str] = Query(None, description="Set to 'live' to bypass cache and fetch fresh data. Requires appropriate user tier."),
-    current_user: Annotated[User, Depends(get_current_user)] = None # Protect this endpoint
+    source: Annotated[Optional[str], Query(
+        "cache", 
+        description="""Data source for the request:
+        - `cache`: Returns cached data (default, fastest response)
+        - `live`: Returns real-time data (slower, requires appropriate user tier)""",
+        enum=["cache", "live"],
+        example="cache"
+    )] = "cache",
+    current_user: Annotated[User, Depends(get_current_user)] # Protect this endpoint
 ):
     """
     Retrieves a list of all crawl jobs. By default, data is served from cache.
@@ -729,7 +743,14 @@ async def public_satellites_endpoint():
 
 @monitoring_debug_router.get("/public/stats", summary="Public aggregated system statistics")
 async def public_stats_endpoint(
-    source: Optional[str] = Query(None, description="Set to 'live' to bypass cache and fetch fresh data. Note: Public endpoint may not support live data fetching.")
+    source: Annotated[Optional[str], Query(
+        "cache", 
+        description="""Data source for the request:
+        - `cache`: Returns cached data (default, fastest response)
+        - `live`: Returns real-time data (slower, may not be supported on public endpoints)""",
+        enum=["cache", "live"],
+        example="cache"
+    )] = "cache"
 ):
     """
     Public endpoint: Retrieves aggregated statistics for the Link Profiler system.
