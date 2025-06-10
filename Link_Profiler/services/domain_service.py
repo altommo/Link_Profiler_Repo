@@ -341,7 +341,7 @@ class DomainService:
 
     async def _fetch_seo_metrics(self, domain_name: str) -> Dict[str, Any]:
         """Fetch SEO metrics using external API if enabled."""
-        if not self.allow_live or not self.seo_metrics_enabled:
+        if not self.allow_live:
             self.logger.debug(
                 "Live SEO metric lookups disabled; returning simulated metrics."
             )
@@ -383,7 +383,7 @@ class DomainService:
 
     async def _fetch_ip_info(self, domain_name: str) -> Dict[str, Any]:
         """Fetch IP information using external API if enabled."""
-        if not self.allow_live or not self.ip_info_enabled:
+        if not self.allow_live:
             self.logger.debug(
                 "Live IP information lookups disabled; using simulated data."
             )
