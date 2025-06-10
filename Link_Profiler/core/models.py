@@ -187,6 +187,8 @@ class SEOMetrics:
     ai_semantic_keywords: List[str] = field(default_factory=list) # AI-generated semantic keywords
     ai_readability_score: Optional[float] = None # AI-generated readability score
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def calculate_seo_score(self):
         """Calculates an overall SEO score based on available metrics."""
@@ -272,6 +274,8 @@ class Domain:
     seo_metrics: SEOMetrics = field(default_factory=SEOMetrics) # Nested SEO metrics
     last_checked: datetime = field(default_factory=datetime.now)
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         data = {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -351,6 +355,8 @@ class Backlink:
     http_status: Optional[int] = None # Added http_status
     crawl_timestamp: Optional[datetime] = None # Added crawl_timestamp
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def __post_init__(self):
         # Automatically set source_domain and target_domain
@@ -428,6 +434,8 @@ class LinkProfile:
     backlinks: List[Backlink] = field(default_factory=list)
     last_updated: datetime = field(default_factory=datetime.now)
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
     
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -528,6 +536,8 @@ class CrawlJob:
     cron_schedule: Optional[str] = None # Added cron_schedule
     anomalies_detected: List[str] = field(default_factory=list) # New: List of detected anomalies for the job
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def add_error(self, url: str, error_type: str, message: str, details: Optional[str] = None, severity: AlertSeverity = AlertSeverity.WARNING) -> None:
         error = CrawlError(url=url, error_type=error_type, message=message, details=details, severity=severity)
@@ -566,6 +576,8 @@ class SERPResult:
     position_type: Optional[str] = None # e.g., "organic", "featured_snippet", "ad"
     timestamp: datetime = field(default_factory=datetime.now)
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
     
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -590,6 +602,8 @@ class KeywordSuggestion:
     source: Optional[str] = None # e.g., "Google Ads", "Ahrefs", "SEMrush"
     keyword_trend: Optional[List[float]] = None # New: Trend data from Google Trends
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -608,6 +622,8 @@ class LinkIntersectResult:
     common_linking_domains: List[str] = field(default_factory=list)
     analysis_date: datetime = field(default_factory=datetime.now)
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -630,6 +646,8 @@ class CompetitiveKeywordAnalysisResult:
     primary_unique_keywords: List[str] = field(default_factory=list) # Keywords primary ranks for that competitors don't
     analysis_date: datetime = field(default_factory=datetime.now)
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -667,6 +685,8 @@ class AlertRule:
     updated_at: datetime = field(default_factory=datetime.now)
     last_triggered_at: Optional[datetime] = None
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -758,6 +778,8 @@ class DomainHistory:
     referring_domains: Optional[int] = None
     # Add other key metrics that should be tracked historically
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -787,6 +809,8 @@ class LinkProspect:
     # Associated SEO metrics of the prospect domain
     prospect_seo_metrics: SEOMetrics = field(default_factory=SEOMetrics)
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         data = {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -825,6 +849,8 @@ class OutreachCampaign:
     replies_received: int = 0
     links_acquired: int = 0
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -852,6 +878,8 @@ class OutreachEvent:
     notes: Optional[str] = None
     success: Optional[bool] = None # Whether the event achieved its immediate goal
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -875,6 +903,8 @@ class ContentGapAnalysisResult:
     actionable_insights: List[str] = field(default_factory=list)
     analysis_date: datetime = field(default_factory=datetime.now)
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -903,6 +933,8 @@ class ReportJob:
     scheduled_at: Optional[datetime] = None # Added scheduled_at
     cron_schedule: Optional[str] = None # Added cron_schedule
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -937,6 +969,8 @@ class DomainIntelligence:
     estimated_traffic_trend: List[float] = field(default_factory=list)
     data_sources: List[str] = field(default_factory=list)
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         data = {k: serialize_model(v) for k, v in self.__dict__.items()}
@@ -968,6 +1002,8 @@ class SocialMention:
     engagement_score: Optional[float] = None
     raw_data: Dict[str, Any] = field(default_factory=dict)
     last_fetched_at: Optional[datetime] = None # New: Timestamp of last fetch/update
+    user_id: Optional[str] = None # NEW: Added user_id
+    organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: serialize_model(v) for k, v in self.__dict__.items()}
