@@ -3,10 +3,12 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import asyncio
 import uuid
+import json # Added missing import for json.dumps
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.jobstores.redis import RedisJobStore # Assuming Redis is used for job store
+import redis.asyncio as redis # Added import for redis.asyncio
 
 from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.database.database import db, clickhouse_client
@@ -59,7 +61,8 @@ class IngestionScheduler:
                  session_manager: SessionManager,
                  resilience_manager: DistributedResilienceManager,
                  api_quota_manager: APIQuotaManager,
-                 redis_url: str):
+                 redis_url: str,
+                 redis_client: redis.Redis): # Added redis_client to init signature
         if self._initialized:
             return
         self._initialized = True
@@ -75,6 +78,7 @@ class IngestionScheduler:
         self.session_manager = session_manager
         self.resilience_manager = resilience_manager
         self.api_quota_manager = api_quota_manager
+        self.redis_client = redis_client # Stored redis_client as instance variable
 
         # Clients (passed to services)
         self.google_trends_client = GoogleTrendsClient(session_manager, resilience_manager, api_quota_manager)
@@ -91,7 +95,8 @@ class IngestionScheduler:
         self.pagespeed_client = PageSpeedClient(session_manager, resilience_manager, api_quota_manager)
 
         # Services (orchestrate clients and DB operations)
-        self.domain_service = DomainService(db, None, session_manager, resilience_manager, api_quota_manager, redis_client) # SmartAPIRouterService is None for now
+        # Passed self.redis_client to services that need it
+        self.domain_service = DomainService(db, None, session_manager, resilience_manager, api_quota_manager, self.redis_client) # SmartAPIRouterService is None for now
         self.backlink_service = BacklinkService(db, None, session_manager, resilience_manager, api_quota_manager) # SmartAPIRouterService is None for now
         self.serp_service = SerpService(db, None, session_manager, resilience_manager, api_quota_manager) # SmartAPIRouterService is None for now
         self.keyword_service = KeywordService(db, None, session_manager, resilience_manager, api_quota_manager) # SmartAPIRouterService is None for now
@@ -404,7 +409,8 @@ async def get_ingestion_scheduler(
     session_manager: SessionManager,
     resilience_manager: DistributedResilienceManager,
     api_quota_manager: APIQuotaManager,
-    redis_url: str
+    redis_url: str,
+    redis_client: redis.Redis # Added redis_client to get_ingestion_scheduler signature
 ) -> IngestionScheduler:
     global ingestion_scheduler
     if ingestion_scheduler is None:
@@ -412,6 +418,7 @@ async def get_ingestion_scheduler(
             session_manager=session_manager,
             resilience_manager=resilience_manager,
             api_quota_manager=api_quota_manager,
-            redis_url=redis_url
+            redis_url=redis_url,
+            redis_client=redis_client # Passed redis_client to IngestionScheduler constructor
         )
     return ingestion_scheduler
