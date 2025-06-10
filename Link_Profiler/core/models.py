@@ -886,10 +886,7 @@ class LinkProspect:
     organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
-        data = {k: serialize_model(v) for k, v in self.__dict__.items()}
-        if isinstance(data.get('prospect_seo_metrics'), SEOMetrics):
-            data['prospect_seo_metrics'] = data['prospect_seo_metrics'].to_dict()
-        return data
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'LinkProspect':
@@ -1046,10 +1043,7 @@ class DomainIntelligence:
     organization_id: Optional[str] = None # NEW: Added organization_id
 
     def to_dict(self) -> Dict[str, Any]:
-        data = {k: serialize_model(v) for k, v in self.__dict__.items()}
-        if isinstance(data.get('seo_metrics'), SEOMetrics):
-            data['seo_metrics'] = data['seo_metrics'].to_dict()
-        return data
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'DomainIntelligence':
@@ -1133,4 +1127,58 @@ class SatellitePerformanceLog:
             data['timestamp'] = datetime.fromisoformat(data['timestamp'])
         if 'last_fetched_at' in data and isinstance(data['last_fetched_at'], str):
             data['last_fetched_at'] = datetime.fromisoformat(data['last_fetched_at'])
+        return cls(**data)
+
+# New dataclasses for tracked entities
+@dataclass
+class TrackedDomain:
+    """Represents a domain that the system is actively tracking for various data points."""
+    id: str
+    domain_name: str
+    user_id: Optional[str] = None
+    organization_id: Optional[str] = None
+    is_active: bool = True
+    last_tracked_gsc_analytics: Optional[datetime] = None
+    last_tracked_technical_audit: Optional[datetime] = None
+    last_tracked_whois_dns: Optional[datetime] = None
+    last_tracked_ssl_labs: Optional[datetime] = None
+    last_tracked_common_crawl: Optional[datetime] = None
+    last_tracked_pagespeed: Optional[datetime] = None
+    last_tracked_backlinks: Optional[datetime] = None # NEW: Added for backlink crawler
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'TrackedDomain':
+        for key in ['last_tracked_gsc_analytics', 'last_tracked_technical_audit',
+                     'last_tracked_whois_dns', 'last_tracked_ssl_labs',
+                     'last_tracked_common_crawl', 'last_tracked_pagespeed',
+                     'last_tracked_backlinks']: # Added new field
+            if key in data and isinstance(data[key], str):
+                data[key] = datetime.fromisoformat(data[key])
+        return cls(**data)
+
+@dataclass
+class TrackedKeyword:
+    """Represents a keyword that the system is actively tracking for trends, SERP, and suggestions."""
+    id: str
+    keyword: str
+    user_id: Optional[str] = None
+    organization_id: Optional[str] = None
+    is_active: bool = True
+    last_tracked_google_trends: Optional[datetime] = None
+    last_tracked_serp: Optional[datetime] = None
+    last_tracked_keyword_suggestions: Optional[datetime] = None
+    last_tracked_news_reddit: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: serialize_model(v) for k, v in self.__dict__.items()}
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'TrackedKeyword':
+        for key in ['last_tracked_google_trends', 'last_tracked_serp',
+                     'last_tracked_keyword_suggestions', 'last_tracked_news_reddit']:
+            if key in data and isinstance(data[key], str):
+                data[key] = datetime.fromisoformat(data[key])
         return cls(**data)
