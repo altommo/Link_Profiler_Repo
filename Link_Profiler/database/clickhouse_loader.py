@@ -34,7 +34,8 @@ class ClickHouseLoader:
             self.logger.info("ClickHouse integration is disabled by configuration.")
             return
 
-        self.logger.info(f"ClickHouseLoader initialized for {self.host}:{self.port}/{self.database}")
+        self.data_retention_years = config_loader.get("clickhouse.data_retention_years", 3) # Default 3 years
+        self.logger.info(f"ClickHouseLoader initialized for {self.host}:{self.port}/{self.database} with {self.data_retention_years} years data retention.")
 
     async def __aenter__(self):
         """Establishes a connection to ClickHouse."""
@@ -98,7 +99,9 @@ class ClickHouseLoader:
         # Table for Backlinks
         # Using ReplacingMergeTree to handle potential duplicates on (source_url, target_url)
         # and Order By (crawl_timestamp, source_url, target_url) for efficient queries.
-        backlinks_table_schema = """
+        # Partitioned by month for better performance on time-series queries.
+        # TTL set for data retention.
+        backlinks_table_schema = f"""
         CREATE TABLE IF NOT EXISTS backlinks_analytical (
             id String,
             source_url String,
@@ -119,15 +122,19 @@ class ClickHouseLoader:
             spam_level LowCardinality(String),
             http_status Nullable(UInt16),
             crawl_timestamp DateTime,
-            source_domain_metrics String -- Stored as JSON string for flexibility
+            source_domain_metrics String, -- Stored as JSON string for flexibility
+            user_id Nullable(String),
+            organization_id Nullable(String)
         ) ENGINE = ReplacingMergeTree(crawl_timestamp)
-        ORDER BY (source_url, target_url, crawl_timestamp);
+        PARTITION BY toYYYYMM(crawl_timestamp)
+        ORDER BY (source_url, target_url, crawl_timestamp)
+        TTL crawl_timestamp + INTERVAL {self.data_retention_years} YEAR;
         """
         # Note: source_domain_metrics is stored as String (JSON) for simplicity.
         # For complex queries, it might be parsed into a Nested type or separate columns.
 
         # Table for SEO Metrics (page-level audits)
-        seo_metrics_table_schema = """
+        seo_metrics_table_schema = f"""
         CREATE TABLE IF NOT EXISTS seo_metrics_analytical (
             url String,
             http_status Nullable(UInt16),
@@ -167,13 +174,17 @@ class ClickHouseLoader:
             ai_content_score Nullable(Float32),
             ai_suggestions Array(String),
             ai_semantic_keywords Array(String),
-            ai_readability_score Nullable(Float32)
+            ai_readability_score Nullable(Float32),
+            user_id Nullable(String),
+            organization_id Nullable(String)
         ) ENGINE = ReplacingMergeTree(audit_timestamp)
-        ORDER BY (url, audit_timestamp);
+        PARTITION BY toYYYYMM(audit_timestamp)
+        ORDER BY (url, audit_timestamp)
+        TTL audit_timestamp + INTERVAL {self.data_retention_years} YEAR;
         """
 
         # Table for SERP Results
-        serp_results_table_schema = """
+        serp_results_table_schema = f"""
         CREATE TABLE IF NOT EXISTS serp_results_analytical (
             id String,
             keyword String,
@@ -183,13 +194,17 @@ class ClickHouseLoader:
             snippet String,
             domain String,
             position_type Nullable(String),
-            timestamp DateTime
+            timestamp DateTime,
+            user_id Nullable(String),
+            organization_id Nullable(String)
         ) ENGINE = ReplacingMergeTree(timestamp)
-        ORDER BY (keyword, url, timestamp);
+        PARTITION BY toYYYYMM(timestamp)
+        ORDER BY (keyword, url, timestamp)
+        TTL timestamp + INTERVAL {self.data_retention_years} YEAR;
         """
 
         # Table for Keyword Suggestions
-        keyword_suggestions_table_schema = """
+        keyword_suggestions_table_schema = f"""
         CREATE TABLE IF NOT EXISTS keyword_suggestions_analytical (
             id String,
             keyword String,
@@ -198,9 +213,15 @@ class ClickHouseLoader:
             competition Nullable(Float32),
             difficulty Nullable(UInt16),
             relevance Nullable(Float32),
-            source Nullable(String)
-        ) ENGINE = ReplacingMergeTree(id)
-        ORDER BY (keyword, source);
+            source Nullable(String),
+            keyword_trend Array(Float32),
+            data_timestamp DateTime,
+            user_id Nullable(String),
+            organization_id Nullable(String)
+        ) ENGINE = ReplacingMergeTree(data_timestamp)
+        PARTITION BY toYYYYMM(data_timestamp)
+        ORDER BY (keyword, source, data_timestamp)
+        TTL data_timestamp + INTERVAL {self.data_retention_years} YEAR;
         """
 
         try:
@@ -239,7 +260,9 @@ class ClickHouseLoader:
                 bl.spam_level.value if bl.spam_level else None,
                 bl.http_status,
                 bl.crawl_timestamp,
-                json.dumps(bl.source_domain_metrics) if bl.source_domain_metrics else "{}" # Serialize dict to JSON string
+                json.dumps(bl.source_domain_metrics) if bl.source_domain_metrics else "{}", # Serialize dict to JSON string
+                bl.user_id,
+                bl.organization_id
             ])
         return rows
 
@@ -286,7 +309,9 @@ class ClickHouseLoader:
                 sm.ai_content_score,
                 sm.ai_suggestions,
                 sm.ai_semantic_keywords,
-                sm.ai_readability_score
+                sm.ai_readability_score,
+                sm.user_id,
+                sm.organization_id
             ])
         return rows
 
@@ -303,7 +328,9 @@ class ClickHouseLoader:
                 sr.snippet, # Changed from snippet_text
                 sr.domain, # New field
                 sr.position_type, # New field
-                sr.timestamp
+                sr.timestamp,
+                sr.user_id,
+                sr.organization_id
             ])
         return rows
 
@@ -319,7 +346,11 @@ class ClickHouseLoader:
                 ks.competition, # Changed from competition_level
                 ks.difficulty, # New field
                 ks.relevance, # New field
-                ks.source # New field
+                ks.source, # New field
+                ks.keyword_trend,
+                ks.last_fetched_at, # Use last_fetched_at as data_timestamp for partitioning
+                ks.user_id,
+                ks.organization_id
             ])
         return rows
 
@@ -423,8 +454,6 @@ class ClickHouseLoader:
                 # the execute method might return a string that needs parsing.
                 # However, clickhouse_driver's execute method usually returns a list of tuples.
                 # For JSONEachRow, we'd typically use a separate HTTP client or a specific driver feature.
-                # Let's assume for now that simple SELECTs return list of lists/tuples.
-                # If you need JSONEachRow, you'd specify it in the query and parse the string result.
                 # For now, we'll return the raw result from execute.
                 return result
             return []
@@ -465,6 +494,7 @@ async def main():
             if key == "clickhouse.user": return "default"
             if key == "clickhouse.password": return ""
             if key == "clickhouse.database": return "test_db"
+            if key == "clickhouse.data_retention_years": return 1 # 1 year retention for testing
             return default
     
     global config_loader
@@ -487,21 +517,70 @@ async def main():
             # For clickhouse_driver, JSONB is not directly supported, use String and serialize/deserialize.
             schema = "id String, timestamp DateTime, metric_name String, value Float64, labels String"
             
-            await loader.create_table(table_name, schema)
+            # This part is for a generic table, not the analytical ones.
+            # For analytical tables, use the bulk_insert methods.
+            # await loader.create_table(table_name, schema) 
             
-            data_to_insert = [
-                {"id": str(uuid.uuid4()), "timestamp": datetime.now(), "metric_name": "cpu_usage", "value": 45.5, "labels": json.dumps({"host": "server1"})},
-                {"id": str(uuid.uuid4()), "timestamp": datetime.now(), "metric_name": "mem_usage", "value": 60.2, "labels": json.dumps({"host": "server1", "app": "web"})},
-                {"id": str(uuid.uuid4()), "timestamp": datetime.now(), "metric_name": "cpu_usage", "value": 50.1, "labels": json.dumps({"host": "server2"})},
+            # Example of inserting data into analytical tables
+            from Link_Profiler.core.models import Backlink, SEOMetrics, SERPResult, KeywordSuggestion, LinkType, SpamLevel
+            from datetime import datetime, timedelta
+            import uuid
+
+            # Backlinks
+            test_backlinks = [
+                Backlink(
+                    id=str(uuid.uuid4()), source_url="http://source1.com", target_url="http://target.com",
+                    anchor_text="test", link_type=LinkType.DOFOLLOW, first_seen=datetime.utcnow() - timedelta(days=10),
+                    last_seen=datetime.utcnow(), crawl_timestamp=datetime.utcnow(), spam_level=SpamLevel.CLEAN,
+                    source_domain="source1.com", target_domain="target.com", user_id="test_user", organization_id="test_org"
+                ),
+                Backlink(
+                    id=str(uuid.uuid4()), source_url="http://source2.com", target_url="http://target.com",
+                    anchor_text="another", link_type=LinkType.NOFOLLOW, first_seen=datetime.utcnow() - timedelta(days=5),
+                    last_seen=datetime.utcnow(), crawl_timestamp=datetime.utcnow(), spam_level=SpamLevel.LOW,
+                    source_domain="source2.com", target_domain="target.com", user_id="test_user", organization_id="test_org"
+                )
             ]
-            # Convert list of dicts to list of lists for clickhouse_driver insert
-            insert_rows = [[row['id'], row['timestamp'], row['metric_name'], row['value'], row['labels']] for row in data_to_insert]
+            await loader.bulk_insert_backlinks(test_backlinks)
 
-            await loader._execute_query(f'INSERT INTO {table_name} VALUES', data=insert_rows, types_check=True)
-            print(f"Successfully inserted {len(insert_rows)} rows into {table_name}.")
+            # SEO Metrics
+            test_seo_metrics = [
+                SEOMetrics(
+                    url="http://target.com/page1", audit_timestamp=datetime.utcnow(), seo_score=75.5,
+                    performance_score=80.0, user_id="test_user", organization_id="test_org"
+                ),
+                SEOMetrics(
+                    url="http://target.com/page2", audit_timestamp=datetime.utcnow(), seo_score=60.0,
+                    performance_score=70.0, user_id="test_user", organization_id="test_org"
+                )
+            ]
+            await loader.bulk_insert_seo_metrics(test_seo_metrics)
 
-            results = await loader.select_data(f"SELECT * FROM {table_name} WHERE metric_name = 'cpu_usage'")
-            print("\nSelected Data:")
+            # SERP Results
+            test_serp_results = [
+                SERPResult(
+                    id=str(uuid.uuid4()), keyword="test keyword", rank=1, url="http://target.com/page1",
+                    title="Test Page 1", snippet="Snippet 1", domain="target.com", timestamp=datetime.utcnow(),
+                    user_id="test_user", organization_id="test_org"
+                )
+            ]
+            await loader.bulk_insert_serp_results(test_serp_results)
+
+            # Keyword Suggestions
+            test_keyword_suggestions = [
+                KeywordSuggestion(
+                    id=str(uuid.uuid4()), keyword="related keyword", search_volume=1000, cpc=0.5,
+                    competition=0.3, difficulty=50, relevance=0.8, source="Simulated",
+                    last_fetched_at=datetime.utcnow(), user_id="test_user", organization_id="test_org"
+                )
+            ]
+            await loader.bulk_insert_keyword_suggestions(test_keyword_suggestions)
+
+            print("\nInserted test data into analytical tables.")
+
+            # Example of selecting data
+            results = await loader.select_data(f"SELECT * FROM backlinks_analytical LIMIT 5")
+            print("\nSelected Backlinks Data:")
             for row in results:
                 print(row)
         else:
