@@ -26,7 +26,7 @@ from Link_Profiler.config.config_loader import config_loader
 from Link_Profiler.utils.api_rate_limiter import api_rate_limited
 from Link_Profiler.clients.base_client import BaseAPIClient # Import BaseAPIClient
 from Link_Profiler.utils.session_manager import SessionManager # Import SessionManager
-from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # Import DistributedResilienceManager
+from Link_Profiler.utils.distributed_circuit_breaker import DistributedResilienceManager # Import DistributedCircuitBreaker
 from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
 
 logger = logging.getLogger(__name__)
@@ -77,8 +77,8 @@ class WHOISClient(BaseAPIClient): # Inherit from BaseAPIClient
             Optional[Dict[str, Any]]: The parsed WHOIS data, or None on failure.
         """
         if not self.enabled:
-            self.logger.warning(f"WHOIS client is disabled. Simulating WHOIS data for {domain}.")
-            return self._simulate_whois_data(domain)
+            self.logger.warning(f"WHOIS client is disabled. Cannot fetch WHOIS data for {domain}.")
+            return None
 
         self.logger.info(f"Fetching WHOIS data for domain: {domain} using python-whois...")
         
@@ -106,42 +106,7 @@ class WHOISClient(BaseAPIClient): # Inherit from BaseAPIClient
             return normalized_data
         except PywhoisError as e:
             self.logger.error(f"PywhoisError fetching WHOIS data for {domain}: {e}", exc_info=True)
-            return self._simulate_whois_data(domain) # Fallback to simulation on error
+            return None # Return None on error
         except Exception as e:
             self.logger.error(f"Error fetching WHOIS data for {domain}: {e}", exc_info=True)
-            return self._simulate_whois_data(domain) # Fallback to simulation on error
-
-    def _simulate_whois_data(self, domain: str) -> Optional[Dict[str, Any]]:
-        """Helper to generate simulated WHOIS data."""
-        self.logger.info(f"Simulating WHOIS data for {domain}.")
-        import random
-        from datetime import datetime, timedelta
-
-        if "example.com" in domain:
-            return {
-                "domain_name": domain,
-                "registrar": "Example Registrar",
-                "creation_date": "2000-01-01",
-                "expiration_date": "2025-01-01",
-                "name_servers": ["ns1.example.com", "ns2.example.com"],
-                "status": "clientTransferProhibited",
-                "emails": ["abuse@example.com"],
-                "organization": "Example LLC",
-                "country": "US",
-                'last_fetched_at': datetime.utcnow().isoformat()
-            }
-        elif "test.com" in domain:
-            return None # Simulate not found
-        else:
-            return {
-                "domain_name": domain,
-                "registrar": f"Registrar {random.randint(1, 10)}",
-                "creation_date": (datetime.now() - timedelta(days=random.randint(365, 365*10))).strftime("%Y-%m-%d"),
-                "expiration_date": (datetime.now() + timedelta(days=random.randint(30, 365*5))).strftime("%Y-%m-%d"),
-                "name_servers": [f"ns1.{domain}", f"ns2.{domain}"],
-                "status": "ok",
-                "emails": [f"admin@{domain}"],
-                "organization": f"Org {random.randint(1, 100)}",
-                "country": random.choice(["US", "CA", "GB", "DE", "AU"]),
-                'last_fetched_at': datetime.utcnow().isoformat()
-            }
+            return None # Return None on error

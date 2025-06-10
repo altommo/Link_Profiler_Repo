@@ -35,7 +35,7 @@ class SecurityTrailsClient(BaseAPIClient): # Inherit from BaseAPIClient
         if not self.enabled:
             self.logger.info("SecurityTrails API is disabled by configuration.")
         elif not self.api_key:
-            self.logger.warning("SecurityTrails API is enabled but API key is missing. Functionality will be simulated.")
+            self.logger.warning("SecurityTrails API is enabled but API key is missing. SecurityTrails API will be disabled.")
             self.enabled = False # Effectively disable if key is missing
 
     async def __aenter__(self):
@@ -66,8 +66,8 @@ class SecurityTrailsClient(BaseAPIClient): # Inherit from BaseAPIClient
             List[str]: A list of subdomains.
         """
         if not self.enabled:
-            self.logger.warning(f"SecurityTrails API is disabled. Simulating subdomains for {domain}.")
-            return self._simulate_subdomains(domain)
+            self.logger.warning(f"SecurityTrails API is disabled. Cannot fetch subdomains for {domain}.")
+            return []
 
         endpoint = f"{self.base_url}/domain/{domain}/subdomains"
         
@@ -84,10 +84,10 @@ class SecurityTrailsClient(BaseAPIClient): # Inherit from BaseAPIClient
             return subdomains
         except aiohttp.ClientResponseError as e:
             self.logger.error(f"Network/API error fetching subdomains for {domain} (Status: {e.status}): {e}", exc_info=True)
-            return self._simulate_subdomains(domain) # Fallback to simulation on error
+            return [] # Return empty on error
         except Exception as e:
             self.logger.error(f"Unexpected error fetching subdomains for {domain}: {e}", exc_info=True)
-            return self._simulate_subdomains(domain) # Fallback to simulation on error
+            return [] # Return empty on error
 
     @api_rate_limited(service="security_trails_api", api_client_type="security_trails_client", endpoint="get_dns_history")
     async def get_dns_history(self, domain: str, record_type: str = 'a') -> Optional[Dict[str, Any]]:
@@ -102,8 +102,8 @@ class SecurityTrailsClient(BaseAPIClient): # Inherit from BaseAPIClient
             Optional[Dict[str, Any]]: The JSON response containing DNS history, or None.
         """
         if not self.enabled:
-            self.logger.warning(f"SecurityTrails API is disabled. Simulating DNS history for {domain}.")
-            return self._simulate_dns_history(domain, record_type)
+            self.logger.warning(f"SecurityTrails API is disabled. Cannot fetch DNS history for {domain}.")
+            return None
 
         endpoint = f"{self.base_url}/history/{domain}/dns/{record_type}"
         
@@ -129,57 +129,14 @@ class SecurityTrailsClient(BaseAPIClient): # Inherit from BaseAPIClient
                 page += 1
             except aiohttp.ClientResponseError as e:
                 self.logger.error(f"Network/API error fetching DNS history for {domain} ({record_type}, page {page}) (Status: {e.status}): {e}", exc_info=True)
-                return self._simulate_dns_history(domain, record_type) # Fallback to simulation on error
+                return None # Return None on error
             except Exception as e:
                 self.logger.error(f"Unexpected error fetching DNS history for {domain} ({record_type}, page {page}): {e}", exc_info=True)
-                return self._simulate_dns_history(domain, record_type) # Fallback to simulation on error
+                return None # Return None on error
 
         self.logger.info(f"DNS history for {domain} ({record_type}) fetched successfully. Total records: {len(all_records)}.")
         return {
             "records": all_records,
             "record_type": record_type.upper(),
             "total_pages": page # Total pages fetched
-        }
-
-    def _simulate_subdomains(self, domain: str) -> List[str]:
-        """Helper to generate simulated subdomains."""
-        self.logger.info(f"Simulating SecurityTrails subdomains for {domain}.")
-        return [
-            f"www.{domain}",
-            f"blog.{domain}",
-            f"app.{domain}",
-            f"dev.{domain}",
-            f"mail.{domain}",
-            f"shop.{domain}",
-            f"cdn{random.randint(1,5)}.{domain}"
-        ]
-
-    def _simulate_dns_history(self, domain: str, record_type: str) -> Dict[str, Any]:
-        """Helper to generate simulated DNS history."""
-        self.logger.info(f"Simulating SecurityTrails DNS history for {domain} ({record_type}).")
-        from datetime import datetime, timedelta
-
-        records = []
-        for i in range(random.randint(1, 5)):
-            timestamp = datetime.now() - timedelta(days=random.randint(30, 365*3))
-            if record_type.lower() == 'a':
-                value = f"{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}"
-            elif record_type.lower() == 'mx':
-                value = f"10 mail.{domain}"
-            elif record_type.lower() == 'ns':
-                value = f"ns{random.randint(1,2)}.{domain}"
-            else:
-                value = f"simulated_value_{random.randint(100,999)}"
-
-            records.append({
-                "values": [{"value": value}],
-                "first_seen": timestamp.strftime("%Y-%m-%d"),
-                "last_seen": (timestamp + timedelta(days=random.randint(1, 365))).strftime("%Y-%m-%d"),
-                "organizations": [f"Simulated Org {random.randint(1,10)}"]
-            })
-        
-        return {
-            "records": records,
-            "record_type": record_type.upper(),
-            "total_pages": 1
         }

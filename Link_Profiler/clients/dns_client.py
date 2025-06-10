@@ -134,4 +134,3 @@ class DNSClient(BaseAPIClient): # Inherit from BaseAPIClient
         if not all_records:
             self.logger.info(f"No DNS records found for {domain}.")
         return all_records
-

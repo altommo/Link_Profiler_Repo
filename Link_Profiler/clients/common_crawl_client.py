@@ -94,8 +94,8 @@ class CommonCrawlClient(BaseAPIClient): # Inherit from BaseAPIClient
             List[Dict[str, Any]]: A list of dictionaries, each representing a Common Crawl record.
         """
         if not self.enabled or not self._current_index_url:
-            self.logger.warning(f"Common Crawl API is disabled or index not resolved. Simulating search for {domain}.")
-            return self._simulate_search_results(domain, match_type, limit)
+            self.logger.warning(f"Common Crawl API is disabled or index not resolved. Cannot search for {domain}.")
+            return []
 
         # Common Crawl CDX API parameters
         params = {
@@ -139,30 +139,7 @@ class CommonCrawlClient(BaseAPIClient): # Inherit from BaseAPIClient
             return results
         except aiohttp.ClientResponseError as e:
             self.logger.error(f"Network/API error searching Common Crawl for {domain}: {e}", exc_info=True)
-            return self._simulate_search_results(domain, match_type, limit) # Fallback to simulation on error
+            return [] # Return empty on error
         except Exception as e:
             self.logger.error(f"Unexpected error searching Common Crawl for {domain}: {e}", exc_info=True)
-            return self._simulate_search_results(domain, match_type, limit) # Fallback to simulation on error
-
-    def _simulate_search_results(self, domain: str, match_type: str, limit: int) -> List[Dict[str, Any]]:
-        """Helper to generate simulated Common Crawl search results."""
-        self.logger.info(f"Simulating Common Crawl search results for {domain} (limit: {limit}).")
-        from datetime import timedelta
-
-        simulated_results = []
-        for i in range(limit):
-            timestamp = datetime.now() - timedelta(days=random.randint(30, 365*5))
-            simulated_results.append({
-                "urlkey": f"com,{domain.replace('.', ',')}/page{i+1}",
-                "timestamp": timestamp.strftime("%Y%m%d%H%M%S"),
-                "url": f"http://{domain}/page{i+1}.html",
-                "mime": "text/html",
-                "status": "200",
-                "digest": f"simulated_digest_{random.randint(1000, 9999)}",
-                "length": str(random.randint(5000, 20000)),
-                "offset": str(random.randint(100000, 999999)),
-                "filename": f"CC-MAIN-{timestamp.year}-{random.randint(1,52)}-warc.gz",
-                'last_fetched_at': datetime.utcnow().isoformat()
-            })
-        return simulated_results
-
+            return [] # Return empty on error

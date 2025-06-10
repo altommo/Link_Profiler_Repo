@@ -61,8 +61,8 @@ class SSLLabsClient(BaseAPIClient): # Inherit from BaseAPIClient
             Optional[Dict[str, Any]]: The JSON response from the SSL Labs API, or None on failure.
         """
         if not self.enabled:
-            self.logger.warning(f"SSL Labs API is disabled. Simulating SSL analysis for {host}.")
-            return self._simulate_ssl_analysis(host)
+            self.logger.warning(f"SSL Labs API is disabled. Cannot perform SSL analysis for {host}.")
+            return None
 
         endpoint = self.base_url
         params = {
@@ -103,71 +103,8 @@ class SSLLabsClient(BaseAPIClient): # Inherit from BaseAPIClient
                     await asyncio.sleep(2 ** attempt * 5) # Exponential backoff
                 else:
                     self.logger.error(f"Network/API error fetching SSL analysis for {host} (Status: {e.status}): {e}", exc_info=True)
-                    return self._simulate_ssl_analysis(host) # Fallback to simulation on error
+                    return None # Return None on persistent error
             except Exception as e:
                 self.logger.error(f"Unexpected error fetching SSL analysis for {host}: {e}", exc_info=True)
-                return self._simulate_ssl_analysis(host) # Fallback to simulation on error
-        return self._simulate_ssl_analysis(host) # Should not be reached if retries are handled
-
-    def _simulate_ssl_analysis(self, host: str) -> Dict[str, Any]:
-        """Helper to generate simulated SSL analysis data."""
-        self.logger.info(f"Simulating SSL Labs analysis for {host}.")
-        from datetime import datetime, timedelta
-
-        grade = random.choice(['A+', 'A', 'B', 'C', 'F'])
-        
-        return {
-            "host": host,
-            "port": 443,
-            "protocol": "https",
-            "status": "READY",
-            "startTime": int(datetime.now().timestamp() * 1000),
-            "testTime": int(datetime.now().timestamp() * 1000),
-            "endpoints": [
-                {
-                    "ipAddress": f"{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}",
-                    "serverName": host,
-                    "statusMessage": "Ready",
-                    "grade": grade,
-                    "details": {
-                        "protocols": [
-                            {"id": "TLS 1.3", "name": "TLS", "version": "1.3"} if random.random() > 0.5 else {"id": "TLS 1.2", "name": "TLS", "version": "1.2"},
-                            {"id": "TLS 1.2", "name": "TLS", "version": "1.2"}
-                        ],
-                        "cert": {
-                            "subject": f"CN={host}",
-                            "issuerLabel": "Simulated CA",
-                            "notBefore": int((datetime.now() - timedelta(days=365)).timestamp() * 1000),
-                            "notAfter": int((datetime.now() + timedelta(days=365)).timestamp() * 1000),
-                            "altNames": [host, f"www.{host}"]
-                        },
-                        "chain": {
-                            "issues": 0,
-                            "cert_ids": [f"sim_cert_id_{random.randint(1000,9999)}"]
-                        },
-                        "freak": False,
-                        "poodle": False,
-                        "heartbleed": False,
-                        "logjam": False,
-                        "drown": False,
-                        "zeroRated": False,
-                        "hstsPolicy": {
-                            "status": "present",
-                            "maxAge": 31536000,
-                            "includeSubDomains": True,
-                            "preload": True
-                        }
-                    }
-                }
-            ],
-            "certs": [
-                {
-                    "subject": f"CN={host}",
-                    "issuerLabel": "Simulated CA",
-                    "notBefore": int((datetime.now() - timedelta(days=365)).timestamp() * 1000),
-                    "notAfter": int((datetime.now() + timedelta(days=365)).timestamp() * 1000),
-                    "altNames": [host, f"www.{host}"]
-                }
-            ],
-            'last_fetched_at': datetime.utcnow().isoformat()
-        }
+                return None # Return None on general error
+        return None # Should not be reached if retries are handled
