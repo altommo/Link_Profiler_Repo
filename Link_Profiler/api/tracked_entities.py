@@ -1,7 +1,7 @@
 import logging
 from typing import Annotated, Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Body, Response # Added Response
-import uuid # Added uuid
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Body, Response
+import uuid
 
 # Import core models
 from Link_Profiler.core.models import User, TrackedDomain, TrackedKeyword
