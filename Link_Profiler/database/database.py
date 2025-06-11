@@ -255,7 +255,7 @@ class Database:
                     self.logger.error(f"Error creating materialized view '{view_name}' (SQLAlchemyError): {e}", exc_info=True)
                     connection.rollback() # Rollback this specific transaction
                 except Exception as e:
-                    self.logger.error(f"Unexpected error during materialized view creation for '{view_name}': {e}", exc_info=True)
+                    self.logger.error(f"An unexpected error occurred during materialized view creation for '{view_name}': {e}", exc_info=True)
                     connection.rollback() # Rollback this specific transaction
 
     def refresh_materialized_views(self):
@@ -522,7 +522,6 @@ class Database:
             orm_profile = self._to_orm(profile)
             existing_profile = session.query(LinkProfileORM).filter_by(target_url=profile.target_url).first()
             if existing_profile:
-                # Update existing
                 for key, value in orm_profile.__dict__.items():
                     if key != '_sa_instance_state': # Skip SQLAlchemy internal state
                         setattr(existing_profile, key, value)
@@ -979,10 +978,35 @@ class Database:
         return [self._from_orm(s) for s in orm_suggestions]
 
     # --- Tracked Entities Operations ---
-    def get_tracked_domains(self, user_id: Optional[str] = None, organization_id: Optional[str] = None) -> List[TrackedDomain]:
+    def create_tracked_domain(self, tracked_domain: TrackedDomain) -> TrackedDomain:
+        """Creates a new tracked domain."""
+        def _create(session):
+            orm_tracked_domain = self._to_orm(tracked_domain)
+            session.add(orm_tracked_domain)
+            session.flush() # Flush to get ID if not already set
+            return self._from_orm(orm_tracked_domain)
+        return self._execute_operation('insert', 'tracked_domains', _create)
+
+    def get_tracked_domain(self, domain_id: str) -> Optional[TrackedDomain]:
+        """Retrieves a tracked domain by its ID."""
+        def _get(session):
+            return session.query(TrackedDomainORM).filter_by(id=domain_id).first()
+        orm_domain = self._execute_operation('select', 'tracked_domains', _get)
+        return self._from_orm(orm_domain) if orm_domain else None
+
+    def get_tracked_domain_by_name(self, domain_name: str) -> Optional[TrackedDomain]:
+        """Retrieves a tracked domain by its name."""
+        def _get(session):
+            return session.query(TrackedDomainORM).filter_by(domain_name=domain_name).first()
+        orm_domain = self._execute_operation('select', 'tracked_domains', _get)
+        return self._from_orm(orm_domain) if orm_domain else None
+
+    def get_tracked_domains(self, user_id: Optional[str] = None, organization_id: Optional[str] = None, active_only: bool = True) -> List[TrackedDomain]:
         """Retrieves all active tracked domains, optionally filtered by user or organization."""
         def _get(session):
-            query = session.query(TrackedDomainORM).filter_by(is_active=True)
+            query = session.query(TrackedDomainORM)
+            if active_only:
+                query = query.filter_by(is_active=True)
             if user_id:
                 query = query.filter_by(user_id=user_id)
             if organization_id:
@@ -991,19 +1015,7 @@ class Database:
         orm_domains = self._execute_operation('select', 'tracked_domains', _get)
         return [self._from_orm(d) for d in orm_domains]
 
-    def get_tracked_keywords(self, user_id: Optional[str] = None, organization_id: Optional[str] = None) -> List[TrackedKeyword]:
-        """Retrieves all active tracked keywords, optionally filtered by user or organization."""
-        def _get(session):
-            query = session.query(TrackedKeywordORM).filter_by(is_active=True)
-            if user_id:
-                query = query.filter_by(user_id=user_id)
-            if organization_id:
-                query = query.filter_by(organization_id=organization_id)
-            return query.all()
-        orm_keywords = self._execute_operation('select', 'tracked_keywords', _get)
-        return [self._from_orm(k) for k in orm_keywords]
-
-    def update_tracked_domain(self, tracked_domain: TrackedDomain) -> None:
+    def update_tracked_domain(self, tracked_domain: TrackedDomain) -> TrackedDomain:
         """Updates an existing tracked domain."""
         def _update(session):
             orm_tracked_domain = session.query(TrackedDomainORM).filter_by(id=tracked_domain.id).first()
@@ -1012,12 +1024,60 @@ class Database:
                 for key, value in new_data.__dict__.items():
                     if key != '_sa_instance_state':
                         setattr(orm_tracked_domain, key, value)
+                session.flush() # Flush to ensure changes are reflected
+                return self._from_orm(orm_tracked_domain)
             else:
                 raise ValueError(f"TrackedDomain with ID {tracked_domain.id} not found for update.")
-        self._execute_operation('update', 'tracked_domains', _update)
-        self.logger.info(f"Updated tracked domain {tracked_domain.domain_name}.")
+        return self._execute_operation('update', 'tracked_domains', _update)
 
-    def update_tracked_keyword(self, tracked_keyword: TrackedKeyword) -> None:
+    def delete_tracked_domain(self, domain_id: str) -> bool:
+        """Deletes a tracked domain by its ID."""
+        def _delete(session):
+            orm_tracked_domain = session.query(TrackedDomainORM).filter_by(id=domain_id).first()
+            if orm_tracked_domain:
+                session.delete(orm_tracked_domain)
+                return True
+            return False
+        return self._execute_operation('delete', 'tracked_domains', _delete)
+
+    def create_tracked_keyword(self, tracked_keyword: TrackedKeyword) -> TrackedKeyword:
+        """Creates a new tracked keyword."""
+        def _create(session):
+            orm_tracked_keyword = self._to_orm(tracked_keyword)
+            session.add(orm_tracked_keyword)
+            session.flush() # Flush to get ID if not already set
+            return self._from_orm(orm_tracked_keyword)
+        return self._execute_operation('insert', 'tracked_keywords', _create)
+
+    def get_tracked_keyword(self, keyword_id: str) -> Optional[TrackedKeyword]:
+        """Retrieves a tracked keyword by its ID."""
+        def _get(session):
+            return session.query(TrackedKeywordORM).filter_by(id=keyword_id).first()
+        orm_keyword = self._execute_operation('select', 'tracked_keywords', _get)
+        return self._from_orm(orm_keyword) if orm_keyword else None
+
+    def get_tracked_keyword_by_name(self, keyword_name: str) -> Optional[TrackedKeyword]:
+        """Retrieves a tracked keyword by its name."""
+        def _get(session):
+            return session.query(TrackedKeywordORM).filter_by(keyword=keyword_name).first()
+        orm_keyword = self._execute_operation('select', 'tracked_keywords', _get)
+        return self._from_orm(orm_keyword) if orm_keyword else None
+
+    def get_tracked_keywords(self, user_id: Optional[str] = None, organization_id: Optional[str] = None, active_only: bool = True) -> List[TrackedKeyword]:
+        """Retrieves all active tracked keywords, optionally filtered by user or organization."""
+        def _get(session):
+            query = session.query(TrackedKeywordORM)
+            if active_only:
+                query = query.filter_by(is_active=True)
+            if user_id:
+                query = query.filter_by(user_id=user_id)
+            if organization_id:
+                query = query.filter_by(organization_id=organization_id)
+            return query.all()
+        orm_keywords = self._execute_operation('select', 'tracked_keywords', _get)
+        return [self._from_orm(k) for k in orm_keywords]
+
+    def update_tracked_keyword(self, tracked_keyword: TrackedKeyword) -> TrackedKeyword:
         """Updates an existing tracked keyword."""
         def _update(session):
             orm_tracked_keyword = session.query(TrackedKeywordORM).filter_by(id=tracked_keyword.id).first()
@@ -1026,10 +1086,21 @@ class Database:
                 for key, value in new_data.__dict__.items():
                     if key != '_sa_instance_state':
                         setattr(orm_tracked_keyword, key, value)
+                session.flush() # Flush to ensure changes are reflected
+                return self._from_orm(orm_tracked_keyword)
             else:
                 raise ValueError(f"TrackedKeyword with ID {tracked_keyword.id} not found for update.")
-        self._execute_operation('update', 'tracked_keywords', _update)
-        self.logger.info(f"Updated tracked keyword {tracked_keyword.keyword}.")
+        return self._execute_operation('update', 'tracked_keywords', _update)
+
+    def delete_tracked_keyword(self, keyword_id: str) -> bool:
+        """Deletes a tracked keyword by its ID."""
+        def _delete(session):
+            orm_tracked_keyword = session.query(TrackedKeywordORM).filter_by(id=keyword_id).first()
+            if orm_tracked_keyword:
+                session.delete(orm_tracked_keyword)
+                return True
+            return False
+        return self._execute_operation('delete', 'tracked_keywords', _delete)
 
 
 class ClickHouseClient:

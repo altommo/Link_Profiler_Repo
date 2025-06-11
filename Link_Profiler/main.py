@@ -252,7 +252,8 @@ from Link_Profiler.api.schemas import (
     ReportJobResponse, QueueStatsResponse, SERPResultResponse, KeywordSuggestionResponse, 
     LinkIntersectResponse, CompetitiveKeywordAnalysisResponse, AlertRuleResponse, # Corrected import name
     ContentGapAnalysisResultResponse, LinkProspectResponse, OutreachCampaignResponse, 
-    OutreachEventResponse, SEOMetricsResponse, QueueCrawlRequest, SystemConfigResponse, SystemConfigUpdate # Added QueueCrawlRequest, SystemConfig schemas
+    OutreachEventResponse, SEOMetricsResponse, QueueCrawlRequest, SystemConfigResponse, SystemConfigUpdate,
+    TrackedDomainCreate, TrackedDomainResponse, TrackedKeywordCreate, TrackedKeywordResponse # Added Tracked Entities schemas
 )
 
 # Import API Routers
@@ -274,6 +275,9 @@ from Link_Profiler.api.admin_routes import admin_router # Import the new admin r
 from Link_Profiler.api.public_api_routes import public_api_router # Import the new public API router
 # New: Import queue_router and set_coordinator_dependencies
 from Link_Profiler.api.queue_endpoints import queue_router, set_coordinator_dependencies
+# NEW: Import tracked_entities_router
+from Link_Profiler.api.tracked_entities import tracked_entities_router
+
 
 # NEW: Import IngestionScheduler and get_ingestion_scheduler
 from Link_Profiler.scheduler.ingestion_scheduler import IngestionScheduler, get_ingestion_scheduler
@@ -786,6 +790,7 @@ app.include_router(customer_router) # Include the new customer router
 app.include_router(admin_router) # Include the new admin router
 app.include_router(public_api_router) # Include the new public API router
 app.include_router(queue_router) # Include the queue router
+app.include_router(tracked_entities_router) # NEW: Include the tracked_entities_router
 # --- End Register API Routers ---
 
 # Mount static files AFTER API routers

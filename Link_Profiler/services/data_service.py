@@ -11,7 +11,7 @@ from Link_Profiler.utils.api_cache import APICache
 from Link_Profiler.core.models import (
     Domain, Backlink, SEOMetrics, SERPResult, KeywordSuggestion,
     GSCBacklink, KeywordTrend, User, CrawlJob, ReportJob, ContentGapAnalysisResult,
-    CompetitiveKeywordAnalysisResult, LinkProspect # Import LinkProspect
+    CompetitiveKeywordAnalysisResult, LinkProspect, TrackedDomain, TrackedKeyword # Import LinkProspect, TrackedDomain, TrackedKeyword
 )
 from Link_Profiler.utils.auth_utils import get_user_tier # Import get_user_tier
 
@@ -140,7 +140,8 @@ class DataService:
             "single_job_status", "single_report_status",
             "domain_overview", "domain_backlinks", "domain_metrics", "domain_competitors",
             "domain_seo_audit", "domain_content_gaps", "keyword_analysis", "keyword_competitors",
-            "domain_link_prospects", "custom_analysis" # Added new features
+            "domain_link_prospects", "custom_analysis",
+            "tracked_domains", "tracked_keywords" # Added new features
         ]
         
         if user_tier == "free":
@@ -480,6 +481,199 @@ class DataService:
         # For now, we'll use link_prospecting_service_instance as a placeholder for a service that can trigger jobs.
         result = await link_prospecting_service_instance.perform_custom_analysis(domain, analysis_type, config)
         return result
+
+    # --- Tracked Entities Data Service Methods ---
+    async def create_tracked_domain(self, tracked_domain: TrackedDomain, current_user: User) -> Dict[str, Any]:
+        """Creates a new tracked domain."""
+        # No live access validation needed for creation, but ensure user context is passed
+        tracked_domain.user_id = current_user.id
+        tracked_domain.organization_id = current_user.organization_id
+        new_domain = self.db.create_tracked_domain(tracked_domain)
+        return new_domain.to_dict()
+
+    async def get_tracked_domain(self, domain_id: str, source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
+        """Retrieves a tracked domain by ID."""
+        feature = "tracked_domains"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{domain_id}"
+
+        async def fetch_live():
+            domain = self.db.get_tracked_domain(domain_id)
+            # Add authorization check: ensure user owns this tracked domain or is admin
+            if domain and domain.user_id != current_user.id and not current_user.is_admin:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to view this tracked domain.")
+            return domain.to_dict() if domain else None
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+
+    async def get_tracked_domain_by_name(self, domain_name: str, source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
+        """Retrieves a tracked domain by name."""
+        feature = "tracked_domains"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_by_name_{domain_name}"
+
+        async def fetch_live():
+            domain = self.db.get_tracked_domain_by_name(domain_name)
+            # Add authorization check: ensure user owns this tracked domain or is admin
+            if domain and domain.user_id != current_user.id and not current_user.is_admin:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to view this tracked domain.")
+            return domain.to_dict() if domain else None
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+
+    async def get_all_tracked_domains(self, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
+        """Retrieves all tracked domains for the current user/organization."""
+        feature = "tracked_domains"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_all_{current_user.id}_{current_user.organization_id}"
+
+        async def fetch_live():
+            domains = self.db.get_tracked_domains(user_id=current_user.id, organization_id=current_user.organization_id)
+            return [d.to_dict() for d in domains]
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+
+    async def update_tracked_domain(self, domain_id: str, update_data: Dict[str, Any], current_user: User) -> Dict[str, Any]:
+        """Updates an existing tracked domain."""
+        # Always live operation for updates
+        feature = "tracked_domains"
+        self.validate_live_access(current_user, feature) # Validate access for updates
+
+        existing_domain = self.db.get_tracked_domain(domain_id)
+        if not existing_domain:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracked domain not found.")
+        
+        # Authorization check: ensure user owns this tracked domain or is admin
+        if existing_domain.user_id != current_user.id and not current_user.is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to update this tracked domain.")
+
+        # Apply updates
+        for key, value in update_data.items():
+            setattr(existing_domain, key, value)
+        
+        updated_domain = self.db.update_tracked_domain(existing_domain)
+        return updated_domain.to_dict()
+
+    async def delete_tracked_domain(self, domain_id: str, current_user: User) -> bool:
+        """Deletes a tracked domain."""
+        # Always live operation for deletes
+        feature = "tracked_domains"
+        self.validate_live_access(current_user, feature) # Validate access for deletes
+
+        existing_domain = self.db.get_tracked_domain(domain_id)
+        if not existing_domain:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracked domain not found.")
+        
+        # Authorization check: ensure user owns this tracked domain or is admin
+        if existing_domain.user_id != current_user.id and not current_user.is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to delete this tracked domain.")
+
+        return self.db.delete_tracked_domain(domain_id)
+
+    async def create_tracked_keyword(self, tracked_keyword: TrackedKeyword, current_user: User) -> Dict[str, Any]:
+        """Creates a new tracked keyword."""
+        # No live access validation needed for creation, but ensure user context is passed
+        tracked_keyword.user_id = current_user.id
+        tracked_keyword.organization_id = current_user.organization_id
+        new_keyword = self.db.create_tracked_keyword(tracked_keyword)
+        return new_keyword.to_dict()
+
+    async def get_tracked_keyword(self, keyword_id: str, source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
+        """Retrieves a tracked keyword by ID."""
+        feature = "tracked_keywords"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_{keyword_id}"
+
+        async def fetch_live():
+            keyword = self.db.get_tracked_keyword(keyword_id)
+            # Add authorization check: ensure user owns this tracked keyword or is admin
+            if keyword and keyword.user_id != current_user.id and not current_user.is_admin:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to view this tracked keyword.")
+            return keyword.to_dict() if keyword else None
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+
+    async def get_tracked_keyword_by_name(self, keyword_name: str, source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
+        """Retrieves a tracked keyword by name."""
+        feature = "tracked_keywords"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_by_name_{keyword_name}"
+
+        async def fetch_live():
+            keyword = self.db.get_tracked_keyword_by_name(keyword_name)
+            # Add authorization check: ensure user owns this tracked keyword or is admin
+            if keyword and keyword.user_id != current_user.id and not current_user.is_admin:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to view this tracked keyword.")
+            return keyword.to_dict() if keyword else None
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+
+    async def get_all_tracked_keywords(self, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
+        """Retrieves all tracked keywords for the current user/organization."""
+        feature = "tracked_keywords"
+        force_live = (source and source.lower() == "live")
+        if force_live and current_user:
+            self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_all_{current_user.id}_{current_user.organization_id}"
+
+        async def fetch_live():
+            keywords = self.db.get_tracked_keywords(user_id=current_user.id, organization_id=current_user.organization_id)
+            return [k.to_dict() for k in keywords]
+        
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+
+    async def update_tracked_keyword(self, keyword_id: str, update_data: Dict[str, Any], current_user: User) -> Dict[str, Any]:
+        """Updates an existing tracked keyword."""
+        # Always live operation for updates
+        feature = "tracked_keywords"
+        self.validate_live_access(current_user, feature) # Validate access for updates
+
+        existing_keyword = self.db.get_tracked_keyword(keyword_id)
+        if not existing_keyword:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracked keyword not found.")
+        
+        # Authorization check: ensure user owns this tracked keyword or is admin
+        if existing_keyword.user_id != current_user.id and not current_user.is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to update this tracked keyword.")
+
+        # Apply updates
+        for key, value in update_data.items():
+            setattr(existing_keyword, key, value)
+        
+        updated_keyword = self.db.update_tracked_keyword(existing_keyword)
+        return updated_keyword.to_dict()
+
+    async def delete_tracked_keyword(self, keyword_id: str, current_user: User) -> bool:
+        """Deletes a tracked keyword."""
+        # Always live operation for deletes
+        feature = "tracked_keywords"
+        self.validate_live_access(current_user, feature) # Validate access for deletes
+
+        existing_keyword = self.db.get_tracked_keyword(keyword_id)
+        if not existing_keyword:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracked keyword not found.")
+        
+        # Authorization check: ensure user owns this tracked keyword or is admin
+        if existing_keyword.user_id != current_user.id and not current_user.is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to delete this tracked keyword.")
+
+        return self.db.delete_tracked_keyword(keyword_id)
 
 
 # Initialize the service with the singleton database clients
