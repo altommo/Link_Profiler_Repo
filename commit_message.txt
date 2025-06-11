@@ -1,0 +1,16 @@
+Restructure: Move dashboards to static directory and fix subdomain routing
+
+- Move customer-dashboard and mission-control-dashboard to Link_Profiler/static/
+- Fix subdomain routing middleware with proper state checking  
+- Update main.py catch-all route with hasattr() checks
+- Enable WebSocket in mission_control service
+- Add /ws/dashboard WebSocket endpoint alias for compatibility
+- Fix mission control subdomain default value
+- Add comprehensive logging for subdomain detection debugging
+- Update nginx configuration for proper WebSocket proxying
+
+Key fixes:
+* monitor.yspanel.com now correctly serves Mission Control dashboard
+* WebSocket connections work properly through nginx with SSL
+* Subdomain detection and routing fully functional
+* All authentication and session management working

@@ -1,0 +1,31 @@
+# Core System Configuration
+system:
+  current_code_version: "1.0.3"
+  version_control_enabled: false
+
+# Authentication settings
+auth:
+  secret_key: "${LP_AUTH_SECRET_KEY}"
+  algorithm: "HS256"
+  access_token_expire_minutes: 30
+
+# Database settings (PostgreSQL)
+database:
+  url: "${LP_DATABASE_URL}"
+
+# Redis settings (for queues and caching)
+redis:
+  url: "${LP_REDIS_URL}"
+  cache_ttl: 3600
+
+# API settings
+api:
+  host: "0.0.0.0"
+  port: 8000
+  external_url: "https://api.yspanel.com"
+  internal_url: "http://localhost:8000"
+
+# API Cache
+api_cache:
+  enabled: true
+  ttl: 3600

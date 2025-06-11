@@ -1,0 +1,29 @@
+# Feature Configuration
+# This file contains feature flags and optional functionality
+
+# Satellite Logging Configuration
+satellite:
+  logging:
+    level: INFO
+    config:
+      version: 1
+      disable_existing_loggers: False
+      formatters:
+        standard:
+          format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+      handlers:
+        console:
+          class: logging.StreamHandler
+          formatter: standard
+          filename: "satellite_crawler.log"
+          maxBytes: 10485760
+          backupCount: 5
+          level: INFO
+      loggers:
+        Link_Profiler:
+          handlers: [console, file]
+          level: INFO
+          propagate: False
+      root:
+        handlers: [console]
+        level: INFO
