@@ -101,7 +101,7 @@ logger.info(f"Expected URLs - Customer: {CUSTOMER_SUBDOMAIN}.yspanel.com, Missio
 
 # Initialize Redis connection pool and client (moved up to ensure it's defined before lifespan)
 import redis.asyncio as redis
-redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
+redis_pool = redis.Redis.ConnectionPool.from_url(REDIS_URL)
 redis_client: Optional[redis.Redis] = redis.Redis(connection_pool=redis_pool) # Make redis_client optional
 
 # New: Initialize SessionManager
@@ -242,6 +242,11 @@ from Link_Profiler.services.dashboard_alert_service import DashboardAlertService
 # New: Import Mission Control Service
 from Link_Profiler.services import mission_control_service as mission_control_module
 from Link_Profiler.services.mission_control_service import MissionControlService
+
+# API Communication System imports (add these to your existing imports)
+from Link_Profiler.services.api_communication_service import get_api_communication_service
+from Link_Profiler.services.api_notification_triggers import get_api_notification_triggers
+from Link_Profiler.api.admin_communication import admin_communication_router
 
 # Import api_cache singleton
 from Link_Profiler.utils.api_cache import api_cache
@@ -513,6 +518,10 @@ alert_service_instance = AlertService(db=db, connection_manager=connection_manag
 # NEW: Global scheduler instance
 ingestion_scheduler_instance: Optional[IngestionScheduler] = None
 
+# Global instances for API Communication System
+api_communication_service_instance = None
+api_notification_triggers_instance = None
+
 async def validate_redis_dependencies(redis_client: redis.Redis, services_to_validate: List[Any]) -> bool:
     """
     Validates that the Redis client is connected and that all specified services
@@ -711,8 +720,32 @@ async def lifespan(app: FastAPI):
                 logger.info(f"Default admin user '{default_admin_username}' already exists.")
         # --- END NEW ---
 
+        # NEW: Initialize API Communication Services
+        global api_communication_service_instance, api_notification_triggers_instance
+        
+        # Initialize API Communication Service
+        api_communication_service_instance = await get_api_communication_service(
+            db=db,
+            connection_manager=connection_manager,
+            api_quota_manager=api_quota_manager, # Pass api_quota_manager
+            redis_client=redis_client
+        )
+        
+        # Initialize API Notification Triggers
+        api_notification_triggers_instance = await get_api_notification_triggers(
+            db=db,
+            communication_service=api_communication_service_instance,
+            redis_client=redis_client
+        )
+        
+        logger.info("API Communication System initialized successfully")
+        
+        # Start automated monitoring (this starts background tasks)
+        await api_notification_triggers_instance.start_automated_monitoring()
+        logger.info("Automated API monitoring started")
+        
         yield
-
+        
     finally:
         # NEW: Shut down IngestionScheduler
         if ingestion_scheduler_instance:
@@ -733,6 +766,15 @@ async def lifespan(app: FastAPI):
         if redis_pool:
             logger.info("Application shutdown: Closing Redis connection pool.")
             await redis_pool.disconnect()
+        
+        # NEW: Clean up API Communication Services
+        if 'api_notification_triggers_instance' in globals() and api_notification_triggers_instance:
+            logger.info("Shutting down API Notification Triggers.")
+            await api_notification_triggers_instance.stop_automated_monitoring() # Assuming this method exists
+        
+        if 'api_communication_service_instance' in globals() and api_communication_service_instance:
+            logger.info("Shutting down API Communication Service.")
+            # API Communication Service cleanup would go here if needed (e.g., closing sessions)
 
 
 # Define origins here
@@ -791,6 +833,7 @@ app.include_router(admin_router) # Include the new admin router
 app.include_router(public_api_router) # Include the new public API router
 app.include_router(queue_router) # Include the queue router
 app.include_router(tracked_entities_router) # NEW: Include the tracked_entities_router
+app.include_router(admin_communication_router) # Add the admin communication router to your app (after existing routers)
 # --- End Register API Routers ---
 
 # Mount static files AFTER API routers
