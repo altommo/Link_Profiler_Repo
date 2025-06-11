@@ -193,7 +193,6 @@ class CrawlJobORM(Base):
     scheduled_at = Column(DateTime)
     cron_schedule = Column(String)
     last_fetched_at = Column(DateTime, default=datetime.utcnow)
-    config = Column(JSON) # Store config as JSON
 
     __table_args__ = (
         Index('ix_crawl_jobs_job_type', 'job_type'),

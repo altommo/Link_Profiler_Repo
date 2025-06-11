@@ -1,7 +1,7 @@
 import logging
 from functools import wraps
 from typing import Callable, Any, Optional, Annotated
-from fastapi import Depends, HTTPException, status, Query
+from fastapi import Depends, HTTPException, status
 from Link_Profiler.utils.auth_utils import get_current_user
 from Link_Profiler.core.models import User
 

@@ -97,7 +97,7 @@ class WhoisJsonAPIClient(BaseAPIClient):
             # WHOIS-JSON.com uses path parameter for domain
             url = f"{self.base_url}/{domain_name}"
             # _make_request now handles resilience
-            response_data = await self._make_request("GET", url, headers=headers)
+            response_data = await self._make_request("GET", url, params=params)
             return response_data
         except Exception as e:
             self.logger.error(f"Error performing WHOIS lookup for {domain_name} with WHOIS-JSON.com: {e}")

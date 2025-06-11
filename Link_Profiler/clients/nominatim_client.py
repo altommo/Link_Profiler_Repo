@@ -8,7 +8,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 import aiohttp
 import json # For parsing JSON response
-import random # Import random for simulation
+import random
 import time # Import time for time.monotonic()
 
 from Link_Profiler.config.config_loader import config_loader

@@ -13,14 +13,14 @@ from Link_Profiler.core.models import (
     GSCBacklink, KeywordTrend, User, CrawlJob, ReportJob, ContentGapAnalysisResult,
     CompetitiveKeywordAnalysisResult, LinkProspect, TrackedDomain, TrackedKeyword # Import LinkProspect, TrackedDomain, TrackedKeyword
 )
-from Link_Profiler.utils.auth_utils import get_user_tier # Import get_user_tier
+from Link_Profiler.utils.auth_utils import get_user_tier, increment_live_api_usage # Import get_user_tier and increment_live_api_usage
 
 # Import service instances for live data fetching (assuming they are global singletons)
 # These imports are placed here to avoid circular dependencies at module load time
 try:
     from Link_Profiler.main import (
         domain_service_instance, backlink_service_instance, serp_service_instance,
-        keyword_service_instance, ai_service_instance, link_prospecting_service_instance # Import LinkProspectingService
+        keyword_service_instance, ai_service_instance, link_building_service_instance # Import LinkBuildingService
     )
 except ImportError:
     # Fallback for testing or if main.py is not fully initialized
@@ -54,7 +54,7 @@ except ImportError:
         async def analyze_content_gap(self, target_url: str, competitor_urls: List[str]) -> Optional[ContentGapAnalysisResult]:
             logging.getLogger(__name__).warning(f"Simulating live content gap analysis for {target_url}")
             return ContentGapAnalysisResult(target_url=target_url, competitor_urls=competitor_urls, missing_topics=["topic1", "topic2"])
-    class DummyLinkProspectingService:
+    class DummyLinkBuildingService: # Renamed from DummyLinkProspectingService
         async def find_prospects(self, target_domain: str, **kwargs) -> List[LinkProspect]:
             logging.getLogger(__name__).warning(f"Simulating live link prospects for {target_domain}")
             return [LinkProspect(id=f"lp{i}", target_domain=target_domain, prospect_url=f"http://blog.example.com/post-{i}") for i in range(3)]
@@ -68,8 +68,7 @@ except ImportError:
     serp_service_instance = DummySerpService()
     keyword_service_instance = DummyKeywordService()
     ai_service_instance = DummyAIService()
-    link_prospecting_service_instance = DummyLinkProspectingService()
-
+    link_building_service_instance = DummyLinkBuildingService() # Renamed
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +117,7 @@ class DataService:
             await self.cache.set(cache_key, data, service="data_service", endpoint="generic_fetch", ttl=ttl)
         return data
 
-    def validate_live_access(self, user: User, feature: str):
+    async def validate_live_access(self, user: User, feature: str):
         """
         Checks if the user has permission to access live data for a specific feature.
         Raises HTTPException if access is denied.
@@ -165,8 +164,8 @@ class DataService:
         #         detail="Live data quota exceeded for today."
         #     )
         
-        # If all checks pass, track usage (placeholder)
-        # self.increment_live_api_usage(user.id, feature)
+        # If all checks pass, track usage
+        await increment_live_api_usage(user.id, feature)
         self.logger.info(f"Live data access granted for user {user.username} (tier: {user_tier}) for feature '{feature}'.")
 
     async def get_all_crawl_jobs(self, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
@@ -176,13 +175,13 @@ class DataService:
         feature = "crawl_jobs"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
         
         async def fetch_live():
-            jobs = self.db.get_all_crawl_jobs()
+            jobs = self.db.get_all_crawl_jobs(user_id=current_user.id, organization_id=current_user.organization_id)
             return [job.to_dict() for job in jobs]
         
-        return await self._fetch_and_cache(f"{feature}_all", fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+        return await self._fetch_and_cache(f"{feature}_all_{current_user.id}_{current_user.organization_id}", fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
 
     async def get_crawl_job_by_id(self, job_id: str, source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
         """
@@ -191,12 +190,15 @@ class DataService:
         feature = "single_job_status"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{job_id}"
 
         async def fetch_live():
             job = self.db.get_crawl_job(job_id)
+            # Add authorization check: ensure user owns this job or is admin
+            if job and job.user_id != current_user.id and not current_user.is_admin:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to view this job.")
             return job.to_dict() if job else None
         
         return await self._fetch_and_cache(cache_key, fetch_live, ttl=60, force_live=force_live) # Cache for 1 minute
@@ -208,13 +210,15 @@ class DataService:
         feature = "link_profiles"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_all_{current_user.id}_{current_user.organization_id}"
 
         async def fetch_live():
-            profiles = self.db.get_all_link_profiles()
+            profiles = self.db.get_all_link_profiles(user_id=current_user.id, organization_id=current_user.organization_id)
             return [profile.to_dict() for profile in profiles]
         
-        return await self._fetch_and_cache(f"{feature}_all", fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
 
     async def get_all_domains(self, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
         """
@@ -223,13 +227,15 @@ class DataService:
         feature = "domains"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_all_{current_user.id}_{current_user.organization_id}"
 
         async def fetch_live():
-            domains = self.db.get_all_domains()
+            domains = self.db.get_all_domains(user_id=current_user.id, organization_id=current_user.organization_id)
             return [domain.to_dict() for domain in domains]
         
-        return await self._fetch_and_cache(f"{feature}_all", fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
 
     async def get_all_backlinks(self, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
         """
@@ -239,14 +245,16 @@ class DataService:
         feature = "backlinks"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_all_{current_user.id}_{current_user.organization_id}"
 
         async def fetch_live():
             # Example of fetching from PostgreSQL
-            backlinks = self.db.get_all_backlinks()
+            backlinks = self.db.get_all_backlinks(user_id=current_user.id, organization_id=current_user.organization_id)
             return [bl.to_dict() for bl in backlinks]
         
-        return await self._fetch_and_cache(f"{feature}_all", fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=3600, force_live=force_live) # Cache for 1 hour
 
     async def get_gsc_backlinks_analytical(self, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
         """
@@ -255,7 +263,9 @@ class DataService:
         feature = "gsc_backlinks_analytical"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_all_{current_user.id}_{current_user.organization_id}"
 
         async def fetch_live():
             # This would typically involve calling the GSC client and then inserting into ClickHouse
@@ -266,7 +276,7 @@ class DataService:
             # Example: return self.ch_client.get_all_gsc_backlinks() if such a method existed
             return [] # Placeholder for actual ClickHouse query results
         
-        return await self._fetch_and_cache(f"{feature}_all", fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
 
     async def get_keyword_trends_analytical(self, source: Optional[str] = None, current_user: Optional[User] = None) -> List[Dict[str, Any]]:
         """
@@ -275,7 +285,9 @@ class DataService:
         feature = "keyword_trends_analytical"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
+
+        cache_key = f"{feature}_all_{current_user.id}_{current_user.organization_id}"
 
         async def fetch_live():
             # Similar to GSC backlinks, this is a placeholder for ClickHouse query.
@@ -283,7 +295,7 @@ class DataService:
             # Example: return self.ch_client.get_all_keyword_trends() if such a method existed
             return [] # Placeholder for actual ClickHouse query results
         
-        return await self._fetch_and_cache(f"{feature}_all", fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
+        return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
 
     async def get_report_job_by_id(self, job_id: str, source: Optional[str] = None, current_user: Optional[User] = None) -> Optional[Dict[str, Any]]:
         """
@@ -292,12 +304,15 @@ class DataService:
         feature = "single_report_status"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{job_id}"
 
         async def fetch_live():
             report_job = self.db.get_report_job(job_id)
+            # Add authorization check: ensure user owns this report job or is admin
+            if report_job and report_job.user_id != current_user.id and not current_user.is_admin:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to view this report job.")
             return report_job.to_dict() if report_job else None
         
         return await self._fetch_and_cache(cache_key, fetch_live, ttl=60, force_live=force_live) # Cache for 1 minute
@@ -309,7 +324,7 @@ class DataService:
         feature = "domain_overview"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{domain}"
 
@@ -327,7 +342,7 @@ class DataService:
         feature = "domain_backlinks"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{domain}"
 
@@ -345,7 +360,7 @@ class DataService:
         feature = "domain_metrics"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{domain}"
 
@@ -363,14 +378,16 @@ class DataService:
         feature = "domain_competitors"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{domain}"
 
         async def fetch_live():
             # This calls the underlying serp_service (or keyword_service) to get live data
-            competitors = await serp_service_instance.get_competitors(domain) # Assuming serp_service has this method
-            return competitors # Assuming it returns a list of dicts
+            competitors = await serp_service_instance.get_serp_results(domain) # Assuming serp_service can derive competitors from SERP
+            # For simplicity, let's just return the top domains from SERP results as competitors
+            unique_domains = list(set([res.domain for res in competitors if res.domain]))
+            return [{"domain": d} for d in unique_domains[:5]] # Return top 5 unique domains
         
         return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
 
@@ -381,7 +398,7 @@ class DataService:
         feature = "domain_seo_audit"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{domain}"
 
@@ -399,7 +416,7 @@ class DataService:
         feature = "domain_content_gaps"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         # Cache key should include competitor domains for uniqueness
         cache_key = f"{feature}_{domain}_{'_'.join(sorted(competitor_domains))}"
@@ -418,7 +435,7 @@ class DataService:
         feature = "keyword_analysis"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{keyword}"
 
@@ -436,7 +453,7 @@ class DataService:
         feature = "keyword_competitors"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{keyword}"
 
@@ -456,13 +473,13 @@ class DataService:
         feature = "domain_link_prospects"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{domain}"
 
         async def fetch_live():
-            # This calls the underlying link_prospecting_service to get live data
-            prospects = await link_prospecting_service_instance.find_prospects(domain) # Assuming this method exists
+            # This calls the underlying link_building_service to get live data
+            prospects = await link_building_service_instance.find_prospects(domain) # Assuming this method exists
             return [p.to_dict() for p in prospects]
         
         return await self._fetch_and_cache(cache_key, fetch_live, ttl=86400, force_live=force_live) # Cache for 24 hours
@@ -475,11 +492,11 @@ class DataService:
         feature = "custom_analysis"
         # Custom analysis is inherently a live operation, so we always validate access
         if current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
         
-        # This will trigger a job submission via the link_prospecting_service or a dedicated analysis service
-        # For now, we'll use link_prospecting_service_instance as a placeholder for a service that can trigger jobs.
-        result = await link_prospecting_service_instance.perform_custom_analysis(domain, analysis_type, config)
+        # This will trigger a job submission via the link_building_service or a dedicated analysis service
+        # For now, we'll use link_building_service_instance as a placeholder for a service that can trigger jobs.
+        result = await link_building_service_instance.perform_custom_analysis(domain, analysis_type, config)
         return result
 
     # --- Tracked Entities Data Service Methods ---
@@ -496,7 +513,7 @@ class DataService:
         feature = "tracked_domains"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{domain_id}"
 
@@ -514,7 +531,7 @@ class DataService:
         feature = "tracked_domains"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_by_name_{domain_name}"
 
@@ -532,7 +549,7 @@ class DataService:
         feature = "tracked_domains"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_all_{current_user.id}_{current_user.organization_id}"
 
@@ -546,7 +563,7 @@ class DataService:
         """Updates an existing tracked domain."""
         # Always live operation for updates
         feature = "tracked_domains"
-        self.validate_live_access(current_user, feature) # Validate access for updates
+        await self.validate_live_access(current_user, feature) # Validate access for updates
 
         existing_domain = self.db.get_tracked_domain(domain_id)
         if not existing_domain:
@@ -567,7 +584,7 @@ class DataService:
         """Deletes a tracked domain."""
         # Always live operation for deletes
         feature = "tracked_domains"
-        self.validate_live_access(current_user, feature) # Validate access for deletes
+        await self.validate_live_access(current_user, feature) # Validate access for deletes
 
         existing_domain = self.db.get_tracked_domain(domain_id)
         if not existing_domain:
@@ -592,7 +609,7 @@ class DataService:
         feature = "tracked_keywords"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_{keyword_id}"
 
@@ -610,7 +627,7 @@ class DataService:
         feature = "tracked_keywords"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_by_name_{keyword_name}"
 
@@ -628,7 +645,7 @@ class DataService:
         feature = "tracked_keywords"
         force_live = (source and source.lower() == "live")
         if force_live and current_user:
-            self.validate_live_access(current_user, feature)
+            await self.validate_live_access(current_user, feature)
 
         cache_key = f"{feature}_all_{current_user.id}_{current_user.organization_id}"
 
@@ -642,7 +659,7 @@ class DataService:
         """Updates an existing tracked keyword."""
         # Always live operation for updates
         feature = "tracked_keywords"
-        self.validate_live_access(current_user, feature) # Validate access for updates
+        await self.validate_live_access(current_user, feature) # Validate access for updates
 
         existing_keyword = self.db.get_tracked_keyword(keyword_id)
         if not existing_keyword:
@@ -663,7 +680,7 @@ class DataService:
         """Deletes a tracked keyword."""
         # Always live operation for deletes
         feature = "tracked_keywords"
-        self.validate_live_access(current_user, feature) # Validate access for deletes
+        await self.validate_live_access(current_user, feature) # Validate access for deletes
 
         existing_keyword = self.db.get_tracked_keyword(keyword_id)
         if not existing_keyword:
