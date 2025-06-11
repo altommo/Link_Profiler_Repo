@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from urllib.parse import urlparse # Import urlparse
 
 # Import from core.models for shared data structures and serialization
-from Link_Profiler.core.models import User, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, Token, TokenData, GSCBacklink, KeywordTrend, Role, TelemetryEvent, LinkIntersectResult, CompetitiveKeywordAnalysisResult # Added new models
+from Link_Profiler.core.models import User, CrawlStatus, LinkType, SpamLevel, Domain, CrawlError, SERPResult, KeywordSuggestion, AlertRule, AlertSeverity, AlertChannel, ContentGapAnalysisResult, DomainHistory, LinkProspect, OutreachCampaign, OutreachEvent, ReportJob, CrawlJob, LinkProfile, Backlink, SEOMetrics, Token, TokenData, GSCBacklink, KeywordTrend, Role, TelemetryEvent, LinkIntersectResult, CompetitiveKeywordAnalysisResult, TrackedDomain, TrackedKeyword # Added new models
 
 # Initialize logger for this module
 logger = logging.getLogger(__name__)
@@ -903,7 +903,7 @@ class DashboardRealtimeUpdates(BaseModel):
     alerts: List[DashboardAlert]
     satellite_fleet_status: List[SatelliteFleetStatus]
 
-# New: Pydantic models for System Configuration
+# New Pydantic models for System Configuration
 class SystemConfigResponse(BaseModel):
     logging_level: str
     api_cache_enabled: bool
@@ -932,3 +932,53 @@ class CustomerDashboardSummary(BaseModel):
     last_updated: datetime
     user_id: str
     organization_id: Optional[str] = None
+
+# NEW: Tracked Entities Schemas
+class TrackedDomainCreate(BaseModel):
+    domain_name: str = Field(..., description="The domain name to track.")
+    is_active: bool = Field(True, description="Whether the tracking is active.")
+
+class TrackedDomainResponse(BaseModel):
+    id: str
+    domain_name: str
+    user_id: Optional[str]
+    organization_id: Optional[str]
+    is_active: bool
+    last_tracked_gsc_analytics: Optional[datetime]
+    last_tracked_technical_audit: Optional[datetime]
+    last_tracked_whois_dns: Optional[datetime]
+    last_tracked_ssl_labs: Optional[datetime]
+    last_tracked_common_crawl: Optional[datetime]
+    last_tracked_pagespeed: Optional[datetime]
+    last_tracked_backlinks: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+    @classmethod
+    def from_tracked_domain(cls, tracked_domain: TrackedDomain):
+        return cls(**tracked_domain.to_dict())
+
+class TrackedKeywordCreate(BaseModel):
+    keyword: str = Field(..., description="The keyword to track.")
+    is_active: bool = Field(True, description="Whether the tracking is active.")
+
+class TrackedKeywordResponse(BaseModel):
+    id: str
+    keyword: str
+    user_id: Optional[str]
+    organization_id: Optional[str]
+    is_active: bool
+    last_tracked_google_trends: Optional[datetime]
+    last_tracked_serp: Optional[datetime]
+    last_tracked_keyword_suggestions: Optional[datetime]
+    last_tracked_news_reddit: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
+
+    @classmethod
+    def from_tracked_keyword(cls, tracked_keyword: TrackedKeyword):
+        return cls(**tracked_keyword.to_dict())
