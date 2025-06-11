@@ -15,6 +15,8 @@ from Link_Profiler.database.database import Database
 from Link_Profiler.utils.connection_manager import ConnectionManager
 from Link_Profiler.core.models import User
 from Link_Profiler.config.config_loader import config_loader
+from Link_Profiler.utils.api_quota_manager import APIQuotaManager # Import APIQuotaManager
+from Link_Profiler.utils.auth_utils import get_user_tier # Import get_user_tier for consistency
 
 logger = logging.getLogger(__name__)
 
@@ -60,17 +62,20 @@ class APICommunicationService:
     Proactive, personalized, and contextual API communications.
     """
     
-    def __init__(self, db: Database, connection_manager: ConnectionManager, redis_client=None):
+    def __init__(self, db: Database, connection_manager: ConnectionManager, api_quota_manager: APIQuotaManager, redis_client):
         self.db = db
         self.connection_manager = connection_manager
-        self.redis_client = redis_client
+        self.api_quota_manager = api_quota_manager # Store API QuotaManager
+        self.redis_client = redis_client # Store redis_client
         self.logger = logging.getLogger(__name__)
         
         # Load communication preferences from config
         self.email_enabled = config_loader.get("api_communication.email.enabled", True)
         self.webhook_enabled = config_loader.get("api_communication.webhook.enabled", True)
         self.in_app_enabled = config_loader.get("api_communication.in_app.enabled", True)
-        
+        self.slack_webhook_url = config_loader.get("notifications.slack.webhook_url")
+        self.slack_enabled = config_loader.get("notifications.slack.enabled", False)
+
         # Initialize notification templates
         self.templates = self._load_notification_templates()
     
@@ -266,6 +271,92 @@ class APICommunicationService:
                     "status": "resolved"
                 },
                 personalization_fields=["customer_name", "affected_endpoint", "start_time", "end_time", "impact_description", "affected_requests", "resolution_description", "service_credit", "prevention_measure_1", "prevention_measure_2", "prevention_measure_3", "duration_minutes"]
+            ),
+            APIEventType.API_DEPRECATION: NotificationTemplate(
+                event_type=APIEventType.API_DEPRECATION,
+                priority=NotificationPriority.CRITICAL,
+                channels=[CommunicationType.EMAIL, CommunicationType.IN_APP, CommunicationType.WEBHOOK, CommunicationType.SLACK],
+                subject_template="🚨 Important: API Endpoint Deprecation - {endpoint_path}",
+                email_template="""
+                <h2>Important API Update: Endpoint Deprecation</h2>
+                <p>Hi {customer_name},</p>
+                <p>This is an important announcement regarding the deprecation of the following API endpoint:</p>
+                
+                <div style="background: #ffe0b2; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                    <h3>Endpoint Details:</h3>
+                    <ul>
+                        <li><strong>Endpoint:</strong> <code>{endpoint_path}</code></li>
+                        <li><strong>Deprecation Date:</strong> {deprecation_date}</li>
+                        <li><strong>Removal Date:</strong> {removal_date}</li>
+                        <li><strong>Reason:</strong> {reason}</li>
+                    </ul>
+                </div>
+                
+                <h3>What You Need To Do:</h3>
+                <p>Please migrate your integration from <code>{endpoint_path}</code> to the new recommended endpoint <code>{new_endpoint_path}</code> before the removal date.</p>
+                
+                <h3>Migration Guide:</h3>
+                <p>We've prepared a detailed migration guide to assist you:</p>
+                <ul>
+                    <li><a href="{migration_guide_url}">Migration Guide for {endpoint_path}</a></li>
+                    <li><a href="{docs_url}">Updated API Documentation</a></li>
+                </ul>
+                
+                <p>If you have any questions or require assistance with the migration, please do not hesitate to contact our support team.</p>
+                <p>Thank you for your understanding and cooperation.</p>
+                """,
+                in_app_template="🚨 Endpoint <code>{endpoint_path}</code> will be deprecated on {deprecation_date}. Migrate to <code>{new_endpoint_path}</code>.",
+                webhook_payload_template={
+                    "event": "api_deprecation",
+                    "endpoint_path": "{endpoint_path}",
+                    "deprecation_date": "{deprecation_date}",
+                    "removal_date": "{removal_date}",
+                    "new_endpoint_path": "{new_endpoint_path}",
+                    "reason": "{reason}"
+                },
+                personalization_fields=["customer_name", "endpoint_path", "deprecation_date", "removal_date", "reason", "new_endpoint_path", "migration_guide_url", "docs_url"]
+            ),
+            APIEventType.MAINTENANCE: NotificationTemplate(
+                event_type=APIEventType.MAINTENANCE,
+                priority=NotificationPriority.HIGH,
+                channels=[CommunicationType.EMAIL, CommunicationType.IN_APP, CommunicationType.WEBHOOK, CommunicationType.SLACK],
+                subject_template="🛠️ Scheduled Maintenance: {maintenance_date} - {impact_summary}",
+                email_template="""
+                <h2>Scheduled Maintenance Notification</h2>
+                <p>Hi {customer_name},</p>
+                <p>We are writing to inform you about upcoming scheduled maintenance that will affect our API services.</p>
+                
+                <div style="background: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                    <h3>Maintenance Details:</h3>
+                    <ul>
+                        <li><strong>Date:</strong> {maintenance_date}</li>
+                        <li><strong>Time:</strong> {start_time} to {end_time} ({timezone})</li>
+                        <li><strong>Duration:</strong> Approximately {duration_minutes} minutes</li>
+                        <li><strong>Impact:</strong> {impact_description}</li>
+                        <li><strong>Affected Services:</strong> {affected_services}</li>
+                    </ul>
+                </div>
+                
+                <h3>What to Expect:</h3>
+                <p>During this window, you may experience {expected_experience}. We recommend {recommendation}.</p>
+                
+                <p>We apologize for any inconvenience this may cause and appreciate your understanding as we work to improve our infrastructure.</p>
+                <p>For real-time updates, please visit our status page: <a href="{status_page_url}">{status_page_url}</a></p>
+                <p>Thank you,</p>
+                <p>The Link Profiler Team</p>
+                """,
+                in_app_template="🛠️ Scheduled Maintenance: {maintenance_date} from {start_time} to {end_time}. {impact_summary}.",
+                webhook_payload_template={
+                    "event": "scheduled_maintenance",
+                    "maintenance_date": "{maintenance_date}",
+                    "start_time": "{start_time}",
+                    "end_time": "{end_time}",
+                    "duration_minutes": "{duration_minutes}",
+                    "impact_description": "{impact_description}",
+                    "affected_services": "{affected_services}",
+                    "status_page_url": "{status_page_url}"
+                },
+                personalization_fields=["customer_name", "maintenance_date", "start_time", "end_time", "timezone", "duration_minutes", "impact_description", "affected_services", "expected_experience", "recommendation", "status_page_url", "impact_summary"]
             )
         }
     
@@ -288,16 +379,16 @@ class APICommunicationService:
         for channel in template.channels:
             if channel in user_preferences.get('enabled_channels', template.channels):
                 try:
-                    if channel == CommunicationType.EMAIL:
+                    if channel == CommunicationType.EMAIL and self.email_enabled:
                         await self._send_email(user, template, personalized_context)
-                    elif channel == CommunicationType.IN_APP:
+                    elif channel == CommunicationType.IN_APP and self.in_app_enabled:
                         await self._send_in_app(user, template, personalized_context)
-                    elif channel == CommunicationType.WEBHOOK:
+                    elif channel == CommunicationType.WEBHOOK and self.webhook_enabled:
                         await self._send_webhook(user, template, personalized_context)
-                    elif channel == CommunicationType.SLACK:
+                    elif channel == CommunicationType.SLACK and self.slack_enabled:
                         await self._send_slack(user, template, personalized_context)
                 except Exception as e:
-                    self.logger.error(f"Failed to send {channel} notification to user {user.id}: {e}")
+                    self.logger.error(f"Failed to send {channel.value} notification to user {user.id} for event {event_type.value}: {e}", exc_info=True)
                     success = False
         
         # Log the notification
@@ -331,7 +422,7 @@ class APICommunicationService:
             })
         
         # Analyze usage tier efficiency
-        current_tier = self._get_user_tier(user)
+        current_tier = get_user_tier(user) # Use auth_utils.get_user_tier
         optimal_tier = self._calculate_optimal_tier(usage_data)
         if optimal_tier != current_tier:
             recommendations["cost_optimization"].append({
@@ -358,31 +449,61 @@ class APICommunicationService:
         
         for user in users:
             try:
-                quota_status = await self._get_quota_status(user.id)
+                # Get quota status from APIQuotaManager
+                quota_status_map = await self.api_quota_manager.get_user_api_quotas(user.id)
                 
-                # Check for quota warnings
-                for api_name, status in quota_status.items():
-                    percentage_used = status['percentage_used']
+                # Check for quota warnings for each API
+                for api_name, status_data in quota_status_map.items():
+                    percentage_used = status_data['percentage_used']
                     
-                    # Send warnings at 75%, 90%, and 95%
-                    if percentage_used >= 75 and not status.get('warned_75'):
+                    # Use Redis to track if a warning has been sent for this threshold
+                    warning_key_75 = f"quota_warning_sent:{user.id}:{api_name}:75"
+                    warning_key_90 = f"quota_warning_sent:{user.id}:{api_name}:90"
+                    warning_key_95 = f"quota_warning_sent:{user.id}:{api_name}:95"
+
+                    if percentage_used >= 95 and not await self.redis_client.get(warning_key_95):
                         await self.send_notification(user, APIEventType.QUOTA_WARNING, {
                             'api_name': api_name,
                             'percentage_used': percentage_used,
-                            'used_calls': status['used'],
-                            'remaining_calls': status['remaining'],
-                            'reset_date': status['reset_date']
+                            'used_calls': status_data['used'],
+                            'remaining_calls': status_data['remaining'],
+                            'reset_date': status_data['reset_date'],
+                            'next_tier': 'Enterprise', # Placeholder
+                            'next_tier_quota': 1000000 # Placeholder
                         })
-                        await self._mark_quota_warning_sent(user.id, api_name, 75)
+                        await self.redis_client.setex(warning_key_95, timedelta(days=1), "true") # Set for 1 day
+                    elif percentage_used >= 90 and not await self.redis_client.get(warning_key_90):
+                        await self.send_notification(user, APIEventType.QUOTA_WARNING, {
+                            'api_name': api_name,
+                            'percentage_used': percentage_used,
+                            'used_calls': status_data['used'],
+                            'remaining_calls': status_data['remaining'],
+                            'reset_date': status_data['reset_date'],
+                            'next_tier': 'Pro', # Placeholder
+                            'next_tier_quota': 500000 # Placeholder
+                        })
+                        await self.redis_client.setex(warning_key_90, timedelta(days=1), "true")
+                    elif percentage_used >= 75 and not await self.redis_client.get(warning_key_75):
+                        await self.send_notification(user, APIEventType.QUOTA_WARNING, {
+                            'api_name': api_name,
+                            'percentage_used': percentage_used,
+                            'used_calls': status_data['used'],
+                            'remaining_calls': status_data['remaining'],
+                            'reset_date': status_data['reset_date'],
+                            'next_tier': 'Pro', # Placeholder
+                            'next_tier_quota': 500000 # Placeholder
+                        })
+                        await self.redis_client.setex(warning_key_75, timedelta(days=1), "true")
                     
-                    # Check for upgrade recommendations
+                    # Check for upgrade recommendations (can be triggered by quota usage)
                     if percentage_used >= 80:
                         recommendations = await self.analyze_usage_and_recommend(user)
                         if recommendations:
+                            # Only send if there are actual recommendations
                             await self.send_notification(user, APIEventType.UPGRADE_RECOMMENDATION, recommendations)
                 
             except Exception as e:
-                self.logger.error(f"Error monitoring quota for user {user.id}: {e}")
+                self.logger.error(f"Error monitoring quota for user {user.id}: {e}", exc_info=True)
     
     async def _send_email(self, user: User, template: NotificationTemplate, context: Dict[str, Any]):
         """Send email notification using connection manager."""
@@ -395,6 +516,7 @@ class APICommunicationService:
             html_body=body,
             priority=template.priority.value
         )
+        self.logger.info(f"Email sent to {user.email} for event {template.event_type.value}.")
     
     async def _send_in_app(self, user: User, template: NotificationTemplate, context: Dict[str, Any]):
         """Send in-app notification via WebSocket or Redis pub/sub."""
@@ -414,11 +536,15 @@ class APICommunicationService:
         if self.redis_client:
             await self.redis_client.lpush(f"notifications:{user.id}", str(notification))
             await self.redis_client.publish(f"user_notifications:{user.id}", str(notification))
-    
+            self.logger.info(f"In-app notification sent to user {user.id} for event {template.event_type.value}.")
+        else:
+            self.logger.warning("Redis client not available for in-app notifications.")
+
     async def _send_webhook(self, user: User, template: NotificationTemplate, context: Dict[str, Any]):
         """Send webhook notification to user's configured endpoint."""
         webhook_url = await self._get_user_webhook_url(user.id)
         if not webhook_url:
+            self.logger.info(f"No webhook URL configured for user {user.id}.")
             return
         
         payload = {}
@@ -426,13 +552,34 @@ class APICommunicationService:
             payload[key] = value_template.format(**context)
         
         await self.connection_manager.send_webhook(webhook_url, payload)
-    
+        self.logger.info(f"Webhook sent to {webhook_url} for user {user.id} for event {template.event_type.value}.")
+
+    async def _send_slack(self, user: User, template: NotificationTemplate, context: Dict[str, Any]):
+        """Send Slack notification to user's configured channel or a default channel."""
+        if not self.slack_webhook_url:
+            self.logger.warning("Slack webhook URL not configured. Cannot send Slack notifications.")
+            return
+
+        # For simplicity, we'll send a basic text message. More complex Slack blocks can be built.
+        message = f"*{template.subject_template.format(**context)}*\n\n{template.in_app_template.format(**context)}"
+        slack_payload = {
+            "text": message
+        }
+        
+        try:
+            # Use aiohttp directly for Slack webhook
+            async with self.connection_manager.get_session().post(self.slack_webhook_url, json=slack_payload) as response:
+                response.raise_for_status()
+                self.logger.info(f"Slack notification sent for user {user.id} for event {template.event_type.value}.")
+        except Exception as e:
+            self.logger.error(f"Failed to send Slack notification to user {user.id}: {e}", exc_info=True)
+
     async def _get_user_preferences(self, user_id: str) -> Dict[str, Any]:
         """Get user's communication preferences."""
-        # This would typically come from the database
+        # This would typically come from the database or a dedicated user service
         # For now, return default preferences
         return {
-            "enabled_channels": [CommunicationType.EMAIL, CommunicationType.IN_APP],
+            "enabled_channels": [CommunicationType.EMAIL, CommunicationType.IN_APP, CommunicationType.WEBHOOK, CommunicationType.SLACK],
             "email_frequency": "immediate",
             "quiet_hours": {"start": "22:00", "end": "08:00"},
             "timezone": "UTC"
@@ -443,21 +590,17 @@ class APICommunicationService:
         personalized = context.copy()
         personalized.update({
             "customer_name": user.username,
-            "current_tier": self._get_user_tier(user),
+            "current_tier": get_user_tier(user), # Use auth_utils.get_user_tier
             "support_url": "https://support.linkprofiler.com",
             "upgrade_url": f"https://billing.linkprofiler.com/upgrade?user={user.id}",
             "docs_url": "https://docs.linkprofiler.com"
         })
         return personalized
     
-    def _get_user_tier(self, user: User) -> str:
-        """Get user's subscription tier."""
-        # This would integrate with your billing system
-        return getattr(user, 'tier', 'basic')
-    
     async def _get_usage_analytics(self, user_id: str, days: int = 30) -> Dict[str, Any]:
         """Get comprehensive usage analytics for a user."""
-        # This would query your analytics system
+        # This would query your analytics system or ClickHouse
+        # For now, return dummy data
         return {
             "total_calls": 5000,
             "live_calls": 3500,
@@ -469,23 +612,60 @@ class APICommunicationService:
             "keyword_calls": 1000
         }
     
-    async def _log_notification(self, user_id: str, event_type: APIEventType, priority: NotificationPriority, success: bool):
-        """Log notification for analytics and debugging."""
-        log_entry = {
-            "user_id": user_id,
-            "event_type": event_type.value,
-            "priority": priority.value,
-            "success": success,
-            "timestamp": datetime.utcnow().isoformat()
+    def _calculate_cache_savings(self, usage_data: Dict[str, Any]) -> float:
+        """Calculate potential monthly savings from cache optimization."""
+        # Dummy calculation
+        total_calls = usage_data.get('total_calls', 0)
+        live_calls = usage_data.get('live_calls', 0)
+        cost_per_live_call = 0.001 # Example cost
+        
+        if total_calls == 0:
+            return 0.0
+        
+        # Assume 50% of live calls could be cached
+        potential_cached_calls = live_calls * 0.5
+        savings = potential_cached_calls * cost_per_live_call
+        return round(savings, 2)
+
+    def _calculate_optimal_tier(self, usage_data: Dict[str, Any]) -> str:
+        """Determine the optimal tier based on usage data."""
+        # Dummy logic
+        total_calls = usage_data.get('total_calls', 0)
+        if total_calls > 50000:
+            return "Enterprise"
+        elif total_calls > 10000:
+            return "Pro"
+        elif total_calls > 1000:
+            return "Basic"
+        return "Free"
+
+    def _calculate_tier_savings(self, usage_data: Dict[str, Any], current_tier: str, recommended_tier: str) -> float:
+        """Calculate potential savings by upgrading/downgrading tiers."""
+        # Dummy calculation
+        tier_costs = {
+            "Free": 0,
+            "Basic": 29,
+            "Pro": 99,
+            "Enterprise": 499
         }
-        self.logger.info(f"Notification logged: {log_entry}")
+        
+        current_cost = tier_costs.get(current_tier, 0)
+        recommended_cost = tier_costs.get(recommended_tier, 0)
+        
+        return round(current_cost - recommended_cost, 2)
+
+    async def _get_user_webhook_url(self, user_id: str) -> Optional[str]:
+        """Retrieve user's configured webhook URL from DB."""
+        # Placeholder: In a real system, this would fetch from user settings in DB
+        self.logger.debug(f"Fetching webhook URL for user {user_id} (placeholder).")
+        return config_loader.get("notifications.webhooks.urls", [None])[0] # Return first configured webhook URL if any
 
 # Global singleton instance
 api_communication_service = None
 
-async def get_api_communication_service(db: Database, connection_manager: ConnectionManager, redis_client=None) -> APICommunicationService:
+async def get_api_communication_service(db: Database, connection_manager: ConnectionManager, api_quota_manager: APIQuotaManager, redis_client) -> APICommunicationService:
     """Get or create the global API communication service instance."""
     global api_communication_service
     if api_communication_service is None:
-        api_communication_service = APICommunicationService(db, connection_manager, redis_client)
+        api_communication_service = APICommunicationService(db, connection_manager, api_quota_manager, redis_client)
     return api_communication_service
