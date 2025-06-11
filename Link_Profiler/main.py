@@ -275,6 +275,9 @@ from Link_Profiler.api.public_api_routes import public_api_router # Import the n
 # New: Import queue_router and set_coordinator_dependencies
 from Link_Profiler.api.queue_endpoints import queue_router, set_coordinator_dependencies
 
+# NEW: Import IngestionScheduler and get_ingestion_scheduler
+from Link_Profiler.scheduler.ingestion_scheduler import IngestionScheduler, get_ingestion_scheduler
+
 
 # New: Import authentication dependencies
 from fastapi.security import OAuth2PasswordRequestForm # Only import this specific class needed for /token endpoint
@@ -454,17 +457,24 @@ crawler_config_data = config_loader.get("crawler", {})
 crawler_config_data['ml_rate_limiter_enabled'] = config_loader.get("rate_limiting.ml_enhanced", False) # Corrected key
 # Pass relevant anti_detection settings to CrawlConfig
 crawler_config_data['user_agent_rotation'] = config_loader.get("anti_detection.user_agent_rotation", False)
+crawler_config_data['consistent_ua_per_domain'] = config_loader.get("anti_detection.consistent_ua_per_domain", False) # Added
 crawler_config_data['request_header_randomization'] = config_loader.get("anti_detection.request_header_randomization", False)
 crawler_config_data['human_like_delays'] = config_loader.get("anti_detection.human_like_delays", False)
+crawler_config_data['random_delay_range'] = config_loader.get("anti_detection.random_delay_range", [0.5, 2.0]) # Added
 crawler_config_data['stealth_mode'] = config_loader.get("anti_detection.stealth_mode", False)
 crawler_config_data['browser_fingerprint_randomization'] = config_loader.get("anti_detection.browser_fingerprint_randomization", False)
 crawler_config_data['captcha_solving_enabled'] = config_loader.get("anti_detection.captcha_solving_enabled", False)
 crawler_config_data['anomaly_detection_enabled'] = config_loader.get("anti_detection.anomaly_detection_enabled", False)
 crawler_config_data['use_proxies'] = config_loader.get("proxy.use_proxies", False)
 crawler_config_data['proxy_list'] = config_loader.get("proxy.proxy_list", [])
+crawler_config_data['proxy_region'] = config_loader.get("proxy.proxy_region", None) # Added
 crawler_config_data['render_javascript'] = config_loader.get("browser_crawler.enabled", False)
 crawler_config_data['browser_type'] = config_loader.get("browser_crawler.browser_type", "chromium")
 crawler_config_data['headless_browser'] = config_loader.get("browser_crawler.headless", True)
+crawler_config_data['extract_image_text'] = config_loader.get("browser_crawler.extract_image_text", False) # Added
+crawler_config_data['crawl_web3_content'] = config_loader.get("browser_crawler.crawl_web3_content", False) # Added
+crawler_config_data['crawl_social_media'] = config_loader.get("browser_crawler.crawl_social_media", False) # Added
+
 
 main_crawl_config = CrawlConfig(**crawler_config_data)
 
@@ -495,6 +505,9 @@ main_web_crawler = EnhancedWebCrawler(config=main_crawl_config, crawl_queue=smar
 
 # Initialize AlertService instance after its dependencies are available
 alert_service_instance = AlertService(db=db, connection_manager=connection_manager, redis_client=redis_client, config_loader=config_loader)
+
+# NEW: Global scheduler instance
+ingestion_scheduler_instance: Optional[IngestionScheduler] = None
 
 async def validate_redis_dependencies(redis_client: redis.Redis, services_to_validate: List[Any]) -> bool:
     """
@@ -610,7 +623,7 @@ async def lifespan(app: FastAPI):
             SmartCrawlQueue, DashboardAlertService, MissionControlService, AlertService,
             DomainService, BacklinkService, SERPService, KeywordService,
             AIService, SocialMediaService, Web3Service,
-            # Add any other services that directly accept redis_client
+            IngestionScheduler # NEW: Add IngestionScheduler to validation
         ]):
             logger.critical("Critical Redis dependencies not met. Aborting application startup.")
             raise RuntimeError("Critical Redis dependencies not met. Aborting application startup.")
@@ -652,6 +665,22 @@ async def lifespan(app: FastAPI):
 
         asyncio.create_task(alert_service_instance.refresh_rules())
 
+        # NEW: Initialize and start IngestionScheduler
+        global ingestion_scheduler_instance
+        try:
+            ingestion_scheduler_instance = await get_ingestion_scheduler(
+                session_manager=session_manager,
+                resilience_manager=distributed_resilience_manager,
+                api_quota_manager=api_quota_manager,
+                redis_url=REDIS_URL, # Use the global REDIS_URL
+                redis_client=redis_client # Pass the global redis_client
+            )
+            await ingestion_scheduler_instance.start()
+            logger.info("Ingestion Scheduler started successfully.")
+        except Exception as e:
+            logger.error(f"Failed to start Ingestion Scheduler: {e}", exc_info=True)
+            # Decide if this should be a critical failure preventing app startup
+
         # --- NEW: Create default admin user if not exists ---
         default_admin_username = "monitor_user"
         # Load default admin password from config_loader
@@ -681,6 +710,12 @@ async def lifespan(app: FastAPI):
         yield
 
     finally:
+        # NEW: Shut down IngestionScheduler
+        if ingestion_scheduler_instance:
+            logger.info("Application shutdown: Shutting down Ingestion Scheduler.")
+            await ingestion_scheduler_instance.shutdown()
+            logger.info("Ingestion Scheduler shut down.")
+
         for cm in reversed(entered_contexts):
             logger.info(f"Application shutdown: Exiting {cm.__class__.__name__} context.")
             await cm.__aexit__(None, None, None)
@@ -840,7 +875,7 @@ async def metrics():
 #     return DomainResponse.from_domain(domain)
 
 # Catch-all route for serving SPAs based on subdomain
-# This must come AFTER all other API routes and static mounts to ensure they are matched first.
+# This must come AFTER all other API routers and static mounts to ensure they are matched first.
 @app.get("/{path:path}", response_class=HTMLResponse)
 async def serve_dashboard_spa(request: Request, path: str):
     """
