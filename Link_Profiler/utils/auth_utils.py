@@ -120,6 +120,18 @@ def can_access_live_data(user: User, feature: str = None) -> bool:
     # Pro and enterprise tiers can access all live features
     return tier in ["pro", "enterprise"]
 
+async def increment_live_api_usage(user_id: str, feature: str = None) -> None:
+    """
+    Increments the live API usage counter for a user.
+    Delegates to the auth_service_instance for Redis tracking.
+    
+    Args:
+        user_id: User ID
+        feature: Feature that was accessed
+    """
+    await auth_service_instance.increment_user_api_usage(user_id, feature)
+    logger.debug(f"Live API usage recorded for user {user_id}, feature: {feature}")
+
 def validate_live_access(user: User, feature: str) -> None:
     """
     Validates if a user can access live data for a specific feature.
@@ -151,17 +163,3 @@ def validate_live_access(user: User, feature: str) -> None:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied for live data."
             )
-
-def increment_live_api_usage(user_id: str, feature: str = None) -> None:
-    """
-    Increments the live API usage counter for a user.
-    This is a placeholder for actual usage tracking implementation.
-    
-    Args:
-        user_id: User ID
-        feature: Feature that was accessed
-    """
-    # TODO: Implement actual usage tracking
-    # This could increment counters in Redis, database, or external service
-    logger.info(f"Live API usage recorded for user {user_id}, feature: {feature}")
-    pass
